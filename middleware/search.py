@@ -79,12 +79,12 @@ class SearchMiddleware(AgentMiddleware):
     def _validate_path(self, path: str) -> tuple[bool, str, Path | None]:
         """验证搜索路径"""
         if not Path(path).is_absolute():
-            return False, f"❌ Path must be absolute: {path}", None
+            return False, f"Path must be absolute: {path}", None
 
         try:
             resolved = Path(path).resolve()
         except Exception as e:
-            return False, f"❌ Invalid path: {path} ({e})", None
+            return False, f"Invalid path: {path} ({e})", None
 
         # 必须在 workspace 内
         try:
@@ -92,7 +92,7 @@ class SearchMiddleware(AgentMiddleware):
         except ValueError:
             return (
                 False,
-                f"❌ Path outside workspace\n"
+                f"Path outside workspace\n"
                 f"   Workspace: {self.workspace_root}\n"
                 f"   Attempted: {resolved}",
                 None,
@@ -120,7 +120,7 @@ class SearchMiddleware(AgentMiddleware):
             return error
 
         if not resolved.exists():
-            return f"❌ Path not found: {SearchPath}"
+            return f"Path not found: {SearchPath}"
 
         # 尝试使用 ripgrep（性能最佳）
         if self.prefer_system_tools and self.has_ripgrep:
@@ -163,7 +163,7 @@ class SearchMiddleware(AgentMiddleware):
 
         # 输出格式
         if match_per_line:
-            cmd.extend(["--line-number", "--no-heading"])
+            cmd.extend(["--line-number", "--no-heading", "-C", "2"])  # 前后各 2 行上下文
         else:
             cmd.extend(["--files-with-matches"])
 
@@ -186,24 +186,29 @@ class SearchMiddleware(AgentMiddleware):
                 if not output:
                     return "No matches found"
 
-                # 转换为相对路径
+                # 处理 ripgrep 输出
                 lines = []
                 for line in output.split("\n"):
-                    if line:
-                        # ripgrep 输出的是绝对路径，转换为相对路径
+                    if not line:
+                        continue
+                    
+                    if match_per_line:
+                        # ripgrep -C 输出格式：
+                        # 行号:匹配内容（匹配行）
+                        # 行号-上下文内容（上下文行）
+                        # -- （分隔符，忽略）
+                        if line == "--":
+                            continue
+                        
+                        # 直接使用 ripgrep 的格式（已经是 行号:内容 或 行号-内容）
+                        lines.append(line)
+                    else:
+                        # 只返回文件名
                         try:
-                            if ":" in line and match_per_line:
-                                # 格式: /abs/path/file.py:123:content
-                                parts = line.split(":", 2)
-                                file_path = Path(parts[0])
-                                rel_path = file_path.relative_to(self.workspace_root)
-                                lines.append(f"{rel_path}:{parts[1]}:{parts[2]}")
-                            else:
-                                # 格式: /abs/path/file.py
-                                file_path = Path(line)
-                                rel_path = file_path.relative_to(self.workspace_root)
-                                lines.append(str(rel_path))
-                        except (ValueError, IndexError):
+                            file_path = Path(line)
+                            rel_path = file_path.relative_to(self.workspace_root)
+                            lines.append(str(rel_path))
+                        except ValueError:
                             lines.append(line)
 
                 return "\n".join(lines) if lines else "No matches found"
@@ -238,7 +243,7 @@ class SearchMiddleware(AgentMiddleware):
             flags = 0 if case_sensitive else re.IGNORECASE
             regex = re.compile(pattern, flags)
         except re.error as e:
-            return f"❌ Invalid regex pattern: {e}"
+            return f"Invalid regex pattern: {e}"
 
         # 收集要搜索的文件
         files_to_search = []
@@ -275,21 +280,37 @@ class SearchMiddleware(AgentMiddleware):
                 with open(file_path, "r", encoding="utf-8") as f:
                     lines = f.readlines()
 
-                matches = []
+                match_line_nums = []
                 for line_num, line in enumerate(lines, start=1):
                     if regex.search(line):
-                        matches.append((line_num, line.rstrip()))
+                        match_line_nums.append(line_num)
 
-                if matches:
-                    rel_path = file_path.relative_to(self.workspace_root)
-
+                if match_line_nums:
                     if match_per_line:
-                        for line_num, line in matches:
-                            results.append(f"{rel_path}:{line_num}:{line}")
+                        # 显示匹配行 + 上下文（Cascade 格式）
+                        context_lines = 2  # 前后各 2 行
+                        displayed_lines = set()
+                        
+                        for match_line in match_line_nums:
+                            # 计算上下文范围
+                            start = max(1, match_line - context_lines)
+                            end = min(len(lines), match_line + context_lines)
+                            
+                            for line_num in range(start, end + 1):
+                                if line_num not in displayed_lines:
+                                    displayed_lines.add(line_num)
+                                    line_content = lines[line_num - 1].rstrip()
+                                    
+                                    # 匹配行用 :，上下文行用 -
+                                    marker = ":" if line_num in match_line_nums else "-"
+                                    results.append(f"{line_num}{marker}{line_content}")
+                                    
                             count += 1
                             if count >= self.max_results:
                                 break
                     else:
+                        # 只返回文件名
+                        rel_path = file_path.relative_to(self.workspace_root)
                         results.append(str(rel_path))
                         count += 1
 
@@ -318,10 +339,10 @@ class SearchMiddleware(AgentMiddleware):
             return error
 
         if not resolved.exists():
-            return f"❌ Directory not found: {SearchDirectory}"
+            return f"Directory not found: {SearchDirectory}"
 
         if not resolved.is_dir():
-            return f"❌ Not a directory: {SearchDirectory}"
+            return f"Not a directory: {SearchDirectory}"
 
         # 尝试使用 fd（性能最佳）
         if self.prefer_system_tools and self.has_fd:
@@ -378,18 +399,18 @@ class SearchMiddleware(AgentMiddleware):
                 if not output:
                     return "No files found"
 
-                # 转换为相对路径
+                # 收集绝对路径
                 lines = []
                 for line in output.split("\n"):
                     if line:
-                        try:
-                            file_path = Path(line)
-                            rel_path = file_path.relative_to(self.workspace_root)
-                            lines.append(str(rel_path))
-                        except ValueError:
-                            lines.append(line)
+                        file_path = Path(line)
+                        if not file_path.is_absolute():
+                            file_path = (self.workspace_root / line).resolve()
+                        lines.append(str(file_path))
 
-                return "\n".join(lines) if lines else "No files found"
+                if not lines:
+                    return "No files found"
+                return f"Found {len(lines)} results\n" + "\n".join(lines)
             else:
                 raise RuntimeError(f"fd error: {result.stderr}")
 
@@ -436,8 +457,7 @@ class SearchMiddleware(AgentMiddleware):
                     # 名称匹配
                     match_target = str(item) if full_path else item.name
                     if item.match(pattern):
-                        rel_path = item.relative_to(self.workspace_root)
-                        results.append(str(rel_path))
+                        results.append(str(item))
                         count += 1
 
                     # 递归搜索子目录
@@ -449,7 +469,9 @@ class SearchMiddleware(AgentMiddleware):
 
         search_recursive(path)
 
-        return "\n".join(results) if results else "No files found"
+        if not results:
+            return "No files found"
+        return f"Found {len(results)} results\n" + "\n".join(results)
 
     def wrap_model_call(
         self,

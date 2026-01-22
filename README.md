@@ -1,12 +1,12 @@
-# Comprehensive LangChain Anthropic Agent
+# Leon - Cascade-Like Agent
 
-A production-ready LangChain agent with **all available Anthropic middleware** components, demonstrating the full capabilities of Claude models.
+一个完全模仿 Windsurf Cascade 的 LangChain Agent，使用纯 Middleware 架构实现所有工具。
 
-**Built with LangChain v1** - Uses the latest `create_agent` API and modern middleware architecture.
+**Built with LangChain v1** - 使用最新的 `create_agent` API 和现代 middleware 架构。
 
-## Features
+## ✨ 特点
 
-This agent includes all Anthropic middleware:
+### 完全匹配 Cascade 的工具和输出格式
 
 ### 1. **Prompt Caching** (`AnthropicPromptCachingMiddleware`)
 - Reduces API costs by caching repetitive prompt content

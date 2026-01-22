@@ -87,12 +87,12 @@ class FileSystemMiddleware(AgentMiddleware):
         """
         # 必须是绝对路径
         if not Path(path).is_absolute():
-            return False, f"❌ Path must be absolute: {path}", None
+            return False, f"Path must be absolute: {path}", None
 
         try:
             resolved = Path(path).resolve()
         except Exception as e:
-            return False, f"❌ Invalid path: {path} ({e})", None
+            return False, f"Invalid path: {path} ({e})", None
 
         # 必须在 workspace 内
         try:
@@ -100,7 +100,7 @@ class FileSystemMiddleware(AgentMiddleware):
         except ValueError:
             return (
                 False,
-                f"❌ Path outside workspace\n"
+                f"Path outside workspace\n"
                 f"   Workspace: {self.workspace_root}\n"
                 f"   Attempted: {resolved}",
                 None,
@@ -111,7 +111,7 @@ class FileSystemMiddleware(AgentMiddleware):
             if resolved.suffix.lstrip(".") not in self.allowed_extensions:
                 return (
                     False,
-                    f"❌ File type not allowed: {resolved.suffix}\n"
+                    f"File type not allowed: {resolved.suffix}\n"
                     f"   Allowed: {', '.join(self.allowed_extensions)}",
                     None,
                 )
@@ -132,14 +132,14 @@ class FileSystemMiddleware(AgentMiddleware):
             return error
 
         if not resolved.exists():
-            return f"❌ File not found: {file_path}"
+            return f"File not found: {file_path}"
 
         if not resolved.is_file():
-            return f"❌ Not a file: {file_path}"
+            return f"Not a file: {file_path}"
 
         # 检查文件大小
         if resolved.stat().st_size > self.max_file_size:
-            return f"❌ File too large: {resolved.stat().st_size} bytes (max: {self.max_file_size})"
+            return f"File too large: {resolved.stat().st_size} bytes (max: {self.max_file_size})"
 
         try:
             with open(resolved, "r", encoding="utf-8") as f:
@@ -150,43 +150,36 @@ class FileSystemMiddleware(AgentMiddleware):
             # 处理分段读取
             if offset > 0:
                 if offset > total_lines:
-                    return f"❌ Offset {offset} exceeds file length {total_lines}"
+                    return f"Offset {offset} exceeds file length {total_lines}"
                 lines = lines[offset - 1 :]  # offset 是 1-indexed
 
             if limit:
                 lines = lines[:limit]
 
-            # 格式化输出（带行号，cat -n 风格）
+            # 格式化输出（Cascade 格式：行号→内容）
             start_line = offset if offset > 0 else 1
             formatted_lines = []
             for i, line in enumerate(lines, start=start_line):
-                formatted_lines.append(f"{i:6d}\t{line.rstrip()}")
+                formatted_lines.append(f"{i:6d}→{line.rstrip()}")
 
-            result = "\n".join(formatted_lines)
-
-            # 添加元信息
-            header = f"File: {file_path}\n"
-            header += f"Lines: {start_line}-{start_line + len(lines) - 1} of {total_lines}\n"
-            header += "-" * 80 + "\n"
-
-            return header + result
+            return "\n".join(formatted_lines)
 
         except UnicodeDecodeError:
-            return f"❌ Cannot read file (not UTF-8): {file_path}"
+            return f"Cannot read file (not UTF-8): {file_path}"
         except Exception as e:
-            return f"❌ Error reading file: {e}"
+            return f"Error reading file: {e}"
 
     def _write_file_impl(self, file_path: str, content: str) -> str:
         """实现 write_file"""
         if self.read_only:
-            return "❌ Write operation not allowed in read-only mode"
+            return "Write operation not allowed in read-only mode"
 
         is_valid, error, resolved = self._validate_path(file_path, "write")
         if not is_valid:
             return error
 
         if resolved.exists():
-            return f"❌ File already exists: {file_path}\nUse edit_file to modify existing files"
+            return f"File already exists: {file_path}\nUse edit_file to modify existing files"
 
         try:
             # 创建父目录
@@ -197,22 +190,22 @@ class FileSystemMiddleware(AgentMiddleware):
                 f.write(content)
 
             lines = content.count("\n") + 1
-            return f"✅ File created: {file_path}\n   Lines: {lines}\n   Size: {len(content)} bytes"
+            return f"File created: {file_path}\n   Lines: {lines}\n   Size: {len(content)} bytes"
 
         except Exception as e:
-            return f"❌ Error writing file: {e}"
+            return f"Error writing file: {e}"
 
     def _edit_file_impl(self, file_path: str, old_string: str, new_string: str) -> str:
         """实现 edit_file (str_replace 模式)"""
         if self.read_only:
-            return "❌ Edit operation not allowed in read-only mode"
+            return "Edit operation not allowed in read-only mode"
 
         is_valid, error, resolved = self._validate_path(file_path, "edit")
         if not is_valid:
             return error
 
         if not resolved.exists():
-            return f"❌ File not found: {file_path}"
+            return f"File not found: {file_path}"
 
         try:
             # 读取文件
@@ -221,13 +214,13 @@ class FileSystemMiddleware(AgentMiddleware):
 
             # 检查 old_string 是否存在
             if old_string not in content:
-                return f"❌ String not found in file\n   Looking for: {old_string[:100]}..."
+                return f"String not found in file\n   Looking for: {old_string[:100]}..."
 
             # 检查是否唯一
             count = content.count(old_string)
             if count > 1:
                 return (
-                    f"❌ String appears {count} times in file (not unique)\n"
+                    f"String appears {count} times in file (not unique)\n"
                     f"   Use multi_edit or provide more context to make it unique"
                 )
 
@@ -238,22 +231,22 @@ class FileSystemMiddleware(AgentMiddleware):
             with open(resolved, "w", encoding="utf-8") as f:
                 f.write(new_content)
 
-            return f"✅ File edited: {file_path}\n   Replaced 1 occurrence"
+            return f"File edited: {file_path}\n   Replaced 1 occurrence"
 
         except Exception as e:
-            return f"❌ Error editing file: {e}"
+            return f"Error editing file: {e}"
 
     def _multi_edit_impl(self, file_path: str, edits: list[dict[str, str]]) -> str:
         """实现 multi_edit"""
         if self.read_only:
-            return "❌ Edit operation not allowed in read-only mode"
+            return "Edit operation not allowed in read-only mode"
 
         is_valid, error, resolved = self._validate_path(file_path, "edit")
         if not is_valid:
             return error
 
         if not resolved.exists():
-            return f"❌ File not found: {file_path}"
+            return f"File not found: {file_path}"
 
         try:
             # 读取文件
@@ -264,7 +257,7 @@ class FileSystemMiddleware(AgentMiddleware):
             for i, edit in enumerate(edits):
                 old_str = edit.get("old_string", "")
                 if old_str not in content:
-                    return f"❌ Edit {i + 1}: String not found\n   Looking for: {old_str[:100]}..."
+                    return f"Edit {i + 1}: String not found\n   Looking for: {old_str[:100]}..."
 
             # 顺序执行所有编辑
             for edit in edits:
@@ -282,10 +275,10 @@ class FileSystemMiddleware(AgentMiddleware):
             with open(resolved, "w", encoding="utf-8") as f:
                 f.write(content)
 
-            return f"✅ File edited: {file_path}\n   Applied {len(edits)} edits"
+            return f"File edited: {file_path}\n   Applied {len(edits)} edits"
 
         except Exception as e:
-            return f"❌ Error in multi_edit: {e}"
+            return f"Error in multi_edit: {e}"
 
     def _list_dir_impl(self, directory_path: str) -> str:
         """实现 list_dir"""
@@ -294,28 +287,28 @@ class FileSystemMiddleware(AgentMiddleware):
             return error
 
         if not resolved.exists():
-            return f"❌ Directory not found: {directory_path}"
+            return f"Directory not found: {directory_path}"
 
         if not resolved.is_dir():
-            return f"❌ Not a directory: {directory_path}"
+            return f"Not a directory: {directory_path}"
 
         try:
             items = []
             for item in sorted(resolved.iterdir()):
                 if item.is_file():
                     size = item.stat().st_size
-                    items.append(f"  {item.name} ({size} bytes)")
+                    items.append(f"\t{item.name} ({size} bytes)")
                 elif item.is_dir():
                     count = sum(1 for _ in item.iterdir())
-                    items.append(f"  {item.name}/ ({count} items)")
+                    items.append(f"\t{item.name}/ ({count} items)")
 
             if not items:
-                return f"Directory: {directory_path}\n(empty)"
+                return f"{directory_path}: Empty directory"
 
-            return f"Directory: {directory_path}\n" + "\n".join(items)
+            return f"{directory_path}/\n" + "\n".join(items)
 
         except Exception as e:
-            return f"❌ Error listing directory: {e}"
+            return f"Error listing directory: {e}"
 
     def wrap_model_call(
         self,

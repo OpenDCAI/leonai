@@ -16,6 +16,7 @@ wheels/
 
 # Workspace & logs
 workspace/
+node_modules/
 *.log
 
 # Environment

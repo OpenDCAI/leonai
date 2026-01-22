@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 from langchain.agents.middleware.types import AgentMiddleware
 from langchain.tools import ToolRuntime, tool
-from langchain_anthropic.middleware.anthropic_tools import AnthropicToolsState
+from middleware.anthropic_tools import AnthropicToolsState
 
 
 def _expand_include_patterns(pattern: str) -> list[str] | None:

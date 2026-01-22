@@ -22,7 +22,7 @@ if env_file.exists():
             key, value = line.split("=", 1)
             os.environ[key] = value
 
-from cascade_agent import create_cascade_agent
+from cascade_agent import create_leon_agent
 
 
 def print_section(title: str):
@@ -192,7 +192,7 @@ def demo_read_only_mode():
 
     # 创建只读 agent
     print("🔒 Creating agent in read-only mode...")
-    readonly_agent = create_cascade_agent(read_only=True)
+    readonly_agent = create_leon_agent(read_only=True)
 
     try:
         # 尝试写入（应该被拦截）
@@ -216,7 +216,7 @@ def main():
 
     # 创建 agent
     print("\n🚀 Initializing Cascade-Like Agent...")
-    agent = create_cascade_agent()
+    agent = create_leon_agent()
     workspace = agent.workspace_root
 
     print(f"✅ Agent initialized")
