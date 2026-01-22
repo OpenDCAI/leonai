@@ -1,0 +1,59 @@
+"""
+危险命令拦截 Hook - 示例模板
+
+将此文件重命名为 dangerous_commands.py 即可启用。
+"""
+
+from .base import BashHook, HookResult
+from typing import Any
+
+
+class DangerousCommandsHook(BashHook):
+    """
+    拦截危险的系统命令
+    
+    功能：
+    - 拦截 rm -rf /
+    - 拦截格式化命令
+    - 拦截覆盖磁盘命令
+    """
+    
+    priority = 15  # 高优先级，在路径检查之后
+    name = "DangerousCommands"
+    description = "Block dangerous system commands that could damage the system"
+    enabled = True
+    
+    # 危险命令模式列表
+    DANGEROUS_PATTERNS = [
+        "rm -rf /",
+        "rm -rf /*",
+        "mkfs",
+        "dd if=/dev/zero",
+        "> /dev/sd",
+        "chmod -R 777 /",
+        "chown -R",
+    ]
+    
+    def check_command(self, command: str, context: dict[str, Any]) -> HookResult:
+        """检查命令是否包含危险操作"""
+        
+        # 检查每个危险模式
+        for pattern in self.DANGEROUS_PATTERNS:
+            if pattern in command:
+                return HookResult.block_command(
+                    error_message=(
+                        f"❌ DANGER: Command contains dangerous pattern '{pattern}'\n"
+                        f"   Command: {command}\n"
+                        f"   Reason: This command could damage your system\n"
+                        f"   💡 If you really need to run this, please ask the user for explicit permission."
+                    )
+                )
+        
+        # 命令安全
+        return HookResult.allow_command()
+    
+    def on_command_error(self, command: str, error: str, context: dict[str, Any]) -> None:
+        """记录被拦截的危险命令"""
+        if "DANGER" in error:
+            # 可以在这里添加告警、日志等
+            print(f"[SECURITY ALERT] Blocked dangerous command: {command}")
