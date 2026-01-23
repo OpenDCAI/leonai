@@ -4,8 +4,8 @@ Leon - 完全模仿 Windsurf Cascade 的 Agent 实现
 使用纯 Middleware 架构实现所有工具：
 - FileSystemMiddleware: read_file, write_file, edit_file, multi_edit, list_dir
 - SearchMiddleware: grep_search, find_by_name
-- ExtensibleBashMiddleware: run_command (with hooks)
-- AnthropicPromptCachingMiddleware: 成本优化
+- ShellMiddleware: run_command (with hooks)
+- PromptCachingMiddleware: 成本优化
 
 所有路径必须使用绝对路径，完整的安全机制和审计日志。
 """
@@ -16,15 +16,15 @@ from pathlib import Path
 from langchain.agents import create_agent
 from langchain.chat_models import init_chat_model
 
-from middleware.extensible_bash import ExtensibleBashMiddleware
 from middleware.filesystem import FileSystemMiddleware
-from middleware.prompt_caching import AnthropicPromptCachingMiddleware
+from middleware.prompt_caching import PromptCachingMiddleware
 from middleware.search import SearchMiddleware
+from middleware.shell import ShellMiddleware
 
 # 导入 hooks
-from middleware.bash_hooks.dangerous_commands import DangerousCommandsHook
-from middleware.bash_hooks.file_access_logger import FileAccessLoggerHook
-from middleware.bash_hooks.file_permission import FilePermissionHook
+from middleware.shell.hooks.dangerous_commands import DangerousCommandsHook
+from middleware.shell.hooks.file_access_logger import FileAccessLoggerHook
+from middleware.shell.hooks.file_permission import FilePermissionHook
 
 
 class LeonAgent:
@@ -40,7 +40,7 @@ class LeonAgent:
     工具列表：
     1. 文件操作：read_file, write_file, edit_file, multi_edit, list_dir
     2. 搜索：grep_search, find_by_name
-    3. 命令执行：bash (通过 ExtensibleBashMiddleware)
+    3. 命令执行：bash (通过 ShellMiddleware)
     """
 
     def __init__(
@@ -108,7 +108,7 @@ class LeonAgent:
 
         # 1. Prompt Caching - 成本优化
         middleware.append(
-            AnthropicPromptCachingMiddleware(
+            PromptCachingMiddleware(
                 ttl="5m",
                 min_messages_to_cache=0,
             )
@@ -150,9 +150,9 @@ class LeonAgent:
         bash_hook_config = {"strict_mode": True}
 
         # 如果启用危险命令拦截，需要手动添加到 hooks
-        # 注意：ExtensibleBashMiddleware 会自动加载 bash_hooks/ 目录下的所有 hooks
+        # 注意：ShellMiddleware 会自动加载 shell/hooks/ 目录下的所有 hooks
         middleware.append(
-            ExtensibleBashMiddleware(
+            ShellMiddleware(
                 workspace_root=str(self.workspace_root),
                 allow_system_python=True,
                 hook_config=bash_hook_config,

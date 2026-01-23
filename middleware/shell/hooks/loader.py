@@ -42,7 +42,7 @@ def load_hooks(
 
         try:
             # 动态导入模块
-            module_name = f"middleware.bash_hooks.{py_file.stem}"
+            module_name = f"middleware.shell.hooks.{py_file.stem}"
             module = importlib.import_module(module_name)
 
             # 查找所有 BashHook 子类

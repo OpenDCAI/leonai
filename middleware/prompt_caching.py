@@ -27,7 +27,7 @@ except ImportError as e:
     raise ImportError(msg) from e
 
 
-class AnthropicPromptCachingMiddleware(AgentMiddleware):
+class PromptCachingMiddleware(AgentMiddleware):
     """Prompt Caching Middleware.
 
     Optimizes API usage by caching conversation prefixes for Anthropic models.
@@ -145,3 +145,6 @@ class AnthropicPromptCachingMiddleware(AgentMiddleware):
             "cache_control": {"type": self.type, "ttl": self.ttl},
         }
         return await handler(request.override(model_settings=new_model_settings))
+
+
+__all__ = ["PromptCachingMiddleware"]

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-测试 ExtensibleBashMiddleware 插件系统
+测试 ShellMiddleware 插件系统
 """
 
 import os
@@ -15,8 +15,8 @@ if env_file.exists():
             key, value = line.split("=", 1)
             os.environ[key] = value
 
-from middleware.bash_hooks import load_hooks
-from middleware.extensible_bash import ExtensibleBashMiddleware
+from middleware.shell.hooks import load_hooks
+from middleware.shell import ShellMiddleware
 
 
 def test_hook_loading():
@@ -78,7 +78,7 @@ def test_middleware_integration():
     workspace.mkdir(parents=True, exist_ok=True)
 
     # 创建 middleware
-    middleware = ExtensibleBashMiddleware(
+    middleware = ShellMiddleware(
         workspace_root=str(workspace),
         allow_system_python=True,
         hook_config={"strict_mode": True},
@@ -147,7 +147,7 @@ class DangerousCommandsHook(BashHook):
 
 
 if __name__ == "__main__":
-    print("\n🔧 ExtensibleBashMiddleware 插件系统测试\n")
+    print("\n🔧 ShellMiddleware 插件系统测试\n")
 
     test_hook_loading()
     test_path_security_hook()

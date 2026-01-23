@@ -1,7 +1,7 @@
 """
-Extensible Bash Middleware - 基于插件系统的 Bash 中间件
+Shell Executor - 基于插件系统的 Shell 中间件
 
-通过 hook 插件系统扩展 bash 功能，添加新功能只需在 bash_hooks/ 目录下创建新的 .py 文件。
+通过 hook 插件系统扩展 shell 功能，添加新功能只需在 hooks/ 目录下创建新的 .py 文件。
 """
 
 from __future__ import annotations
@@ -18,24 +18,24 @@ from langchain.agents.middleware.types import (
     ToolCallRequest,
 )
 
-from .bash_hooks import BashHook, HookResult, load_hooks
+from .hooks import BashHook, HookResult, load_hooks
 
 BASH_TOOL_TYPE = "bash_20250124"
 BASH_TOOL_NAME = "bash"
 
 
-class ExtensibleBashMiddleware(ShellToolMiddleware):
+class ShellMiddleware(ShellToolMiddleware):
     """
-    可扩展的 Bash Middleware - 基于插件系统
+    可扩展的 Shell Middleware - 基于插件系统
 
     特点：
-    - 自动加载 bash_hooks/ 目录下的所有插件
+    - 自动加载 hooks/ 目录下的所有插件
     - 插件按 priority 顺序执行
     - 任何插件返回 block 即停止执行
     - 支持命令前后的回调 hooks
 
     添加新功能：
-    1. 在 middleware/bash_hooks/ 目录下创建新的 .py 文件
+    1. 在 middleware/shell/hooks/ 目录下创建新的 .py 文件
     2. 继承 BashHook 基类
     3. 实现 check_command 方法
     4. 重启 agent，插件自动加载
@@ -53,7 +53,7 @@ class ExtensibleBashMiddleware(ShellToolMiddleware):
         hook_config: dict[str, Any] | None = None,
     ) -> None:
         """
-        初始化可扩展 Bash middleware
+        初始化可扩展 Shell middleware
 
         Args:
             workspace_root: 工作目录
@@ -61,11 +61,11 @@ class ExtensibleBashMiddleware(ShellToolMiddleware):
             shutdown_commands: 关闭时执行的命令
             allow_system_python: 是否允许使用系统 Python
             env: 环境变量
-            hooks_dir: hooks 目录路径（默认为 bash_hooks/）
+            hooks_dir: hooks 目录路径（默认为 hooks/）
             hook_config: 传递给 hooks 的配置参数
         """
         if workspace_root is None:
-            raise ValueError("workspace_root must be specified for ExtensibleBashMiddleware")
+            raise ValueError("workspace_root must be specified for ShellMiddleware")
 
         self.workspace_root = Path(workspace_root).resolve()
 
@@ -76,7 +76,7 @@ class ExtensibleBashMiddleware(ShellToolMiddleware):
         # 默认启动命令
         if startup_commands is None:
             startup_commands = [
-                f"echo '🔧 Extensible bash workspace initialized at: {self.workspace_root}'",
+                f"echo '🔧 Shell workspace initialized at: {self.workspace_root}'",
             ]
 
             if allow_system_python:
@@ -105,7 +105,7 @@ class ExtensibleBashMiddleware(ShellToolMiddleware):
             **hook_config,
         )
 
-        print(f"[ExtensibleBash] Loaded {len(self.hooks)} hooks: {[h.name for h in self.hooks]}")
+        print(f"[Shell] Loaded {len(self.hooks)} hooks: {[h.name for h in self.hooks]}")
 
     def _check_command_with_hooks(
         self,
@@ -134,7 +134,7 @@ class ExtensibleBashMiddleware(ShellToolMiddleware):
                     break
 
             except Exception as e:
-                print(f"[ExtensibleBash] Hook {hook.name} error: {e}")
+                print(f"[Shell] Hook {hook.name} error: {e}")
                 # 继续执行其他 hooks
                 continue
 
@@ -155,7 +155,7 @@ class ExtensibleBashMiddleware(ShellToolMiddleware):
             try:
                 hook.on_command_success(command, output, context)
             except Exception as e:
-                print(f"[ExtensibleBash] Hook {hook.name} on_command_success error: {e}")
+                print(f"[Shell] Hook {hook.name} on_command_success error: {e}")
 
     def _notify_hooks_error(
         self,
@@ -171,7 +171,7 @@ class ExtensibleBashMiddleware(ShellToolMiddleware):
             try:
                 hook.on_command_error(command, error, context)
             except Exception as e:
-                print(f"[ExtensibleBash] Hook {hook.name} on_command_error error: {e}")
+                print(f"[Shell] Hook {hook.name} on_command_error error: {e}")
 
     def wrap_tool_call(
         self,
@@ -288,4 +288,4 @@ class ExtensibleBashMiddleware(ShellToolMiddleware):
         return await handler(request.override(tools=tools))
 
 
-__all__ = ["ExtensibleBashMiddleware"]
+__all__ = ["ShellMiddleware"]
