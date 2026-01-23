@@ -1,45 +1,49 @@
-"""
-Shell Executor - 基于插件系统的 Shell 中间件
-
-通过 hook 插件系统扩展 shell 功能，添加新功能只需在 hooks/ 目录下创建新的 .py 文件。
-"""
+"""Shell Middleware with session persistence via Runtime.context."""
 
 from __future__ import annotations
 
 import os
-from collections.abc import Awaitable, Callable
+import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from langchain.agents.middleware import AgentMiddleware, AgentState
 from langchain.agents.middleware.shell_tool import ShellToolMiddleware
-from langchain.agents.middleware.types import (
-    ModelRequest,
-    ModelResponse,
-    ToolCallRequest,
-)
+from langchain.agents.middleware.types import ModelRequest, ModelResponse
+from langchain.tools import tool, ToolRuntime
+from langgraph.runtime import Runtime
+from typing_extensions import NotRequired
 
-from .hooks import BashHook, HookResult, load_hooks
+from .hooks import load_hooks
 
 BASH_TOOL_TYPE = "bash_20250124"
 BASH_TOOL_NAME = "bash"
 
 
-class ShellMiddleware(ShellToolMiddleware):
-    """
-    可扩展的 Shell Middleware - 基于插件系统
+class ShellState(AgentState):
+    """State schema - 只存 session_id (可序列化)"""
+    shell_session_id: NotRequired[str]
 
-    特点：
-    - 自动加载 hooks/ 目录下的所有插件
-    - 插件按 priority 顺序执行
-    - 任何插件返回 block 即停止执行
-    - 支持命令前后的回调 hooks
 
-    添加新功能：
-    1. 在 middleware/shell/hooks/ 目录下创建新的 .py 文件
-    2. 继承 BashHook 基类
-    3. 实现 check_command 方法
-    4. 重启 agent，插件自动加载
+@dataclass
+class ShellContext:
+    """Runtime context - 存储 session 池 (不可序列化)"""
+    session_pool: dict[str, Any]
+
+
+class ShellMiddleware(AgentMiddleware[ShellState]):
     """
+    Shell middleware with persistent sessions via Runtime.context.
+    
+    Architecture:
+    - State: 只存 shell_session_id (checkpoint 保存)
+    - Runtime.context: 存储 session_pool (不序列化)
+    - before_agent: 从 context 的 pool 中获取/创建 session
+    """
+
+    state_schema = ShellState
+    context_schema = ShellContext
 
     def __init__(
         self,
@@ -52,239 +56,118 @@ class ShellMiddleware(ShellToolMiddleware):
         hooks_dir: str | Path | None = None,
         hook_config: dict[str, Any] | None = None,
     ) -> None:
-        """
-        初始化可扩展 Shell middleware
-
-        Args:
-            workspace_root: 工作目录
-            startup_commands: 启动时执行的命令
-            shutdown_commands: 关闭时执行的命令
-            allow_system_python: 是否允许使用系统 Python
-            env: 环境变量
-            hooks_dir: hooks 目录路径（默认为 hooks/）
-            hook_config: 传递给 hooks 的配置参数
-        """
         if workspace_root is None:
-            raise ValueError("workspace_root must be specified for ShellMiddleware")
+            raise ValueError("workspace_root required")
 
+        AgentMiddleware.__init__(self)
+        
         self.workspace_root = Path(workspace_root).resolve()
-
-        # 如果允许系统 Python，设置 PATH
+        
         if allow_system_python and env is None:
             env = {"PATH": os.environ.get("PATH", "")}
 
-        # 默认启动命令
         if startup_commands is None:
-            startup_commands = [
-                f"echo '🔧 Shell workspace initialized at: {self.workspace_root}'",
-            ]
-
+            startup_commands = [f"echo 'Shell: {self.workspace_root}'"]
             if allow_system_python:
-                startup_commands.append("which python3 && python3 --version || echo 'Python not found'")
+                startup_commands.append("which python3 && python3 --version || echo 'No Python'")
 
-        super().__init__(
+        # 创建 ShellToolMiddleware 实例（仅用于创建 session resources）
+        self._shell_tool = ShellToolMiddleware(
             workspace_root=str(self.workspace_root),
             startup_commands=startup_commands,
             shutdown_commands=shutdown_commands,
-            execution_policy=None,
-            redaction_rules=None,
-            tool_description=(
-                f"Execute bash commands within workspace: {self.workspace_root}\n"
-                "Commands are validated by security hooks before execution."
-            ),
             tool_name=BASH_TOOL_NAME,
             shell_command=("/bin/bash",),
             env=env,
         )
-
-        # 加载所有 hooks
-        hook_config = hook_config or {}
-        self.hooks: list[BashHook] = load_hooks(
+        
+        # 创建自定义 bash tool，直接使用 Runtime.context 中的 session 池
+        @tool(BASH_TOOL_NAME)
+        def bash_tool(
+            *,
+            runtime: ToolRuntime[ShellContext, ShellState],
+            command: str | None = None,
+            restart: bool = False,
+        ) -> str:
+            """Execute bash commands in a persistent shell session."""
+            # 从 runtime.context 获取 session 池
+            session_pool = runtime.context.session_pool
+            
+            # 从 state 获取 session_id
+            session_id = runtime.state.get("shell_session_id")
+            if not session_id:
+                return "Error: No shell session initialized"
+            
+            # 从池中获取 session resources
+            if session_id not in session_pool:
+                return f"Error: Session {session_id} not found in pool"
+            
+            resources = session_pool[session_id]
+            
+            # 调用 ShellToolMiddleware 的执行逻辑
+            return self._shell_tool._run_shell_tool(
+                resources,
+                {"command": command, "restart": restart},
+                tool_call_id=runtime.tool_call_id,
+            )
+        
+        self._bash_tool = bash_tool
+        
+        self.hooks = load_hooks(
             hooks_dir=hooks_dir,
             workspace_root=self.workspace_root,
-            **hook_config,
+            **(hook_config or {}),
         )
 
-        print(f"[Shell] Loaded {len(self.hooks)} hooks: {[h.name for h in self.hooks]}")
+        self.tools = [self._bash_tool]
+        print(f"[Shell] Loaded {len(self.hooks)} hooks")
 
-    def _check_command_with_hooks(
-        self,
-        command: str,
-        context: dict[str, Any],
-    ) -> tuple[bool, str]:
-        """
-        使用所有 hooks 检查命令
+    def _get_or_create_session(self, session_pool: dict[str, Any], session_id: str) -> Any:
+        """从 session 池中获取或创建 session"""
+        if session_id not in session_pool:
+            resources = self._shell_tool._create_resources()
+            # 禁用 finalizer，防止垃圾回收时自动清理
+            resources.finalizer.detach()
+            session_pool[session_id] = resources
+            print(f"[Shell] Created session: {session_id}")
+        return session_pool[session_id]
 
-        Returns:
-            (is_allowed, error_message)
-        """
-        for hook in self.hooks:
-            if not hook.enabled:
-                continue
 
-            try:
-                result: HookResult = hook.check_command(command, context)
+    def before_agent(self, state: ShellState, runtime: Runtime[ShellContext]) -> dict[str, Any] | None:
+        # 从 runtime.context 获取 session 池
+        session_pool = runtime.context.session_pool
+        
+        # 获取或生成 session_id
+        session_id = state.get("shell_session_id") or f"shell_{uuid.uuid4().hex[:8]}"
+        
+        # 从池中获取或创建 session resources
+        session_resources = self._get_or_create_session(session_pool, session_id)
+        
+        # 返回 dict，让 checkpoint 能保存 session_id
+        # shell_session_resources 用 UntrackedValue，不会被序列化
+        return {
+            "shell_session_id": session_id,
+            "shell_session_resources": session_resources,
+        }
 
-                # 如果 hook 拦截了命令
-                if not result.allow:
-                    return False, result.error_message
+    async def abefore_agent(self, state: ShellState, runtime: Runtime[ShellContext]) -> dict[str, Any] | None:
+        return self.before_agent(state, runtime)
 
-                # 如果 hook 要求停止后续检查
-                if not result.continue_chain:
-                    break
+    def after_agent(self, state: ShellState, runtime: Runtime[ShellContext]) -> None:
+        # 不清理 session - 保持在 context 的 pool 中
+        pass
 
-            except Exception as e:
-                print(f"[Shell] Hook {hook.name} error: {e}")
-                # 继续执行其他 hooks
-                continue
+    async def aafter_agent(self, state: ShellState, runtime: Runtime[ShellContext]) -> None:
+        pass
 
-        # 所有 hooks 都通过
-        return True, ""
-
-    def _notify_hooks_success(
-        self,
-        command: str,
-        output: str,
-        context: dict[str, Any],
-    ) -> None:
-        """通知所有 hooks 命令执行成功"""
-        for hook in self.hooks:
-            if not hook.enabled:
-                continue
-
-            try:
-                hook.on_command_success(command, output, context)
-            except Exception as e:
-                print(f"[Shell] Hook {hook.name} on_command_success error: {e}")
-
-    def _notify_hooks_error(
-        self,
-        command: str,
-        error: str,
-        context: dict[str, Any],
-    ) -> None:
-        """通知所有 hooks 命令执行失败"""
-        for hook in self.hooks:
-            if not hook.enabled:
-                continue
-
-            try:
-                hook.on_command_error(command, error, context)
-            except Exception as e:
-                print(f"[Shell] Hook {hook.name} on_command_error error: {e}")
-
-    def wrap_tool_call(
-        self,
-        request: ToolCallRequest,
-        handler: Callable[[ToolCallRequest], Any],
-    ) -> Any:
-        """拦截并验证 bash 命令"""
-        from langchain.agents.middleware.types import ToolMessage
-
-        tool_call = request.tool_call
-
-        if tool_call.get("name") == BASH_TOOL_NAME:
-            command = tool_call.get("args", {}).get("command", "")
-
-            # 构建上下文
-            context = {
-                "tool_call": tool_call,
-                "request": request,
-            }
-
-            # 使用 hooks 检查命令
-            is_allowed, error_msg = self._check_command_with_hooks(command, context)
-
-            if not is_allowed:
-                # 通知 hooks 命令被拦截
-                self._notify_hooks_error(command, error_msg, context)
-
-                # 返回错误消息
-                return ToolMessage(
-                    content=error_msg,
-                    tool_call_id=tool_call.get("id", ""),
-                    status="error",
-                )
-
-            # 执行命令
-            result = handler(request)
-
-            # 通知 hooks 命令执行成功
-            if hasattr(result, "content"):
-                self._notify_hooks_success(command, result.content, context)
-
-            return result
-
-        # 非 bash 命令，直接执行
-        return handler(request)
-
-    async def awrap_tool_call(
-        self,
-        request: ToolCallRequest,
-        handler: Callable[[ToolCallRequest], Awaitable[Any]],
-    ) -> Any:
-        """异步：拦截并验证 bash 命令"""
-        from langchain.agents.middleware.types import ToolMessage
-
-        tool_call = request.tool_call
-
-        if tool_call.get("name") == BASH_TOOL_NAME:
-            command = tool_call.get("args", {}).get("command", "")
-
-            # 构建上下文
-            context = {
-                "tool_call": tool_call,
-                "request": request,
-            }
-
-            # 使用 hooks 检查命令
-            is_allowed, error_msg = self._check_command_with_hooks(command, context)
-
-            if not is_allowed:
-                # 通知 hooks 命令被拦截
-                self._notify_hooks_error(command, error_msg, context)
-
-                # 返回错误消息
-                return ToolMessage(
-                    content=error_msg,
-                    tool_call_id=tool_call.get("id", ""),
-                    status="error",
-                )
-
-            # 执行命令
-            result = await handler(request)
-
-            # 通知 hooks 命令执行成功
-            if hasattr(result, "content"):
-                self._notify_hooks_success(command, result.content, context)
-
-            return result
-
-        # 非 bash 命令，直接执行
-        return await handler(request)
-
-    def wrap_model_call(
-        self,
-        request: ModelRequest,
-        handler: Callable[[ModelRequest], ModelResponse],
-    ) -> ModelResponse:
-        """替换为 Claude 的 bash 工具描述符"""
-        filtered = [
-            t for t in request.tools if getattr(t, "name", None) != BASH_TOOL_NAME
-        ]
-        tools = [*filtered, {"type": BASH_TOOL_TYPE, "name": BASH_TOOL_NAME}]
+    def wrap_model_call(self, request: ModelRequest, handler) -> ModelResponse:
+        tools = [t for t in request.tools if getattr(t, "name", None) != BASH_TOOL_NAME]
+        tools.append({"type": BASH_TOOL_TYPE, "name": BASH_TOOL_NAME})
         return handler(request.override(tools=tools))
 
-    async def awrap_model_call(
-        self,
-        request: ModelRequest,
-        handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
-    ) -> ModelResponse:
-        """异步：替换为 Claude 的 bash 工具描述符"""
-        filtered = [
-            t for t in request.tools if getattr(t, "name", None) != BASH_TOOL_NAME
-        ]
-        tools = [*filtered, {"type": BASH_TOOL_TYPE, "name": BASH_TOOL_NAME}]
+    async def awrap_model_call(self, request: ModelRequest, handler) -> ModelResponse:
+        tools = [t for t in request.tools if getattr(t, "name", None) != BASH_TOOL_NAME]
+        tools.append({"type": BASH_TOOL_TYPE, "name": BASH_TOOL_NAME})
         return await handler(request.override(tools=tools))
 
 

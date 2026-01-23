@@ -15,6 +15,16 @@ from pathlib import Path
 
 from langchain.agents import create_agent
 from langchain.chat_models import init_chat_model
+from langgraph.checkpoint.memory import MemorySaver
+
+# Load .env file
+_env_file = Path(__file__).parent / ".env"
+if _env_file.exists():
+    for line in _env_file.read_text().splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            key, value = line.split("=", 1)
+            os.environ[key] = value
 
 from middleware.filesystem import FileSystemMiddleware
 from middleware.prompt_caching import PromptCachingMiddleware
@@ -94,6 +104,9 @@ class LeonAgent:
         self.block_dangerous_commands = block_dangerous_commands
         self.block_network_commands = block_network_commands
         self.enable_audit_log = enable_audit_log
+        
+        # Session 池 - 存储在 agent 实例中，通过 context 传入
+        self._session_pool: dict[str, Any] = {}
 
         # 初始化模型
         model_kwargs = {"api_key": self.api_key}
@@ -159,11 +172,12 @@ class LeonAgent:
             )
         )
 
-        # 创建 agent
+        # 创建 agent（带 checkpointer 支持对话历史和 session 状态）
         self.agent = create_agent(
             model=self.model,
             tools=[],  # 所有工具都由 middleware 提供
             middleware=middleware,
+            checkpointer=MemorySaver(),  # 保存对话历史和 shell_session_id
         )
 
         # System prompt
@@ -234,24 +248,31 @@ Be helpful, accurate, and security-conscious in all your operations.
 
         return prompt
 
-    def invoke(self, message: str, thread_id: str = "default", **kwargs) -> dict:
+    def invoke(
+        self,
+        message: str,
+        thread_id: str = "default",
+    ) -> dict:
         """
         调用 agent
 
         Args:
             message: 用户消息
             thread_id: 线程 ID
-            **kwargs: 额外的状态参数
 
         Returns:
             Agent 响应（包含消息和状态）
         """
         config = {"configurable": {"thread_id": thread_id}}
 
+        # 导入 ShellContext
+        from middleware.shell.executor import ShellContext
+        
         result = self.agent.invoke(
-            {"messages": [{"role": "user", "content": message}], **kwargs}, config=config
+            {"messages": [{"role": "user", "content": message}]},
+            config={"configurable": {"thread_id": thread_id}},
+            context=ShellContext(session_pool=self._session_pool),
         )
-
         return result
 
     def get_response(self, message: str, thread_id: str = "default", **kwargs) -> str:
