@@ -71,32 +71,30 @@ def test_multiround_persistence():
         # ========== 测试 1: Shell 进程 PID 持久化 ==========
         print_test("1. Shell 进程 PID 持久化")
         
-        result1 = agent.invoke(
-            "使用 bash 执行：echo $$",
-            thread_id=thread_id,
-        )
-        pid1 = result1['messages'][-1].content
+        # 提取实际的 PID（从 ToolMessage）
+        def extract_pid(result):
+            for msg in reversed(result['messages']):
+                if hasattr(msg, '__class__') and msg.__class__.__name__ == 'ToolMessage':
+                    return msg.content.strip()
+            return None
+        
+        result1 = agent.invoke("使用 bash 执行：echo $$", thread_id=thread_id)
+        pid1 = extract_pid(result1)
         print_info(f"第 1 轮 PID: {pid1}")
         
-        result2 = agent.invoke(
-            "使用 bash 执行：echo $$",
-            thread_id=thread_id,
-        )
-        pid2 = result2['messages'][-1].content
+        result2 = agent.invoke("使用 bash 执行：echo $$", thread_id=thread_id)
+        pid2 = extract_pid(result2)
         print_info(f"第 2 轮 PID: {pid2}")
         
-        result3 = agent.invoke(
-            "使用 bash 执行：echo $$",
-            thread_id=thread_id,
-        )
-        pid3 = result3['messages'][-1].content
+        result3 = agent.invoke("使用 bash 执行：echo $$", thread_id=thread_id)
+        pid3 = extract_pid(result3)
         print_info(f"第 3 轮 PID: {pid3}")
         
         # 验证：PID 应该相同（同一个 shell 进程）
-        if "76" in pid1 and "76" in pid2 and "76" in pid3:
-            print_pass("Shell 进程 PID 在多轮对话中保持不变")
+        if pid1 and pid2 and pid3 and pid1 == pid2 == pid3:
+            print_pass(f"Shell 进程 PID 在多轮对话中保持不变 (PID: {pid1})")
         else:
-            print_fail("Shell 进程 PID 发生变化")
+            print_fail(f"Shell 进程 PID 发生变化: {pid1} → {pid2} → {pid3}")
         
         # ========== 测试 2: 文件系统操作持久化 ==========
         print_test("2. 文件系统操作持久化")
