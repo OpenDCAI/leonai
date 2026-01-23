@@ -22,25 +22,16 @@ BASH_TOOL_NAME = "bash"
 
 
 class ShellState(AgentState):
-    """State schema - 只存 session_id (可序列化)"""
     shell_session_id: NotRequired[str]
 
 
 @dataclass
 class ShellContext:
-    """Runtime context - 存储 session 池 (不可序列化)"""
     session_pool: dict[str, Any]
 
 
 class ShellMiddleware(AgentMiddleware[ShellState]):
-    """
-    Shell middleware with persistent sessions via Runtime.context.
-    
-    Architecture:
-    - State: 只存 shell_session_id (checkpoint 保存)
-    - Runtime.context: 存储 session_pool (不序列化)
-    - before_agent: 从 context 的 pool 中获取/创建 session
-    """
+    """Shell middleware with persistent bash sessions."""
 
     state_schema = ShellState
     context_schema = ShellContext
@@ -71,7 +62,6 @@ class ShellMiddleware(AgentMiddleware[ShellState]):
             if allow_system_python:
                 startup_commands.append("which python3 && python3 --version || echo 'No Python'")
 
-        # 创建 ShellToolMiddleware 实例（仅用于创建 session resources）
         self._shell_tool = ShellToolMiddleware(
             workspace_root=str(self.workspace_root),
             startup_commands=startup_commands,
@@ -81,7 +71,6 @@ class ShellMiddleware(AgentMiddleware[ShellState]):
             env=env,
         )
         
-        # 创建自定义 bash tool，直接使用 Runtime.context 中的 session 池
         @tool(BASH_TOOL_NAME)
         def bash_tool(
             *,
@@ -90,23 +79,16 @@ class ShellMiddleware(AgentMiddleware[ShellState]):
             restart: bool = False,
         ) -> str:
             """Execute bash commands in a persistent shell session."""
-            # 从 runtime.context 获取 session 池
             session_pool = runtime.context.session_pool
-            
-            # 从 state 获取 session_id
             session_id = runtime.state.get("shell_session_id")
+            
             if not session_id:
                 return "Error: No shell session initialized"
-            
-            # 从池中获取 session resources
             if session_id not in session_pool:
                 return f"Error: Session {session_id} not found in pool"
             
-            resources = session_pool[session_id]
-            
-            # 调用 ShellToolMiddleware 的执行逻辑
             return self._shell_tool._run_shell_tool(
-                resources,
+                session_pool[session_id],
                 {"command": command, "restart": restart},
                 tool_call_id=runtime.tool_call_id,
             )
@@ -123,10 +105,8 @@ class ShellMiddleware(AgentMiddleware[ShellState]):
         print(f"[Shell] Loaded {len(self.hooks)} hooks")
 
     def _get_or_create_session(self, session_pool: dict[str, Any], session_id: str) -> Any:
-        """从 session 池中获取或创建 session"""
         if session_id not in session_pool:
             resources = self._shell_tool._create_resources()
-            # 禁用 finalizer，防止垃圾回收时自动清理
             resources.finalizer.detach()
             session_pool[session_id] = resources
             print(f"[Shell] Created session: {session_id}")
@@ -134,17 +114,10 @@ class ShellMiddleware(AgentMiddleware[ShellState]):
 
 
     def before_agent(self, state: ShellState, runtime: Runtime[ShellContext]) -> dict[str, Any] | None:
-        # 从 runtime.context 获取 session 池
         session_pool = runtime.context.session_pool
-        
-        # 获取或生成 session_id
         session_id = state.get("shell_session_id") or f"shell_{uuid.uuid4().hex[:8]}"
-        
-        # 从池中获取或创建 session resources
         session_resources = self._get_or_create_session(session_pool, session_id)
         
-        # 返回 dict，让 checkpoint 能保存 session_id
-        # shell_session_resources 用 UntrackedValue，不会被序列化
         return {
             "shell_session_id": session_id,
             "shell_session_resources": session_resources,
@@ -154,7 +127,6 @@ class ShellMiddleware(AgentMiddleware[ShellState]):
         return self.before_agent(state, runtime)
 
     def after_agent(self, state: ShellState, runtime: Runtime[ShellContext]) -> None:
-        # 不清理 session - 保持在 context 的 pool 中
         pass
 
     async def aafter_agent(self, state: ShellState, runtime: Runtime[ShellContext]) -> None:

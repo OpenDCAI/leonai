@@ -69,10 +69,8 @@ def stream_response(agent, message: str, thread_id: str = "chat"):
     print(f"{Colors.GREEN}🤖 Leon:{Colors.RESET} ", end="", flush=True)
     
     try:
-        # 导入 ShellContext
         from middleware.shell.executor import ShellContext
         
-        # 调用 agent（使用 stream 模式）
         config = {"configurable": {"thread_id": thread_id}}
         
         # 跟踪已显示的内容

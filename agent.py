@@ -104,8 +104,6 @@ class LeonAgent:
         self.block_dangerous_commands = block_dangerous_commands
         self.block_network_commands = block_network_commands
         self.enable_audit_log = enable_audit_log
-        
-        # Session 池 - 存储在 agent 实例中，通过 context 传入
         self._session_pool: dict[str, Any] = {}
 
         # 初始化模型
@@ -263,9 +261,6 @@ Be helpful, accurate, and security-conscious in all your operations.
         Returns:
             Agent 响应（包含消息和状态）
         """
-        config = {"configurable": {"thread_id": thread_id}}
-
-        # 导入 ShellContext
         from middleware.shell.executor import ShellContext
         
         result = self.agent.invoke(
