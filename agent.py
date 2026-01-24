@@ -108,7 +108,7 @@ class LeonAgent:
 
         # 初始化模型
         model_kwargs = {"api_key": self.api_key}
-        base_url = os.getenv("ANTHROPIC_BASE_URL")
+        base_url = os.getenv("OPENAI_BASE_URL")
         if base_url:
             model_kwargs["base_url"] = base_url
 

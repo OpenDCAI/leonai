@@ -3,11 +3,29 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "leon"
+name = "leonai"
 version = "0.1.0"
-description = "Leon - Interactive AI coding assistant with persistent memory"
+description = "Leon - Proactive AI coding assistant with persistent memory and TUI"
 readme = "README.md"
 requires-python = ">=3.12"
+license = {text = "MIT"}
+authors = [
+    {name = "nmhjklnm"}
+]
+keywords = ["ai", "assistant", "langchain", "anthropic", "claude", "tui", "coding"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 dependencies = [
     "langchain>=1.2.6",
     "langchain-anthropic>=1.3.1",
@@ -18,7 +36,12 @@ dependencies = [
 ]
 
 [project.scripts]
-leon = "tui.leon_cli:main"
+leonai = "tui.leon_cli:main"
+
+[project.urls]
+Homepage = "https://github.com/Ju-Yi-AI-Lab/leonai"
+Repository = "https://github.com/Ju-Yi-AI-Lab/leonai"
+Issues = "https://github.com/Ju-Yi-AI-Lab/leonai/issues"
 
 [tool.setuptools]
 packages = ["middleware", "tui", "middleware.shell", "middleware.shell.hooks", "tui.widgets"]

@@ -102,6 +102,14 @@ class ChatInput(Vertical):
     ChatInput ChatTextArea:focus {
         border: none;
     }
+
+    ChatInput .input-hint {
+        height: 1;
+        width: 100%;
+        padding: 0 1;
+        color: $text-muted;
+        text-align: right;
+    }
     """
 
     class Submitted(Message):
@@ -125,6 +133,7 @@ class ChatInput(Vertical):
         with Horizontal(classes="input-row"):
             yield Static(">", classes="input-prompt")
             yield ChatTextArea(id="chat-input")
+        yield Static("Enter 发送 | Shift+Enter 换行 | /help 帮助", classes="input-hint")
 
     def on_mount(self) -> None:
         """Initialize after mount"""

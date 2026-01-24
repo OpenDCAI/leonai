@@ -385,7 +385,7 @@ wheels = [
 ]
 
 [[package]]
-name = "leon"
+name = "leonai"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
