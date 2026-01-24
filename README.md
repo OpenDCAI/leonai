@@ -20,6 +20,18 @@ Leon 是一个智能 AI 助手，帮你写代码、改 bug、管理项目。就�
 
 ### 安装
 
+**推荐方式（全局安装）：**
+
+```bash
+# 使用 uv（推荐）
+uv tool install leonai
+
+# 或使用 pipx
+pipx install leonai
+```
+
+**开发者方式：**
+
 ```bash
 pip install leonai
 ```
@@ -41,7 +53,7 @@ leonai config
 
 ### 启动
 
-在你的项目目录下运行：
+在任意项目目录下运行：
 
 ```bash
 cd /path/to/your/project
@@ -49,6 +61,8 @@ leonai
 ```
 
 Leon 会自动把当前目录作为工作目录，可以直接操作你的项目文件。
+
+**注意**：如果使用 `pip install` 安装，需要先激活虚拟环境或使用 `python -m leonai`。
 
 ## 🎯 核心特性
 
