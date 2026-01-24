@@ -1,14 +1,28 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "leon"
 version = "0.1.0"
-description = "Add your description here"
+description = "Leon - Interactive AI coding assistant with persistent memory"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "langchain>=1.2.6",
     "langchain-anthropic>=1.3.1",
     "langgraph>=1.0.7",
+    "textual>=1.0.0",
+    "rich>=13.0.0",
+    "pyperclip>=1.11.0",
 ]
+
+[project.scripts]
+leon = "tui.leon_cli:main"
+
+[tool.setuptools]
+packages = ["middleware", "tui", "middleware.shell", "middleware.shell.hooks", "tui.widgets"]
+py-modules = ["agent"]
 
 [tool.ruff]
 line-length = 120

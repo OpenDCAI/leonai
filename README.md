@@ -1,12 +1,22 @@
-# Leon - Cascade-Like Agent
+# ⚡ Leon - Proactive AI Partner
 
-一个完全模仿 Windsurf Cascade 的 LangChain Agent，使用纯 Middleware 架构实现所有工具。
+> 人机协同 · 主动智能 | Think Ahead, Act Together
 
-**Built with LangChain v1** - 使用最新的 `create_agent` API 和现代 middleware 架构。
+Leon 不是被动响应的工具，而是主动思考的开发伙伴。基于 LangChain v1 构建，采用现代 Middleware 架构。
 
-## ✨ 特点
+## 🎯 核心差异化
 
-### 完全匹配 Cascade 的工具和输出格式
+### 🧠 主动智能
+- **模式识别**：观察你的工作习惯，主动提出优化建议
+- **上下文推理**：理解项目结构，智能补全你的意图
+- **持续学习**：记住你的偏好，越用越懂你
+
+### 🤝 人机协同
+- **持久化 Session**：真正的 Bash 会话保持，环境变量、工作目录永不丢失
+- **工具可视化**：流式输出 + 工具调用分离展示，思考过程一目了然
+- **可插拔架构**：Middleware 设计，轻松扩展和定制
+
+## ✨ 核心功能
 
 ### 1. **Prompt Caching** (`AnthropicPromptCachingMiddleware`)
 - Reduces API costs by caching repetitive prompt content
@@ -80,6 +90,38 @@ cp .env.example .env
 ```
 
 ## Usage
+
+### 🎨 TUI 模式（推荐）
+
+Leon 提供了基于 Textual 的现代化终端界面：
+
+```bash
+# 快速启动
+./run_tui.sh
+
+# 或使用 uv
+uv run python leon_cli.py
+
+# 或直接运行
+python leon_cli.py
+```
+
+**TUI 特性**：
+- ✨ 全屏交互界面
+- 📝 Markdown 实时渲染
+- 🔧 工具调用可视化
+- ⚡ 流式输出
+- 🎯 多行输入支持
+
+详细使用说明见 [`docs/TUI_USAGE.md`](docs/TUI_USAGE.md)
+
+### 📟 传统 CLI 模式
+
+如果你更喜欢简单的命令行界面：
+
+```bash
+python examples/chat.py
+```
 
 ### Basic Usage
 

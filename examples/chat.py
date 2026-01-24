@@ -64,6 +64,21 @@ def print_tool_call(tool_name: str, tool_input: dict):
     print()
 
 
+def print_tool_result(tool_name: str, result: str):
+    """打印工具返回值"""
+    print(f"{Colors.CYAN}📤 工具返回:{Colors.RESET}")
+    
+    # 截断长返回值
+    result_str = str(result)
+    if len(result_str) > 500:
+        result_str = result_str[:500] + f"... (共 {len(result_str)} 字符)"
+    
+    # 多行结果缩进显示
+    for line in result_str.splitlines():
+        print(f"{Colors.CYAN}   {Colors.RESET}{line}")
+    print()
+
+
 def stream_response(agent, message: str, thread_id: str = "chat"):
     """流式处理 agent 响应并展示工具调用"""
     print(f"{Colors.GREEN}🤖 Leon:{Colors.RESET} ", end="", flush=True)
@@ -76,6 +91,7 @@ def stream_response(agent, message: str, thread_id: str = "chat"):
         # 跟踪已显示的内容
         last_ai_content = None
         shown_tool_calls = set()
+        shown_tool_results = set()
         
         # LangChain 的 stream 方法
         for chunk in agent.agent.stream(
@@ -107,6 +123,14 @@ def stream_response(agent, message: str, thread_id: str = "chat"):
                                 tool_call.get("args", {})
                             )
                             shown_tool_calls.add(tool_id)
+                
+                # 检查工具返回值
+                if last_msg.__class__.__name__ == "ToolMessage":
+                    tool_call_id = getattr(last_msg, "tool_call_id", None)
+                    if tool_call_id and tool_call_id not in shown_tool_results:
+                        tool_name = getattr(last_msg, "name", "unknown")
+                        print_tool_result(tool_name, last_msg.content)
+                        shown_tool_results.add(tool_call_id)
         
         print()  # 换行
         

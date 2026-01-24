@@ -69,7 +69,7 @@ class PathSecurityHook(BashHook):
         absolute_paths = re.findall(r'\s(/[^\s;|&]+)', command)
         for abs_path in absolute_paths:
             # 跳过常见的系统命令
-            if abs_path.startswith(('/bin/', '/usr/', '/etc/bash', '/dev/')):
+            if abs_path.startswith(('/bin/', '/usr/', '/etc/bash', '/dev/','/tmp/')):
                 continue
 
             try:
