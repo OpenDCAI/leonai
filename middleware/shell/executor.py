@@ -1,10 +1,9 @@
-"""Shell Middleware with session persistence via Runtime.context."""
+"""Shell Middleware with session persistence via module-level pool."""
 
 from __future__ import annotations
 
 import os
 import uuid
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -20,21 +19,18 @@ from .hooks import load_hooks
 BASH_TOOL_TYPE = "bash_20250124"
 BASH_TOOL_NAME = "bash"
 
+# Module-level session pool (shared across all instances)
+_GLOBAL_SESSION_POOL: dict[str, Any] = {}
+
 
 class ShellState(AgentState):
     shell_session_id: NotRequired[str]
-
-
-@dataclass
-class ShellContext:
-    session_pool: dict[str, Any]
 
 
 class ShellMiddleware(AgentMiddleware[ShellState]):
     """Shell middleware with persistent bash sessions."""
 
     state_schema = ShellState
-    context_schema = ShellContext
 
     def __init__(
         self,
@@ -74,21 +70,20 @@ class ShellMiddleware(AgentMiddleware[ShellState]):
         @tool(BASH_TOOL_NAME)
         def bash_tool(
             *,
-            runtime: ToolRuntime[ShellContext, ShellState],
+            runtime: ToolRuntime[ShellState],
             command: str | None = None,
             restart: bool = False,
         ) -> str:
             """Execute bash commands in a persistent shell session."""
-            session_pool = runtime.context.session_pool
             session_id = runtime.state.get("shell_session_id")
             
             if not session_id:
                 return "Error: No shell session initialized"
-            if session_id not in session_pool:
+            if session_id not in _GLOBAL_SESSION_POOL:
                 return f"Error: Session {session_id} not found in pool"
             
             return self._shell_tool._run_shell_tool(
-                session_pool[session_id],
+                _GLOBAL_SESSION_POOL[session_id],
                 {"command": command, "restart": restart},
                 tool_call_id=runtime.tool_call_id,
             )
@@ -113,23 +108,35 @@ class ShellMiddleware(AgentMiddleware[ShellState]):
         return session_pool[session_id]
 
 
-    def before_agent(self, state: ShellState, runtime: Runtime[ShellContext]) -> dict[str, Any] | None:
-        session_pool = runtime.context.session_pool
+    def before_agent(self, state: ShellState, runtime: Runtime) -> dict[str, Any] | None:
         session_id = state.get("shell_session_id") or f"shell_{uuid.uuid4().hex[:8]}"
-        session_resources = self._get_or_create_session(session_pool, session_id)
+        session_resources = self._get_or_create_session(_GLOBAL_SESSION_POOL, session_id)
         
         return {
             "shell_session_id": session_id,
             "shell_session_resources": session_resources,
         }
 
-    async def abefore_agent(self, state: ShellState, runtime: Runtime[ShellContext]) -> dict[str, Any] | None:
-        return self.before_agent(state, runtime)
+    async def abefore_agent(self, state: ShellState, runtime: Runtime) -> dict[str, Any] | None:
+        import asyncio
+        session_id = state.get("shell_session_id") or f"shell_{uuid.uuid4().hex[:8]}"
+        
+        # Run blocking session creation in thread pool
+        if session_id not in _GLOBAL_SESSION_POOL:
+            resources = await asyncio.to_thread(self._shell_tool._create_resources)
+            resources.finalizer.detach()
+            _GLOBAL_SESSION_POOL[session_id] = resources
+            print(f"[Shell] Created session: {session_id}")
+        
+        return {
+            "shell_session_id": session_id,
+            "shell_session_resources": _GLOBAL_SESSION_POOL[session_id],
+        }
 
-    def after_agent(self, state: ShellState, runtime: Runtime[ShellContext]) -> None:
+    def after_agent(self, state: ShellState, runtime: Runtime) -> None:
         pass
 
-    async def aafter_agent(self, state: ShellState, runtime: Runtime[ShellContext]) -> None:
+    async def aafter_agent(self, state: ShellState, runtime: Runtime) -> None:
         pass
 
     def wrap_model_call(self, request: ModelRequest, handler) -> ModelResponse:

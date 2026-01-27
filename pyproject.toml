@@ -33,7 +33,17 @@ dependencies = [
     "textual>=1.0.0",
     "rich>=13.0.0",
     "pyperclip>=1.11.0",
+    "langchain-openai>=1.1.7",
+    "duckduckgo-search>=8.1.1",
+    "langgraph-cli[inmem]>=0.4.12",
+    "httpx>=0.28.1",
 ]
+
+[project.optional-dependencies]
+pdf = ["pymupdf>=1.24.0"]
+pptx = ["python-pptx>=1.0.0"]
+docs = ["pymupdf>=1.24.0", "python-pptx>=1.0.0"]
+all = ["pymupdf>=1.24.0", "python-pptx>=1.0.0"]
 
 [project.scripts]
 leonai = "tui.leon_cli:main"
@@ -44,7 +54,7 @@ Repository = "https://github.com/Ju-Yi-AI-Lab/leonai"
 Issues = "https://github.com/Ju-Yi-AI-Lab/leonai/issues"
 
 [tool.setuptools]
-packages = ["middleware", "tui", "middleware.shell", "middleware.shell.hooks", "tui.widgets"]
+packages = ["middleware", "tui", "middleware.shell", "middleware.shell.hooks", "middleware.filesystem", "middleware.filesystem.read", "middleware.filesystem.read.readers", "middleware.web", "middleware.web.fetchers", "middleware.web.searchers", "tui.widgets"]
 py-modules = ["agent"]
 
 [tool.ruff]

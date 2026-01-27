@@ -19,6 +19,8 @@ wheels/
 # Workspace & logs
 workspace/
 node_modules/
+.next/
+.langgraph_api/
 *.log
 
 # Environment

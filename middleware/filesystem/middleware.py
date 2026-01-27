@@ -13,7 +13,6 @@ FileSystem Middleware - 完全模仿 Cascade 的文件操作
 
 from __future__ import annotations
 
-import json
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
@@ -25,6 +24,9 @@ from langchain.agents.middleware.types import (
     ToolCallRequest,
 )
 from langchain_core.messages import ToolMessage
+
+from middleware.filesystem.read import ReadLimits, ReadResult
+from middleware.filesystem.read import read_file as read_file_dispatch
 
 
 class FileSystemMiddleware(AgentMiddleware):
@@ -125,49 +127,46 @@ class FileSystemMiddleware(AgentMiddleware):
 
         return True, "", resolved
 
-    def _read_file_impl(self, file_path: str, offset: int = 0, limit: int | None = None) -> str:
-        """实现 read_file"""
+    def _read_file_impl(self, file_path: str, offset: int = 0, limit: int | None = None) -> ReadResult:
+        """实现 read_file - 委托给 read dispatcher 处理不同文件类型"""
         is_valid, error, resolved = self._validate_path(file_path, "read")
         if not is_valid:
-            return error
+            return ReadResult(
+                file_path=file_path,
+                file_type=None,  # type: ignore[arg-type]
+                error=error,
+            )
 
-        if not resolved.exists():
-            return f"File not found: {file_path}"
-
-        if not resolved.is_file():
-            return f"Not a file: {file_path}"
-
-        # 检查文件大小
         if resolved.stat().st_size > self.max_file_size:
-            return f"File too large: {resolved.stat().st_size} bytes (max: {self.max_file_size})"
+            return ReadResult(
+                file_path=file_path,
+                file_type=None,  # type: ignore[arg-type]
+                error=f"File too large: {resolved.stat().st_size} bytes (max: {self.max_file_size})",
+            )
 
-        try:
-            with open(resolved, "r", encoding="utf-8") as f:
-                lines = f.readlines()
+        limits = ReadLimits(
+            max_lines=1000,
+            max_chars=100_000,
+            max_line_length=2000,
+        )
 
-            total_lines = len(lines)
+        return read_file_dispatch(
+            path=resolved,
+            limits=limits,
+            offset=offset if offset > 0 else None,
+            limit=limit,
+        )
 
-            # 处理分段读取
-            if offset > 0:
-                if offset > total_lines:
-                    return f"Offset {offset} exceeds file length {total_lines}"
-                lines = lines[offset - 1 :]  # offset 是 1-indexed
-
-            if limit:
-                lines = lines[:limit]
-
-            # 格式化输出（Cascade 格式：行号→内容）
-            start_line = offset if offset > 0 else 1
-            formatted_lines = []
-            for i, line in enumerate(lines, start=start_line):
-                formatted_lines.append(f"{i:6d}→{line.rstrip()}")
-
-            return "\n".join(formatted_lines)
-
-        except UnicodeDecodeError:
-            return f"Cannot read file (not UTF-8): {file_path}"
-        except Exception as e:
-            return f"Error reading file: {e}"
+    def _make_read_tool_message(self, result: ReadResult, tool_call_id: str) -> ToolMessage:
+        """Create ToolMessage from ReadResult, using content_blocks for images."""
+        if result.content_blocks:
+            image_desc = f"Image file: {result.file_path}\nSize: {result.total_size:,} bytes\nReturned as image content block for vision model."
+            return ToolMessage(
+                content=image_desc,
+                content_blocks=result.content_blocks,
+                tool_call_id=tool_call_id,
+            )
+        return ToolMessage(content=result.format_output(), tool_call_id=tool_call_id)
 
     def _write_file_impl(self, file_path: str, content: str) -> str:
         """实现 write_file"""
@@ -207,9 +206,13 @@ class FileSystemMiddleware(AgentMiddleware):
         if not resolved.exists():
             return f"File not found: {file_path}"
 
+        # 禁止 no-op 编辑
+        if old_string == new_string:
+            return "Error: old_string and new_string are identical (no-op edit)"
+
         try:
             # 读取文件
-            with open(resolved, "r", encoding="utf-8") as f:
+            with open(resolved, encoding="utf-8") as f:
                 content = f.read()
 
             # 检查 old_string 是否存在
@@ -250,7 +253,7 @@ class FileSystemMiddleware(AgentMiddleware):
 
         try:
             # 读取文件
-            with open(resolved, "r", encoding="utf-8") as f:
+            with open(resolved, encoding="utf-8") as f:
                 content = f.read()
 
             # 验证所有编辑
@@ -325,7 +328,7 @@ class FileSystemMiddleware(AgentMiddleware):
                     "type": "function",
                     "function": {
                         "name": self.TOOL_READ_FILE,
-                        "description": "Read file content. Path must be absolute.",
+                        "description": "Read file content (text/code/images/PDF/PPTX/Notebook). Images return as content_blocks. Path must be absolute.",
                         "parameters": {
                             "type": "object",
                             "properties": {
@@ -356,13 +359,19 @@ class FileSystemMiddleware(AgentMiddleware):
                     "type": "function",
                     "function": {
                         "name": self.TOOL_EDIT_FILE,
-                        "description": "Edit existing file using string replacement. old_string must be unique.",
+                        "description": (
+                            "Edit existing file using exact string replacement (diff-style). "
+                            "MUST use read_file before editing. "
+                            "old_string must match file content exactly (including whitespace/indentation). "
+                            "old_string must be unique in file. "
+                            "old_string and new_string must be different (no-op edits forbidden)."
+                        ),
                         "parameters": {
                             "type": "object",
                             "properties": {
                                 "file_path": {"type": "string", "description": "Absolute file path"},
-                                "old_string": {"type": "string", "description": "String to replace (must be unique)"},
-                                "new_string": {"type": "string", "description": "Replacement string"},
+                                "old_string": {"type": "string", "description": "Exact string to replace (must be unique and match exactly)"},
+                                "new_string": {"type": "string", "description": "Replacement string (must differ from old_string)"},
                             },
                             "required": ["file_path", "old_string", "new_string"],
                         },
@@ -428,7 +437,7 @@ class FileSystemMiddleware(AgentMiddleware):
                     "type": "function",
                     "function": {
                         "name": self.TOOL_READ_FILE,
-                        "description": "Read file content. Path must be absolute.",
+                        "description": "Read file content (text/code/images/PDF/PPTX/Notebook). Images return as content_blocks. Path must be absolute.",
                         "parameters": {
                             "type": "object",
                             "properties": {
@@ -459,13 +468,19 @@ class FileSystemMiddleware(AgentMiddleware):
                     "type": "function",
                     "function": {
                         "name": self.TOOL_EDIT_FILE,
-                        "description": "Edit existing file using string replacement. old_string must be unique.",
+                        "description": (
+                            "Edit existing file using exact string replacement (diff-style). "
+                            "MUST use read_file before editing. "
+                            "old_string must match file content exactly (including whitespace/indentation). "
+                            "old_string must be unique in file. "
+                            "old_string and new_string must be different (no-op edits forbidden)."
+                        ),
                         "parameters": {
                             "type": "object",
                             "properties": {
                                 "file_path": {"type": "string", "description": "Absolute file path"},
-                                "old_string": {"type": "string", "description": "String to replace (must be unique)"},
-                                "new_string": {"type": "string", "description": "Replacement string"},
+                                "old_string": {"type": "string", "description": "Exact string to replace (must be unique and match exactly)"},
+                                "new_string": {"type": "string", "description": "Replacement string (must differ from old_string)"},
                             },
                             "required": ["file_path", "old_string", "new_string"],
                         },
@@ -533,7 +548,7 @@ class FileSystemMiddleware(AgentMiddleware):
                 offset=args.get("offset", 0),
                 limit=args.get("limit"),
             )
-            return ToolMessage(content=result, tool_call_id=tool_call.get("id", ""))
+            return self._make_read_tool_message(result, tool_call.get("id", ""))
 
         elif tool_name == self.TOOL_WRITE_FILE:
             result = self._write_file_impl(
@@ -579,7 +594,7 @@ class FileSystemMiddleware(AgentMiddleware):
                 offset=args.get("offset", 0),
                 limit=args.get("limit"),
             )
-            return ToolMessage(content=result, tool_call_id=tool_call.get("id", ""))
+            return self._make_read_tool_message(result, tool_call.get("id", ""))
 
         elif tool_name == self.TOOL_WRITE_FILE:
             result = self._write_file_impl(

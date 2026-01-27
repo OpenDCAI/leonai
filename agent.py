@@ -30,6 +30,7 @@ from middleware.filesystem import FileSystemMiddleware
 from middleware.prompt_caching import PromptCachingMiddleware
 from middleware.search import SearchMiddleware
 from middleware.shell import ShellMiddleware
+from middleware.web import WebMiddleware
 
 # 导入 hooks
 from middleware.shell.hooks.dangerous_commands import DangerousCommandsHook
@@ -64,6 +65,11 @@ class LeonAgent:
         block_dangerous_commands: bool = True,
         block_network_commands: bool = False,
         enable_audit_log: bool = True,
+        enable_web_tools: bool = True,
+        tavily_api_key: str | None = None,
+        exa_api_key: str | None = None,
+        firecrawl_api_key: str | None = None,
+        jina_api_key: str | None = None,
     ):
         """
         初始化 Cascade-Like Agent
@@ -77,6 +83,11 @@ class LeonAgent:
             block_dangerous_commands: 是否拦截危险命令
             block_network_commands: 是否拦截网络命令
             enable_audit_log: 是否启用审计日志
+            enable_web_tools: 是否启用 Web 搜索和内容获取工具
+            tavily_api_key: Tavily API key（Web 搜索）
+            exa_api_key: Exa API key（Web 搜索）
+            firecrawl_api_key: Firecrawl API key（Web 搜索）
+            jina_api_key: Jina API key（URL 内容获取）
         """
         self.model_name = model_name
 
@@ -104,6 +115,11 @@ class LeonAgent:
         self.block_dangerous_commands = block_dangerous_commands
         self.block_network_commands = block_network_commands
         self.enable_audit_log = enable_audit_log
+        self.enable_web_tools = enable_web_tools
+        self.tavily_api_key = tavily_api_key or os.getenv("TAVILY_API_KEY")
+        self.exa_api_key = exa_api_key or os.getenv("EXA_API_KEY")
+        self.firecrawl_api_key = firecrawl_api_key or os.getenv("FIRECRAWL_API_KEY")
+        self.jina_api_key = jina_api_key or os.getenv("JINA_AI_API_KEY")
         self._session_pool: dict[str, Any] = {}
 
         # 初始化模型
@@ -157,7 +173,18 @@ class LeonAgent:
         # 3. Search Middleware - 搜索功能
         middleware.append(SearchMiddleware(workspace_root=self.workspace_root))
 
-        # 4. Bash Middleware - 命令执行（带安全 hooks）
+        # 4. Web Middleware - Web 搜索和内容获取
+        if self.enable_web_tools:
+            middleware.append(
+                WebMiddleware(
+                    tavily_api_key=self.tavily_api_key,
+                    exa_api_key=self.exa_api_key,
+                    firecrawl_api_key=self.firecrawl_api_key,
+                    jina_api_key=self.jina_api_key,
+                )
+            )
+
+        # 5. Bash Middleware - 命令执行（带安全 hooks）
         bash_hook_config = {"strict_mode": True}
 
         # 如果启用危险命令拦截，需要手动添加到 hooks
@@ -193,7 +220,7 @@ class LeonAgent:
 **Available Tools:**
 
 1. **File Operations** (all paths must be absolute):
-   - `read_file`: Read file content (supports pagination)
+   - `read_file`: Read file content (supports pagination), including images.
    - `write_file`: Create new files
    - `edit_file`: Edit existing files (string replacement)
    - `multi_edit`: Apply multiple edits sequentially
@@ -203,7 +230,12 @@ class LeonAgent:
    - `grep_search`: Search file contents using regex
    - `find_by_name`: Find files by name pattern
 
-3. **Command Execution**:
+3. **Web Tools**:
+   - `web_search`: Search the web for current information
+   - `read_url_content`: Fetch and read content from URLs (returns chunked content)
+   - `view_web_content`: View specific chunks of previously fetched URL content
+
+4. **Command Execution**:
    - `bash`: Execute shell commands
    - Commands are validated by security hooks
    - Restricted to workspace directory
@@ -214,11 +246,16 @@ class LeonAgent:
    - ✅ Correct: `/Users/apple/Desktop/project/v1/文稿/project/leon/workspace/test.py`
    - ❌ Wrong: `test.py` or `./test.py`
 
-2. **Workspace Restriction**: All operations are restricted to: {self.workspace_root}
+2. **Workspace Restriction**: File operations are restricted to: {self.workspace_root}
    - You cannot access files outside this directory
    - Attempts to access external paths will be blocked
 
-3. **Security**:
+3. **Web Content**: 
+   - Use `web_search` to find information online
+   - Use `read_url_content` to fetch full page content (returns chunk overview)
+   - Use `view_web_content` to read specific chunks if content is large
+
+4. **Security**:
    - Dangerous commands are blocked (rm -rf, sudo, etc.)
    - All operations are logged for audit
 """
@@ -230,13 +267,16 @@ class LeonAgent:
             prompt += f"\n   - **File Type Restriction**: Only these extensions allowed: {', '.join(self.allowed_file_extensions)}\n"
 
         prompt += """
-4. **Best Practices**:
+5. **Best Practices**:
    - Always use `read_file` before editing to understand file structure
+   - To inspect a file's contents, prefer `read_file` over `bash`
    - Use `list_dir` to explore directory structure
    - Use `grep_search` to find specific content across files
    - For multiple edits, use `multi_edit` instead of multiple `edit_file` calls
+   - Use `web_search` to find current information not in your training data
+   - For large web pages, use `view_web_content` to read specific sections
 
-5. **Error Handling**:
+6. **Error Handling**:
    - If a command is blocked, explain the security reason to the user
    - Suggest alternative approaches when operations fail
    - Always provide clear feedback about what happened
@@ -261,12 +301,9 @@ Be helpful, accurate, and security-conscious in all your operations.
         Returns:
             Agent 响应（包含消息和状态）
         """
-        from middleware.shell.executor import ShellContext
-        
         result = self.agent.invoke(
             {"messages": [{"role": "user", "content": message}]},
             config={"configurable": {"thread_id": thread_id}},
-            context=ShellContext(session_pool=self._session_pool),
         )
         return result
 
@@ -333,31 +370,98 @@ def create_leon_agent(
     )
 
 
+# Export compiled graph for LangGraph CLI (without checkpointer)
+def _create_agent_for_langgraph():
+    """Create agent without checkpointer for LangGraph CLI"""
+    leon = create_leon_agent()
+    # Recreate agent without checkpointer
+    middleware = []
+    
+    # Rebuild middleware stack
+    middleware.append(
+        PromptCachingMiddleware(ttl="5m", min_messages_to_cache=0)
+    )
+    
+    file_hooks = []
+    if leon.enable_audit_log:
+        file_hooks.append(
+            FileAccessLoggerHook(
+                workspace_root=leon.workspace_root, log_file="file_access.log"
+            )
+        )
+    file_hooks.append(
+        FilePermissionHook(
+            workspace_root=leon.workspace_root,
+            read_only=leon.read_only,
+            allowed_extensions=leon.allowed_file_extensions,
+        )
+    )
+    
+    middleware.append(
+        FileSystemMiddleware(
+            workspace_root=leon.workspace_root,
+            read_only=leon.read_only,
+            allowed_extensions=leon.allowed_file_extensions,
+            hooks=file_hooks,
+        )
+    )
+    
+    middleware.append(SearchMiddleware(workspace_root=leon.workspace_root))
+    
+    if leon.enable_web_tools:
+        middleware.append(
+            WebMiddleware(
+                tavily_api_key=leon.tavily_api_key,
+                exa_api_key=leon.exa_api_key,
+                firecrawl_api_key=leon.firecrawl_api_key,
+                jina_api_key=leon.jina_api_key,
+            )
+        )
+    
+    middleware.append(
+        ShellMiddleware(
+            workspace_root=str(leon.workspace_root),
+            allow_system_python=True,
+            hook_config={"strict_mode": True},
+        )
+    )
+    
+    # Create agent WITHOUT checkpointer
+    return create_agent(
+        model=leon.model,
+        tools=[],
+        middleware=middleware,
+        checkpointer=None,
+    )
+
+agent = _create_agent_for_langgraph()
+
+
 if __name__ == "__main__":
     # 示例用法
-    agent = create_leon_agent()
+    leon_agent = create_leon_agent()
 
     try:
         print("=== Example 1: File Operations ===")
-        response = agent.get_response(
-            f"Create a Python file at {agent.workspace_root}/hello.py that prints 'Hello, Cascade!'",
+        response = leon_agent.get_response(
+            f"Create a Python file at {leon_agent.workspace_root}/hello.py that prints 'Hello, Cascade!'",
             thread_id="demo",
         )
         print(response)
         print()
 
         print("=== Example 2: Read File ===")
-        response = agent.get_response(
-            f"Read the file {agent.workspace_root}/hello.py", thread_id="demo"
+        response = leon_agent.get_response(
+            f"Read the file {leon_agent.workspace_root}/hello.py", thread_id="demo"
         )
         print(response)
         print()
 
         print("=== Example 3: Search ===")
-        response = agent.get_response(
-            f"Search for 'Hello' in {agent.workspace_root}", thread_id="demo"
+        response = leon_agent.get_response(
+            f"Search for 'Hello' in {leon_agent.workspace_root}", thread_id="demo"
         )
         print(response)
 
     finally:
-        agent.cleanup()
+        leon_agent.cleanup()
