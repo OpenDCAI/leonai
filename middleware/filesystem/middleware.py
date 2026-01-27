@@ -332,7 +332,7 @@ class FileSystemMiddleware(AgentMiddleware):
                         "parameters": {
                             "type": "object",
                             "properties": {
-                                "file_path": {"type": "string", "description": "Absolute file path"},
+                                "file_path": {"type": "string", "description": "Absolute file path (e.g., /path/to/file). Do NOT use '.' or '..'"},
                                 "offset": {"type": "integer", "description": "Start line (1-indexed, optional)"},
                                 "limit": {"type": "integer", "description": "Number of lines to read (optional)"},
                             },
@@ -348,7 +348,7 @@ class FileSystemMiddleware(AgentMiddleware):
                         "parameters": {
                             "type": "object",
                             "properties": {
-                                "file_path": {"type": "string", "description": "Absolute file path"},
+                                "file_path": {"type": "string", "description": "Absolute file path (e.g., /path/to/file). Do NOT use '.' or '..'"},
                                 "content": {"type": "string", "description": "File content"},
                             },
                             "required": ["file_path", "content"],
@@ -369,7 +369,7 @@ class FileSystemMiddleware(AgentMiddleware):
                         "parameters": {
                             "type": "object",
                             "properties": {
-                                "file_path": {"type": "string", "description": "Absolute file path"},
+                                "file_path": {"type": "string", "description": "Absolute file path (e.g., /path/to/file). Do NOT use '.' or '..'"},
                                 "old_string": {"type": "string", "description": "Exact string to replace (must be unique and match exactly)"},
                                 "new_string": {"type": "string", "description": "Replacement string (must differ from old_string)"},
                             },
@@ -385,7 +385,7 @@ class FileSystemMiddleware(AgentMiddleware):
                         "parameters": {
                             "type": "object",
                             "properties": {
-                                "file_path": {"type": "string", "description": "Absolute file path"},
+                                "file_path": {"type": "string", "description": "Absolute file path (e.g., /path/to/file). Do NOT use '.' or '..'"},
                                 "edits": {
                                     "type": "array",
                                     "items": {
@@ -411,7 +411,7 @@ class FileSystemMiddleware(AgentMiddleware):
                         "parameters": {
                             "type": "object",
                             "properties": {
-                                "directory_path": {"type": "string", "description": "Absolute directory path"},
+                                "directory_path": {"type": "string", "description": "Absolute directory path (e.g., /path/to/dir). Do NOT use '.' or '..'"},
                             },
                             "required": ["directory_path"],
                         },
@@ -441,7 +441,7 @@ class FileSystemMiddleware(AgentMiddleware):
                         "parameters": {
                             "type": "object",
                             "properties": {
-                                "file_path": {"type": "string", "description": "Absolute file path"},
+                                "file_path": {"type": "string", "description": "Absolute file path (e.g., /path/to/file). Do NOT use '.' or '..'"},
                                 "offset": {"type": "integer", "description": "Start line (1-indexed, optional)"},
                                 "limit": {"type": "integer", "description": "Number of lines to read (optional)"},
                             },
@@ -457,7 +457,7 @@ class FileSystemMiddleware(AgentMiddleware):
                         "parameters": {
                             "type": "object",
                             "properties": {
-                                "file_path": {"type": "string", "description": "Absolute file path"},
+                                "file_path": {"type": "string", "description": "Absolute file path (e.g., /path/to/file). Do NOT use '.' or '..'"},
                                 "content": {"type": "string", "description": "File content"},
                             },
                             "required": ["file_path", "content"],
@@ -478,7 +478,7 @@ class FileSystemMiddleware(AgentMiddleware):
                         "parameters": {
                             "type": "object",
                             "properties": {
-                                "file_path": {"type": "string", "description": "Absolute file path"},
+                                "file_path": {"type": "string", "description": "Absolute file path (e.g., /path/to/file). Do NOT use '.' or '..'"},
                                 "old_string": {"type": "string", "description": "Exact string to replace (must be unique and match exactly)"},
                                 "new_string": {"type": "string", "description": "Replacement string (must differ from old_string)"},
                             },
@@ -494,7 +494,7 @@ class FileSystemMiddleware(AgentMiddleware):
                         "parameters": {
                             "type": "object",
                             "properties": {
-                                "file_path": {"type": "string", "description": "Absolute file path"},
+                                "file_path": {"type": "string", "description": "Absolute file path (e.g., /path/to/file). Do NOT use '.' or '..'"},
                                 "edits": {
                                     "type": "array",
                                     "items": {
@@ -520,7 +520,7 @@ class FileSystemMiddleware(AgentMiddleware):
                         "parameters": {
                             "type": "object",
                             "properties": {
-                                "directory_path": {"type": "string", "description": "Absolute directory path"},
+                                "directory_path": {"type": "string", "description": "Absolute directory path (e.g., /path/to/dir). Do NOT use '.' or '..'"},
                             },
                             "required": ["directory_path"],
                         },

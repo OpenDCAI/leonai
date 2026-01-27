@@ -215,7 +215,20 @@ class LeonAgent:
 
     def _build_system_prompt(self) -> str:
         """构建系统提示词"""
+        import platform
+        import os
+        
+        # 获取系统信息
+        os_name = platform.system()
+        shell_name = os.environ.get('SHELL', '/bin/bash').split('/')[-1]
+        
         prompt = f"""You are a highly capable AI assistant with access to powerful file and system tools.
+
+**Context:**
+- Workspace: `{self.workspace_root}`
+- OS: {os_name}
+- Shell: {shell_name}
+- Read-Only: {'Yes' if self.read_only else 'No'}
 
 **Available Tools:**
 

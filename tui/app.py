@@ -210,27 +210,9 @@ class LeonApp(App):
         t_agent_total = (time.perf_counter() - t_agent_start) * 1000
         print(f"[LATENCY] Agent processing took {t_agent_total:.2f}ms\n")
 
-    def _stream_agent_sync(self, message: str, result_queue: queue.Queue) -> None:
-        """Run agent.stream() in a background thread (blocking)"""
-        from middleware.shell.executor import ShellContext
-        
-        config = {"configurable": {"thread_id": self.thread_id}}
-        
-        try:
-            for chunk in self.agent.agent.stream(
-                {"messages": [{"role": "user", "content": message}]},
-                config=config,
-                context=ShellContext(session_pool=self.agent._session_pool),
-                stream_mode="updates",
-            ):
-                if chunk:
-                    result_queue.put(("chunk", chunk))
-            result_queue.put(("done", None))
-        except Exception as e:
-            result_queue.put(("error", str(e)))
     
     async def _process_message(self, message: str, thinking_spinner: ThinkingSpinner | None = None) -> None:
-        """Process message with agent using background thread for non-blocking UI"""
+        """Process message with agent using async astream"""
         import time
         
         messages_container = self.query_one("#messages", Container)
@@ -246,118 +228,99 @@ class LeonApp(App):
         last_update_time = 0
         update_interval = 0.05
 
-        # Use queue for thread-safe communication
-        result_queue: queue.Queue = queue.Queue()
-        
-        # Start agent streaming in background thread
-        stream_thread = threading.Thread(
-            target=self._stream_agent_sync,
-            args=(message, result_queue),
-            daemon=True
-        )
-        stream_thread.start()
+        config = {"configurable": {"thread_id": self.thread_id}}
         
         try:
-            while True:
-                # Non-blocking check for new chunks - yield to event loop frequently
-                try:
-                    msg_type, data = result_queue.get_nowait()
-                except queue.Empty:
-                    # No data yet, yield control to event loop
-                    await asyncio.sleep(0.01)  # 10ms polling interval
+            async for chunk in self.agent.agent.astream(
+                {"messages": [{"role": "user", "content": message}]},
+                config=config,
+                stream_mode="updates",
+            ):
+                if not chunk:
                     continue
                 
-                if msg_type == "done":
-                    break
-                elif msg_type == "error":
-                    error_msg = AssistantMessage(f"❌ 错误: {data}")
-                    await messages_container.mount(error_msg)
-                    break
-                elif msg_type == "chunk":
-                    chunk = data
+                # Process chunk
+                for node_name, node_update in chunk.items():
+                    if not isinstance(node_update, dict) or "messages" not in node_update:
+                        continue
                     
-                    # Process chunk
-                    for node_name, node_update in chunk.items():
-                        if not isinstance(node_update, dict) or "messages" not in node_update:
+                    new_messages = node_update["messages"]
+                    if not new_messages:
+                        continue
+                    
+                    if not isinstance(new_messages, (list, tuple)):
+                        new_messages = [new_messages]
+                    
+                    for msg in new_messages:
+                        msg_class = msg.__class__.__name__
+                        
+                        if msg_class == "HumanMessage":
                             continue
-                        
-                        new_messages = node_update["messages"]
-                        if not new_messages:
-                            continue
-                        
-                        if not isinstance(new_messages, (list, tuple)):
-                            new_messages = [new_messages]
-                        
-                        for msg in new_messages:
-                            msg_class = msg.__class__.__name__
+
+                        if msg_class == "AIMessage":
+                            raw_content = getattr(msg, "content", "")
                             
-                            if msg_class == "HumanMessage":
-                                continue
-
-                            if msg_class == "AIMessage":
-                                raw_content = getattr(msg, "content", "")
+                            if isinstance(raw_content, str):
+                                content = raw_content
+                            elif isinstance(raw_content, list):
+                                text_parts = []
+                                for block in raw_content:
+                                    if isinstance(block, dict) and block.get("type") == "text":
+                                        text_parts.append(block.get("text", ""))
+                                    elif isinstance(block, str):
+                                        text_parts.append(block)
+                                content = "".join(text_parts)
+                            else:
+                                content = str(raw_content)
+                            
+                            if content and content != last_content:
+                                if thinking_spinner and thinking_spinner.is_mounted:
+                                    await thinking_spinner.remove()
+                                    thinking_spinner = None
                                 
-                                if isinstance(raw_content, str):
-                                    content = raw_content
-                                elif isinstance(raw_content, list):
-                                    text_parts = []
-                                    for block in raw_content:
-                                        if isinstance(block, dict) and block.get("type") == "text":
-                                            text_parts.append(block.get("text", ""))
-                                        elif isinstance(block, str):
-                                            text_parts.append(block)
-                                    content = "".join(text_parts)
+                                if not self._current_assistant_msg:
+                                    self._current_assistant_msg = AssistantMessage()
+                                    await messages_container.mount(self._current_assistant_msg)
+
+                                current_time = time.time()
+                                if current_time - last_update_time >= update_interval:
+                                    self._current_assistant_msg.update_content(content)
+                                    last_update_time = current_time
                                 else:
-                                    content = str(raw_content)
+                                    self._current_assistant_msg.update_content(content)
                                 
-                                if content and content != last_content:
-                                    if thinking_spinner and thinking_spinner.is_mounted:
-                                        await thinking_spinner.remove()
-                                        thinking_spinner = None
-                                    
-                                    if not self._current_assistant_msg:
-                                        self._current_assistant_msg = AssistantMessage()
-                                        await messages_container.mount(self._current_assistant_msg)
-
-                                    current_time = time.time()
-                                    if current_time - last_update_time >= update_interval:
-                                        self._current_assistant_msg.update_content(content)
-                                        last_update_time = current_time
-                                    else:
-                                        self._current_assistant_msg.update_content(content)
-                                    
-                                    last_content = content
-                                    self._last_assistant_message = content
+                                last_content = content
+                                self._last_assistant_message = content
+                            
+                            tool_calls = getattr(msg, "tool_calls", [])
+                            if tool_calls:
+                                self._current_assistant_msg = None
                                 
-                                tool_calls = getattr(msg, "tool_calls", [])
-                                if tool_calls:
-                                    self._current_assistant_msg = None
+                                for tool_call in tool_calls:
+                                    tool_id = tool_call.get("id", "")
+                                    tool_name = tool_call.get("name", "unknown")
                                     
-                                    for tool_call in tool_calls:
-                                        tool_id = tool_call.get("id", "")
-                                        tool_name = tool_call.get("name", "unknown")
+                                    if tool_id and tool_id not in self._shown_tool_calls:
+                                        if thinking_spinner and thinking_spinner.is_mounted:
+                                            thinking_spinner.set_tool_execution(tool_name)
                                         
-                                        if tool_id and tool_id not in self._shown_tool_calls:
-                                            if thinking_spinner and thinking_spinner.is_mounted:
-                                                thinking_spinner.set_tool_execution(tool_name)
-                                            
-                                            tool_widget = ToolCallMessage(
-                                                tool_name,
-                                                tool_call.get("args", {}),
-                                            )
-                                            await messages_container.mount(tool_widget)
-                                            
-                                            self._tool_call_widgets[tool_id] = tool_widget
-                                            self._shown_tool_calls.add(tool_id)
+                                        tool_widget = ToolCallMessage(
+                                            tool_name,
+                                            tool_call.get("args", {}),
+                                        )
+                                        await messages_container.mount(tool_widget)
+                                        
+                                        self._tool_call_widgets[tool_id] = tool_widget
+                                        self._shown_tool_calls.add(tool_id)
 
-                            elif msg_class == "ToolMessage":
-                                tool_call_id = getattr(msg, "tool_call_id", None)
-                                if tool_call_id and tool_call_id not in self._shown_tool_results:
-                                    if tool_call_id in self._tool_call_widgets:
-                                        self._tool_call_widgets[tool_call_id].mark_completed()
-                                    
-                                    await messages_container.mount(ToolResultMessage(msg.content))
-                                    self._shown_tool_results.add(tool_call_id)
+                        elif msg_class == "ToolMessage":
+                            tool_call_id = getattr(msg, "tool_call_id", None)
+                            if tool_call_id and tool_call_id not in self._shown_tool_results:
+                                if tool_call_id in self._tool_call_widgets:
+                                    self._tool_call_widgets[tool_call_id].mark_completed()
+                                
+                                await messages_container.mount(ToolResultMessage(msg.content))
+                                self._shown_tool_results.add(tool_call_id)
 
         except Exception as e:
             error_msg = AssistantMessage(f"❌ 错误: {str(e)}")

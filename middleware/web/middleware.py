@@ -147,7 +147,7 @@ class WebMiddleware(AgentMiddleware):
 
         return FetchResult(url=Url, error="All fetch providers failed")
 
-    def _view_chunk_impl(self, Url: str, Position: int) -> str:
+    def _view_chunk_impl(self, Url: str, position: int) -> str:
         """
         实现 view_web_content（查看指定 chunk）
         """
@@ -155,12 +155,12 @@ class WebMiddleware(AgentMiddleware):
             return f"URL not in cache. Use read_url_content first: {Url}"
 
         result = self._content_cache[Url]
-        chunk_content = result.get_chunk(Position)
+        chunk_content = result.get_chunk(position)
 
         if chunk_content is None:
-            return f"Chunk position {Position} not found. Available: 0-{result.total_chunks - 1}"
+            return f"Chunk position {position} not found. Available: 0-{result.total_chunks - 1}"
 
-        return f"URL: {Url}\nPosition: {Position}/{result.total_chunks - 1}\n\n{chunk_content}"
+        return f"URL: {Url}\nPosition: {position}/{result.total_chunks - 1}\n\n{chunk_content}"
 
     def _get_tool_definitions(self) -> list[dict]:
         """获取工具定义"""
@@ -225,12 +225,12 @@ class WebMiddleware(AgentMiddleware):
                                 "type": "string",
                                 "description": "URL that was previously fetched",
                             },
-                            "Position": {
+                            "position": {
                                 "type": "integer",
                                 "description": "Chunk position to view (0-indexed)",
                             },
                         },
-                        "required": ["Url", "Position"],
+                        "required": ["Url", "position"],
                     },
                 },
             },
@@ -274,7 +274,7 @@ class WebMiddleware(AgentMiddleware):
         elif tool_name == self.TOOL_VIEW_CHUNK:
             content = self._view_chunk_impl(
                 Url=args.get("Url", ""),
-                Position=args.get("Position", 0),
+                position=args.get("position", 0),
             )
             return ToolMessage(content=content, tool_call_id=tool_call_id)
 
