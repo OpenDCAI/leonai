@@ -93,7 +93,8 @@ class LeonApp(App):
     """
 
     BINDINGS = [
-        Binding("ctrl+c", "quit", "退出", show=False),
+        Binding("ctrl+c", "quit_or_interrupt", "中断/退出", show=False),
+        Binding("ctrl+d", "quit", "退出", show=False),
         Binding("ctrl+l", "clear_history", "清空历史", show=False),
         Binding("ctrl+up", "history_up", "历史上一条", show=False),
         Binding("ctrl+down", "history_down", "历史下一条", show=False),
@@ -111,6 +112,10 @@ class LeonApp(App):
         self._shown_tool_results = set()
         self._message_count = 0
         self._last_assistant_message = ""
+        # Agent interruption support
+        self._agent_running = False
+        self._agent_worker = None
+        self._quit_pending = False
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -173,8 +178,10 @@ class LeonApp(App):
                 self.notify("⚠ 用法: /rollback <数字> 或 /回退 <数字>", severity="warning")
                 return
 
-        # Run async handler
-        self.run_worker(self._handle_submission(content), exclusive=False)
+        # Run async handler with worker tracking for interruption
+        self._agent_running = True
+        self._quit_pending = False
+        self._agent_worker = self.run_worker(self._handle_submission(content), exclusive=False)
     
     async def _handle_submission(self, content: str) -> None:
         """Handle message submission asynchronously to ensure proper rendering"""
@@ -322,10 +329,18 @@ class LeonApp(App):
                                 await messages_container.mount(ToolResultMessage(msg.content))
                                 self._shown_tool_results.add(tool_call_id)
 
+        except asyncio.CancelledError:
+            # Agent was interrupted by user
+            interrupt_msg = SystemMessage("⚠ 已中断")
+            await messages_container.mount(interrupt_msg)
         except Exception as e:
             error_msg = AssistantMessage(f"❌ 错误: {str(e)}")
             await messages_container.mount(error_msg)
         finally:
+            # Reset agent state
+            self._agent_running = False
+            self._agent_worker = None
+            
             if thinking_spinner and thinking_spinner.is_mounted:
                 await thinking_spinner.remove()
             
@@ -443,10 +458,11 @@ class LeonApp(App):
   • Enter: 发送消息
   • Shift+Enter: 换行
   • ESC ESC: 浏览历史输入（弹窗选择）
+  • Ctrl+C: 中断当前执行 / 再按一次退出
+  • Ctrl+D: 直接退出
   • Ctrl+Y: 复制最后一条消息
   • Ctrl+E: 导出对话为 Markdown
   • Ctrl+L: 清空对话历史
-  • Ctrl+C: 退出
 
 命令:
   • /help: 显示此帮助信息
@@ -467,6 +483,28 @@ class LeonApp(App):
         """Update status bar with message count"""
         status_bar = self.query_one("#status-bar", StatusBar)
         status_bar.update_stats(self._message_count)
+    
+    def action_quit_or_interrupt(self) -> None:
+        """Handle Ctrl+C - interrupt agent or quit on double press.
+        
+        Priority:
+        1. If agent is running, interrupt it
+        2. If double press (quit_pending), quit
+        3. Otherwise show quit hint
+        """
+        # If agent is running, interrupt it
+        if self._agent_running and self._agent_worker:
+            self._agent_worker.cancel()
+            self._quit_pending = False
+            self.notify("⚠ 正在中断...", timeout=2)
+            return
+        
+        # Double Ctrl+C to quit
+        if self._quit_pending:
+            self.exit()
+        else:
+            self._quit_pending = True
+            self.notify("再按一次 Ctrl+C 退出，或按 Ctrl+D 直接退出", timeout=3)
     
     def action_clear_history(self) -> None:
         """Clear chat history"""
