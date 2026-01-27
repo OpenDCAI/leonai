@@ -4,7 +4,7 @@ Leon - 完全模仿 Windsurf Cascade 的 Agent 实现
 使用纯 Middleware 架构实现所有工具：
 - FileSystemMiddleware: read_file, write_file, edit_file, multi_edit, list_dir
 - SearchMiddleware: grep_search, find_by_name
-- ShellMiddleware: run_command (with hooks)
+- CommandMiddleware: run_command (with hooks)
 - PromptCachingMiddleware: 成本优化
 
 所有路径必须使用绝对路径，完整的安全机制和审计日志。
@@ -12,6 +12,7 @@ Leon - 完全模仿 Windsurf Cascade 的 Agent 实现
 
 import os
 from pathlib import Path
+from typing import Any
 
 from langchain.agents import create_agent
 from langchain.chat_models import init_chat_model
@@ -26,16 +27,17 @@ if _env_file.exists():
             key, value = line.split("=", 1)
             os.environ[key] = value
 
+from middleware.command import CommandMiddleware
 from middleware.filesystem import FileSystemMiddleware
 from middleware.prompt_caching import PromptCachingMiddleware
 from middleware.search import SearchMiddleware
-from middleware.shell import ShellMiddleware
-from middleware.web import WebMiddleware
 
 # 导入 hooks
 from middleware.shell.hooks.dangerous_commands import DangerousCommandsHook
 from middleware.shell.hooks.file_access_logger import FileAccessLoggerHook
 from middleware.shell.hooks.file_permission import FilePermissionHook
+from middleware.shell.hooks.path_security import PathSecurityHook
+from middleware.web import WebMiddleware
 
 
 class LeonAgent:
@@ -51,7 +53,7 @@ class LeonAgent:
     工具列表：
     1. 文件操作：read_file, write_file, edit_file, multi_edit, list_dir
     2. 搜索：grep_search, find_by_name
-    3. 命令执行：bash (通过 ShellMiddleware)
+    3. 命令执行：run_command (通过 CommandMiddleware)
     """
 
     def __init__(
@@ -184,16 +186,27 @@ class LeonAgent:
                 )
             )
 
-        # 5. Bash Middleware - 命令执行（带安全 hooks）
-        bash_hook_config = {"strict_mode": True}
+        # 5. Command Middleware - 命令执行（带安全 hooks）
+        command_hooks = []
 
-        # 如果启用危险命令拦截，需要手动添加到 hooks
-        # 注意：ShellMiddleware 会自动加载 shell/hooks/ 目录下的所有 hooks
+        # 添加危险命令拦截 hook
+        if self.block_dangerous_commands:
+            command_hooks.append(
+                DangerousCommandsHook(
+                    workspace_root=self.workspace_root,
+                    block_network=self.block_network_commands,
+                )
+            )
+
+        # 添加路径安全检查 hook
+        command_hooks.append(
+            PathSecurityHook(workspace_root=self.workspace_root)
+        )
+
         middleware.append(
-            ShellMiddleware(
-                workspace_root=str(self.workspace_root),
-                allow_system_python=True,
-                hook_config=bash_hook_config,
+            CommandMiddleware(
+                workspace_root=self.workspace_root,
+                hooks=command_hooks,
             )
         )
 
@@ -208,20 +221,20 @@ class LeonAgent:
         # System prompt
         self.system_prompt = self._build_system_prompt()
 
-        print(f"[LeonAgent] Initialized successfully")
+        print("[LeonAgent] Initialized successfully")
         print(f"[LeonAgent] Workspace: {self.workspace_root}")
         print(f"[LeonAgent] Read-only: {self.read_only}")
         print(f"[LeonAgent] Audit log: {self.enable_audit_log}")
 
     def _build_system_prompt(self) -> str:
         """构建系统提示词"""
-        import platform
         import os
-        
+        import platform
+
         # 获取系统信息
         os_name = platform.system()
         shell_name = os.environ.get('SHELL', '/bin/bash').split('/')[-1]
-        
+
         prompt = f"""You are a highly capable AI assistant with access to powerful file and system tools.
 
 **Context:**
@@ -249,7 +262,8 @@ class LeonAgent:
    - `view_web_content`: View specific chunks of previously fetched URL content
 
 4. **Command Execution**:
-   - `bash`: Execute shell commands
+   - `run_command`: Execute shell commands (Blocking/non-blocking, with Cwd support)
+   - `command_status`: Check status of non-blocking commands
    - Commands are validated by security hooks
    - Restricted to workspace directory
 
@@ -389,12 +403,12 @@ def _create_agent_for_langgraph():
     leon = create_leon_agent()
     # Recreate agent without checkpointer
     middleware = []
-    
+
     # Rebuild middleware stack
     middleware.append(
         PromptCachingMiddleware(ttl="5m", min_messages_to_cache=0)
     )
-    
+
     file_hooks = []
     if leon.enable_audit_log:
         file_hooks.append(
@@ -409,7 +423,7 @@ def _create_agent_for_langgraph():
             allowed_extensions=leon.allowed_file_extensions,
         )
     )
-    
+
     middleware.append(
         FileSystemMiddleware(
             workspace_root=leon.workspace_root,
@@ -418,9 +432,9 @@ def _create_agent_for_langgraph():
             hooks=file_hooks,
         )
     )
-    
+
     middleware.append(SearchMiddleware(workspace_root=leon.workspace_root))
-    
+
     if leon.enable_web_tools:
         middleware.append(
             WebMiddleware(
@@ -430,15 +444,25 @@ def _create_agent_for_langgraph():
                 jina_api_key=leon.jina_api_key,
             )
         )
-    
+
+    # Command Middleware with hooks
+    command_hooks = []
+    if leon.block_dangerous_commands:
+        command_hooks.append(
+            DangerousCommandsHook(
+                workspace_root=leon.workspace_root,
+                block_network=leon.block_network_commands,
+            )
+        )
+    command_hooks.append(PathSecurityHook(workspace_root=leon.workspace_root))
+
     middleware.append(
-        ShellMiddleware(
-            workspace_root=str(leon.workspace_root),
-            allow_system_python=True,
-            hook_config={"strict_mode": True},
+        CommandMiddleware(
+            workspace_root=leon.workspace_root,
+            hooks=command_hooks,
         )
     )
-    
+
     # Create agent WITHOUT checkpointer
     return create_agent(
         model=leon.model,
