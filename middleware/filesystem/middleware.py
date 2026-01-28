@@ -76,6 +76,7 @@ class FileSystemMiddleware(AgentMiddleware):
             'read_file': True, 'write_file': True, 'edit_file': True,
             'multi_edit': True, 'list_dir': True
         }
+        self._read_files: set[Path] = set()
 
         # 确保 workspace 存在
         self.workspace_root.mkdir(parents=True, exist_ok=True)
@@ -155,12 +156,18 @@ class FileSystemMiddleware(AgentMiddleware):
             max_line_length=2000,
         )
 
-        return read_file_dispatch(
+        result = read_file_dispatch(
             path=resolved,
             limits=limits,
             offset=offset if offset > 0 else None,
             limit=limit,
         )
+
+        # Track read files for "no read no write" enforcement
+        if not result.error:
+            self._read_files.add(resolved)
+
+        return result
 
     def _make_read_tool_message(self, result: ReadResult, tool_call_id: str) -> ToolMessage:
         """Create ToolMessage from ReadResult, using content_blocks for images."""
@@ -211,6 +218,10 @@ class FileSystemMiddleware(AgentMiddleware):
         if not resolved.exists():
             return f"File not found: {file_path}"
 
+        # No read no write enforcement
+        if resolved not in self._read_files:
+            return "File has not been read yet. Read it first before writing to it."
+
         # 禁止 no-op 编辑
         if old_string == new_string:
             return "Error: old_string and new_string are identical (no-op edit)"
@@ -255,6 +266,10 @@ class FileSystemMiddleware(AgentMiddleware):
 
         if not resolved.exists():
             return f"File not found: {file_path}"
+
+        # No read no write enforcement
+        if resolved not in self._read_files:
+            return "File has not been read yet. Read it first before writing to it."
 
         try:
             # 读取文件
