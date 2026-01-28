@@ -442,72 +442,21 @@ def create_leon_agent(
 def _create_agent_for_langgraph():
     """Create agent without checkpointer for LangGraph CLI"""
     leon = create_leon_agent()
-    # Recreate agent without checkpointer
-    middleware = []
+    middleware = leon._build_middleware_stack()
 
-    # Rebuild middleware stack
-    middleware.append(
-        PromptCachingMiddleware(ttl="5m", min_messages_to_cache=0)
-    )
-
-    file_hooks = []
-    if leon.enable_audit_log:
-        file_hooks.append(
-            FileAccessLoggerHook(
-                workspace_root=leon.workspace_root, log_file="file_access.log"
-            )
-        )
-    file_hooks.append(
-        FilePermissionHook(
-            workspace_root=leon.workspace_root,
-            read_only=leon.read_only,
-            allowed_extensions=leon.allowed_file_extensions,
-        )
-    )
-
-    middleware.append(
-        FileSystemMiddleware(
-            workspace_root=leon.workspace_root,
-            read_only=leon.read_only,
-            allowed_extensions=leon.allowed_file_extensions,
-            hooks=file_hooks,
-        )
-    )
-
-    middleware.append(SearchMiddleware(workspace_root=leon.workspace_root))
-
-    if leon.enable_web_tools:
-        middleware.append(
-            WebMiddleware(
-                tavily_api_key=leon.tavily_api_key,
-                exa_api_key=leon.exa_api_key,
-                firecrawl_api_key=leon.firecrawl_api_key,
-                jina_api_key=leon.jina_api_key,
-            )
-        )
-
-    # Command Middleware with hooks
-    command_hooks = []
-    if leon.block_dangerous_commands:
-        command_hooks.append(
-            DangerousCommandsHook(
-                workspace_root=leon.workspace_root,
-                block_network=leon.block_network_commands,
-            )
-        )
-    command_hooks.append(PathSecurityHook(workspace_root=leon.workspace_root))
-
-    middleware.append(
-        CommandMiddleware(
-            workspace_root=leon.workspace_root,
-            hooks=command_hooks,
-        )
-    )
+    # Load MCP tools
+    import asyncio
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        mcp_tools = loop.run_until_complete(leon._init_mcp_tools())
+    finally:
+        loop.close()
 
     # Create agent WITHOUT checkpointer
     return create_agent(
         model=leon.model,
-        tools=[],
+        tools=mcp_tools,
         middleware=middleware,
         checkpointer=None,
     )
