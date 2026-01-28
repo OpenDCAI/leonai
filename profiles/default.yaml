@@ -7,9 +7,14 @@ agent:
 system_prompt: null
 
 tools:
+  prompt_caching:
+    enabled: true
+    ttl: "5m"
+    min_messages_to_cache: 0
+
   filesystem:
     enabled: true
-    read_only: false
+    max_file_size: 10485760  # 10MB in bytes
     allowed_extensions: null
     read_file: true
     write_file: true
@@ -19,17 +24,27 @@ tools:
 
   search:
     enabled: true
+    max_results: 50
+    max_file_size: 10485760  # 10MB in bytes
+    prefer_system_tools: true
     grep_search: true
     find_by_name: true
 
   web:
     enabled: true
+    max_search_results: 5
+    timeout: 15
+    tavily_api_key: null  # fallback to TAVILY_API_KEY env var
+    exa_api_key: null     # fallback to EXA_API_KEY env var
+    firecrawl_api_key: null  # fallback to FIRECRAWL_API_KEY env var
+    jina_api_key: null    # fallback to JINA_AI_API_KEY env var
     web_search: true
     read_url_content: true
     view_web_content: true
 
   command:
     enabled: true
+    default_timeout: 120
     block_dangerous_commands: true
     block_network_commands: false
     run_command: true
