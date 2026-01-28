@@ -1,164 +1,85 @@
-# Task: 重构 Command Middleware（替换 LangChain ShellToolMiddleware）
+ # Tasks
 
-## 目标
-实现自己的 CommandMiddleware，达到与 Cascade `run_command` 同等能力，不再依赖 LangChain 的 `ShellToolMiddleware`。
+## 背景
 
----
-
-## Cascade `run_command` 完整能力
-
-### 参数列表
-
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `CommandLine` | `string` | ✅ | 要执行的命令 |
-| `Cwd` | `string` | ❌ | 工作目录（不传则用默认） |
-| `Blocking` | `boolean` | ❌ | 是否阻塞等待完成（默认 true） |
-| `SafeToAutoRun` | `boolean` | ❌ | 是否安全到可以自动运行（不需用户确认） |
-| `WaitMsBeforeAsync` | `integer` | ❌ | 非阻塞模式下，启动后等待多少毫秒再返回（用于捕获快速失败） |
-
-### 行为特性
-
-1. **阻塞 vs 非阻塞**
-   - `Blocking=true`：等命令执行完，返回完整输出
-   - `Blocking=false`：启动后立即返回一个 `CommandId`，后续用 `command_status` 工具查询
-
-2. **安全检查**
-   - `SafeToAutoRun=true`：跳过用户确认，直接执行
-   - `SafeToAutoRun=false`（默认）：需要用户批准才执行
-   - 危险命令（`rm -rf`、`sudo` 等）即使设置 `SafeToAutoRun=true` 也会被拒绝
-
-3. **工作目录**
-   - `Cwd` 指定命令执行的目录
-   - 不传则使用 workspace 根目录
-
-4. **超时处理**
-   - 阻塞模式下有内置超时
-   - 非阻塞模式下通过 `WaitMsBeforeAsync` 控制初始等待
-
-5. **配套工具**
-   - `command_status`：查询非阻塞命令的状态和输出
-
-### 错误处理
-
-- 命令不存在 → 返回错误信息
-- 超时 → 返回超时错误
-- 非零退出码 → 返回 exit code + stderr
-- 危险命令 → 拒绝执行并说明原因
+Leon 目标：用纯 Middleware 架构模拟 Windsurf Cascade 的 tool-calling 机制。
 
 ---
 
-## 当前实现的差距
+## 已完成（里程碑）
 
-| 能力 | Cascade | 当前 `bash` |
-|------|---------|--------------|
-| 工具名 | `run_command` | `bash` |
-| 参数名 | `CommandLine` | `command` |
-| Cwd 支持 | ✅ 每次调用可指定 | ❌ 无 |
-| Blocking 模式 | ✅ 可选 | ❌ 永远阻塞 |
-| 非阻塞状态查询 | ✅ `command_status` | ❌ 无 |
-| SafeToAutoRun | ✅ 有 | ❌ 无（用 hooks 做安全检查） |
-| 多 shell 支持 | ✅ 根据 OS 自动选 | ❌ 写死 `/bin/bash` |
-| 超时控制 | ✅ 内置 | ⚠️ 内部有，但不可调 |
+### Command Middleware 重构（替换 LangChain ShellToolMiddleware）
 
----
+- **完成内容**
+  - 替换 LangChain `ShellToolMiddleware` → 自研 `CommandMiddleware`
+  - 提供 `run_command` / `command_status` 两个工具
+  - 支持 `Blocking` / `Cwd` / `Timeout` 等参数
+  - hooks 安全拦截（危险命令、路径限制）
+  - 输出截断行为对齐 Cascade（`command_status` 返回最后 N 字符并标注截断行数）
 
-## 设计方案
+- **测试**
+  - `tests/test_command_middleware.py` 覆盖 executor、middleware、hooks、异步执行
 
-### 目录结构
-
-```
-middleware/
-  command/
-    __init__.py
-    middleware.py          # 主入口：注入 tool + 拦截 tool call
-    dispatcher.py          # 根据 OS/参数 选择 executor
-    base.py                # Executor 基类
-    bash/
-      __init__.py
-      executor.py
-    zsh/
-      __init__.py
-      executor.py
-    powershell/
-      __init__.py
-      executor.py
-```
-
-### Tool Schema（对齐 Cascade）
-
-```python
-{
-    "name": "run_command",
-    "description": "Execute shell command. OS auto-detects shell (mac→zsh, linux→bash, win→powershell).",
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "CommandLine": {"type": "string", "description": "Command to execute"},
-            "Cwd": {"type": "string", "description": "Working directory (optional)"},
-            "Blocking": {"type": "boolean", "description": "Wait for completion (default: true)"},
-            "Timeout": {"type": "integer", "description": "Timeout in seconds (optional)"},
-        },
-        "required": ["CommandLine"]
-    }
-}
-```
-
-### 默认 Shell 选择规则
-
-- 使用系统默认 shell
-
-### 核心实现思路
-
-1. **不依赖 LangChain ShellToolMiddleware**
-   - 直接用 Python `subprocess` / `asyncio.create_subprocess_shell`
-   - 自己管理进程生命周期
-
-2. **Executor 基类**
-   ```python
-   class BaseExecutor(ABC):
-       @abstractmethod
-       async def execute(self, command: str, cwd: str | None, timeout: float | None) -> ExecuteResult:
-           ...
-   ```
-
-3. **Dispatcher**
-   ```python
-   def get_executor() -> BaseExecutor:
-       system = platform.system()
-       if system == "Darwin":
-           return ZshExecutor()
-       elif system == "Windows":
-           return PowerShellExecutor()
-       else:
-           return BashExecutor()
-   ```
-
-4. **非阻塞支持**
-   - 启动进程后返回 `command_id`
-   - 用字典存储运行中的进程
-   - 提供 `command_status` 工具查询
+- **TUI 体验优化**
+  - Ctrl+C：优先中断当前执行；空闲时双击退出
+  - Ctrl+D：直接退出
 
 ---
 
-## 实施步骤
+## 接下来 3 个大功能（开发顺序已决策）
 
-1. [x] 创建 `middleware/command/` 目录结构
-2. [x] 实现 `base.py`（Executor 基类 + ExecuteResult）
-3. [x] 实现 `bash/executor.py`
-4. [x] 实现 `zsh/executor.py`
-5. [x] 实现 `dispatcher.py`
-6. [x] 实现 `middleware.py`（注入 tool + 拦截处理）
-7. [x] 实现 `command_status` 工具（非阻塞查询）
-8. [x] 迁移 hooks 系统
-9. [x] 删除对 LangChain ShellToolMiddleware 的依赖
-10. [x] 更新 agent.py 和相关引用
-11. [x] 测试验证（20 tests passed）
+### 1) Agent Profile（静态化 + 配置化 agent 能力）
+
+- **目标**
+  - 用配置文件管理 agent 能力开关与参数，避免散落在代码里
+  - 作为后续 `resume` 和 `MCP skills` 的统一入口
+
+- **配置形式**
+  - 配置文件：YAML/TOML/JSON
+  - 只做最小必要能力，不引入复杂模板系统
+
+- **建议配置块**
+  - `agent`: model、workspace_root、read_only、audit、thread_id（可选）
+  - `tools`: filesystem/search/web/command 的 enable 与参数
+  - `command.hooks`: dangerous_commands/path_security 等
+
+- **验收标准**
+  - 支持 `--profile <path.(yaml|toml|json)>`
+  - Profile 解析后有强类型校验（Fail Fast）
+  - agent 初始化逻辑只依赖 profile（或 profile + CLI 覆盖）
+  - 默认 profile 不存在时也能启动（使用合理默认值）
+
+### 2) TUI Resume（退出后恢复继续聊，只恢复 messages/thread）
+
+- **目标**
+  - 退出 TUI 后，下次启动能继续某个对话 thread
+  - 只恢复 `messages/thread`，不恢复未完成 tool call、不恢复 UI 状态
+
+- **建议实现**
+  - session 文件（例如保存最近 thread_id 列表、last_thread_id）
+  - CLI 参数支持：`--thread <id>`
+
+- **验收标准**
+  - 重启后使用同一个 `thread_id` 可加载历史 messages 并继续对话
+  - 提供明确的 “当前 thread_id” 展示与切换入口
+
+### 3) MCP Skill 能力支持
+
+- **目标**
+  - 支持通过 MCP 引入 skills/servers，并以 tool 的形式注入 agent
+
+- **依赖**
+  - 依赖 Agent Profile 作为启用与权限策略入口
+
+- **验收标准**
+  - Profile 可配置 MCP servers/skills 的 enable、权限、白名单
+  - 可观测性：加载日志、调用日志、失败可定位
 
 ---
 
-## 不做向后兼容
+## 当前决策
 
-- 工具名从 `bash` 改为 `run_command`
-- 参数名从 `command` 改为 `CommandLine`
-- 删除旧的 `middleware/shell/` 目录
+- **开发顺序**
+  - 先做 Agent Profile
+  - 再做 TUI Resume（只恢复 messages/thread）
+  - 最后做 MCP Skill
