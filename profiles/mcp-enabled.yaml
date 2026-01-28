@@ -2,7 +2,7 @@ agent:
   model: claude-sonnet-4-5-20250929
   workspace_root: ~/Desktop/project/v1/文稿/project/leon/test_workspace
 
-tools:
+tool:
   filesystem:
     enabled: false
   command:

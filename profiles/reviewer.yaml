@@ -1,22 +1,22 @@
 agent:
   model: "claude-sonnet-4-5-20250929"
   workspace_root: null
-  read_only: true
-  enable_audit_log: true
 
 system_prompt: "You are a code reviewer. Focus on analyzing code quality, security, and best practices. You cannot modify files."
 
-tools:
+tool:
   filesystem:
     enabled: true
-    read_only: true
-    allowed_extensions: null
-
+    tools:
+      write_file: false
+      edit_file: false
+      multi_edit: false
   search:
     enabled: true
-
   web:
     enabled: true
-
   command:
     enabled: false
+
+mcp:
+  enabled: false
