@@ -373,7 +373,7 @@ class FileSystemMiddleware(AgentMiddleware):
                     "name": self.TOOL_EDIT_FILE,
                     "description": (
                         "Edit existing file using exact string replacement (diff-style). "
-                        "IMPORTANT: You MUST call read_file on this exact file in this conversation before calling edit_file, or the edit will fail. "
+                        "MUST use read_file before editing. "
                         "old_string must match file content exactly (including whitespace/indentation). "
                         "old_string must be unique in file. "
                         "old_string and new_string must be different (no-op edits forbidden)."
