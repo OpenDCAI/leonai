@@ -12,6 +12,11 @@ except ImportError:
 class AgentConfig(BaseModel):
     model: str = "claude-sonnet-4-5-20250929"
     workspace_root: str | None = None
+    read_only: bool = False
+    enable_audit_log: bool = True
+    allowed_extensions: list[str] | None = None
+    block_dangerous_commands: bool = True
+    block_network_commands: bool = False
 
 
 class ReadFileConfig(BaseModel):
