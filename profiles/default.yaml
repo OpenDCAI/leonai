@@ -7,18 +7,20 @@ agent:
 system_prompt: null
 
 tools:
-  filesystem:
-    enabled: true
-    read_only: false
-    allowed_extensions: null
+  read_file: true
+  write_file: true
+  edit_file: true
+  multi_edit: true
+  list_dir: true
+  grep_search: true
+  find_by_name: true
+  web_search: true
+  read_url_content: true
+  view_web_content: true
+  run_command: true
+  command_status: true
 
-  search:
-    enabled: true
-
-  web:
-    enabled: true
-
-  command:
-    enabled: true
-    block_dangerous_commands: true
-    block_network_commands: false
+  filesystem_read_only: false
+  filesystem_allowed_extensions: null
+  command_block_dangerous: true
+  command_block_network: false

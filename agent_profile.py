@@ -9,20 +9,6 @@ except ImportError:
     raise ImportError("需要安装 pydantic: pip install pydantic")
 
 
-class ToolConfig(BaseModel):
-    enabled: bool = True
-
-
-class FileSystemConfig(ToolConfig):
-    read_only: bool = False
-    allowed_extensions: list[str] | None = None
-
-
-class CommandConfig(ToolConfig):
-    block_dangerous_commands: bool = True
-    block_network_commands: bool = False
-
-
 class AgentConfig(BaseModel):
     model: str = "claude-sonnet-4-5-20250929"
     workspace_root: str | None = None
@@ -31,10 +17,24 @@ class AgentConfig(BaseModel):
 
 
 class ToolsConfig(BaseModel):
-    filesystem: FileSystemConfig = Field(default_factory=FileSystemConfig)
-    search: ToolConfig = Field(default_factory=ToolConfig)
-    web: ToolConfig = Field(default_factory=ToolConfig)
-    command: CommandConfig = Field(default_factory=CommandConfig)
+    read_file: bool = True
+    write_file: bool = True
+    edit_file: bool = True
+    multi_edit: bool = True
+    list_dir: bool = True
+    grep_search: bool = True
+    find_by_name: bool = True
+    web_search: bool = True
+    read_url_content: bool = True
+    view_web_content: bool = True
+    run_command: bool = True
+    command_status: bool = True
+
+    # Global settings
+    filesystem_read_only: bool = False
+    filesystem_allowed_extensions: list[str] | None = None
+    command_block_dangerous: bool = True
+    command_block_network: bool = False
 
 
 class MCPServerConfig(BaseModel):
