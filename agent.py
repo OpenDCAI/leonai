@@ -190,15 +190,11 @@ class LeonAgent:
         """构建 middleware 栈"""
         middleware = []
 
-        # 1. Prompt Caching
-        if self.profile.tools.prompt_caching.enabled:
-            middleware.append(PromptCachingMiddleware(
-                ttl=self.profile.tools.prompt_caching.ttl,
-                min_messages_to_cache=self.profile.tools.prompt_caching.min_messages_to_cache
-            ))
+        # 1. Prompt Caching（架构级，固定启用）
+        middleware.append(PromptCachingMiddleware(ttl="5m", min_messages_to_cache=0))
 
         # 2. FileSystem
-        if self.profile.tools.filesystem.enabled:
+        if self.profile.tool.filesystem.enabled:
             file_hooks = []
             if self.enable_audit_log:
                 file_hooks.append(FileAccessLoggerHook(workspace_root=self.workspace_root, log_file="file_access.log"))
@@ -208,54 +204,54 @@ class LeonAgent:
                 allowed_extensions=self.allowed_file_extensions,
             ))
             fs_tools = {
-                'read_file': self.profile.tools.filesystem.read_file,
-                'write_file': self.profile.tools.filesystem.write_file,
-                'edit_file': self.profile.tools.filesystem.edit_file,
-                'multi_edit': self.profile.tools.filesystem.multi_edit,
-                'list_dir': self.profile.tools.filesystem.list_dir,
+                'read_file': self.profile.tool.filesystem.tools.read_file.enabled,
+                'write_file': self.profile.tool.filesystem.tools.write_file,
+                'edit_file': self.profile.tool.filesystem.tools.edit_file,
+                'multi_edit': self.profile.tool.filesystem.tools.multi_edit,
+                'list_dir': self.profile.tool.filesystem.tools.list_dir,
             }
             middleware.append(FileSystemMiddleware(
                 workspace_root=self.workspace_root,
                 read_only=self.read_only,
-                max_file_size=self.profile.tools.filesystem.max_file_size,
+                max_file_size=self.profile.tool.filesystem.tools.read_file.max_file_size,
                 allowed_extensions=self.allowed_file_extensions,
                 hooks=file_hooks,
                 enabled_tools=fs_tools,
             ))
 
         # 3. Search
-        if self.profile.tools.search.enabled:
+        if self.profile.tool.search.enabled:
             search_tools = {
-                'grep_search': self.profile.tools.search.grep_search,
-                'find_by_name': self.profile.tools.search.find_by_name,
+                'grep_search': self.profile.tool.search.tools.grep_search.enabled,
+                'find_by_name': self.profile.tool.search.tools.find_by_name,
             }
             middleware.append(SearchMiddleware(
                 workspace_root=self.workspace_root,
-                max_results=self.profile.tools.search.max_results,
-                max_file_size=self.profile.tools.search.max_file_size,
-                prefer_system_tools=self.profile.tools.search.prefer_system_tools,
+                max_results=self.profile.tool.search.max_results,
+                max_file_size=self.profile.tool.search.tools.grep_search.max_file_size,
+                prefer_system_tools=True,
                 enabled_tools=search_tools,
             ))
 
         # 4. Web
-        if self.profile.tools.web.enabled:
+        if self.profile.tool.web.enabled:
             web_tools = {
-                'web_search': self.profile.tools.web.web_search,
-                'read_url_content': self.profile.tools.web.read_url_content,
-                'view_web_content': self.profile.tools.web.view_web_content,
+                'web_search': self.profile.tool.web.tools.web_search.enabled,
+                'read_url_content': self.profile.tool.web.tools.read_url_content.enabled,
+                'view_web_content': self.profile.tool.web.tools.view_web_content,
             }
             middleware.append(WebMiddleware(
-                tavily_api_key=self.profile.tools.web.tavily_api_key or os.getenv("TAVILY_API_KEY"),
-                exa_api_key=self.profile.tools.web.exa_api_key or os.getenv("EXA_API_KEY"),
-                firecrawl_api_key=self.profile.tools.web.firecrawl_api_key or os.getenv("FIRECRAWL_API_KEY"),
-                jina_api_key=self.profile.tools.web.jina_api_key or os.getenv("JINA_AI_API_KEY"),
-                max_search_results=self.profile.tools.web.max_search_results,
-                timeout=self.profile.tools.web.timeout,
+                tavily_api_key=self.profile.tool.web.tools.web_search.tavily_api_key or os.getenv("TAVILY_API_KEY"),
+                exa_api_key=self.profile.tool.web.tools.web_search.exa_api_key or os.getenv("EXA_API_KEY"),
+                firecrawl_api_key=self.profile.tool.web.tools.web_search.firecrawl_api_key or os.getenv("FIRECRAWL_API_KEY"),
+                jina_api_key=self.profile.tool.web.tools.read_url_content.jina_api_key or os.getenv("JINA_AI_API_KEY"),
+                max_search_results=self.profile.tool.web.tools.web_search.max_results,
+                timeout=self.profile.tool.web.timeout,
                 enabled_tools=web_tools,
             ))
 
         # 5. Command
-        if self.profile.tools.command.enabled:
+        if self.profile.tool.command.enabled:
             command_hooks = []
             if self.block_dangerous_commands:
                 command_hooks.append(DangerousCommandsHook(
@@ -264,12 +260,12 @@ class LeonAgent:
                 ))
             command_hooks.append(PathSecurityHook(workspace_root=self.workspace_root))
             command_tools = {
-                'run_command': self.profile.tools.command.run_command,
-                'command_status': self.profile.tools.command.command_status,
+                'run_command': self.profile.tool.command.tools.run_command.enabled,
+                'command_status': self.profile.tool.command.tools.command_status,
             }
             middleware.append(CommandMiddleware(
                 workspace_root=self.workspace_root,
-                default_timeout=self.profile.tools.command.default_timeout,
+                default_timeout=self.profile.tool.command.tools.run_command.default_timeout,
                 hooks=command_hooks,
                 enabled_tools=command_tools,
             ))

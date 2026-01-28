@@ -9,63 +9,86 @@ except ImportError:
     raise ImportError("需要安装 pydantic: pip install pydantic")
 
 
-class PromptCachingConfig(BaseModel):
-    enabled: bool = True
-    ttl: str = "5m"
-    min_messages_to_cache: int = 0
+class AgentConfig(BaseModel):
+    model: str = "claude-sonnet-4-5-20250929"
+    workspace_root: str | None = None
 
 
-class FileSystemConfig(BaseModel):
+class ReadFileConfig(BaseModel):
     enabled: bool = True
-    max_file_size: int = 10 * 1024 * 1024  # 10MB
-    allowed_extensions: list[str] | None = None
-    read_file: bool = True
+    max_file_size: int = 10 * 1024 * 1024
+
+
+class FileSystemToolsConfig(BaseModel):
+    read_file: ReadFileConfig = Field(default_factory=ReadFileConfig)
     write_file: bool = True
     edit_file: bool = True
     multi_edit: bool = True
     list_dir: bool = True
 
 
+class FileSystemConfig(BaseModel):
+    enabled: bool = True
+    tools: FileSystemToolsConfig = Field(default_factory=FileSystemToolsConfig)
+
+
+class GrepSearchConfig(BaseModel):
+    enabled: bool = True
+    max_file_size: int = 10 * 1024 * 1024
+
+
+class SearchToolsConfig(BaseModel):
+    grep_search: GrepSearchConfig = Field(default_factory=GrepSearchConfig)
+    find_by_name: bool = True
+
+
 class SearchConfig(BaseModel):
     enabled: bool = True
     max_results: int = 50
-    max_file_size: int = 10 * 1024 * 1024  # 10MB
-    prefer_system_tools: bool = True
-    grep_search: bool = True
-    find_by_name: bool = True
+    tools: SearchToolsConfig = Field(default_factory=SearchToolsConfig)
+
+
+class WebSearchConfig(BaseModel):
+    enabled: bool = True
+    max_results: int = 5
+    tavily_api_key: str | None = None
+    exa_api_key: str | None = None
+    firecrawl_api_key: str | None = None
+
+
+class ReadUrlContentConfig(BaseModel):
+    enabled: bool = True
+    jina_api_key: str | None = None
+
+
+class WebToolsConfig(BaseModel):
+    web_search: WebSearchConfig = Field(default_factory=WebSearchConfig)
+    read_url_content: ReadUrlContentConfig = Field(default_factory=ReadUrlContentConfig)
+    view_web_content: bool = True
 
 
 class WebConfig(BaseModel):
     enabled: bool = True
-    max_search_results: int = 5
     timeout: int = 15
-    tavily_api_key: str | None = None
-    exa_api_key: str | None = None
-    firecrawl_api_key: str | None = None
-    jina_api_key: str | None = None
-    web_search: bool = True
-    read_url_content: bool = True
-    view_web_content: bool = True
+    tools: WebToolsConfig = Field(default_factory=WebToolsConfig)
+
+
+class RunCommandConfig(BaseModel):
+    enabled: bool = True
+    default_timeout: int = 120
+
+
+class CommandToolsConfig(BaseModel):
+    run_command: RunCommandConfig = Field(default_factory=RunCommandConfig)
+    command_status: bool = True
 
 
 class CommandConfig(BaseModel):
     enabled: bool = True
-    default_timeout: int = 120
-    block_dangerous_commands: bool = True
-    block_network_commands: bool = False
-    run_command: bool = True
-    command_status: bool = True
+    tools: CommandToolsConfig = Field(default_factory=CommandToolsConfig)
 
 
-class AgentConfig(BaseModel):
-    model: str = "claude-sonnet-4-5-20250929"
-    workspace_root: str | None = None
-    read_only: bool = False
-    enable_audit_log: bool = True
-
-
-class ToolsConfig(BaseModel):
-    prompt_caching: PromptCachingConfig = Field(default_factory=PromptCachingConfig)
+class ToolConfig(BaseModel):
     filesystem: FileSystemConfig = Field(default_factory=FileSystemConfig)
     search: SearchConfig = Field(default_factory=SearchConfig)
     web: WebConfig = Field(default_factory=WebConfig)
@@ -92,9 +115,8 @@ class SkillsConfig(BaseModel):
 class AgentProfile(BaseModel):
     agent: AgentConfig = Field(default_factory=AgentConfig)
     system_prompt: str | None = None
-    tools: ToolsConfig = Field(default_factory=ToolsConfig)
+    tool: ToolConfig = Field(default_factory=ToolConfig)
     mcp: MCPConfig = Field(default_factory=MCPConfig)
-    skills: SkillsConfig = Field(default_factory=SkillsConfig)
 
 
     @classmethod
