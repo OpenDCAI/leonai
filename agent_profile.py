@@ -37,10 +37,24 @@ class ToolsConfig(BaseModel):
     command: CommandConfig = Field(default_factory=CommandConfig)
 
 
+class MCPServerConfig(BaseModel):
+    command: str | None = None
+    args: list[str] = Field(default_factory=list)
+    url: str | None = None
+    env: dict[str, str] = Field(default_factory=dict)
+    allowed_tools: list[str] | None = None
+
+
+class MCPConfig(BaseModel):
+    enabled: bool = True
+    servers: dict[str, MCPServerConfig] = Field(default_factory=dict)
+
+
 class AgentProfile(BaseModel):
     agent: AgentConfig = Field(default_factory=AgentConfig)
     system_prompt: str | None = None
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
+    mcp: MCPConfig = Field(default_factory=MCPConfig)
 
 
     @classmethod
