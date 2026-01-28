@@ -141,12 +141,12 @@ class LeonAgent:
         self.workspace_root.mkdir(parents=True, exist_ok=True)
 
         # 配置参数
-        self.read_only = profile.tools.filesystem_read_only
-        self.allowed_file_extensions = profile.tools.filesystem_allowed_extensions
-        self.block_dangerous_commands = profile.tools.command_block_dangerous
-        self.block_network_commands = profile.tools.command_block_network
+        self.read_only = profile.tools.filesystem.read_only
+        self.allowed_file_extensions = profile.tools.filesystem.allowed_extensions
+        self.block_dangerous_commands = profile.tools.command.block_dangerous_commands
+        self.block_network_commands = profile.tools.command.block_network_commands
         self.enable_audit_log = profile.agent.enable_audit_log
-        self.enable_web_tools = any([profile.tools.web_search, profile.tools.read_url_content, profile.tools.view_web_content])
+        self.enable_web_tools = profile.tools.web.enabled
         self.tavily_api_key = tavily_api_key or os.getenv("TAVILY_API_KEY")
         self.exa_api_key = exa_api_key or os.getenv("EXA_API_KEY")
         self.firecrawl_api_key = firecrawl_api_key or os.getenv("FIRECRAWL_API_KEY")
@@ -198,8 +198,7 @@ class LeonAgent:
         middleware.append(PromptCachingMiddleware(ttl="5m", min_messages_to_cache=0))
 
         # 2. FileSystem
-        if any([self.profile.tools.read_file, self.profile.tools.write_file, self.profile.tools.edit_file,
-                self.profile.tools.multi_edit, self.profile.tools.list_dir]):
+        if self.profile.tools.filesystem.enabled:
             file_hooks = []
             if self.enable_audit_log:
                 file_hooks.append(FileAccessLoggerHook(workspace_root=self.workspace_root, log_file="file_access.log"))
@@ -208,28 +207,49 @@ class LeonAgent:
                 read_only=self.read_only,
                 allowed_extensions=self.allowed_file_extensions,
             ))
+            fs_tools = {
+                'read_file': self.profile.tools.filesystem.read_file,
+                'write_file': self.profile.tools.filesystem.write_file,
+                'edit_file': self.profile.tools.filesystem.edit_file,
+                'multi_edit': self.profile.tools.filesystem.multi_edit,
+                'list_dir': self.profile.tools.filesystem.list_dir,
+            }
             middleware.append(FileSystemMiddleware(
                 workspace_root=self.workspace_root,
                 read_only=self.read_only,
                 allowed_extensions=self.allowed_file_extensions,
                 hooks=file_hooks,
+                enabled_tools=fs_tools,
             ))
 
         # 3. Search
-        if any([self.profile.tools.grep_search, self.profile.tools.find_by_name]):
-            middleware.append(SearchMiddleware(workspace_root=self.workspace_root))
+        if self.profile.tools.search.enabled:
+            search_tools = {
+                'grep_search': self.profile.tools.search.grep_search,
+                'find_by_name': self.profile.tools.search.find_by_name,
+            }
+            middleware.append(SearchMiddleware(
+                workspace_root=self.workspace_root,
+                enabled_tools=search_tools,
+            ))
 
         # 4. Web
-        if self.enable_web_tools:
+        if self.profile.tools.web.enabled:
+            web_tools = {
+                'web_search': self.profile.tools.web.web_search,
+                'read_url_content': self.profile.tools.web.read_url_content,
+                'view_web_content': self.profile.tools.web.view_web_content,
+            }
             middleware.append(WebMiddleware(
                 tavily_api_key=self.tavily_api_key,
                 exa_api_key=self.exa_api_key,
                 firecrawl_api_key=self.firecrawl_api_key,
                 jina_api_key=self.jina_api_key,
+                enabled_tools=web_tools,
             ))
 
         # 5. Command
-        if any([self.profile.tools.run_command, self.profile.tools.command_status]):
+        if self.profile.tools.command.enabled:
             command_hooks = []
             if self.block_dangerous_commands:
                 command_hooks.append(DangerousCommandsHook(
@@ -237,7 +257,15 @@ class LeonAgent:
                     block_network=self.block_network_commands,
                 ))
             command_hooks.append(PathSecurityHook(workspace_root=self.workspace_root))
-            middleware.append(CommandMiddleware(workspace_root=self.workspace_root, hooks=command_hooks))
+            command_tools = {
+                'run_command': self.profile.tools.command.run_command,
+                'command_status': self.profile.tools.command.command_status,
+            }
+            middleware.append(CommandMiddleware(
+                workspace_root=self.workspace_root,
+                hooks=command_hooks,
+                enabled_tools=command_tools,
+            ))
 
         return middleware
 
