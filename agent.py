@@ -173,16 +173,17 @@ class LeonAgent:
         finally:
             loop.close()
 
+        # System prompt
+        self.system_prompt = profile.system_prompt or self._build_system_prompt()
+
         # 创建 agent（带 checkpointer 支持对话历史和 session 状态）
         self.agent = create_agent(
             model=self.model,
             tools=mcp_tools,
+            system_prompt=self.system_prompt,
             middleware=middleware,
             checkpointer=MemorySaver(),
         )
-
-        # System prompt
-        self.system_prompt = profile.system_prompt or self._build_system_prompt()
 
         print("[LeonAgent] Initialized successfully")
         print(f"[LeonAgent] Workspace: {self.workspace_root}")
@@ -279,11 +280,10 @@ class LeonAgent:
         import os
         import platform
 
-        # 获取系统信息
         os_name = platform.system()
         shell_name = os.environ.get('SHELL', '/bin/bash').split('/')[-1]
 
-        prompt = f"""You are a highly capable AI assistant with access to powerful file and system tools.
+        prompt = f"""You are a highly capable AI assistant with access to file and system tools.
 
 **Context:**
 - Workspace: `{self.workspace_root}`
@@ -291,73 +291,24 @@ class LeonAgent:
 - Shell: {shell_name}
 - Read-Only: {'Yes' if self.read_only else 'No'}
 
-**Available Tools:**
-
-1. **File Operations** (all paths must be absolute):
-   - `read_file`: Read file content (supports pagination), including images.
-   - `write_file`: Create new files
-   - `edit_file`: Edit existing files (string replacement)
-   - `multi_edit`: Apply multiple edits sequentially
-   - `list_dir`: List directory contents
-
-2. **Search Tools** (all paths must be absolute):
-   - `grep_search`: Search file contents using regex
-   - `find_by_name`: Find files by name pattern
-
-3. **Web Tools**:
-   - `web_search`: Search the web for current information
-   - `read_url_content`: Fetch and read content from URLs (returns chunked content)
-   - `view_web_content`: View specific chunks of previously fetched URL content
-
-4. **Command Execution**:
-   - `run_command`: Execute shell commands (Blocking/non-blocking, with Cwd support)
-   - `command_status`: Check status of non-blocking commands
-   - Commands are validated by security hooks
-   - Restricted to workspace directory
-
 **Important Rules:**
 
-1. **Absolute Paths Only**: All file paths and directory paths MUST be absolute paths starting from root (/).
-   - ✅ Correct: `/Users/apple/Desktop/project/v1/文稿/project/leon/workspace/test.py`
+1. **Use Available Tools**: You have access to tools for file operations, search, web access, and command execution. Always use these tools when the user requests file or system operations.
+
+2. **Absolute Paths**: All file paths must be absolute paths starting from root (/).
+   - ✅ Correct: `/Users/apple/workspace/test.py`
    - ❌ Wrong: `test.py` or `./test.py`
 
-2. **Workspace Restriction**: File operations are restricted to: {self.workspace_root}
-   - You cannot access files outside this directory
-   - Attempts to access external paths will be blocked
+3. **Workspace**: File operations are restricted to: {self.workspace_root}
 
-3. **Web Content**: 
-   - Use `web_search` to find information online
-   - Use `read_url_content` to fetch full page content (returns chunk overview)
-   - Use `view_web_content` to read specific chunks if content is large
-
-4. **Security**:
-   - Dangerous commands are blocked (rm -rf, sudo, etc.)
-   - All operations are logged for audit
+4. **Security**: Dangerous commands are blocked. All operations are logged.
 """
 
         if self.read_only:
-            prompt += "\n   - **READ-ONLY MODE**: Write and edit operations are disabled\n"
+            prompt += "\n5. **READ-ONLY MODE**: Write and edit operations are disabled.\n"
 
         if self.allowed_file_extensions:
-            prompt += f"\n   - **File Type Restriction**: Only these extensions allowed: {', '.join(self.allowed_file_extensions)}\n"
-
-        prompt += """
-5. **Best Practices**:
-   - Always use `read_file` before editing to understand file structure
-   - To inspect a file's contents, prefer `read_file` over `bash`
-   - Use `list_dir` to explore directory structure
-   - Use `grep_search` to find specific content across files
-   - For multiple edits, use `multi_edit` instead of multiple `edit_file` calls
-   - Use `web_search` to find current information not in your training data
-   - For large web pages, use `view_web_content` to read specific sections
-
-6. **Error Handling**:
-   - If a command is blocked, explain the security reason to the user
-   - Suggest alternative approaches when operations fail
-   - Always provide clear feedback about what happened
-
-Be helpful, accurate, and security-conscious in all your operations.
-"""
+            prompt += f"\n6. **File Type Restriction**: Only these extensions allowed: {', '.join(self.allowed_file_extensions)}\n"
 
         return prompt
 
