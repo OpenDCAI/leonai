@@ -51,3 +51,7 @@ tool:
 mcp:
   enabled: false
   servers: {}
+
+skills:
+  enabled: false
+  paths: []
