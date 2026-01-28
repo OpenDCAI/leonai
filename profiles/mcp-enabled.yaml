@@ -4,9 +4,13 @@ agent:
 
 tools:
   filesystem:
-    enabled: true
+    enabled: false
   command:
     enabled: true
+  search:
+    enabled: false
+  web:
+    enabled: false
 
 mcp:
   enabled: true
@@ -14,4 +18,3 @@ mcp:
     filesystem:
       command: npx
       args: ["-y", "@modelcontextprotocol/server-filesystem", "/Users/apple/workspace"]
-      allowed_tools: ["read_file", "write_file", "list_directory"]
