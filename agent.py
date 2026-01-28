@@ -141,16 +141,12 @@ class LeonAgent:
         self.workspace_root.mkdir(parents=True, exist_ok=True)
 
         # 配置参数
-        self.read_only = profile.tools.filesystem.read_only
+        self.read_only = profile.agent.read_only
         self.allowed_file_extensions = profile.tools.filesystem.allowed_extensions
         self.block_dangerous_commands = profile.tools.command.block_dangerous_commands
         self.block_network_commands = profile.tools.command.block_network_commands
         self.enable_audit_log = profile.agent.enable_audit_log
         self.enable_web_tools = profile.tools.web.enabled
-        self.tavily_api_key = tavily_api_key or os.getenv("TAVILY_API_KEY")
-        self.exa_api_key = exa_api_key or os.getenv("EXA_API_KEY")
-        self.firecrawl_api_key = firecrawl_api_key or os.getenv("FIRECRAWL_API_KEY")
-        self.jina_api_key = jina_api_key or os.getenv("JINA_AI_API_KEY")
         self._session_pool: dict[str, Any] = {}
 
         # 初始化模型
@@ -195,7 +191,11 @@ class LeonAgent:
         middleware = []
 
         # 1. Prompt Caching
-        middleware.append(PromptCachingMiddleware(ttl="5m", min_messages_to_cache=0))
+        if self.profile.tools.prompt_caching.enabled:
+            middleware.append(PromptCachingMiddleware(
+                ttl=self.profile.tools.prompt_caching.ttl,
+                min_messages_to_cache=self.profile.tools.prompt_caching.min_messages_to_cache
+            ))
 
         # 2. FileSystem
         if self.profile.tools.filesystem.enabled:
@@ -217,6 +217,7 @@ class LeonAgent:
             middleware.append(FileSystemMiddleware(
                 workspace_root=self.workspace_root,
                 read_only=self.read_only,
+                max_file_size=self.profile.tools.filesystem.max_file_size,
                 allowed_extensions=self.allowed_file_extensions,
                 hooks=file_hooks,
                 enabled_tools=fs_tools,
@@ -230,6 +231,9 @@ class LeonAgent:
             }
             middleware.append(SearchMiddleware(
                 workspace_root=self.workspace_root,
+                max_results=self.profile.tools.search.max_results,
+                max_file_size=self.profile.tools.search.max_file_size,
+                prefer_system_tools=self.profile.tools.search.prefer_system_tools,
                 enabled_tools=search_tools,
             ))
 
@@ -241,10 +245,12 @@ class LeonAgent:
                 'view_web_content': self.profile.tools.web.view_web_content,
             }
             middleware.append(WebMiddleware(
-                tavily_api_key=self.tavily_api_key,
-                exa_api_key=self.exa_api_key,
-                firecrawl_api_key=self.firecrawl_api_key,
-                jina_api_key=self.jina_api_key,
+                tavily_api_key=self.profile.tools.web.tavily_api_key or os.getenv("TAVILY_API_KEY"),
+                exa_api_key=self.profile.tools.web.exa_api_key or os.getenv("EXA_API_KEY"),
+                firecrawl_api_key=self.profile.tools.web.firecrawl_api_key or os.getenv("FIRECRAWL_API_KEY"),
+                jina_api_key=self.profile.tools.web.jina_api_key or os.getenv("JINA_AI_API_KEY"),
+                max_search_results=self.profile.tools.web.max_search_results,
+                timeout=self.profile.tools.web.timeout,
                 enabled_tools=web_tools,
             ))
 
@@ -263,6 +269,7 @@ class LeonAgent:
             }
             middleware.append(CommandMiddleware(
                 workspace_root=self.workspace_root,
+                default_timeout=self.profile.tools.command.default_timeout,
                 hooks=command_hooks,
                 enabled_tools=command_tools,
             ))

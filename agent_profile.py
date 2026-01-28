@@ -9,9 +9,15 @@ except ImportError:
     raise ImportError("需要安装 pydantic: pip install pydantic")
 
 
+class PromptCachingConfig(BaseModel):
+    enabled: bool = True
+    ttl: str = "5m"
+    min_messages_to_cache: int = 0
+
+
 class FileSystemConfig(BaseModel):
     enabled: bool = True
-    read_only: bool = False
+    max_file_size: int = 10 * 1024 * 1024  # 10MB
     allowed_extensions: list[str] | None = None
     read_file: bool = True
     write_file: bool = True
@@ -22,12 +28,21 @@ class FileSystemConfig(BaseModel):
 
 class SearchConfig(BaseModel):
     enabled: bool = True
+    max_results: int = 50
+    max_file_size: int = 10 * 1024 * 1024  # 10MB
+    prefer_system_tools: bool = True
     grep_search: bool = True
     find_by_name: bool = True
 
 
 class WebConfig(BaseModel):
     enabled: bool = True
+    max_search_results: int = 5
+    timeout: int = 15
+    tavily_api_key: str | None = None
+    exa_api_key: str | None = None
+    firecrawl_api_key: str | None = None
+    jina_api_key: str | None = None
     web_search: bool = True
     read_url_content: bool = True
     view_web_content: bool = True
@@ -35,6 +50,7 @@ class WebConfig(BaseModel):
 
 class CommandConfig(BaseModel):
     enabled: bool = True
+    default_timeout: int = 120
     block_dangerous_commands: bool = True
     block_network_commands: bool = False
     run_command: bool = True
@@ -49,6 +65,7 @@ class AgentConfig(BaseModel):
 
 
 class ToolsConfig(BaseModel):
+    prompt_caching: PromptCachingConfig = Field(default_factory=PromptCachingConfig)
     filesystem: FileSystemConfig = Field(default_factory=FileSystemConfig)
     search: SearchConfig = Field(default_factory=SearchConfig)
     web: WebConfig = Field(default_factory=WebConfig)
