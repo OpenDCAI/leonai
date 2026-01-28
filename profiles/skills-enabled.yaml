@@ -1,0 +1,21 @@
+agent:
+  model: claude-sonnet-4-5-20250929
+  workspace_root: null
+
+tool:
+  filesystem:
+    enabled: true
+  search:
+    enabled: true
+  web:
+    enabled: false
+  command:
+    enabled: true
+
+mcp:
+  enabled: false
+
+skills:
+  enabled: true
+  paths:
+    - ./skills

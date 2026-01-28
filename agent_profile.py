@@ -115,6 +115,7 @@ class MCPConfig(BaseModel):
 
 class SkillsConfig(BaseModel):
     enabled: bool = True
+    paths: list[str] = Field(default_factory=list)
 
 
 class AgentProfile(BaseModel):
@@ -122,6 +123,7 @@ class AgentProfile(BaseModel):
     system_prompt: str | None = None
     tool: ToolConfig = Field(default_factory=ToolConfig)
     mcp: MCPConfig = Field(default_factory=MCPConfig)
+    skills: SkillsConfig = Field(default_factory=SkillsConfig)
 
 
     @classmethod

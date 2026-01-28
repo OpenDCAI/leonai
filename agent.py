@@ -32,6 +32,7 @@ from middleware.command import CommandMiddleware
 from middleware.filesystem import FileSystemMiddleware
 from middleware.prompt_caching import PromptCachingMiddleware
 from middleware.search import SearchMiddleware
+from middleware.skills import SkillsMiddleware
 
 # 导入 hooks
 from middleware.shell.hooks.dangerous_commands import DangerousCommandsHook
@@ -269,6 +270,10 @@ class LeonAgent:
                 hooks=command_hooks,
                 enabled_tools=command_tools,
             ))
+
+        # 6. Skills
+        if self.profile.skills.enabled and self.profile.skills.paths:
+            middleware.append(SkillsMiddleware(skill_paths=self.profile.skills.paths))
 
         return middleware
 
