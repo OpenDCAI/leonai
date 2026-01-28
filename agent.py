@@ -257,8 +257,19 @@ class LeonAgent:
             configs[name] = config
 
         try:
-            client = MultiServerMCPClient(configs, tool_name_prefix=True)
+            client = MultiServerMCPClient(configs, tool_name_prefix=False)
             tools = await client.get_tools()
+
+            # Apply mcp__ prefix to match Claude Code naming convention
+            for tool in tools:
+                # Extract server name from tool metadata or connection
+                server_name = None
+                for name in configs.keys():
+                    if hasattr(tool, 'metadata') and tool.metadata:
+                        server_name = name
+                        break
+                if server_name:
+                    tool.name = f"mcp__{server_name}__{tool.name}"
 
             if any(cfg.allowed_tools for cfg in self.profile.mcp.servers.values()):
                 tools = [t for t in tools if self._is_tool_allowed(t)]
