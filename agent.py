@@ -257,7 +257,7 @@ class LeonAgent:
             configs[name] = config
 
         try:
-            client = MultiServerMCPClient(configs)
+            client = MultiServerMCPClient(configs, tool_name_prefix=True)
             tools = await client.get_tools()
 
             if any(cfg.allowed_tools for cfg in self.profile.mcp.servers.values()):
