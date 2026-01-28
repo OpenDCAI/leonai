@@ -1,0 +1,22 @@
+agent:
+  model: "claude-sonnet-4-5-20250929"
+  workspace_root: null
+  read_only: true
+  enable_audit_log: false
+
+system_prompt: "You are a research assistant. Focus on finding information online and analyzing documentation."
+
+tools:
+  filesystem:
+    enabled: true
+    read_only: true
+    allowed_extensions: null
+
+  search:
+    enabled: true
+
+  web:
+    enabled: true
+
+  command:
+    enabled: false

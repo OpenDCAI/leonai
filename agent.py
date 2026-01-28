@@ -27,6 +27,7 @@ if _env_file.exists():
             key, value = line.split("=", 1)
             os.environ[key] = value
 
+from agent_profile import AgentProfile
 from middleware.command import CommandMiddleware
 from middleware.filesystem import FileSystemMiddleware
 from middleware.prompt_caching import PromptCachingMiddleware
@@ -58,16 +59,17 @@ class LeonAgent:
 
     def __init__(
         self,
-        model_name: str = "claude-sonnet-4-5-20250929",
+        model_name: str | None = None,
         api_key: str | None = None,
         workspace_root: str | Path | None = None,
         *,
-        read_only: bool = False,
+        profile: AgentProfile | str | Path | None = None,
+        read_only: bool | None = None,
         allowed_file_extensions: list[str] | None = None,
-        block_dangerous_commands: bool = True,
-        block_network_commands: bool = False,
-        enable_audit_log: bool = True,
-        enable_web_tools: bool = True,
+        block_dangerous_commands: bool | None = None,
+        block_network_commands: bool | None = None,
+        enable_audit_log: bool | None = None,
+        enable_web_tools: bool | None = None,
         tavily_api_key: str | None = None,
         exa_api_key: str | None = None,
         firecrawl_api_key: str | None = None,
@@ -80,6 +82,7 @@ class LeonAgent:
             model_name: Anthropic 模型名称
             api_key: API key (默认从环境变量读取)
             workspace_root: 工作目录（所有操作限制在此目录内）
+            profile: Agent Profile (配置文件路径或对象)
             read_only: 只读模式（禁止写入和编辑）
             allowed_file_extensions: 允许的文件扩展名（None 表示全部允许）
             block_dangerous_commands: 是否拦截危险命令
@@ -91,7 +94,33 @@ class LeonAgent:
             firecrawl_api_key: Firecrawl API key（Web 搜索）
             jina_api_key: Jina API key（URL 内容获取）
         """
-        self.model_name = model_name
+        # 加载 profile
+        if isinstance(profile, (str, Path)):
+            profile = AgentProfile.from_file(profile)
+        elif profile is None:
+            profile = AgentProfile.default()
+
+        # CLI 参数覆盖 profile
+        if model_name is not None:
+            profile.agent.model = model_name
+        if workspace_root is not None:
+            profile.agent.workspace_root = str(workspace_root)
+        if read_only is not None:
+            profile.agent.read_only = read_only
+            profile.tools.filesystem.read_only = read_only
+        if allowed_file_extensions is not None:
+            profile.tools.filesystem.allowed_extensions = allowed_file_extensions
+        if block_dangerous_commands is not None:
+            profile.tools.command.block_dangerous_commands = block_dangerous_commands
+        if block_network_commands is not None:
+            profile.tools.command.block_network_commands = block_network_commands
+        if enable_audit_log is not None:
+            profile.agent.enable_audit_log = enable_audit_log
+        if enable_web_tools is not None:
+            profile.tools.web.enabled = enable_web_tools
+
+        self.profile = profile
+        self.model_name = profile.agent.model
 
         # API key 处理
         self.api_key = api_key or os.getenv("OPENAI_API_KEY") or os.getenv("ANTHROPIC_API_KEY")
@@ -104,20 +133,20 @@ class LeonAgent:
             )
 
         # Workspace 设置
-        if workspace_root:
-            self.workspace_root = Path(workspace_root).resolve()
+        if profile.agent.workspace_root:
+            self.workspace_root = Path(profile.agent.workspace_root).expanduser().resolve()
         else:
-            self.workspace_root = Path("/Users/apple/Desktop/project/v1/文稿/project/leon/workspace")
+            self.workspace_root = Path.cwd()
 
         self.workspace_root.mkdir(parents=True, exist_ok=True)
 
         # 配置参数
-        self.read_only = read_only
-        self.allowed_file_extensions = allowed_file_extensions
-        self.block_dangerous_commands = block_dangerous_commands
-        self.block_network_commands = block_network_commands
-        self.enable_audit_log = enable_audit_log
-        self.enable_web_tools = enable_web_tools
+        self.read_only = profile.tools.filesystem.read_only
+        self.allowed_file_extensions = profile.tools.filesystem.allowed_extensions
+        self.block_dangerous_commands = profile.tools.command.block_dangerous_commands
+        self.block_network_commands = profile.tools.command.block_network_commands
+        self.enable_audit_log = profile.agent.enable_audit_log
+        self.enable_web_tools = profile.tools.web.enabled
         self.tavily_api_key = tavily_api_key or os.getenv("TAVILY_API_KEY")
         self.exa_api_key = exa_api_key or os.getenv("EXA_API_KEY")
         self.firecrawl_api_key = firecrawl_api_key or os.getenv("FIRECRAWL_API_KEY")
@@ -133,98 +162,73 @@ class LeonAgent:
         self.model = init_chat_model(self.model_name, **model_kwargs)
 
         # 构建 middleware 栈
-        middleware = []
-
-        # 1. Prompt Caching - 成本优化
-        middleware.append(
-            PromptCachingMiddleware(
-                ttl="5m",
-                min_messages_to_cache=0,
-            )
-        )
-
-        # 2. FileSystem Middleware - 文件操作
-        file_hooks = []
-
-        # 添加文件访问日志 hook
-        if self.enable_audit_log:
-            file_hooks.append(
-                FileAccessLoggerHook(
-                    workspace_root=self.workspace_root, log_file="file_access.log"
-                )
-            )
-
-        # 添加文件权限控制 hook
-        file_hooks.append(
-            FilePermissionHook(
-                workspace_root=self.workspace_root,
-                read_only=self.read_only,
-                allowed_extensions=self.allowed_file_extensions,
-            )
-        )
-
-        middleware.append(
-            FileSystemMiddleware(
-                workspace_root=self.workspace_root,
-                read_only=self.read_only,
-                allowed_extensions=self.allowed_file_extensions,
-                hooks=file_hooks,
-            )
-        )
-
-        # 3. Search Middleware - 搜索功能
-        middleware.append(SearchMiddleware(workspace_root=self.workspace_root))
-
-        # 4. Web Middleware - Web 搜索和内容获取
-        if self.enable_web_tools:
-            middleware.append(
-                WebMiddleware(
-                    tavily_api_key=self.tavily_api_key,
-                    exa_api_key=self.exa_api_key,
-                    firecrawl_api_key=self.firecrawl_api_key,
-                    jina_api_key=self.jina_api_key,
-                )
-            )
-
-        # 5. Command Middleware - 命令执行（带安全 hooks）
-        command_hooks = []
-
-        # 添加危险命令拦截 hook
-        if self.block_dangerous_commands:
-            command_hooks.append(
-                DangerousCommandsHook(
-                    workspace_root=self.workspace_root,
-                    block_network=self.block_network_commands,
-                )
-            )
-
-        # 添加路径安全检查 hook
-        command_hooks.append(
-            PathSecurityHook(workspace_root=self.workspace_root)
-        )
-
-        middleware.append(
-            CommandMiddleware(
-                workspace_root=self.workspace_root,
-                hooks=command_hooks,
-            )
-        )
+        middleware = self._build_middleware_stack()
 
         # 创建 agent（带 checkpointer 支持对话历史和 session 状态）
         self.agent = create_agent(
             model=self.model,
-            tools=[],  # 所有工具都由 middleware 提供
+            tools=[],
             middleware=middleware,
-            checkpointer=MemorySaver(),  # 保存对话历史和 shell_session_id
+            checkpointer=MemorySaver(),
         )
 
         # System prompt
-        self.system_prompt = self._build_system_prompt()
+        self.system_prompt = profile.system_prompt or self._build_system_prompt()
 
         print("[LeonAgent] Initialized successfully")
         print(f"[LeonAgent] Workspace: {self.workspace_root}")
         print(f"[LeonAgent] Read-only: {self.read_only}")
         print(f"[LeonAgent] Audit log: {self.enable_audit_log}")
+
+    def _build_middleware_stack(self) -> list:
+        """构建 middleware 栈"""
+        middleware = []
+
+        # 1. Prompt Caching
+        middleware.append(PromptCachingMiddleware(ttl="5m", min_messages_to_cache=0))
+
+        # 2. FileSystem
+        if self.profile.tools.filesystem.enabled:
+            file_hooks = []
+            if self.enable_audit_log:
+                file_hooks.append(FileAccessLoggerHook(workspace_root=self.workspace_root, log_file="file_access.log"))
+            file_hooks.append(FilePermissionHook(
+                workspace_root=self.workspace_root,
+                read_only=self.read_only,
+                allowed_extensions=self.allowed_file_extensions,
+            ))
+            middleware.append(FileSystemMiddleware(
+                workspace_root=self.workspace_root,
+                read_only=self.read_only,
+                allowed_extensions=self.allowed_file_extensions,
+                hooks=file_hooks,
+            ))
+
+        # 3. Search
+        if self.profile.tools.search.enabled:
+            middleware.append(SearchMiddleware(workspace_root=self.workspace_root))
+
+        # 4. Web
+        if self.profile.tools.web.enabled:
+            middleware.append(WebMiddleware(
+                tavily_api_key=self.tavily_api_key,
+                exa_api_key=self.exa_api_key,
+                firecrawl_api_key=self.firecrawl_api_key,
+                jina_api_key=self.jina_api_key,
+            ))
+
+        # 5. Command
+        if self.profile.tools.command.enabled:
+            command_hooks = []
+            if self.block_dangerous_commands:
+                command_hooks.append(DangerousCommandsHook(
+                    workspace_root=self.workspace_root,
+                    block_network=self.block_network_commands,
+                ))
+            command_hooks.append(PathSecurityHook(workspace_root=self.workspace_root))
+            middleware.append(CommandMiddleware(workspace_root=self.workspace_root, hooks=command_hooks))
+
+        return middleware
 
     def _build_system_prompt(self) -> str:
         """构建系统提示词"""

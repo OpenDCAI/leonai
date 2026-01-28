@@ -1,0 +1,24 @@
+agent:
+  model: "claude-sonnet-4-5-20250929"
+  workspace_root: null
+  read_only: false
+  enable_audit_log: true
+
+system_prompt: null
+
+tools:
+  filesystem:
+    enabled: true
+    read_only: false
+    allowed_extensions: null
+
+  search:
+    enabled: true
+
+  web:
+    enabled: true
+
+  command:
+    enabled: true
+    block_dangerous_commands: true
+    block_network_commands: false
