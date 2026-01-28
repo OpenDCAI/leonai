@@ -313,6 +313,104 @@ class FileSystemMiddleware(AgentMiddleware):
         except Exception as e:
             return f"Error listing directory: {e}"
 
+    def _get_tool_schemas(self) -> list[dict]:
+        """获取文件系统工具 schema（sync/async 共享）"""
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": self.TOOL_READ_FILE,
+                    "description": "Read file content (text/code/images/PDF/PPTX/Notebook). Images return as content_blocks. Path must be absolute.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "file_path": {"type": "string", "description": "Absolute file path (e.g., /path/to/file). Do NOT use '.' or '..'"},
+                            "offset": {"type": "integer", "description": "Start line (1-indexed, optional)"},
+                            "limit": {"type": "integer", "description": "Number of lines to read (optional)"},
+                        },
+                        "required": ["file_path"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": self.TOOL_WRITE_FILE,
+                    "description": "Create new file. Path must be absolute. Fails if file exists.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "file_path": {"type": "string", "description": "Absolute file path (e.g., /path/to/file). Do NOT use '.' or '..'"},
+                            "content": {"type": "string", "description": "File content"},
+                        },
+                        "required": ["file_path", "content"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": self.TOOL_EDIT_FILE,
+                    "description": (
+                        "Edit existing file using exact string replacement (diff-style). "
+                        "MUST use read_file before editing. "
+                        "old_string must match file content exactly (including whitespace/indentation). "
+                        "old_string must be unique in file. "
+                        "old_string and new_string must be different (no-op edits forbidden)."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "file_path": {"type": "string", "description": "Absolute file path (e.g., /path/to/file). Do NOT use '.' or '..'"},
+                            "old_string": {"type": "string", "description": "Exact string to replace (must be unique and match exactly)"},
+                            "new_string": {"type": "string", "description": "Replacement string (must differ from old_string)"},
+                        },
+                        "required": ["file_path", "old_string", "new_string"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": self.TOOL_MULTI_EDIT,
+                    "description": "Apply multiple edits to a file sequentially.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "file_path": {"type": "string", "description": "Absolute file path (e.g., /path/to/file). Do NOT use '.' or '..'"},
+                            "edits": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "old_string": {"type": "string"},
+                                        "new_string": {"type": "string"},
+                                        "replace_all": {"type": "boolean"},
+                                    },
+                                    "required": ["old_string", "new_string"],
+                                },
+                            },
+                        },
+                        "required": ["file_path", "edits"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": self.TOOL_LIST_DIR,
+                    "description": "List directory contents. Path must be absolute.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "directory_path": {"type": "string", "description": "Absolute directory path (e.g., /path/to/dir). Do NOT use '.' or '..'"},
+                        },
+                        "required": ["directory_path"],
+                    },
+                },
+            },
+        ]
+
     def wrap_model_call(
         self,
         request: ModelRequest,
@@ -320,106 +418,7 @@ class FileSystemMiddleware(AgentMiddleware):
     ) -> ModelResponse:
         """注入文件系统工具定义"""
         tools = list(request.tools or [])
-
-        # 添加文件系统工具
-        tools.extend(
-            [
-                {
-                    "type": "function",
-                    "function": {
-                        "name": self.TOOL_READ_FILE,
-                        "description": "Read file content (text/code/images/PDF/PPTX/Notebook). Images return as content_blocks. Path must be absolute.",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "file_path": {"type": "string", "description": "Absolute file path (e.g., /path/to/file). Do NOT use '.' or '..'"},
-                                "offset": {"type": "integer", "description": "Start line (1-indexed, optional)"},
-                                "limit": {"type": "integer", "description": "Number of lines to read (optional)"},
-                            },
-                            "required": ["file_path"],
-                        },
-                    },
-                },
-                {
-                    "type": "function",
-                    "function": {
-                        "name": self.TOOL_WRITE_FILE,
-                        "description": "Create new file. Path must be absolute. Fails if file exists.",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "file_path": {"type": "string", "description": "Absolute file path (e.g., /path/to/file). Do NOT use '.' or '..'"},
-                                "content": {"type": "string", "description": "File content"},
-                            },
-                            "required": ["file_path", "content"],
-                        },
-                    },
-                },
-                {
-                    "type": "function",
-                    "function": {
-                        "name": self.TOOL_EDIT_FILE,
-                        "description": (
-                            "Edit existing file using exact string replacement (diff-style). "
-                            "MUST use read_file before editing. "
-                            "old_string must match file content exactly (including whitespace/indentation). "
-                            "old_string must be unique in file. "
-                            "old_string and new_string must be different (no-op edits forbidden)."
-                        ),
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "file_path": {"type": "string", "description": "Absolute file path (e.g., /path/to/file). Do NOT use '.' or '..'"},
-                                "old_string": {"type": "string", "description": "Exact string to replace (must be unique and match exactly)"},
-                                "new_string": {"type": "string", "description": "Replacement string (must differ from old_string)"},
-                            },
-                            "required": ["file_path", "old_string", "new_string"],
-                        },
-                    },
-                },
-                {
-                    "type": "function",
-                    "function": {
-                        "name": self.TOOL_MULTI_EDIT,
-                        "description": "Apply multiple edits to a file sequentially.",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "file_path": {"type": "string", "description": "Absolute file path (e.g., /path/to/file). Do NOT use '.' or '..'"},
-                                "edits": {
-                                    "type": "array",
-                                    "items": {
-                                        "type": "object",
-                                        "properties": {
-                                            "old_string": {"type": "string"},
-                                            "new_string": {"type": "string"},
-                                            "replace_all": {"type": "boolean"},
-                                        },
-                                        "required": ["old_string", "new_string"],
-                                    },
-                                },
-                            },
-                            "required": ["file_path", "edits"],
-                        },
-                    },
-                },
-                {
-                    "type": "function",
-                    "function": {
-                        "name": self.TOOL_LIST_DIR,
-                        "description": "List directory contents. Path must be absolute.",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "directory_path": {"type": "string", "description": "Absolute directory path (e.g., /path/to/dir). Do NOT use '.' or '..'"},
-                            },
-                            "required": ["directory_path"],
-                        },
-                    },
-                },
-            ]
-        )
-
+        tools.extend(self._get_tool_schemas())
         return handler(request.override(tools=tools))
 
     async def awrap_model_call(
@@ -429,106 +428,7 @@ class FileSystemMiddleware(AgentMiddleware):
     ) -> ModelResponse:
         """异步：注入文件系统工具定义"""
         tools = list(request.tools or [])
-
-        # 添加文件系统工具（同步版本）
-        tools.extend(
-            [
-                {
-                    "type": "function",
-                    "function": {
-                        "name": self.TOOL_READ_FILE,
-                        "description": "Read file content (text/code/images/PDF/PPTX/Notebook). Images return as content_blocks. Path must be absolute.",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "file_path": {"type": "string", "description": "Absolute file path (e.g., /path/to/file). Do NOT use '.' or '..'"},
-                                "offset": {"type": "integer", "description": "Start line (1-indexed, optional)"},
-                                "limit": {"type": "integer", "description": "Number of lines to read (optional)"},
-                            },
-                            "required": ["file_path"],
-                        },
-                    },
-                },
-                {
-                    "type": "function",
-                    "function": {
-                        "name": self.TOOL_WRITE_FILE,
-                        "description": "Create new file. Path must be absolute. Fails if file exists.",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "file_path": {"type": "string", "description": "Absolute file path (e.g., /path/to/file). Do NOT use '.' or '..'"},
-                                "content": {"type": "string", "description": "File content"},
-                            },
-                            "required": ["file_path", "content"],
-                        },
-                    },
-                },
-                {
-                    "type": "function",
-                    "function": {
-                        "name": self.TOOL_EDIT_FILE,
-                        "description": (
-                            "Edit existing file using exact string replacement (diff-style). "
-                            "MUST use read_file before editing. "
-                            "old_string must match file content exactly (including whitespace/indentation). "
-                            "old_string must be unique in file. "
-                            "old_string and new_string must be different (no-op edits forbidden)."
-                        ),
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "file_path": {"type": "string", "description": "Absolute file path (e.g., /path/to/file). Do NOT use '.' or '..'"},
-                                "old_string": {"type": "string", "description": "Exact string to replace (must be unique and match exactly)"},
-                                "new_string": {"type": "string", "description": "Replacement string (must differ from old_string)"},
-                            },
-                            "required": ["file_path", "old_string", "new_string"],
-                        },
-                    },
-                },
-                {
-                    "type": "function",
-                    "function": {
-                        "name": self.TOOL_MULTI_EDIT,
-                        "description": "Apply multiple edits to a file sequentially.",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "file_path": {"type": "string", "description": "Absolute file path (e.g., /path/to/file). Do NOT use '.' or '..'"},
-                                "edits": {
-                                    "type": "array",
-                                    "items": {
-                                        "type": "object",
-                                        "properties": {
-                                            "old_string": {"type": "string"},
-                                            "new_string": {"type": "string"},
-                                            "replace_all": {"type": "boolean"},
-                                        },
-                                        "required": ["old_string", "new_string"],
-                                    },
-                                },
-                            },
-                            "required": ["file_path", "edits"],
-                        },
-                    },
-                },
-                {
-                    "type": "function",
-                    "function": {
-                        "name": self.TOOL_LIST_DIR,
-                        "description": "List directory contents. Path must be absolute.",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "directory_path": {"type": "string", "description": "Absolute directory path (e.g., /path/to/dir). Do NOT use '.' or '..'"},
-                            },
-                            "required": ["directory_path"],
-                        },
-                    },
-                },
-            ]
-        )
-
+        tools.extend(self._get_tool_schemas())
         return await handler(request.override(tools=tools))
 
     def wrap_tool_call(
