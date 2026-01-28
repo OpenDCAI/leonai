@@ -1,0 +1,17 @@
+agent:
+  model: claude-sonnet-4-5-20250929
+  workspace_root: ~/workspace
+
+tools:
+  filesystem:
+    enabled: true
+  command:
+    enabled: true
+
+mcp:
+  enabled: true
+  servers:
+    filesystem:
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-filesystem", "/Users/apple/workspace"]
+      allowed_tools: ["read_file", "write_file", "list_directory"]

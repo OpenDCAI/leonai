@@ -172,6 +172,8 @@ class LeonAgent:
             checkpointer=MemorySaver(),
         )
 
+        self._mcp_initialized = False
+
         # System prompt
         self.system_prompt = profile.system_prompt or self._build_system_prompt()
 
@@ -229,6 +231,41 @@ class LeonAgent:
             middleware.append(CommandMiddleware(workspace_root=self.workspace_root, hooks=command_hooks))
 
         return middleware
+
+    async def _init_mcp_tools(self) -> list:
+        if not self.profile.mcp.enabled or not self.profile.mcp.servers:
+            return []
+
+        from langchain_mcp_adapters.client import MultiServerMCPClient
+
+        configs = {}
+        for name, cfg in self.profile.mcp.servers.items():
+            if cfg.url:
+                config = {"transport": "streamable_http", "url": cfg.url}
+            else:
+                config = {"transport": "stdio", "command": cfg.command, "args": cfg.args}
+            if cfg.env:
+                config["env"] = cfg.env
+            configs[name] = config
+
+        try:
+            client = MultiServerMCPClient(configs)
+            tools = await client.get_tools()
+
+            if any(cfg.allowed_tools for cfg in self.profile.mcp.servers.values()):
+                tools = [t for t in tools if self._is_tool_allowed(t)]
+
+            print(f"[LeonAgent] Loaded {len(tools)} MCP tools from {len(configs)} servers")
+            return tools
+        except Exception as e:
+            print(f"[LeonAgent] MCP initialization failed: {e}")
+            return []
+
+    def _is_tool_allowed(self, tool) -> bool:
+        for name, cfg in self.profile.mcp.servers.items():
+            if cfg.allowed_tools and name in tool.name:
+                return any(allowed in tool.name for allowed in cfg.allowed_tools)
+        return True
 
     def _build_system_prompt(self) -> str:
         """构建系统提示词"""
