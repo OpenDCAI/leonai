@@ -473,6 +473,73 @@ class SearchMiddleware(AgentMiddleware):
             return "No files found"
         return f"Found {len(results)} results\n" + "\n".join(results)
 
+    def _get_tool_schemas(self) -> list[dict]:
+        """获取搜索工具 schema（sync/async 共享）"""
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": self.TOOL_GREP_SEARCH,
+                    "description": "Search file contents using regex. Path must be absolute.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "SearchPath": {
+                                "type": "string",
+                                "description": "Absolute path to file or directory",
+                            },
+                            "Query": {"type": "string", "description": "Search pattern (regex by default)"},
+                            "CaseSensitive": {"type": "boolean", "description": "Case sensitive search"},
+                            "FixedStrings": {
+                                "type": "boolean",
+                                "description": "Treat query as literal string",
+                            },
+                            "Includes": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "Glob patterns to filter files (e.g., '*.py')",
+                            },
+                            "MatchPerLine": {
+                                "type": "boolean",
+                                "description": "Show line-by-line matches",
+                            },
+                        },
+                        "required": ["SearchPath", "Query"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": self.TOOL_FIND_BY_NAME,
+                    "description": "Find files by name pattern. Path must be absolute.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "SearchDirectory": {
+                                "type": "string",
+                                "description": "Absolute directory path",
+                            },
+                            "Pattern": {"type": "string", "description": "Glob pattern (e.g., '*.py')"},
+                            "Extensions": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "File extensions to include",
+                            },
+                            "Type": {
+                                "type": "string",
+                                "enum": ["file", "directory", "any"],
+                                "description": "Filter by type",
+                            },
+                            "MaxDepth": {"type": "integer", "description": "Maximum search depth"},
+                            "FullPath": {"type": "boolean", "description": "Match against full path"},
+                        },
+                        "required": ["SearchDirectory", "Pattern"],
+                    },
+                },
+            },
+        ]
+
     def wrap_model_call(
         self,
         request: ModelRequest,
@@ -480,74 +547,7 @@ class SearchMiddleware(AgentMiddleware):
     ) -> ModelResponse:
         """注入搜索工具定义"""
         tools = list(request.tools or [])
-
-        tools.extend(
-            [
-                {
-                    "type": "function",
-                    "function": {
-                        "name": self.TOOL_GREP_SEARCH,
-                        "description": "Search file contents using regex. Path must be absolute.",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "SearchPath": {
-                                    "type": "string",
-                                    "description": "Absolute path to file or directory",
-                                },
-                                "Query": {"type": "string", "description": "Search pattern (regex by default)"},
-                                "CaseSensitive": {"type": "boolean", "description": "Case sensitive search"},
-                                "FixedStrings": {
-                                    "type": "boolean",
-                                    "description": "Treat query as literal string",
-                                },
-                                "Includes": {
-                                    "type": "array",
-                                    "items": {"type": "string"},
-                                    "description": "Glob patterns to filter files (e.g., '*.py')",
-                                },
-                                "MatchPerLine": {
-                                    "type": "boolean",
-                                    "description": "Show line-by-line matches",
-                                },
-                            },
-                            "required": ["SearchPath", "Query"],
-                        },
-                    },
-                },
-                {
-                    "type": "function",
-                    "function": {
-                        "name": self.TOOL_FIND_BY_NAME,
-                        "description": "Find files by name pattern. Path must be absolute.",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "SearchDirectory": {
-                                    "type": "string",
-                                    "description": "Absolute directory path",
-                                },
-                                "Pattern": {"type": "string", "description": "Glob pattern (e.g., '*.py')"},
-                                "Extensions": {
-                                    "type": "array",
-                                    "items": {"type": "string"},
-                                    "description": "File extensions to include",
-                                },
-                                "Type": {
-                                    "type": "string",
-                                    "enum": ["file", "directory", "any"],
-                                    "description": "Filter by type",
-                                },
-                                "MaxDepth": {"type": "integer", "description": "Maximum search depth"},
-                                "FullPath": {"type": "boolean", "description": "Match against full path"},
-                            },
-                            "required": ["SearchDirectory", "Pattern"],
-                        },
-                    },
-                },
-            ]
-        )
-
+        tools.extend(self._get_tool_schemas())
         return handler(request.override(tools=tools))
 
     async def awrap_model_call(
@@ -557,74 +557,7 @@ class SearchMiddleware(AgentMiddleware):
     ) -> ModelResponse:
         """异步：注入搜索工具定义"""
         tools = list(request.tools or [])
-
-        tools.extend(
-            [
-                {
-                    "type": "function",
-                    "function": {
-                        "name": self.TOOL_GREP_SEARCH,
-                        "description": "Search file contents using regex. Path must be absolute.",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "SearchPath": {
-                                    "type": "string",
-                                    "description": "Absolute path to file or directory",
-                                },
-                                "Query": {"type": "string", "description": "Search pattern (regex by default)"},
-                                "CaseSensitive": {"type": "boolean", "description": "Case sensitive search"},
-                                "FixedStrings": {
-                                    "type": "boolean",
-                                    "description": "Treat query as literal string",
-                                },
-                                "Includes": {
-                                    "type": "array",
-                                    "items": {"type": "string"},
-                                    "description": "Glob patterns to filter files (e.g., '*.py')",
-                                },
-                                "MatchPerLine": {
-                                    "type": "boolean",
-                                    "description": "Show line-by-line matches",
-                                },
-                            },
-                            "required": ["SearchPath", "Query"],
-                        },
-                    },
-                },
-                {
-                    "type": "function",
-                    "function": {
-                        "name": self.TOOL_FIND_BY_NAME,
-                        "description": "Find files by name pattern. Path must be absolute.",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "SearchDirectory": {
-                                    "type": "string",
-                                    "description": "Absolute directory path",
-                                },
-                                "Pattern": {"type": "string", "description": "Glob pattern (e.g., '*.py')"},
-                                "Extensions": {
-                                    "type": "array",
-                                    "items": {"type": "string"},
-                                    "description": "File extensions to include",
-                                },
-                                "Type": {
-                                    "type": "string",
-                                    "enum": ["file", "directory", "any"],
-                                    "description": "Filter by type",
-                                },
-                                "MaxDepth": {"type": "integer", "description": "Maximum search depth"},
-                                "FullPath": {"type": "boolean", "description": "Match against full path"},
-                            },
-                            "required": ["SearchDirectory", "Pattern"],
-                        },
-                    },
-                },
-            ]
-        )
-
+        tools.extend(self._get_tool_schemas())
         return await handler(request.override(tools=tools))
 
     def wrap_tool_call(
