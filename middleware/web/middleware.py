@@ -57,6 +57,7 @@ class WebMiddleware(AgentMiddleware):
         fetch_limits: FetchLimits | None = None,
         max_search_results: int = 5,
         timeout: int = 15,
+        enabled_tools: dict[str, bool] | None = None,
     ):
         """
         初始化 Web middleware
@@ -73,6 +74,9 @@ class WebMiddleware(AgentMiddleware):
         self.fetch_limits = fetch_limits or FetchLimits()
         self.max_search_results = max_search_results
         self.timeout = timeout
+        self.enabled_tools = enabled_tools or {
+            'web_search': True, 'read_url_content': True, 'view_web_content': True
+        }
 
         self._searchers: list[tuple[str, Any]] = []
         if tavily_api_key:

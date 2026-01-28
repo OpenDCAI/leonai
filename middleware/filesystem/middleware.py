@@ -55,6 +55,7 @@ class FileSystemMiddleware(AgentMiddleware):
         max_file_size: int = 10 * 1024 * 1024,  # 10MB
         allowed_extensions: list[str] | None = None,
         hooks: list[Any] | None = None,
+        enabled_tools: dict[str, bool] | None = None,
     ):
         """
         初始化文件系统 middleware
@@ -71,6 +72,10 @@ class FileSystemMiddleware(AgentMiddleware):
         self.max_file_size = max_file_size
         self.allowed_extensions = allowed_extensions
         self.hooks = hooks or []
+        self.enabled_tools = enabled_tools or {
+            'read_file': True, 'write_file': True, 'edit_file': True,
+            'multi_edit': True, 'list_dir': True
+        }
 
         # 确保 workspace 存在
         self.workspace_root.mkdir(parents=True, exist_ok=True)

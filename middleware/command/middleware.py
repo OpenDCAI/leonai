@@ -51,6 +51,7 @@ class CommandMiddleware(AgentMiddleware[CommandState]):
         default_timeout: float = DEFAULT_TIMEOUT,
         hooks: list[Any] | None = None,
         env: dict[str, str] | None = None,
+        enabled_tools: dict[str, bool] | None = None,
     ) -> None:
         """
         Initialize CommandMiddleware.
@@ -67,6 +68,7 @@ class CommandMiddleware(AgentMiddleware[CommandState]):
         self.default_timeout = default_timeout
         self.hooks = hooks or []
         self.env = env
+        self.enabled_tools = enabled_tools or {'run_command': True, 'command_status': True}
 
         self._executor = get_executor(default_cwd=str(self.workspace_root))
 

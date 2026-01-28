@@ -9,6 +9,38 @@ except ImportError:
     raise ImportError("需要安装 pydantic: pip install pydantic")
 
 
+class FileSystemConfig(BaseModel):
+    enabled: bool = True
+    read_only: bool = False
+    allowed_extensions: list[str] | None = None
+    read_file: bool = True
+    write_file: bool = True
+    edit_file: bool = True
+    multi_edit: bool = True
+    list_dir: bool = True
+
+
+class SearchConfig(BaseModel):
+    enabled: bool = True
+    grep_search: bool = True
+    find_by_name: bool = True
+
+
+class WebConfig(BaseModel):
+    enabled: bool = True
+    web_search: bool = True
+    read_url_content: bool = True
+    view_web_content: bool = True
+
+
+class CommandConfig(BaseModel):
+    enabled: bool = True
+    block_dangerous_commands: bool = True
+    block_network_commands: bool = False
+    run_command: bool = True
+    command_status: bool = True
+
+
 class AgentConfig(BaseModel):
     model: str = "claude-sonnet-4-5-20250929"
     workspace_root: str | None = None
@@ -17,24 +49,10 @@ class AgentConfig(BaseModel):
 
 
 class ToolsConfig(BaseModel):
-    read_file: bool = True
-    write_file: bool = True
-    edit_file: bool = True
-    multi_edit: bool = True
-    list_dir: bool = True
-    grep_search: bool = True
-    find_by_name: bool = True
-    web_search: bool = True
-    read_url_content: bool = True
-    view_web_content: bool = True
-    run_command: bool = True
-    command_status: bool = True
-
-    # Global settings
-    filesystem_read_only: bool = False
-    filesystem_allowed_extensions: list[str] | None = None
-    command_block_dangerous: bool = True
-    command_block_network: bool = False
+    filesystem: FileSystemConfig = Field(default_factory=FileSystemConfig)
+    search: SearchConfig = Field(default_factory=SearchConfig)
+    web: WebConfig = Field(default_factory=WebConfig)
+    command: CommandConfig = Field(default_factory=CommandConfig)
 
 
 class MCPServerConfig(BaseModel):
@@ -50,11 +68,16 @@ class MCPConfig(BaseModel):
     servers: dict[str, MCPServerConfig] = Field(default_factory=dict)
 
 
+class SkillsConfig(BaseModel):
+    enabled: bool = True
+
+
 class AgentProfile(BaseModel):
     agent: AgentConfig = Field(default_factory=AgentConfig)
     system_prompt: str | None = None
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     mcp: MCPConfig = Field(default_factory=MCPConfig)
+    skills: SkillsConfig = Field(default_factory=SkillsConfig)
 
 
     @classmethod

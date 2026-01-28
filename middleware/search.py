@@ -52,6 +52,7 @@ class SearchMiddleware(AgentMiddleware):
         max_results: int = 50,  # Cascade 限制为 50
         max_file_size: int = 10 * 1024 * 1024,  # 10MB
         prefer_system_tools: bool = True,
+        enabled_tools: dict[str, bool] | None = None,
     ):
         """
         初始化搜索 middleware
@@ -66,6 +67,7 @@ class SearchMiddleware(AgentMiddleware):
         self.max_results = max_results
         self.max_file_size = max_file_size
         self.prefer_system_tools = prefer_system_tools
+        self.enabled_tools = enabled_tools or {'grep_search': True, 'find_by_name': True}
 
         # 检查系统工具可用性
         self.has_ripgrep = shutil.which("rg") is not None

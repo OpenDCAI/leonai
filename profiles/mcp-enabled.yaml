@@ -3,18 +3,14 @@ agent:
   workspace_root: ~/Desktop/project/v1/文稿/project/leon/test_workspace
 
 tools:
-  read_file: false
-  write_file: false
-  edit_file: false
-  multi_edit: false
-  list_dir: false
-  grep_search: false
-  find_by_name: false
-  web_search: false
-  read_url_content: false
-  view_web_content: false
-  run_command: true
-  command_status: true
+  filesystem:
+    enabled: false
+  command:
+    enabled: true
+  search:
+    enabled: false
+  web:
+    enabled: false
 
 mcp:
   enabled: true
