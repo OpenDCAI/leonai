@@ -164,15 +164,22 @@ class LeonAgent:
         # 构建 middleware 栈
         middleware = self._build_middleware_stack()
 
+        # 加载 MCP 工具
+        import asyncio
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            mcp_tools = loop.run_until_complete(self._init_mcp_tools())
+        finally:
+            loop.close()
+
         # 创建 agent（带 checkpointer 支持对话历史和 session 状态）
         self.agent = create_agent(
             model=self.model,
-            tools=[],
+            tools=mcp_tools,
             middleware=middleware,
             checkpointer=MemorySaver(),
         )
-
-        self._mcp_initialized = False
 
         # System prompt
         self.system_prompt = profile.system_prompt or self._build_system_prompt()
@@ -262,9 +269,9 @@ class LeonAgent:
             return []
 
     def _is_tool_allowed(self, tool) -> bool:
-        for name, cfg in self.profile.mcp.servers.items():
-            if cfg.allowed_tools and name in tool.name:
-                return any(allowed in tool.name for allowed in cfg.allowed_tools)
+        for cfg in self.profile.mcp.servers.values():
+            if cfg.allowed_tools:
+                return tool.name in cfg.allowed_tools
         return True
 
     def _build_system_prompt(self) -> str:
