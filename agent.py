@@ -141,12 +141,12 @@ class LeonAgent:
         self.workspace_root.mkdir(parents=True, exist_ok=True)
 
         # 配置参数
-        self.read_only = profile.tools.filesystem.read_only
-        self.allowed_file_extensions = profile.tools.filesystem.allowed_extensions
-        self.block_dangerous_commands = profile.tools.command.block_dangerous_commands
-        self.block_network_commands = profile.tools.command.block_network_commands
+        self.read_only = profile.tools.filesystem_read_only
+        self.allowed_file_extensions = profile.tools.filesystem_allowed_extensions
+        self.block_dangerous_commands = profile.tools.command_block_dangerous
+        self.block_network_commands = profile.tools.command_block_network
         self.enable_audit_log = profile.agent.enable_audit_log
-        self.enable_web_tools = profile.tools.web.enabled
+        self.enable_web_tools = any([profile.tools.web_search, profile.tools.read_url_content, profile.tools.view_web_content])
         self.tavily_api_key = tavily_api_key or os.getenv("TAVILY_API_KEY")
         self.exa_api_key = exa_api_key or os.getenv("EXA_API_KEY")
         self.firecrawl_api_key = firecrawl_api_key or os.getenv("FIRECRAWL_API_KEY")
@@ -198,7 +198,8 @@ class LeonAgent:
         middleware.append(PromptCachingMiddleware(ttl="5m", min_messages_to_cache=0))
 
         # 2. FileSystem
-        if self.profile.tools.filesystem.enabled:
+        if any([self.profile.tools.read_file, self.profile.tools.write_file, self.profile.tools.edit_file,
+                self.profile.tools.multi_edit, self.profile.tools.list_dir]):
             file_hooks = []
             if self.enable_audit_log:
                 file_hooks.append(FileAccessLoggerHook(workspace_root=self.workspace_root, log_file="file_access.log"))
@@ -215,11 +216,11 @@ class LeonAgent:
             ))
 
         # 3. Search
-        if self.profile.tools.search.enabled:
+        if any([self.profile.tools.grep_search, self.profile.tools.find_by_name]):
             middleware.append(SearchMiddleware(workspace_root=self.workspace_root))
 
         # 4. Web
-        if self.profile.tools.web.enabled:
+        if self.enable_web_tools:
             middleware.append(WebMiddleware(
                 tavily_api_key=self.tavily_api_key,
                 exa_api_key=self.exa_api_key,
@@ -228,7 +229,7 @@ class LeonAgent:
             ))
 
         # 5. Command
-        if self.profile.tools.command.enabled:
+        if any([self.profile.tools.run_command, self.profile.tools.command_status]):
             command_hooks = []
             if self.block_dangerous_commands:
                 command_hooks.append(DangerousCommandsHook(
