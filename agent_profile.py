@@ -42,16 +42,6 @@ class AgentProfile(BaseModel):
     system_prompt: str | None = None
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
 
-    @field_validator("agent", mode="after")
-    @classmethod
-    def validate_agent(cls, v: AgentConfig) -> AgentConfig:
-        if v.workspace_root:
-            ws_str = v.workspace_root
-            if not ("$" in ws_str or "{" in ws_str):
-                ws = Path(ws_str).expanduser()
-                if not ws.exists():
-                    raise ValueError(f"workspace_root 不存在: {ws}")
-        return v
 
     @classmethod
     def from_file(cls, path: str | Path) -> "AgentProfile":
