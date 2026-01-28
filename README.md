@@ -1,26 +1,35 @@
-# ⚡ Leon AI
+# LEON (Lane Runtime)
 
-> 你的 AI 伙伴 · 让代码开发更智能
+LEON 是一个面向企业级生产可用的 Agent Runtime：用于构建、运行与治理一组可长期运行的 Agent，并把它们当作可持续协作的 co-workers 来管理与调度。
 
-Leon 是一个智能 AI 助手，帮你写代码、改 bug、管理项目。就像有个经验丰富的程序员坐在你旁边，随时准备帮忙。
+LEON 以 LangChain Middleware 为核心架构：通过统一的 middleware 管线完成 tool 注入、运行时校验、安全拦截、上下文装载/卸载与可观测性。
 
-## ✨ 选择 Leon
+## 快速体验（CLI）
 
-### 🧠 真正理解你的项目
-- **记住上下文**：Leon 会记住你之前说过的话，不用每次都重复
-- **理解项目结构**：自动分析你的代码组织方式
-- **持续对话**：像和真人聊天一样，可以连续提问和讨论
+当前可用的体验入口是 `leonai`（TUI）：
 
-### 🎨 现代化界面
-- **全屏终端界面**：清爽美观的 TUI 界面
-- **实时反馈**：看到 AI 的思考过程
-- **Markdown 支持**：代码高亮、格式化显示
+- `leonai`：启动
+- `leonai config`：配置 API key
+- `leonai config show`：查看当前配置
 
-## 🚀 快速开始
+## 截图
 
-### 安装
+![LEON TUI Screenshot](./docs/assets/leon-tui.png)
 
-**推荐方式（全局安装）：**
+## 最小基座
+
+LEON 认为一个真正可工作的 Agent，至少应具备三类基础能力：
+
+- Web
+- Bash
+- File System
+
+## 架构方式
+
+- Middleware-first：tool schema 注入、参数/路径校验（Fail Fast）、hooks/policy 拦截、结果整形、可观测性
+- Profile-driven（推进中）：用 Profile 描述 Agent 的 `system_prompt` 与 tools/mcp/skill 开关
+
+## 安装
 
 ```bash
 # 使用 uv（推荐）
@@ -30,58 +39,20 @@ uv tool install leonai
 pipx install leonai
 ```
 
-**开发者方式：**
-
-```bash
-pip install leonai
-```
-
-### 配置
-
-首次使用需要配置 API key：
+## 配置
 
 ```bash
 leonai config
 ```
 
-按提示输入：
-- **OPENAI_API_KEY**: 你的 API key（必需）
-- **OPENAI_BASE_URL**: 代理地址（可选）
-- **MODEL_NAME**: 模型名称（可选，默认 claude-sonnet-4-5-20250929）
+配置会保存到 `~/.config/leon/config.env`。
 
-配置会保存到 `~/.config/leon/config.env`，之后无需重复配置。
+## 路线
 
-### 启动
+- Agent Profile：配置化、强类型校验、统一能力入口
+- TUI Resume：恢复 thread（仅 messages/thread）
+- MCP Skill：可配置加载、权限、调用日志与失败定位
 
-在任意项目目录下运行：
-
-```bash
-cd /path/to/your/project
-leonai
-```
-
-Leon 会自动把当前目录作为工作目录，可以直接操作你的项目文件。
-
-**注意**：如果使用 `pip install` 安装，需要先激活虚拟环境或使用 `python -m leonai`。
-
-## 🎯 核心特性
-
-- ✅ **文件操作**：读取、创建、编辑项目文件
-- ✅ **代码搜索**：快速找到相关代码
-- ✅ **命令执行**：运行测试、构建项目
-- ✅ **持久记忆**：记住项目信息和你的偏好
-- ✅ **安全隔离**：可选的 Docker 沙箱环境
-
-
-
-## 🤝 贡献
-
-欢迎提交 Issue 和 Pull Request！
-
-## 📄 许可证
+## 许可证
 
 MIT License
-
----
-
-**用 ❤️ 和 AI 打造** | [GitHub](https://github.com/Ju-Yi-AI-Lab/leonai)
