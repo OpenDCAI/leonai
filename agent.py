@@ -142,11 +142,11 @@ class LeonAgent:
 
         # 配置参数
         self.read_only = profile.agent.read_only
-        self.allowed_file_extensions = profile.tools.filesystem.allowed_extensions
-        self.block_dangerous_commands = profile.tools.command.block_dangerous_commands
-        self.block_network_commands = profile.tools.command.block_network_commands
+        self.allowed_file_extensions = profile.agent.allowed_extensions
+        self.block_dangerous_commands = profile.agent.block_dangerous_commands
+        self.block_network_commands = profile.agent.block_network_commands
         self.enable_audit_log = profile.agent.enable_audit_log
-        self.enable_web_tools = profile.tools.web.enabled
+        self.enable_web_tools = profile.tool.web.enabled
         self._session_pool: dict[str, Any] = {}
 
         # 初始化模型
