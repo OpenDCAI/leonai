@@ -82,4 +82,4 @@ Leon 目标：用纯 Middleware 架构模拟 Windsurf Cascade 的 tool-calling �
 - **开发顺序**
   - 先做 Agent Profile
   - 再做 TUI Resume（只恢复 messages/thread）
-  - 最后做 MCP Skill
+  - 做 MCP Skill

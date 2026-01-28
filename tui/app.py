@@ -17,6 +17,7 @@ from tui.widgets.history_browser import HistoryBrowser
 from tui.widgets.loading import ThinkingSpinner
 from tui.widgets.messages import AssistantMessage, SystemMessage, ToolCallMessage, ToolResultMessage, UserMessage
 from tui.widgets.status import StatusBar
+from tui.widgets.thread_browser import ThreadBrowser
 
 
 class WelcomeBanner(Static):
@@ -96,17 +97,19 @@ class LeonApp(App):
         Binding("ctrl+c", "quit_or_interrupt", "中断/退出", show=False),
         Binding("ctrl+d", "quit", "退出", show=False),
         Binding("ctrl+l", "clear_history", "清空历史", show=False),
+        Binding("ctrl+t", "switch_thread", "切换对话", show=False),
         Binding("ctrl+up", "history_up", "历史上一条", show=False),
         Binding("ctrl+down", "history_down", "历史下一条", show=False),
         Binding("ctrl+e", "export_conversation", "导出对话", show=False),
         Binding("ctrl+y", "copy_last_message", "复制最后消息", show=False),
     ]
 
-    def __init__(self, agent, workspace_root: Path, thread_id: str = "default"):
+    def __init__(self, agent, workspace_root: Path, thread_id: str = "default", session_mgr=None):
         super().__init__()
         self.agent = agent
         self.workspace_root = workspace_root
         self.thread_id = thread_id
+        self.session_mgr = session_mgr
         self._current_assistant_msg = None
         self._shown_tool_calls = set()
         self._shown_tool_results = set()
@@ -131,10 +134,13 @@ class LeonApp(App):
         """Focus input on mount"""
         chat_input = self.query_one("#chat-input", ChatInput)
         chat_input.focus_input()
-        
+
         # Ensure scroll container can receive focus for scrolling
         chat_container = self.query_one("#chat-container", VerticalScroll)
         chat_container.can_focus = True
+
+        # 加载历史 messages
+        self.run_worker(self._load_history(), exclusive=False)
     
     def on_key(self, event) -> None:
         """Handle global key events for double-ESC detection"""
@@ -460,6 +466,7 @@ class LeonApp(App):
   • ESC ESC: 浏览历史输入（弹窗选择）
   • Ctrl+C: 中断当前执行 / 再按一次退出
   • Ctrl+D: 直接退出
+  • Ctrl+T: 切换对话 Thread
   • Ctrl+Y: 复制最后一条消息
   • Ctrl+E: 导出对话为 Markdown
   • Ctrl+L: 清空对话历史
@@ -527,12 +534,113 @@ class LeonApp(App):
         # Reset counters
         self._message_count = 0
         self._last_assistant_message = ""
-        
+
+        # Save new thread
+        if self.session_mgr:
+            self.session_mgr.save_session(self.thread_id)
+
         # Show notification
         self.notify("✓ 对话历史已清空")
 
+    def action_switch_thread(self) -> None:
+        """切换到其他对话"""
+        if not self.session_mgr:
+            self.notify("⚠ Session 管理器未初始化", severity="warning")
+            return
 
-def run_tui(agent, workspace_root: Path, thread_id: str = "default") -> None:
+        threads = self.session_mgr.get_threads()
+        if not threads:
+            self.notify("暂无历史对话", severity="information")
+            return
+
+        # 显示 thread 列表供选择
+        from tui.widgets.thread_browser import ThreadBrowser
+
+        def handle_thread_selection(selected_thread: str | None) -> None:
+            if selected_thread and selected_thread != self.thread_id:
+                self.thread_id = selected_thread
+                self.session_mgr.save_session(self.thread_id)
+
+                # 清空当前消息
+                messages_container = self.query_one("#messages", Container)
+                messages_container.remove_children()
+                messages_container.mount(WelcomeBanner())
+
+                # 更新状态栏
+                status_bar = self.query_one("#status-bar", StatusBar)
+                status_bar.update_thread(self.thread_id)
+
+                # 重置计数器
+                self._message_count = 0
+                self._last_assistant_message = ""
+
+                # 加载历史
+                self.run_worker(self._load_history(), exclusive=False)
+                self.notify(f"✓ 已切换到对话: {self.thread_id}")
+
+        self.push_screen(ThreadBrowser(threads, self.thread_id), handle_thread_selection)
+
+    async def _load_history(self) -> None:
+        """加载历史 messages"""
+        try:
+            config = {"configurable": {"thread_id": self.thread_id}}
+            state = await self.agent.agent.aget_state(config)
+
+            if not state or not state.values.get("messages"):
+                return
+
+            messages = state.values["messages"]
+            if not messages:
+                return
+
+            messages_container = self.query_one("#messages", Container)
+            chat_container = self.query_one("#chat-container", VerticalScroll)
+
+            # 移除 welcome banner
+            try:
+                welcome = messages_container.query_one(WelcomeBanner)
+                await welcome.remove()
+            except Exception:
+                pass
+
+            # 渲染历史消息
+            for msg in messages:
+                msg_class = msg.__class__.__name__
+
+                if msg_class == "HumanMessage":
+                    await messages_container.mount(UserMessage(msg.content))
+                    self._message_count += 1
+                elif msg_class == "AIMessage":
+                    content = msg.content
+                    if isinstance(content, list):
+                        text_parts = [b.get("text", "") if isinstance(b, dict) else str(b) for b in content]
+                        content = "".join(text_parts)
+                    if content:
+                        await messages_container.mount(AssistantMessage(content))
+                        self._last_assistant_message = content
+
+                    # 显示 tool calls
+                    tool_calls = getattr(msg, "tool_calls", [])
+                    for tool_call in tool_calls:
+                        await messages_container.mount(
+                            ToolCallMessage(tool_call.get("name", "unknown"), tool_call.get("args", {}))
+                        )
+                elif msg_class == "ToolMessage":
+                    await messages_container.mount(ToolResultMessage(msg.content))
+
+            # 更新状态栏
+            self._update_status_bar()
+
+            # 滚动到底部
+            chat_container.scroll_end(animate=False)
+
+            if self._message_count > 0:
+                self.notify(f"✓ 已加载 {self._message_count} 条历史消息")
+        except Exception as e:
+            self.notify(f"⚠ 加载历史失败: {str(e)}", severity="warning")
+
+
+def run_tui(agent, workspace_root: Path, thread_id: str = "default", session_mgr=None) -> None:
     """Run the Textual TUI"""
-    app = LeonApp(agent, workspace_root, thread_id)
+    app = LeonApp(agent, workspace_root, thread_id, session_mgr)
     app.run()
