@@ -281,9 +281,16 @@ class LeonAgent:
             return []
 
     def _is_tool_allowed(self, tool) -> bool:
+        # Extract original tool name without mcp__ prefix
+        tool_name = tool.name
+        if tool_name.startswith('mcp__'):
+            parts = tool_name.split('__', 2)
+            if len(parts) == 3:
+                tool_name = parts[2]
+
         for cfg in self.profile.mcp.servers.values():
             if cfg.allowed_tools:
-                return tool.name in cfg.allowed_tools
+                return tool_name in cfg.allowed_tools
         return True
 
     def _build_system_prompt(self) -> str:
