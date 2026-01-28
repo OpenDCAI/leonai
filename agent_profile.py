@@ -116,6 +116,7 @@ class MCPConfig(BaseModel):
 class SkillsConfig(BaseModel):
     enabled: bool = True
     paths: list[str] = Field(default_factory=list)
+    skills: dict[str, bool] = Field(default_factory=dict)  # skill_name: enabled
 
 
 class AgentProfile(BaseModel):
