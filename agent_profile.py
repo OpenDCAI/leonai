@@ -46,9 +46,11 @@ class AgentProfile(BaseModel):
     @classmethod
     def validate_agent(cls, v: Any) -> Any:
         if isinstance(v, dict) and v.get("workspace_root"):
-            ws = Path(v["workspace_root"]).expanduser()
-            if not ws.exists():
-                raise ValueError(f"workspace_root 不存在: {ws}")
+            ws_str = v["workspace_root"]
+            if ws_str and not ws_str.startswith("$"):
+                ws = Path(ws_str).expanduser()
+                if not ws.exists():
+                    raise ValueError(f"workspace_root 不存在: {ws}")
         return v
 
     @classmethod
