@@ -14,6 +14,7 @@ from pathlib import Path
 from agent import create_leon_agent
 from tui.app import run_tui
 from tui.config import ConfigManager, interactive_config, show_config
+from tui.session import SessionManager
 
 
 def main():
@@ -21,6 +22,7 @@ def main():
     parser = argparse.ArgumentParser(description="Leon AI - 你的 AI 编程助手", add_help=False)
     parser.add_argument("--profile", type=str, help="Profile 配置文件路径")
     parser.add_argument("--workspace", type=str, help="工作目录")
+    parser.add_argument("--thread", type=str, help="Thread ID (恢复对话)")
     parser.add_argument("-h", "--help", action="store_true", help="显示帮助信息")
     parser.add_argument("command", nargs="?", help="命令 (config)")
     parser.add_argument("subcommand", nargs="?", help="子命令 (show)")
@@ -33,6 +35,7 @@ def main():
         print("  leonai                    启动 Leon")
         print("  leonai --profile <path>   使用指定 profile 启动")
         print("  leonai --workspace <dir>  指定工作目录")
+        print("  leonai --thread <id>      恢复指定对话")
         print("  leonai config             配置 API key 和其他设置")
         print("  leonai config show        显示当前配置")
         return
@@ -67,13 +70,29 @@ def main():
     print(f"✅ Agent 已就绪")
     print(f"📁 工作目录: {agent.workspace_root}\n")
 
-    thread_id = f"tui-{uuid.uuid4().hex[:8]}"
+    # Session 管理
+    session_mgr = SessionManager()
+
+    # 确定 thread_id
+    if args.thread:
+        thread_id = args.thread
+        print(f"📝 恢复对话: {thread_id}")
+    else:
+        last_thread = session_mgr.get_last_thread_id()
+        if last_thread:
+            thread_id = last_thread
+            print(f"📝 继续上次对话: {thread_id}")
+        else:
+            thread_id = f"tui-{uuid.uuid4().hex[:8]}"
+            print(f"📝 新对话: {thread_id}")
 
     try:
-        run_tui(agent, agent.workspace_root, thread_id)
+        run_tui(agent, agent.workspace_root, thread_id, session_mgr)
     except KeyboardInterrupt:
         print("\n\n👋 再见！")
     finally:
+        # 保存 session
+        session_mgr.save_session(thread_id, str(workspace))
         print("\n🧹 已退出")
 
 
