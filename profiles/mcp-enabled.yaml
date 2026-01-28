@@ -1,6 +1,6 @@
 agent:
   model: claude-sonnet-4-5-20250929
-  workspace_root: ~/workspace
+  workspace_root: ~/Desktop/project/v1/文稿/project/leon/test_workspace
 
 tools:
   filesystem:
@@ -17,4 +17,4 @@ mcp:
   servers:
     filesystem:
       command: npx
-      args: ["-y", "@modelcontextprotocol/server-filesystem", "/Users/apple/workspace"]
+      args: ["-y", "@modelcontextprotocol/server-filesystem", "/Users/apple/Desktop/project/v1/文稿/project/leon/test_workspace"]
