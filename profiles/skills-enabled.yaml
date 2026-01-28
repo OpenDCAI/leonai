@@ -19,3 +19,6 @@ skills:
   enabled: true
   paths:
     - ./skills
+  skills:
+    example-skill: true
+    disabled-skill: false  # Disable specific skill

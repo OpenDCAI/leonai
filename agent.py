@@ -273,7 +273,10 @@ class LeonAgent:
 
         # 6. Skills
         if self.profile.skills.enabled and self.profile.skills.paths:
-            middleware.append(SkillsMiddleware(skill_paths=self.profile.skills.paths))
+            middleware.append(SkillsMiddleware(
+                skill_paths=self.profile.skills.paths,
+                enabled_skills=self.profile.skills.skills
+            ))
 
         return middleware
 

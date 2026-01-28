@@ -28,14 +28,16 @@ class SkillsMiddleware(AgentMiddleware):
 
     TOOL_LOAD_SKILL = "load_skill"
 
-    def __init__(self, skill_paths: list[str | Path]):
+    def __init__(self, skill_paths: list[str | Path], enabled_skills: dict[str, bool] | None = None):
         """
         Initialize Skills middleware
 
         Args:
             skill_paths: List of directories containing SKILL.md files
+            enabled_skills: Dict of skill_name: enabled (None = all enabled)
         """
         self.skill_paths = [Path(p).expanduser().resolve() for p in skill_paths]
+        self.enabled_skills = enabled_skills or {}
         self._skills_index: dict[str, Path] = {}
         self._load_skills_index()
 
@@ -80,6 +82,10 @@ class SkillsMiddleware(AgentMiddleware):
         if skill_name not in self._skills_index:
             available = ', '.join(self._skills_index.keys())
             return f"Skill '{skill_name}' not found.\nAvailable skills: {available}"
+
+        # Check if skill is disabled
+        if self.enabled_skills and skill_name in self.enabled_skills and not self.enabled_skills[skill_name]:
+            return f"Skill '{skill_name}' is disabled in profile configuration."
 
         skill_file = self._skills_index[skill_name]
         try:
