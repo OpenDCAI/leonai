@@ -60,9 +60,14 @@ def main():
 
     workspace = Path(args.workspace) if args.workspace else Path.cwd()
 
+    model_name = os.getenv("MODEL_NAME") or None
     print("🚀 初始化 Leon Agent...")
     try:
-        agent = create_leon_agent(profile=args.profile, workspace_root=workspace)
+        agent = create_leon_agent(
+            model_name=model_name or "claude-sonnet-4-5-20250929",
+            profile=args.profile,
+            workspace_root=workspace,
+        )
     except Exception as e:
         print(f"❌ 初始化失败: {e}")
         sys.exit(1)
