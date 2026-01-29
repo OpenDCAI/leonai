@@ -49,9 +49,17 @@ tool:
       command_status: true
 
 mcp:
-  enabled: false
-  servers: {}
+  enabled: true
+  servers:
+    filesystem:
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-filesystem", "/Users/apple/Desktop/project/v1/文稿/project/leon"]
 
 skills:
-  enabled: false
-  paths: []
+  enabled: true
+  paths:
+    - ./skills
+  skills:
+    example-skill: true
+    disabled-skill: false  # Disable specific skill
+

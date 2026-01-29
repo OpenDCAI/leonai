@@ -171,7 +171,10 @@ class LeonAgent:
             loop.close()
 
         # System prompt
-        self.system_prompt = profile.system_prompt or self._build_system_prompt()
+        # 内置 prompt 始终存在，用户配置的追加在后面
+        self.system_prompt = self._build_system_prompt()
+        if profile.system_prompt:
+            self.system_prompt += f"\n\n**Custom Instructions:**\n{profile.system_prompt}"
 
         # 创建 agent（带 checkpointer 支持对话历史和 session 状态）
         self.agent = create_agent(
@@ -360,6 +363,8 @@ class LeonAgent:
 3. **Workspace**: File operations are restricted to: {self.workspace_root}
 
 4. **Security**: Dangerous commands are blocked. All operations are logged.
+
+5. **Tool Priority**: Tools starting with `mcp__` are external MCP integrations. When a built-in tool and an MCP tool have the same functionality, use the built-in tool.
 """
 
         if self.read_only:
@@ -453,31 +458,6 @@ def create_leon_agent(
         model_name=model_name, api_key=api_key, workspace_root=workspace_root, **kwargs
     )
 
-
-# Export compiled graph for LangGraph CLI (without checkpointer)
-def _create_agent_for_langgraph():
-    """Create agent without checkpointer for LangGraph CLI"""
-    leon = create_leon_agent()
-    middleware = leon._build_middleware_stack()
-
-    # Load MCP tools
-    import asyncio
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        mcp_tools = loop.run_until_complete(leon._init_mcp_tools())
-    finally:
-        loop.close()
-
-    # Create agent WITHOUT checkpointer
-    return create_agent(
-        model=leon.model,
-        tools=mcp_tools,
-        middleware=middleware,
-        checkpointer=None,
-    )
-
-agent = _create_agent_for_langgraph()
 
 
 if __name__ == "__main__":
