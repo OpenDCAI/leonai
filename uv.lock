@@ -810,7 +810,9 @@ dependencies = [
     { name = "langchain-openai" },
     { name = "langgraph" },
     { name = "langgraph-cli", extra = ["inmem"] },
+    { name = "pydantic" },
     { name = "pyperclip" },
+    { name = "pyyaml" },
     { name = "rich" },
     { name = "textual" },
 ]
@@ -840,6 +842,7 @@ requires-dist = [
     { name = "langchain-openai", specifier = ">=1.1.7" },
     { name = "langgraph", specifier = ">=1.0.7" },
     { name = "langgraph-cli", extras = ["inmem"], specifier = ">=0.4.12" },
+    { name = "pydantic", specifier = ">=2.0" },
     { name = "pymupdf", marker = "extra == 'all'", specifier = ">=1.24.0" },
     { name = "pymupdf", marker = "extra == 'docs'", specifier = ">=1.24.0" },
     { name = "pymupdf", marker = "extra == 'pdf'", specifier = ">=1.24.0" },
@@ -847,6 +850,7 @@ requires-dist = [
     { name = "python-pptx", marker = "extra == 'all'", specifier = ">=1.0.0" },
     { name = "python-pptx", marker = "extra == 'docs'", specifier = ">=1.0.0" },
     { name = "python-pptx", marker = "extra == 'pptx'", specifier = ">=1.0.0" },
+    { name = "pyyaml", specifier = ">=6.0" },
     { name = "rich", specifier = ">=13.0.0" },
     { name = "textual", specifier = ">=1.0.0" },
 ]

@@ -7,6 +7,7 @@ wheels/
 *.egg-info
 *.egg
 .eggs/
+AGENTS.md
 
 # Virtual environments
 .venv
