@@ -50,10 +50,11 @@ tool:
 
 mcp:
   enabled: true
-  servers:
-    filesystem:
-      command: npx
-      args: ["-y", "@modelcontextprotocol/server-filesystem", "/Users/apple/Desktop/project/v1/文稿/project/leon"]
+  servers: {}
+    # Example:
+    # filesystem:
+    #   command: npx
+    #   args: ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/workspace"]
 
 skills:
   enabled: true

@@ -1,15 +1,15 @@
 """
-Search Middleware - 完全模仿 Cascade 的搜索功能
+Search Middleware - Code search functionality
 
-提供以下工具（纯 Middleware 实现）：
-- grep_search: 内容搜索（优先使用 ripgrep，fallback 到 Python）
-- find_by_name: 文件名搜索（优先使用 fd，fallback 到 Python）
+Tools (pure Middleware implementation):
+- grep_search: Content search (ripgrep preferred, Python fallback)
+- find_by_name: Filename search (fd preferred, Python fallback)
 
-完全模仿 Cascade：
-- PascalCase 参数命名（SearchPath, Query, Includes, MatchPerLine）
-- 绝对路径要求
-- 简洁输出格式
-- 系统工具优先，Python fallback
+Features:
+- PascalCase parameter naming (SearchPath, Query, Includes, MatchPerLine)
+- Absolute path requirement
+- Concise output format
+- System tools preferred, Python fallback
 """
 
 from __future__ import annotations
@@ -32,14 +32,14 @@ from langchain_core.messages import ToolMessage
 
 class SearchMiddleware(AgentMiddleware):
     """
-    搜索 Middleware - 完全模仿 Cascade 的搜索实现
+    Search Middleware
 
-    特点：
-    - 优先使用 ripgrep/fd 系统工具（性能最佳）
-    - Fallback 到 Python 实现（跨平台兼容）
-    - PascalCase 参数命名（与 Cascade 完全一致）
-    - 强制绝对路径
-    - 简洁输出格式
+    Features:
+    - Prefers ripgrep/fd system tools (best performance)
+    - Fallback to Python implementation (cross-platform)
+    - PascalCase parameter naming
+    - Absolute path enforcement
+    - Concise output format
     """
 
     TOOL_GREP_SEARCH = "grep_search"
@@ -49,19 +49,19 @@ class SearchMiddleware(AgentMiddleware):
         self,
         workspace_root: str | Path,
         *,
-        max_results: int = 50,  # Cascade 限制为 50
+        max_results: int = 50,  # Default limit
         max_file_size: int = 10 * 1024 * 1024,  # 10MB
         prefer_system_tools: bool = True,
         enabled_tools: dict[str, bool] | None = None,
     ):
         """
-        初始化搜索 middleware
+        Initialize search middleware
 
         Args:
-            workspace_root: 工作目录（搜索限制在此目录内）
-            max_results: 最大结果数（默认 50，与 Cascade 一致）
-            max_file_size: 最大文件大小（字节）
-            prefer_system_tools: 是否优先使用系统工具（ripgrep/fd）
+            workspace_root: Working directory (search restricted to this directory)
+            max_results: Maximum results (default 50)
+            max_file_size: Maximum file size (bytes)
+            prefer_system_tools: Whether to prefer system tools (ripgrep/fd)
         """
         self.workspace_root = Path(workspace_root).resolve()
         self.max_results = max_results
@@ -112,10 +112,10 @@ class SearchMiddleware(AgentMiddleware):
         MatchPerLine: bool = False,
     ) -> str:
         """
-        实现 grep_search（完全模仿 Cascade）
+        Implement grep_search
 
-        优先使用 ripgrep，fallback 到 Python 实现
-        参数命名与 Cascade 完全一致（PascalCase）
+        Prefers ripgrep, fallback to Python implementation
+        PascalCase parameter naming
         """
         is_valid, error, resolved = self._validate_path(SearchPath)
         if not is_valid:
@@ -147,7 +147,7 @@ class SearchMiddleware(AgentMiddleware):
         includes: list[str] | None,
         match_per_line: bool,
     ) -> str:
-        """使用 ripgrep 进行搜索（与 Cascade 一致）"""
+        """Use ripgrep for search"""
         cmd = ["rg", query, str(path)]
 
         # 大小写敏感
@@ -289,7 +289,7 @@ class SearchMiddleware(AgentMiddleware):
 
                 if match_line_nums:
                     if match_per_line:
-                        # 显示匹配行 + 上下文（Cascade 格式）
+                        # Show matching line + context
                         context_lines = 2  # 前后各 2 行
                         displayed_lines = set()
                         
@@ -331,10 +331,10 @@ class SearchMiddleware(AgentMiddleware):
         FullPath: bool = False,
     ) -> str:
         """
-        实现 find_by_name（完全模仿 Cascade）
+        Implement find_by_name
 
-        优先使用 fd，fallback 到 Python 实现
-        参数命名与 Cascade 完全一致（PascalCase）
+        Prefers fd, fallback to Python implementation
+        PascalCase parameter naming
         """
         is_valid, error, resolved = self._validate_path(SearchDirectory)
         if not is_valid:
@@ -365,7 +365,7 @@ class SearchMiddleware(AgentMiddleware):
         max_depth: int | None,
         full_path: bool,
     ) -> str:
-        """使用 fd 进行文件名搜索（与 Cascade 一致）"""
+        """Use fd for filename search"""
         cmd = ["fd", pattern, str(path)]
 
         # 类型过滤

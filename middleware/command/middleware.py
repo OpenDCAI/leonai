@@ -1,6 +1,6 @@
-"""Command Middleware - replaces LangChain ShellToolMiddleware.
+"""Command Middleware - shell command execution.
 
-Provides run_command and command_status tools with Cascade-compatible API.
+Provides run_command and command_status tools.
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ class CommandState(AgentState):
 
 class CommandMiddleware(AgentMiddleware[CommandState]):
     """
-    Command execution middleware with Cascade-compatible API.
+    Command execution middleware.
 
     Features:
     - run_command tool with CommandLine, Cwd, Blocking, Timeout params

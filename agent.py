@@ -1,13 +1,13 @@
 """
-Leon - 完全模仿 Windsurf Cascade 的 Agent 实现
+Leon - AI Coding Agent with Middleware Architecture
 
-使用纯 Middleware 架构实现所有工具：
+Middleware-based tool implementation:
 - FileSystemMiddleware: read_file, write_file, edit_file, multi_edit, list_dir
 - SearchMiddleware: grep_search, find_by_name
 - CommandMiddleware: run_command (with hooks)
-- PromptCachingMiddleware: 成本优化
+- PromptCachingMiddleware: cost optimization
 
-所有路径必须使用绝对路径，完整的安全机制和审计日志。
+All paths must be absolute. Full security mechanisms and audit logging.
 """
 
 import os
@@ -44,18 +44,17 @@ from middleware.web import WebMiddleware
 
 class LeonAgent:
     """
-    Leon Agent - 完全模仿 Windsurf Cascade
+    Leon Agent - AI Coding Assistant
 
-    特点：
-    - 纯 Middleware 架构（无独立 Tool）
-    - 强制绝对路径
-    - 完整安全机制（权限控制、命令拦截、审计日志）
-    - 支持所有 Cascade 核心工具
+    Features:
+    - Pure Middleware architecture
+    - Absolute path enforcement
+    - Full security (permission control, command interception, audit logging)
 
-    工具列表：
-    1. 文件操作：read_file, write_file, edit_file, multi_edit, list_dir
-    2. 搜索：grep_search, find_by_name
-    3. 命令执行：run_command (通过 CommandMiddleware)
+    Tools:
+    1. File operations: read_file, write_file, edit_file, multi_edit, list_dir
+    2. Search: grep_search, find_by_name
+    3. Command execution: run_command (via CommandMiddleware)
     """
 
     def __init__(
@@ -77,7 +76,7 @@ class LeonAgent:
         jina_api_key: str | None = None,
     ):
         """
-        初始化 Cascade-Like Agent
+        Initialize Leon Agent
 
         Args:
             model_name: Anthropic 模型名称
@@ -98,8 +97,17 @@ class LeonAgent:
         # 加载 profile
         if isinstance(profile, (str, Path)):
             profile = AgentProfile.from_file(profile)
+            print(f"[LeonAgent] Profile: {profile} (from CLI argument)")
         elif profile is None:
-            profile = AgentProfile.default()
+            # 默认 profile 路径：~/.leon/profile.yaml
+            default_profile = Path.home() / ".leon" / "profile.yaml"
+            if default_profile.exists():
+                profile = AgentProfile.from_file(default_profile)
+                print(f"[LeonAgent] Profile: {default_profile}")
+            else:
+                # 首次运行，创建默认配置文件
+                profile = self._create_default_profile(default_profile)
+                print(f"[LeonAgent] Profile: {default_profile} (created)")
 
         # CLI 参数覆盖 profile
         if model_name is not None:
@@ -189,6 +197,47 @@ class LeonAgent:
         print(f"[LeonAgent] Workspace: {self.workspace_root}")
         print(f"[LeonAgent] Read-only: {self.read_only}")
         print(f"[LeonAgent] Audit log: {self.enable_audit_log}")
+
+    def _create_default_profile(self, path: Path) -> AgentProfile:
+        """首次运行时创建默认配置文件"""
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        default_content = """\
+# Leon AI Profile
+# 配置文档: https://github.com/Ju-Yi-AI-Lab/leonai
+
+agent:
+  model: claude-sonnet-4-5-20250929
+  read_only: false
+  enable_audit_log: true
+  block_dangerous_commands: true
+
+tool:
+  filesystem:
+    enabled: true
+  search:
+    enabled: true
+  web:
+    enabled: true
+  command:
+    enabled: true
+
+# MCP 服务器配置
+# mcp:
+#   enabled: true
+#   servers:
+#     example:
+#       command: npx
+#       args: ["-y", "@anthropic/mcp-server-example"]
+
+# Skills 配置
+# skills:
+#   enabled: true
+#   paths:
+#     - ~/.leon/skills
+"""
+        path.write_text(default_content)
+        return AgentProfile.from_file(path)
 
     def _build_middleware_stack(self) -> list:
         """构建 middleware 栈"""
@@ -357,7 +406,7 @@ class LeonAgent:
 1. **Use Available Tools**: You have access to tools for file operations, search, web access, and command execution. Always use these tools when the user requests file or system operations.
 
 2. **Absolute Paths**: All file paths must be absolute paths starting from root (/).
-   - ✅ Correct: `/Users/apple/workspace/test.py`
+   - ✅ Correct: `/home/user/workspace/test.py`
    - ❌ Wrong: `test.py` or `./test.py`
 
 3. **Workspace**: File operations are restricted to: {self.workspace_root}
@@ -467,7 +516,7 @@ if __name__ == "__main__":
     try:
         print("=== Example 1: File Operations ===")
         response = leon_agent.get_response(
-            f"Create a Python file at {leon_agent.workspace_root}/hello.py that prints 'Hello, Cascade!'",
+            f"Create a Python file at {leon_agent.workspace_root}/hello.py that prints 'Hello, Leon!'",
             thread_id="demo",
         )
         print(response)

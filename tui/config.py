@@ -10,7 +10,7 @@ class ConfigManager:
     """管理 Leon 的配置"""
     
     def __init__(self):
-        self.config_dir = Path.home() / ".config" / "leon"
+        self.config_dir = Path.home() / ".leon"
         self.config_file = self.config_dir / "config.env"
         self.config_dir.mkdir(parents=True, exist_ok=True)
     

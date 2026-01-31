@@ -1,15 +1,15 @@
 """
-Web Middleware - 模仿 Cascade 的 Web 搜索和内容获取
+Web Middleware - Web search and content fetching
 
-提供以下工具（纯 Middleware 实现）：
-- web_search: 网页搜索（Tavily → Exa → Firecrawl 降级）
-- read_url_content: 获取网页内容（Jina → Markdownify 降级）
-- view_web_content: 查看指定 chunk 的内容
+Tools (pure Middleware implementation):
+- web_search: Web search (Tavily → Exa → Firecrawl fallback)
+- read_url_content: Fetch web content (Jina → Markdownify fallback)
+- view_web_content: View specific chunk content
 
-特点：
-- 分块设计（与 read_file 一致）
-- 多提供商降级策略
-- PascalCase 参数命名
+Features:
+- Chunked design (consistent with read_file)
+- Multi-provider fallback strategy
+- PascalCase parameter naming
 """
 
 from __future__ import annotations

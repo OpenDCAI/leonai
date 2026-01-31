@@ -1,7 +1,6 @@
 """Command execution middleware with extensible hook system.
 
-Replaces LangChain ShellToolMiddleware with a custom implementation
-that matches Cascade's run_command capabilities.
+Custom implementation with run_command and command_status tools.
 """
 
 from .hooks import CommandHook, HookResult, load_hooks

@@ -1,13 +1,11 @@
-# Leon Agent 项目背景
+# Leon Agent
 
-## 背景
+## Background
 
-观察 Windsurf Cascade 的实现方式，发现其核心是通过工具调用（read_file、edit_file、bash 等）与代码库交互。想要理解这类 AI 编程助手的实现机制，最直接的方式是自己实现一个。
+Leon is an AI coding assistant built with LangChain's Middleware architecture. Instead of scattered tool definitions, it uses a unified middleware pattern for tool injection, parameter validation, and result transformation.
 
-LangChain 提供了 Agent 框架，但传统的 Tool 模式在处理复杂场景时存在局限：工具定义分散、安全控制不统一、难以实现跨工具的状态管理。LangChain 1.0 引入的 Middleware 模式提供了新思路：在模型调用前后插入逻辑，统一处理工具注入、参数验证、结果转换。
+## Goals
 
-leon Agent 则是这套思路的具体实践。它目前还在模仿 cascade 的阶段，后续会根据实际需求进行优化和改进。
-
-## 目标
-
-追求功能完整性，实现核心工具,目标是企业级落地；考虑生产环境部署。
+- Feature completeness with core tools (file operations, search, command execution, web access)
+- Enterprise-ready with security controls and audit logging
+- Production deployment ready

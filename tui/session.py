@@ -9,7 +9,7 @@ class SessionManager:
 
     def __init__(self, session_dir: Path | None = None):
         if session_dir is None:
-            session_dir = Path.home() / ".config" / "leon"
+            session_dir = Path.home() / ".leon"
         self.session_dir = Path(session_dir)
         self.session_dir.mkdir(parents=True, exist_ok=True)
         self.session_file = self.session_dir / "session.json"
