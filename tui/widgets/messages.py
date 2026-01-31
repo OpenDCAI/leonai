@@ -1,4 +1,4 @@
-"""Message widgets for chat display"""
+"""Message widgets for chat display - Minimal Modern Style"""
 
 from typing import Any
 
@@ -8,15 +8,14 @@ from textual.widgets import Markdown, Static
 
 
 class UserMessage(Static):
-    """User message widget"""
+    """User message widget - minimal style"""
 
     DEFAULT_CSS = """
     UserMessage {
         height: auto;
         padding: 0 1;
         margin: 1 0;
-        background: $surface;
-        border-left: thick $primary;
+        border-left: wide #10b981;
     }
     """
 
@@ -26,7 +25,7 @@ class UserMessage(Static):
 
     def compose(self):
         text = Text()
-        text.append("👤 你: ", style="bold #10b981")
+        text.append("› ", style="bold #10b981")
         text.append(self._content)
         yield Static(text)
 
@@ -39,8 +38,8 @@ class SystemMessage(Static):
         height: auto;
         padding: 1 2;
         margin: 1 0;
-        background: $panel;
-        border: solid $accent;
+        color: $text-muted;
+        border-left: wide $accent;
     }
     """
 
@@ -50,19 +49,20 @@ class SystemMessage(Static):
 
     def compose(self):
         text = Text()
-        text.append("ℹ️  ", style="bold cyan")
-        text.append(self._content, style="cyan")
+        text.append("· ", style="dim cyan")
+        text.append(self._content, style="dim")
         yield Static(text)
 
 
 class AssistantMessage(Vertical):
-    """Assistant message widget with markdown support"""
+    """Assistant message widget with markdown support - minimal style"""
 
     DEFAULT_CSS = """
     AssistantMessage {
         height: auto;
         padding: 0 1;
         margin: 1 0;
+        border-left: wide #6366f1;
     }
 
     AssistantMessage Markdown {
@@ -86,9 +86,7 @@ class AssistantMessage(Vertical):
 
     def update_content(self, content: str) -> None:
         """Update message content - for streaming"""
-        # Ensure content is string
         if isinstance(content, list):
-            # Extract text from multimodal content
             text_parts = []
             for block in content:
                 if isinstance(block, dict) and block.get("type") == "text":
@@ -98,13 +96,10 @@ class AssistantMessage(Vertical):
             content = "".join(text_parts)
         elif not isinstance(content, str):
             content = str(content)
-        
+
         self._content = content
         if self._markdown:
-            prefix = "🤖 **Leon**: "
-            # Force update to trigger re-render
-            self._markdown.update(prefix + content)
-            # Refresh to ensure immediate display
+            self._markdown.update(content)
             self._markdown.refresh()
 
     def append_content(self, text: str) -> None:

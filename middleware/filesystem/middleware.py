@@ -1,14 +1,14 @@
 """
-FileSystem Middleware - 完全模仿 Cascade 的文件操作
+FileSystem Middleware - File operations
 
-提供以下工具（纯 Middleware 实现）：
-- read_file: 读取文件（支持分段）
-- write_file: 创建新文件
-- edit_file: 编辑文件（str_replace 模式）
-- multi_edit: 批量编辑
-- list_dir: 列出目录
+Tools (pure Middleware implementation):
+- read_file: Read file (with chunking support)
+- write_file: Create new file
+- edit_file: Edit file (str_replace mode)
+- multi_edit: Batch edit
+- list_dir: List directory
 
-所有路径必须使用绝对路径，workspace 限制通过 hooks 实现。
+All paths must be absolute. Workspace restrictions via hooks.
 """
 
 from __future__ import annotations
