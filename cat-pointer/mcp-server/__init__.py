@@ -1,0 +1,1 @@
+"""Cat Pointer MCP Server"""

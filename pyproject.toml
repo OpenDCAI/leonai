@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "leonai"
-version = "0.1.0"
+version = "0.2.0"
 description = "Leon - Proactive AI coding assistant with persistent memory and TUI"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -45,7 +45,8 @@ dependencies = [
 pdf = ["pymupdf>=1.24.0"]
 pptx = ["python-pptx>=1.0.0"]
 docs = ["pymupdf>=1.24.0", "python-pptx>=1.0.0"]
-all = ["pymupdf>=1.24.0", "python-pptx>=1.0.0"]
+voice = ["sounddevice>=0.4.6", "scipy>=1.11.0"]
+all = ["pymupdf>=1.24.0", "python-pptx>=1.0.0", "sounddevice>=0.4.6", "scipy>=1.11.0"]
 
 [project.scripts]
 leonai = "tui.leon_cli:main"
