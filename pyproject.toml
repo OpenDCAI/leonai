@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "leonai"
-version = "0.2.0"
+version = "0.2.1"
 description = "Leon - Proactive AI coding assistant with persistent memory and TUI"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -56,7 +56,25 @@ Repository = "https://github.com/Ju-Yi-AI-Lab/leonai"
 Issues = "https://github.com/Ju-Yi-AI-Lab/leonai/issues"
 
 [tool.setuptools]
-packages = ["middleware", "tui", "middleware.shell", "middleware.shell.hooks", "middleware.filesystem", "middleware.filesystem.read", "middleware.filesystem.read.readers", "middleware.web", "middleware.web.fetchers", "middleware.web.searchers", "tui.widgets"]
+packages = [
+    "middleware",
+    "middleware.command",
+    "middleware.command.hooks",
+    "middleware.command.bash",
+    "middleware.command.zsh",
+    "middleware.command.powershell",
+    "middleware.filesystem",
+    "middleware.filesystem.read",
+    "middleware.filesystem.read.readers",
+    "middleware.shell",
+    "middleware.shell.hooks",
+    "middleware.skills",
+    "middleware.web",
+    "middleware.web.fetchers",
+    "middleware.web.searchers",
+    "tui",
+    "tui.widgets",
+]
 py-modules = ["agent", "agent_profile"]
 
 [tool.ruff]
