@@ -10,9 +10,17 @@ LEON 以 LangChain Middleware 为核心架构：通过统一的 middleware 管�
 
 ```bash
 uv tool install leonai   # 安装
-leonai config            # 配置 API key
 leonai                   # 启动
 ```
+
+首次运行会自动进入配置向导，支持 OpenAI 兼容格式的 API（OpenAI、Claude via proxy、DeepSeek 等）。
+
+```bash
+leonai config            # 修改配置
+leonai config show       # 查看当前配置
+```
+
+配置保存在 `~/.leon/config.env`。
 
 ## 最小基座
 
@@ -26,24 +34,6 @@ LEON 认为一个真正可工作的 Agent，至少应具备三类基础能力：
 
 - Middleware-first：tool schema 注入、参数/路径校验（Fail Fast）、hooks/policy 拦截、结果整形、可观测性
 - Profile-driven（推进中）：用 Profile 描述 Agent 的 `system_prompt` 与 tools/mcp/skill 开关
-
-## 安装
-
-```bash
-# 使用 uv（推荐）
-uv tool install leonai
-
-# 或使用 pipx
-pipx install leonai
-```
-
-## 配置
-
-```bash
-leonai config
-```
-
-配置会保存到 `~/.leon/config.env`。
 
 ## 核心特性
 
