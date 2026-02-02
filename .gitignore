@@ -8,6 +8,7 @@ wheels/
 *.egg
 .eggs/
 AGENTS.md
+CLAUDE.md
 
 # Virtual environments
 .venv
@@ -27,3 +28,5 @@ node_modules/
 
 # Environment
 .env
+
+docs/assets/
