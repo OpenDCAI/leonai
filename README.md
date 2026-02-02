@@ -9,8 +9,8 @@ LEON 以 LangChain Middleware 为核心架构：通过统一的 middleware 管�
 ## 快速开始
 
 ```bash
-uv tool install leonai   # 安装
-leonai                   # 启动
+uv tool install -U leonai   # 安装/更新
+leonai                      # 启动
 ```
 
 首次运行会自动进入配置向导，支持 OpenAI 兼容格式的 API（OpenAI、Claude via proxy、DeepSeek 等）。
