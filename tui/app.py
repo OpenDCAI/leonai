@@ -4,6 +4,7 @@ import asyncio
 import os
 import queue
 import threading
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -12,12 +13,14 @@ from textual.binding import Binding
 from textual.containers import Container, VerticalScroll
 from textual.widgets import Footer, Header, Static
 
+from tui.operations import current_checkpoint_id, current_thread_id, get_recorder
 from tui.widgets.chat_input import ChatInput
+from tui.widgets.checkpoint_browser import CheckpointBrowser
 from tui.widgets.history_browser import HistoryBrowser
 from tui.widgets.loading import ThinkingSpinner
 from tui.widgets.messages import AssistantMessage, SystemMessage, ToolCallMessage, ToolResultMessage, UserMessage
 from tui.widgets.status import StatusBar
-from tui.widgets.thread_browser import ThreadBrowser
+from tui.widgets.thread_selector import ThreadSelector
 
 
 class WelcomeBanner(Static):
@@ -97,7 +100,6 @@ class LeonApp(App):
         Binding("ctrl+c", "quit_or_interrupt", "中断/退出", show=False),
         Binding("ctrl+d", "quit", "退出", show=False),
         Binding("ctrl+l", "clear_history", "清空历史", show=False),
-        Binding("ctrl+t", "switch_thread", "切换对话", show=False),
         Binding("ctrl+up", "history_up", "历史上一条", show=False),
         Binding("ctrl+down", "history_down", "历史下一条", show=False),
         Binding("ctrl+e", "export_conversation", "导出对话", show=False),
@@ -149,7 +151,7 @@ class LeonApp(App):
             if chat_input.check_double_esc():
                 event.prevent_default()
                 event.stop()
-                self.action_show_history()
+                self.action_time_travel()
 
     def on_chat_input_submitted(self, event: ChatInput.Submitted) -> None:
         """Handle message submission"""
@@ -167,11 +169,15 @@ class LeonApp(App):
         if content.lower() in ["/exit", "/quit"]:
             self.exit()
             return
-        
+
         if content.lower() == "/history":
             self.action_show_history()
             return
-        
+
+        if content.lower() == "/resume":
+            self._show_resume_dialog()
+            return
+
         # Handle /rollback N command
         if content.lower().startswith("/rollback ") or content.lower().startswith("/回退 "):
             try:
@@ -227,7 +233,7 @@ class LeonApp(App):
     async def _process_message(self, message: str, thinking_spinner: ThinkingSpinner | None = None) -> None:
         """Process message with agent using async astream"""
         import time
-        
+
         messages_container = self.query_one("#messages", Container)
         chat_container = self.query_one("#chat-container", VerticalScroll)
 
@@ -236,13 +242,19 @@ class LeonApp(App):
         self._shown_tool_calls = set()
         self._shown_tool_results = set()
         self._tool_call_widgets = {}
-        
+
         last_content = ""
         last_update_time = 0
         update_interval = 0.05
 
         config = {"configurable": {"thread_id": self.thread_id}}
-        
+
+        # Set context variables for file operation recording
+        current_thread_id.set(self.thread_id)
+        # Generate a checkpoint ID for this interaction
+        checkpoint_id = f"{self.thread_id}-{uuid.uuid4().hex[:8]}"
+        current_checkpoint_id.set(checkpoint_id)
+
         try:
             async for chunk in self.agent.agent.astream(
                 {"messages": [{"role": "user", "content": message}]},
@@ -463,10 +475,9 @@ class LeonApp(App):
 快捷键:
   • Enter: 发送消息
   • Shift+Enter: 换行
-  • ESC ESC: 浏览历史输入（弹窗选择）
+  • ESC ESC: 时间旅行（回退到历史节点）
   • Ctrl+C: 中断当前执行 / 再按一次退出
   • Ctrl+D: 直接退出
-  • Ctrl+T: 切换对话 Thread
   • Ctrl+Y: 复制最后一条消息
   • Ctrl+E: 导出对话为 Markdown
   • Ctrl+L: 清空对话历史
@@ -474,6 +485,7 @@ class LeonApp(App):
 命令:
   • /help: 显示此帮助信息
   • /history: 查看历史输入
+  • /resume: 切换到其他对话
   • /rollback N 或 /回退 N: 回退到N步前的输入
   • /clear: 清空对话历史
   • /exit 或 /quit: 退出程序
@@ -515,8 +527,6 @@ class LeonApp(App):
     
     def action_clear_history(self) -> None:
         """Clear chat history"""
-        import uuid
-
         # Generate new thread ID
         self.thread_id = f"chat-{uuid.uuid4().hex[:8]}"
 
@@ -542,8 +552,54 @@ class LeonApp(App):
         # Show notification
         self.notify("✓ 对话历史已清空")
 
-    def action_switch_thread(self) -> None:
-        """切换到其他对话"""
+    def action_time_travel(self) -> None:
+        """Time travel - rewind to a previous checkpoint (ESC ESC)"""
+        if not hasattr(self.agent, 'checkpointer'):
+            self.notify("⚠ 时间旅行功能不可用", severity="warning")
+            return
+
+        from tui.time_travel import TimeTravelManager
+
+        time_travel_mgr = TimeTravelManager()
+        checkpoints = time_travel_mgr.get_checkpoints(self.thread_id, user_turns_only=True)
+
+        if not checkpoints:
+            self.notify("暂无历史节点", severity="information")
+            return
+
+        current_checkpoint_id_val = checkpoints[-1].checkpoint_id if checkpoints else ""
+
+        def handle_rewind(target_checkpoint_id: str | None) -> None:
+            if not target_checkpoint_id:
+                return
+
+            # Execute rewind
+            result = time_travel_mgr.rewind_to(self.thread_id, target_checkpoint_id)
+
+            if result.success:
+                # Reload the conversation from the target checkpoint
+                messages_container = self.query_one("#messages", Container)
+                messages_container.remove_children()
+                messages_container.mount(WelcomeBanner())
+
+                # Reset counters
+                self._message_count = 0
+                self._last_assistant_message = ""
+
+                # Reload history
+                self.run_worker(self._load_history(), exclusive=False)
+
+                self.notify(f"✓ {result.message}")
+            else:
+                self.notify(f"⚠ {result.message}", severity="warning")
+
+        self.push_screen(
+            CheckpointBrowser(checkpoints, current_checkpoint_id_val),
+            handle_rewind
+        )
+
+    def _show_resume_dialog(self) -> None:
+        """Show dialog to switch to another conversation (/resume command)"""
         if not self.session_mgr:
             self.notify("⚠ Session 管理器未初始化", severity="warning")
             return
@@ -553,8 +609,17 @@ class LeonApp(App):
             self.notify("暂无历史对话", severity="information")
             return
 
-        # 显示 thread 列表供选择
-        from tui.widgets.thread_browser import ThreadBrowser
+        # Get thread info for display
+        thread_info = {}
+        if hasattr(self.agent, 'checkpointer'):
+            from tui.time_travel import TimeTravelManager
+            time_travel_mgr = TimeTravelManager()
+            for tid in threads:
+                try:
+                    info = time_travel_mgr.get_thread_summary(tid)
+                    thread_info[tid] = info
+                except Exception:
+                    pass
 
         def handle_thread_selection(selected_thread: str | None) -> None:
             if selected_thread and selected_thread != self.thread_id:
@@ -578,7 +643,10 @@ class LeonApp(App):
                 self.run_worker(self._load_history(), exclusive=False)
                 self.notify(f"✓ 已切换到对话: {self.thread_id}")
 
-        self.push_screen(ThreadBrowser(threads, self.thread_id), handle_thread_selection)
+        self.push_screen(
+            ThreadSelector(threads, self.thread_id, thread_info),
+            handle_thread_selection
+        )
 
     async def _load_history(self) -> None:
         """加载历史 messages"""

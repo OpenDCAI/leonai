@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from langchain.agents.middleware.types import (
     AgentMiddleware,
@@ -27,6 +27,9 @@ from langchain_core.messages import ToolMessage
 
 from middleware.filesystem.read import ReadLimits, ReadResult
 from middleware.filesystem.read import read_file as read_file_dispatch
+
+if TYPE_CHECKING:
+    from tui.operations import FileOperationRecorder
 
 
 class FileSystemMiddleware(AgentMiddleware):
@@ -56,6 +59,7 @@ class FileSystemMiddleware(AgentMiddleware):
         allowed_extensions: list[str] | None = None,
         hooks: list[Any] | None = None,
         enabled_tools: dict[str, bool] | None = None,
+        operation_recorder: "FileOperationRecorder | None" = None,
     ):
         """
         初始化文件系统 middleware
@@ -66,6 +70,7 @@ class FileSystemMiddleware(AgentMiddleware):
             max_file_size: 最大文件大小（字节）
             allowed_extensions: 允许的文件扩展名（None 表示全部允许）
             hooks: 文件操作 hooks（用于安全检查和审计）
+            operation_recorder: 文件操作记录器（用于时间旅行）
         """
         self.workspace_root = Path(workspace_root).resolve()
         self.read_only = read_only
@@ -77,6 +82,7 @@ class FileSystemMiddleware(AgentMiddleware):
             'multi_edit': True, 'list_dir': True
         }
         self._read_files: set[Path] = set()
+        self.operation_recorder = operation_recorder
 
         # 确保 workspace 存在
         self.workspace_root.mkdir(parents=True, exist_ok=True)
@@ -132,6 +138,39 @@ class FileSystemMiddleware(AgentMiddleware):
                     return False, result.error_message, None
 
         return True, "", resolved
+
+    def _record_operation(
+        self,
+        operation_type: str,
+        file_path: str,
+        before_content: str | None,
+        after_content: str,
+        changes: list[dict] | None = None,
+    ) -> None:
+        """Record a file operation for time travel"""
+        if not self.operation_recorder:
+            return
+
+        from tui.operations import current_checkpoint_id, current_thread_id
+
+        thread_id = current_thread_id.get()
+        checkpoint_id = current_checkpoint_id.get()
+
+        if not thread_id or not checkpoint_id:
+            return
+
+        try:
+            self.operation_recorder.record(
+                thread_id=thread_id,
+                checkpoint_id=checkpoint_id,
+                operation_type=operation_type,
+                file_path=file_path,
+                before_content=before_content,
+                after_content=after_content,
+                changes=changes,
+            )
+        except Exception as e:
+            print(f"[FileSystemMiddleware] Failed to record operation: {e}")
 
     def _read_file_impl(self, file_path: str, offset: int = 0, limit: int | None = None) -> ReadResult:
         """实现 read_file - 委托给 read dispatcher 处理不同文件类型"""
@@ -200,6 +239,17 @@ class FileSystemMiddleware(AgentMiddleware):
             with open(resolved, "w", encoding="utf-8") as f:
                 f.write(content)
 
+            # Mark as read since we just wrote it (AI knows the content)
+            self._read_files.add(resolved)
+
+            # Record operation for time travel
+            self._record_operation(
+                operation_type="write",
+                file_path=file_path,
+                before_content=None,
+                after_content=content,
+            )
+
             lines = content.count("\n") + 1
             return f"File created: {file_path}\n   Lines: {lines}\n   Size: {len(content)} bytes"
 
@@ -250,6 +300,15 @@ class FileSystemMiddleware(AgentMiddleware):
             with open(resolved, "w", encoding="utf-8") as f:
                 f.write(new_content)
 
+            # Record operation for time travel
+            self._record_operation(
+                operation_type="edit",
+                file_path=file_path,
+                before_content=content,
+                after_content=new_content,
+                changes=[{"old_string": old_string, "new_string": new_string}],
+            )
+
             return f"File edited: {file_path}\n   Replaced 1 occurrence"
 
         except Exception as e:
@@ -276,6 +335,8 @@ class FileSystemMiddleware(AgentMiddleware):
             with open(resolved, encoding="utf-8") as f:
                 content = f.read()
 
+            original_content = content
+
             # 验证所有编辑
             for i, edit in enumerate(edits):
                 old_str = edit.get("old_string", "")
@@ -297,6 +358,15 @@ class FileSystemMiddleware(AgentMiddleware):
             # 写回文件
             with open(resolved, "w", encoding="utf-8") as f:
                 f.write(content)
+
+            # Record operation for time travel
+            self._record_operation(
+                operation_type="multi_edit",
+                file_path=file_path,
+                before_content=original_content,
+                after_content=content,
+                changes=edits,
+            )
 
             return f"File edited: {file_path}\n   Applied {len(edits)} edits"
 
