@@ -1,5 +1,7 @@
 """Session management for TUI resume"""
 import json
+import sqlite3
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -13,6 +15,7 @@ class SessionManager:
         self.session_dir = Path(session_dir)
         self.session_dir.mkdir(parents=True, exist_ok=True)
         self.session_file = self.session_dir / "session.json"
+        self.db_path = self.session_dir / "leon.db"
 
     def save_session(self, thread_id: str, workspace: str | None = None) -> None:
         """保存 session 状态"""
@@ -40,6 +43,72 @@ class SessionManager:
         """获取所有 thread_id 列表"""
         data = self._load_data()
         return data.get("threads", [])
+
+    def get_threads_from_db(self) -> list[dict]:
+        """从 SQLite 数据库获取所有 thread 信息"""
+        if not self.db_path.exists():
+            return []
+
+        threads = []
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                # Query checkpoints table for unique thread_ids
+                cursor = conn.execute("""
+                    SELECT DISTINCT thread_id
+                    FROM checkpoints
+                    WHERE thread_id IS NOT NULL
+                    ORDER BY thread_id
+                """)
+                for row in cursor.fetchall():
+                    thread_id = row["thread_id"]
+                    if thread_id:
+                        threads.append({
+                            "thread_id": thread_id,
+                            "last_active": None,
+                        })
+        except Exception as e:
+            print(f"[SessionManager] Error reading threads from DB: {e}")
+
+        return threads
+
+    def delete_thread(self, thread_id: str) -> bool:
+        """删除一个 thread 及其所有数据"""
+        # Remove from session.json
+        data = self._load_data()
+        threads = data.get("threads", [])
+        if thread_id in threads:
+            threads.remove(thread_id)
+            data["threads"] = threads
+            if data.get("last_thread_id") == thread_id:
+                data["last_thread_id"] = threads[0] if threads else None
+            self.session_file.write_text(json.dumps(data, indent=2))
+
+        # Remove from SQLite database
+        if self.db_path.exists():
+            try:
+                with sqlite3.connect(self.db_path) as conn:
+                    # Delete from checkpoints table
+                    conn.execute(
+                        "DELETE FROM checkpoints WHERE thread_id = ?",
+                        (thread_id,),
+                    )
+                    # Delete from writes table
+                    conn.execute(
+                        "DELETE FROM writes WHERE thread_id = ?",
+                        (thread_id,),
+                    )
+                    # Delete from file_operations table
+                    conn.execute(
+                        "DELETE FROM file_operations WHERE thread_id = ?",
+                        (thread_id,),
+                    )
+                    conn.commit()
+                return True
+            except Exception as e:
+                print(f"[SessionManager] Error deleting thread from DB: {e}")
+                return False
+        return True
 
     def _load_data(self) -> dict:
         """加载 session 数据"""

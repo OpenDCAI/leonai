@@ -16,7 +16,11 @@ from typing import Any
 
 from langchain.agents import create_agent
 from langchain.chat_models import init_chat_model
-from langgraph.checkpoint.memory import MemorySaver
+import sqlite3
+
+import aiosqlite
+from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 # Load .env file
 _env_file = Path(__file__).parent / ".env"
@@ -40,6 +44,9 @@ from middleware.shell.hooks.file_access_logger import FileAccessLoggerHook
 from middleware.shell.hooks.file_permission import FilePermissionHook
 from middleware.shell.hooks.path_security import PathSecurityHook
 from middleware.web import WebMiddleware
+
+# Import file operation recorder for time travel
+from tui.operations import get_recorder
 
 
 class LeonAgent:
@@ -175,6 +182,8 @@ class LeonAgent:
         asyncio.set_event_loop(loop)
         try:
             mcp_tools = loop.run_until_complete(self._init_mcp_tools())
+            # 初始化异步 checkpointer
+            self._aiosqlite_conn = loop.run_until_complete(self._init_checkpointer())
         finally:
             loop.close()
 
@@ -184,19 +193,34 @@ class LeonAgent:
         if profile.system_prompt:
             self.system_prompt += f"\n\n**Custom Instructions:**\n{profile.system_prompt}"
 
-        # 创建 agent（带 checkpointer 支持对话历史和 session 状态）
         self.agent = create_agent(
             model=self.model,
             tools=mcp_tools,
             system_prompt=self.system_prompt,
             middleware=middleware,
-            checkpointer=MemorySaver(),
+            checkpointer=self.checkpointer,
         )
 
         print("[LeonAgent] Initialized successfully")
         print(f"[LeonAgent] Workspace: {self.workspace_root}")
         print(f"[LeonAgent] Read-only: {self.read_only}")
         print(f"[LeonAgent] Audit log: {self.enable_audit_log}")
+
+    def close(self):
+        """Clean up resources"""
+        if hasattr(self, '_aiosqlite_conn') and self._aiosqlite_conn:
+            import asyncio
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    loop.create_task(self._aiosqlite_conn.close())
+                else:
+                    loop.run_until_complete(self._aiosqlite_conn.close())
+            except Exception:
+                pass
+
+    def __del__(self):
+        self.close()
 
     def _create_default_profile(self, path: Path) -> AgentProfile:
         """首次运行时创建默认配置文件"""
@@ -270,6 +294,7 @@ tool:
                 allowed_extensions=self.allowed_file_extensions,
                 hooks=file_hooks,
                 enabled_tools=fs_tools,
+                operation_recorder=get_recorder(),
             ))
 
         # 3. Search
@@ -371,6 +396,15 @@ tool:
         except Exception as e:
             print(f"[LeonAgent] MCP initialization failed: {e}")
             return []
+
+    async def _init_checkpointer(self):
+        """Initialize async checkpointer for conversation persistence"""
+        db_path = Path.home() / ".leon" / "leon.db"
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        conn = await aiosqlite.connect(str(db_path))
+        self.checkpointer = AsyncSqliteSaver(conn)
+        await self.checkpointer.setup()
+        return conn
 
     def _is_tool_allowed(self, tool) -> bool:
         # Extract original tool name without mcp__ prefix
