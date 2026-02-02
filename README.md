@@ -6,13 +6,13 @@ LEON 以 LangChain Middleware 为核心架构：通过统一的 middleware 管�
 
 ![架构图](./docs/diagram_dark.png)
 
-## 快速体验（CLI）
+## 快速开始
 
-当前可用的体验入口是 `leonai`（TUI）：
-
-- `leonai`：启动
-- `leonai config`：配置 API key
-- `leonai config show`：查看当前配置
+```bash
+uv tool install leonai   # 安装
+leonai config            # 配置 API key
+leonai                   # 启动
+```
 
 ## 最小基座
 
