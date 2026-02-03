@@ -58,6 +58,7 @@ Issues = "https://github.com/Ju-Yi-AI-Lab/leonai/issues"
 
 [tool.setuptools]
 packages = [
+    "agents",
     "middleware",
     "middleware.command",
     "middleware.command.hooks",
@@ -70,6 +71,8 @@ packages = [
     "middleware.shell",
     "middleware.shell.hooks",
     "middleware.skills",
+    "middleware.task",
+    "middleware.todo",
     "middleware.web",
     "middleware.web.fetchers",
     "middleware.web.searchers",
@@ -77,6 +80,9 @@ packages = [
     "tui.widgets",
 ]
 py-modules = ["agent", "agent_profile"]
+
+[tool.setuptools.package-data]
+"agents" = ["*.md"]
 
 [tool.ruff]
 line-length = 120

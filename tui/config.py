@@ -67,7 +67,40 @@ class ConfigManager:
         """加载配置到环境变量"""
         for key, value in self.list_all().items():
             if key not in os.environ:
+                # 规范化 OPENAI_BASE_URL：确保包含 /v1
+                if key == "OPENAI_BASE_URL" and value:
+                    value = normalize_base_url(value)
                 os.environ[key] = value
+
+
+def normalize_base_url(url: str) -> str:
+    """
+    规范化 OpenAI 兼容 API 的 base_url
+
+    OpenAI SDK 会在 base_url 后直接拼接 /chat/completions，
+    所以 base_url 必须以 /v1 结尾。
+
+    Examples:
+        https://api.openai.com -> https://api.openai.com/v1
+        https://yunwu.ai -> https://yunwu.ai/v1
+        https://yunwu.ai/v1 -> https://yunwu.ai/v1 (不变)
+        https://example.com/api/v1 -> https://example.com/api/v1 (不变)
+    """
+    if not url:
+        return url
+
+    url = url.rstrip("/")
+
+    # 如果已经以 /v1 结尾，不处理
+    if url.endswith("/v1"):
+        return url
+
+    # 如果包含 /v1/ 在中间（如 /v1/engines），不处理
+    if "/v1/" in url:
+        return url
+
+    # 否则补全 /v1
+    return f"{url}/v1"
 
 
 def interactive_config():
@@ -115,17 +148,20 @@ def interactive_config():
 
         # 2. BASE_URL（可选）
         current_url = manager.get("OPENAI_BASE_URL") or ""
-        default_url = current_url or "https://api.openai.com"
+        default_url = current_url or "https://api.openai.com/v1"
         base_url = Prompt.ask(
-            "  [bright_cyan]2.[/] BASE_URL",
+            "  [bright_cyan]2.[/] BASE_URL [dim](需包含 /v1)[/]",
             default=default_url,
             show_default=True,
             console=console,
         )
-        if base_url and base_url != default_url:
-            manager.set("OPENAI_BASE_URL", base_url)
-        elif not current_url:
-            manager.set("OPENAI_BASE_URL", default_url)
+        if base_url:
+            # 规范化 URL
+            normalized = normalize_base_url(base_url)
+            if normalized != base_url:
+                console.print(f"      [dim]→ 已自动补全为: {normalized}[/]")
+            if normalized != current_url:
+                manager.set("OPENAI_BASE_URL", normalized)
 
         # 3. MODEL_NAME（可选）
         current_model = manager.get("MODEL_NAME") or ""
