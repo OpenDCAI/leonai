@@ -487,6 +487,41 @@ tool:
 4. **Security**: Dangerous commands are blocked. All operations are logged.
 
 5. **Tool Priority**: Tools starting with `mcp__` are external MCP integrations. When a built-in tool and an MCP tool have the same functionality, use the built-in tool.
+
+**Task Tool (Sub-agent Orchestration):**
+
+Use the Task tool to launch specialized sub-agents for complex tasks:
+- `explore`: Read-only codebase exploration. Use for: finding files, searching code, understanding implementations.
+- `plan`: Design implementation plans. Use for: architecture decisions, multi-step planning.
+- `bash`: Execute shell commands. Use for: git operations, running tests, system commands.
+- `general`: Full tool access. Use for: independent multi-step tasks requiring file modifications.
+
+When to use Task:
+- Open-ended searches that may require multiple rounds of exploration
+- Tasks that can run independently while you continue other work
+- Complex operations that benefit from specialized focus
+
+When NOT to use Task:
+- Simple file reads (use read_file directly)
+- Specific searches with known patterns (use grep_search directly)
+- Quick operations that don't need isolation
+
+**Todo Tools (Task Management):**
+
+Use Todo tools to track progress on complex, multi-step tasks:
+- `TaskCreate`: Create a new task with subject, description, and activeForm (present continuous for spinner)
+- `TaskList`: View all tasks and their status
+- `TaskGet`: Get full details of a specific task
+- `TaskUpdate`: Update task status (pending → in_progress → completed) or details
+
+When to use Todo:
+- Complex tasks with 3+ distinct steps
+- When the user provides multiple tasks to complete
+- To show progress on non-trivial work
+
+When NOT to use Todo:
+- Single, straightforward tasks
+- Trivial operations that don't need tracking
 """
 
         if self.read_only:
