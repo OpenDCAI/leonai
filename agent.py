@@ -16,6 +16,7 @@ from typing import Any
 
 from langchain.agents import create_agent
 from langchain.chat_models import init_chat_model
+from langchain_core.tools import tool
 import sqlite3
 
 import aiosqlite
@@ -37,6 +38,8 @@ from middleware.filesystem import FileSystemMiddleware
 from middleware.prompt_caching import PromptCachingMiddleware
 from middleware.search import SearchMiddleware
 from middleware.skills import SkillsMiddleware
+from middleware.task import TaskMiddleware
+from middleware.todo import TodoMiddleware
 
 # 导入 hooks
 from middleware.shell.hooks.dangerous_commands import DangerousCommandsHook
@@ -186,6 +189,27 @@ class LeonAgent:
             self._aiosqlite_conn = loop.run_until_complete(self._init_checkpointer())
         finally:
             loop.close()
+
+        # Set parent middleware and checkpointer for TaskMiddleware
+        if hasattr(self, '_task_middleware'):
+            self._task_middleware.set_parent_middleware(middleware)
+            self._task_middleware.set_checkpointer(self.checkpointer)
+
+        # Check if any middleware has self.tools (BaseTool instances).
+        # langchain's create_agent creates ToolNode only when:
+        #   available_tools = middleware_tools + regular_tools is non-empty
+        # where middleware_tools = [t for m in middleware for t in getattr(m, "tools", [])]
+        #
+        # Most Leon middleware inject tools via wrap_model_call (dict schema),
+        # only CommandMiddleware has self.tools (BaseTool instances).
+        # If command is disabled and no MCP tools, we need a placeholder.
+        middleware_has_tools = any(getattr(m, "tools", None) for m in middleware)
+        if not mcp_tools and not middleware_has_tools:
+            @tool
+            def _placeholder() -> str:
+                """Internal placeholder - ensures ToolNode is created for middleware tools."""
+                return ""
+            mcp_tools = [_placeholder]
 
         # System prompt
         # 内置 prompt 始终存在，用户配置的追加在后面
@@ -354,6 +378,21 @@ tool:
                 skill_paths=self.profile.skills.paths,
                 enabled_skills=self.profile.skills.skills
             ))
+
+        # 7. Todo (task management and progress tracking)
+        self._todo_middleware = TodoMiddleware()
+        middleware.append(self._todo_middleware)
+
+        # 8. Subagent (sub-agent orchestration)
+        # TaskMiddleware needs parent middleware for tool inheritance
+        # We'll set it after building the stack
+        self._task_middleware = TaskMiddleware(
+            workspace_root=self.workspace_root,
+            parent_model=self.model_name,
+            api_key=self.api_key,
+            base_url=os.getenv("OPENAI_BASE_URL"),
+        )
+        middleware.append(self._task_middleware)
 
         return middleware
 

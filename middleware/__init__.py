@@ -5,6 +5,8 @@ from middleware.filesystem import FileSystemMiddleware
 from middleware.prompt_caching import PromptCachingMiddleware
 from middleware.search import SearchMiddleware
 from middleware.shell import ShellMiddleware
+from middleware.task import TaskMiddleware
+from middleware.todo import TodoMiddleware
 from middleware.web import WebMiddleware
 
 __all__ = [
@@ -13,5 +15,7 @@ __all__ = [
     "PromptCachingMiddleware",
     "SearchMiddleware",
     "ShellMiddleware",
+    "TaskMiddleware",
+    "TodoMiddleware",
     "WebMiddleware",
 ]
