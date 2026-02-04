@@ -31,20 +31,21 @@ class AgentBayProvider(SandboxProvider):
         self,
         api_key: str,
         region_id: str = "ap-southeast-1",
-        default_context_path: str = "/workspace",
+        default_context_path: str = "/home/user",
     ):
         """
         Initialize AgentBay provider.
 
         Args:
             api_key: AgentBay API key
-            region_id: Region (ap-southeast-1 for Singapore, cn-hangzhou for China)
+            region_id: Region (currently unused - SDK uses default)
             default_context_path: Default mount path for context sync
         """
         # @@@ Lazy import - only load SDK when provider is used
         from agentbay import AgentBay
 
-        self.client = AgentBay(api_key=api_key, region_id=region_id)
+        # SDK reads region from env or uses default
+        self.client = AgentBay(api_key=api_key)
         self.default_context_path = default_context_path
         self._sessions: dict[str, Any] = {}  # session_id -> Session object cache
 
@@ -78,11 +79,13 @@ class AgentBayProvider(SandboxProvider):
         return result.success
 
     def pause_session(self, session_id: str) -> bool:
-        result = self.client.beta_pause(session_id)
+        session = self._get_session(session_id)
+        result = self.client.beta_pause(session)
         return result.success
 
     def resume_session(self, session_id: str) -> bool:
-        result = self.client.beta_resume(session_id)
+        session = self._get_session(session_id)
+        result = self.client.beta_resume(session)
         if result.success:
             # Re-fetch session object after resume
             get_result = self.client.get(session_id)
@@ -129,7 +132,7 @@ class AgentBayProvider(SandboxProvider):
         result = session.file_system.read_file(path)
         if not result.success:
             raise IOError(result.error_message)
-        return result.data or ""
+        return result.content or ""
 
     def write_file(self, session_id: str, path: str, content: str) -> str:
         session = self._get_session(session_id)
@@ -145,11 +148,11 @@ class AgentBayProvider(SandboxProvider):
             return []
         # Normalize to common format
         items = []
-        for entry in result.data or []:
+        for entry in result.entries or []:
             items.append({
-                "name": entry.get("name", ""),
-                "type": "directory" if entry.get("isDirectory") else "file",
-                "size": entry.get("size", 0),
+                "name": entry.name,
+                "type": "directory" if entry.is_directory else "file",
+                "size": entry.size or 0,
             })
         return items
 
