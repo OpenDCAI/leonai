@@ -126,7 +126,7 @@ class SandboxProviderConfig(BaseModel):
     """Configuration for a specific sandbox provider."""
     api_key: str | None = None
     region_id: str = "ap-southeast-1"
-    context_path: str = "/workspace"
+    context_path: str = "/root"  # Default working directory in AgentBay containers
 
 
 class SandboxToolsConfig(BaseModel):
