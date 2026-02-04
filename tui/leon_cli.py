@@ -317,8 +317,10 @@ def main():
             sys.exit(1)
         return
 
-    # Handle sandbox command
+    # Handle sandbox command - load config first for API key
     if args.command == "sandbox":
+        config_manager = ConfigManager()
+        config_manager.load_to_env()
         cmd_sandbox(args)
         return
 
