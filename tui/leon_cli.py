@@ -221,6 +221,25 @@ def cmd_thread_rm(args):
         console.print(f"[red]✗ 删除失败[/red]")
 
 
+def cmd_sandbox(args):
+    """Launch sandbox session manager TUI"""
+    import os
+
+    api_key = os.getenv("AGENTBAY_API_KEY")
+    if not api_key:
+        print("❌ AGENTBAY_API_KEY not set")
+        print("Set it in ~/.leon/config.env or as environment variable")
+        sys.exit(1)
+
+    try:
+        from tui.widgets.sandbox_manager import SandboxManagerApp
+        SandboxManagerApp(api_key=api_key).run()
+    except ImportError as e:
+        print(f"❌ Failed to import sandbox manager: {e}")
+        print("Make sure wuying-agentbay-sdk is installed: uv pip install wuying-agentbay-sdk")
+        sys.exit(1)
+
+
 def main():
     """主函数"""
     parser = argparse.ArgumentParser(description="Leon AI - 你的 AI 编程助手", add_help=False)
@@ -252,6 +271,9 @@ def main():
         print("  leonai thread history <thread_id>   查看对话历史")
         print("  leonai thread rewind <thread_id> <checkpoint_id>  回退到指定节点")
         print("  leonai thread rm <thread_id>        删除对话")
+        print()
+        print("Sandbox 管理:")
+        print("  leonai sandbox            打开 sandbox 会话管理器")
         return
 
     # Handle config command
@@ -293,6 +315,11 @@ def main():
             print(f"未知子命令: {subcommand}")
             print("可用子命令: ls, list, history, rewind, rm")
             sys.exit(1)
+        return
+
+    # Handle sandbox command
+    if args.command == "sandbox":
+        cmd_sandbox(args)
         return
 
     config_manager = ConfigManager()
