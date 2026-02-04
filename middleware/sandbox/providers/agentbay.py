@@ -31,7 +31,7 @@ class AgentBayProvider(SandboxProvider):
         self,
         api_key: str,
         region_id: str = "ap-southeast-1",
-        default_context_path: str = "/home/user",
+        default_context_path: str = "/root",
     ):
         """
         Initialize AgentBay provider.
@@ -125,7 +125,7 @@ class AgentBayProvider(SandboxProvider):
         if not result.success:
             return ExecuteResult(output="", error=result.error_message)
 
-        return ExecuteResult(output=result.data or "")
+        return ExecuteResult(output=result.output or "")
 
     def read_file(self, session_id: str, path: str) -> str:
         session = self._get_session(session_id)
