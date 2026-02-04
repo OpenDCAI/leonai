@@ -438,11 +438,11 @@ tool:
                         default_context_id=self.profile.sandbox.context_id,
                     )
                     sandbox_tools = {
-                        'read_file': self.profile.sandbox.tools.read_file,
-                        'write_file': self.profile.sandbox.tools.write_file,
-                        'edit_file': self.profile.sandbox.tools.edit_file,
-                        'list_dir': self.profile.sandbox.tools.list_dir,
-                        'run_command': self.profile.sandbox.tools.run_command,
+                        'sandbox_read_file': self.profile.sandbox.tools.read_file,
+                        'sandbox_write_file': self.profile.sandbox.tools.write_file,
+                        'sandbox_edit_file': self.profile.sandbox.tools.edit_file,
+                        'sandbox_list_dir': self.profile.sandbox.tools.list_dir,
+                        'sandbox_execute': self.profile.sandbox.tools.run_command,
                         'sandbox_upload': self.profile.sandbox.tools.sandbox_upload,
                         'sandbox_download': self.profile.sandbox.tools.sandbox_download,
                     }
