@@ -312,7 +312,13 @@ tool:
         middleware.append(PromptCachingMiddleware(ttl="5m", min_messages_to_cache=0))
 
         # 2. FileSystem
-        if self.profile.tool.filesystem.enabled:
+        # @@@ Skip if sandbox is enabled and replaces local tools
+        sandbox_replaces_local = (
+            self.profile.sandbox.enabled and
+            self.profile.sandbox.replace_local_tools
+        )
+
+        if self.profile.tool.filesystem.enabled and not sandbox_replaces_local:
             file_hooks = []
             if self.enable_audit_log:
                 file_hooks.append(FileAccessLoggerHook(workspace_root=self.workspace_root, log_file="file_access.log"))
@@ -370,7 +376,8 @@ tool:
             ))
 
         # 5. Command
-        if self.profile.tool.command.enabled:
+        # @@@ Skip if sandbox is enabled and replaces local tools
+        if self.profile.tool.command.enabled and not sandbox_replaces_local:
             command_hooks = []
             if self.block_dangerous_commands:
                 command_hooks.append(DangerousCommandsHook(

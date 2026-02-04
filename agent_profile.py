@@ -152,6 +152,7 @@ class SandboxConfig(BaseModel):
     enabled: bool = False  # Disabled by default
     provider: str = "agentbay"  # 'agentbay', 'e2b', 'docker'
     context_id: str | None = None  # Persistent context for data
+    replace_local_tools: bool = True  # When True, disable local filesystem/command tools
 
     # Provider-specific configs
     agentbay: SandboxProviderConfig = Field(default_factory=SandboxProviderConfig)
