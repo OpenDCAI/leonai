@@ -230,7 +230,7 @@ The agent will work independently and return results when complete.""",
         tool_call = request.tool_call
         tool_name = tool_call.get("name")
 
-        if tool_name not in (self.TOOL_TASK, self.TOOL_TASK_STATUS):
+        if tool_name not in (self.TOOL_TASK, self.TOOL_TASK_OUTPUT):
             return await handler(request)
 
         return await self._handle_tool_call(tool_call)
