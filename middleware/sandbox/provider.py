@@ -250,3 +250,14 @@ class SandboxProvider(ABC):
             List of dicts with keys: pid, name, cmd
         """
         return []
+
+    def get_web_url(self, session_id: str) -> str | None:
+        """
+        Get web UI URL for the sandbox session.
+
+        Optional - not all providers support this.
+
+        Returns:
+            URL string or None if unavailable
+        """
+        return None

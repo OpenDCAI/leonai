@@ -212,6 +212,11 @@ class AgentBayProvider(SandboxProvider):
             ]
         return []
 
+    def get_web_url(self, session_id: str) -> str | None:
+        """Get AgentBay web UI URL for the session."""
+        session = self._get_session(session_id)
+        return getattr(session, 'resource_url', None)
+
     def _get_session(self, session_id: str):
         """Get session object, fetching from API if not cached."""
         if session_id not in self._sessions:
