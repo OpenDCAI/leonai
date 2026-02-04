@@ -49,12 +49,12 @@ class SandboxMiddleware(AgentMiddleware):
     - Auto-resume when thread is selected again
     """
 
-    # Tool names - same as local tools for seamless switching
-    TOOL_READ_FILE = "read_file"
-    TOOL_WRITE_FILE = "write_file"
-    TOOL_EDIT_FILE = "edit_file"
-    TOOL_LIST_DIR = "list_dir"
-    TOOL_EXECUTE = "run_command"
+    # Tool names - prefixed with sandbox_ to avoid conflicts with local tools
+    TOOL_READ_FILE = "sandbox_read_file"
+    TOOL_WRITE_FILE = "sandbox_write_file"
+    TOOL_EDIT_FILE = "sandbox_edit_file"
+    TOOL_LIST_DIR = "sandbox_list_dir"
+    TOOL_EXECUTE = "sandbox_execute"
 
     # Sandbox-specific tools for local ↔ sandbox transfer
     TOOL_UPLOAD = "sandbox_upload"
@@ -226,13 +226,13 @@ class SandboxMiddleware(AgentMiddleware):
                 "type": "function",
                 "function": {
                     "name": self.TOOL_READ_FILE,
-                    "description": "Read file content. Path must be absolute.",
+                    "description": "Read file in remote sandbox environment. Path must be absolute.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "file_path": {
                                 "type": "string",
-                                "description": "Absolute file path",
+                                "description": "Absolute file path in sandbox",
                             },
                         },
                         "required": ["file_path"],
@@ -245,13 +245,13 @@ class SandboxMiddleware(AgentMiddleware):
                 "type": "function",
                 "function": {
                     "name": self.TOOL_WRITE_FILE,
-                    "description": "Create new file. Fails if file exists.",
+                    "description": "Create new file in remote sandbox environment.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "file_path": {
                                 "type": "string",
-                                "description": "Absolute file path",
+                                "description": "Absolute file path in sandbox",
                             },
                             "content": {
                                 "type": "string",
@@ -268,7 +268,7 @@ class SandboxMiddleware(AgentMiddleware):
                 "type": "function",
                 "function": {
                     "name": self.TOOL_EDIT_FILE,
-                    "description": "Edit file using string replacement. Must read file first.",
+                    "description": "Edit file in remote sandbox using string replacement. Must read file first.",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -292,13 +292,13 @@ class SandboxMiddleware(AgentMiddleware):
                 "type": "function",
                 "function": {
                     "name": self.TOOL_LIST_DIR,
-                    "description": "List directory contents.",
+                    "description": "List directory contents in remote sandbox.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "directory_path": {
                                 "type": "string",
-                                "description": "Absolute directory path",
+                                "description": "Absolute directory path in sandbox",
                             },
                         },
                         "required": ["directory_path"],
@@ -311,13 +311,13 @@ class SandboxMiddleware(AgentMiddleware):
                 "type": "function",
                 "function": {
                     "name": self.TOOL_EXECUTE,
-                    "description": "Execute shell command.",
+                    "description": "Execute shell command in remote sandbox environment.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "command": {
                                 "type": "string",
-                                "description": "Shell command to execute",
+                                "description": "Shell command to execute in sandbox",
                             },
                             "timeout_ms": {
                                 "type": "integer",
