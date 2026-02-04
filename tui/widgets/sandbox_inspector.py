@@ -187,6 +187,8 @@ class SandboxInspector(ModalScreen):
 
             # Load metrics
             metrics = provider.get_metrics(session_id)
+            web_url = provider.get_web_url(session_id)
+
             if metrics:
                 metrics_text = (
                     f"CPU:     {metrics.cpu_percent:.1f}%\n"
@@ -199,11 +201,14 @@ class SandboxInspector(ModalScreen):
             else:
                 metrics_text = f"Session ID: {session_id}\nStatus: {self.session_info.status}\n\nMetrics unavailable"
 
+            if web_url:
+                metrics_text += f"\n\nWeb UI: {web_url[:80]}..."
+
             self.call_from_thread(self._update_metrics, metrics_text)
 
             # Load files
             try:
-                files = provider.list_dir(session_id, "/workspace")
+                files = provider.list_dir(session_id, "/root")
                 self.call_from_thread(self._update_files, files)
             except Exception:
                 self.call_from_thread(self._update_files, [])
