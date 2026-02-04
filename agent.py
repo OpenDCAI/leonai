@@ -167,6 +167,7 @@ class LeonAgent:
         self.enable_audit_log = profile.agent.enable_audit_log
         self.enable_web_tools = profile.tool.web.enabled
         self._session_pool: dict[str, Any] = {}
+        self.db_path = Path.home() / ".leon" / "leon.db"
 
         # 初始化模型
         model_kwargs = {"api_key": self.api_key}
@@ -232,6 +233,22 @@ class LeonAgent:
 
     def close(self):
         """Clean up resources"""
+        # Pause sandbox sessions on exit
+        if hasattr(self, '_sandbox_manager') and self._sandbox_manager:
+            try:
+                on_exit = self.profile.sandbox.on_exit
+                if on_exit == "pause":
+                    count = self._sandbox_manager.pause_all_sessions()
+                    if count > 0:
+                        print(f"[LeonAgent] Paused {count} sandbox session(s)")
+                elif on_exit == "destroy":
+                    for session in self._sandbox_manager.list_sessions():
+                        self._sandbox_manager.destroy_session(session["thread_id"])
+                    print("[LeonAgent] Destroyed all sandbox sessions")
+            except Exception as e:
+                print(f"[LeonAgent] Sandbox cleanup error: {e}")
+
+        # Close SQLite connection
         if hasattr(self, '_aiosqlite_conn') and self._aiosqlite_conn:
             import asyncio
             try:
@@ -393,6 +410,48 @@ tool:
             base_url=os.getenv("OPENAI_BASE_URL"),
         )
         middleware.append(self._task_middleware)
+
+        # 9. Sandbox (isolated execution environment)
+        # @@@ Sandbox replaces local tools when enabled - must be last to override
+        self._sandbox_manager = None
+        if self.profile.sandbox.enabled:
+            from middleware.sandbox import SandboxManager, SandboxMiddleware
+            from middleware.sandbox.providers.agentbay import AgentBayProvider
+
+            # Initialize provider based on config
+            if self.profile.sandbox.provider == "agentbay":
+                api_key = (
+                    self.profile.sandbox.agentbay.api_key
+                    or os.getenv("AGENTBAY_API_KEY")
+                )
+                if not api_key:
+                    print("[LeonAgent] Warning: Sandbox enabled but AGENTBAY_API_KEY not set")
+                else:
+                    provider = AgentBayProvider(
+                        api_key=api_key,
+                        region_id=self.profile.sandbox.agentbay.region_id,
+                        default_context_path=self.profile.sandbox.agentbay.context_path,
+                    )
+                    self._sandbox_manager = SandboxManager(
+                        provider=provider,
+                        db_path=self.db_path,
+                        default_context_id=self.profile.sandbox.context_id,
+                    )
+                    sandbox_tools = {
+                        'read_file': self.profile.sandbox.tools.read_file,
+                        'write_file': self.profile.sandbox.tools.write_file,
+                        'edit_file': self.profile.sandbox.tools.edit_file,
+                        'list_dir': self.profile.sandbox.tools.list_dir,
+                        'run_command': self.profile.sandbox.tools.run_command,
+                        'sandbox_upload': self.profile.sandbox.tools.sandbox_upload,
+                        'sandbox_download': self.profile.sandbox.tools.sandbox_download,
+                    }
+                    middleware.append(SandboxMiddleware(
+                        manager=self._sandbox_manager,
+                        workspace_root=self.workspace_root,
+                        enabled_tools=sandbox_tools,
+                    ))
+                    print(f"[LeonAgent] Sandbox enabled: {self.profile.sandbox.provider}")
 
         return middleware
 
