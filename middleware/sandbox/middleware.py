@@ -50,12 +50,12 @@ class SandboxMiddleware(AgentMiddleware):
     - Auto-resume when thread is selected again
     """
 
-    # Tool names - prefixed with sandbox_ to avoid conflicts with local tools
-    TOOL_READ_FILE = "sandbox_read_file"
-    TOOL_WRITE_FILE = "sandbox_write_file"
-    TOOL_EDIT_FILE = "sandbox_edit_file"
-    TOOL_LIST_DIR = "sandbox_list_dir"
-    TOOL_EXECUTE = "sandbox_execute"
+    # Tool names - same as local tools (local tools disabled when sandbox enabled)
+    TOOL_READ_FILE = "read_file"
+    TOOL_WRITE_FILE = "write_file"
+    TOOL_EDIT_FILE = "edit_file"
+    TOOL_LIST_DIR = "list_dir"
+    TOOL_EXECUTE = "run_command"
 
     # Sandbox-specific tools for local ↔ sandbox transfer
     TOOL_UPLOAD = "sandbox_upload"
