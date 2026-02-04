@@ -7,8 +7,8 @@ run_command) regardless of backend - provider is swapped at config time.
 
 from __future__ import annotations
 
-import threading
 from collections.abc import Awaitable, Callable
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
 
@@ -22,18 +22,19 @@ from langchain_core.messages import ToolMessage
 
 from middleware.sandbox.manager import SandboxManager
 
-# @@@ Thread-local for current thread_id binding
-_current_thread_id: threading.local = threading.local()
+# @@@ ContextVar for thread_id - works across async boundaries
+_current_thread_id: ContextVar[str] = ContextVar("sandbox_thread_id", default="")
 
 
 def set_current_thread_id(thread_id: str):
-    """Set thread_id for current thread (called by TUI before agent invoke)."""
-    _current_thread_id.value = thread_id
+    """Set thread_id for current context (called by TUI before agent invoke)."""
+    _current_thread_id.set(thread_id)
 
 
 def get_current_thread_id() -> str | None:
-    """Get thread_id for current thread."""
-    return getattr(_current_thread_id, "value", None)
+    """Get thread_id for current context."""
+    value = _current_thread_id.get()
+    return value if value else None
 
 
 class SandboxMiddleware(AgentMiddleware):
