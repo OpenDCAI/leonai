@@ -532,7 +532,31 @@ tool:
         os_name = platform.system()
         shell_name = os.environ.get('SHELL', '/bin/bash').split('/')[-1]
 
-        prompt = f"""You are a highly capable AI assistant with access to file and system tools.
+        # @@@ Different prompt for sandbox vs local mode
+        if self.profile.sandbox.enabled and self.profile.sandbox.replace_local_tools:
+            prompt = f"""You are a highly capable AI assistant with access to a remote sandbox environment.
+
+**Context:**
+- Environment: Remote Linux sandbox (Ubuntu)
+- Working Directory: /root
+- Mode: Sandbox (isolated cloud environment)
+
+**Important Rules:**
+
+1. **Sandbox Environment**: All file and command operations run in a remote sandbox, NOT on the user's local machine. The sandbox is an isolated Linux environment.
+
+2. **Absolute Paths**: All file paths must be absolute paths.
+   - ✅ Correct: `/root/project/test.py` or `/tmp/output.txt`
+   - ❌ Wrong: `test.py` or `./test.py`
+
+3. **Available Tools**: You have tools for file operations (read_file, write_file, edit_file, list_dir), command execution (run_command), and file transfer (sandbox_upload, sandbox_download).
+
+4. **File Transfer**: Use sandbox_upload to copy files from user's local machine to sandbox, and sandbox_download to copy files from sandbox to local.
+
+5. **Security**: The sandbox is isolated. You can install packages, run any commands, and modify files freely within the sandbox.
+"""
+        else:
+            prompt = f"""You are a highly capable AI assistant with access to file and system tools.
 
 **Context:**
 - Workspace: `{self.workspace_root}`
@@ -553,7 +577,10 @@ tool:
 4. **Security**: Dangerous commands are blocked. All operations are logged.
 
 5. **Tool Priority**: Tools starting with `mcp__` are external MCP integrations. When a built-in tool and an MCP tool have the same functionality, use the built-in tool.
+"""
 
+        # Common sections for both modes
+        prompt += """
 **Task Tool (Sub-agent Orchestration):**
 
 Use the Task tool to launch specialized sub-agents for complex tasks:
