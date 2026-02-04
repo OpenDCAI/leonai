@@ -119,12 +119,59 @@ class SkillsConfig(BaseModel):
     skills: dict[str, bool] = Field(default_factory=dict)  # skill_name: enabled
 
 
+# ==================== Sandbox Configuration ====================
+
+
+class SandboxProviderConfig(BaseModel):
+    """Configuration for a specific sandbox provider."""
+    api_key: str | None = None
+    region_id: str = "ap-southeast-1"
+    context_path: str = "/workspace"
+
+
+class SandboxToolsConfig(BaseModel):
+    """Which sandbox tools to enable."""
+    read_file: bool = True
+    write_file: bool = True
+    edit_file: bool = True
+    list_dir: bool = True
+    run_command: bool = True
+    sandbox_upload: bool = True
+    sandbox_download: bool = True
+
+
+class SandboxConfig(BaseModel):
+    """
+    Sandbox configuration for isolated execution environments.
+
+    Lifecycle:
+    - create: 'lazy' (first tool call) or 'eager' (thread start)
+    - on_thread_switch: 'pause' or 'keep_running'
+    - on_exit: 'pause' or 'destroy'
+    """
+    enabled: bool = False  # Disabled by default
+    provider: str = "agentbay"  # 'agentbay', 'e2b', 'docker'
+    context_id: str | None = None  # Persistent context for data
+
+    # Provider-specific configs
+    agentbay: SandboxProviderConfig = Field(default_factory=SandboxProviderConfig)
+
+    # Lifecycle settings
+    create: str = "lazy"  # 'lazy' or 'eager'
+    on_thread_switch: str = "pause"  # 'pause' or 'keep_running'
+    on_exit: str = "pause"  # 'pause' or 'destroy'
+
+    # Tool configuration
+    tools: SandboxToolsConfig = Field(default_factory=SandboxToolsConfig)
+
+
 class AgentProfile(BaseModel):
     agent: AgentConfig = Field(default_factory=AgentConfig)
     system_prompt: str | None = None
     tool: ToolConfig = Field(default_factory=ToolConfig)
     mcp: MCPConfig = Field(default_factory=MCPConfig)
     skills: SkillsConfig = Field(default_factory=SkillsConfig)
+    sandbox: SandboxConfig = Field(default_factory=SandboxConfig)
 
 
     @classmethod

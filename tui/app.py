@@ -104,6 +104,7 @@ class LeonApp(App):
         Binding("ctrl+down", "history_down", "历史下一条", show=False),
         Binding("ctrl+e", "export_conversation", "导出对话", show=False),
         Binding("ctrl+y", "copy_last_message", "复制最后消息", show=False),
+        Binding("ctrl+b", "show_sandbox", "沙箱", show=False),
     ]
 
     def __init__(self, agent, workspace_root: Path, thread_id: str = "default", session_mgr=None):
@@ -481,6 +482,7 @@ class LeonApp(App):
   • Ctrl+Y: 复制最后一条消息
   • Ctrl+E: 导出对话为 Markdown
   • Ctrl+L: 清空对话历史
+  • Ctrl+B: 沙箱检查器
 
 命令:
   • /help: 显示此帮助信息
@@ -551,6 +553,22 @@ class LeonApp(App):
 
         # Show notification
         self.notify("✓ 对话历史已清空")
+
+    def action_show_sandbox(self) -> None:
+        """Show sandbox inspector (Ctrl+B)"""
+        # Check if sandbox is enabled
+        if not hasattr(self.agent, '_sandbox_manager') or not self.agent._sandbox_manager:
+            self.notify("⚠ 沙箱未启用", severity="warning")
+            return
+
+        from tui.widgets.sandbox_inspector import SandboxInspector
+
+        self.push_screen(
+            SandboxInspector(
+                sandbox_manager=self.agent._sandbox_manager,
+                thread_id=self.thread_id,
+            )
+        )
 
     def action_time_travel(self) -> None:
         """Time travel - rewind to a previous checkpoint (ESC ESC)"""
