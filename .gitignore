@@ -14,6 +14,7 @@ CLAUDE.md
 .venv
 
 # IDE
+.cursor/
 .windsurf/
 .vscode/
 .idea/
