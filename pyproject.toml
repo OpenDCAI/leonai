@@ -68,6 +68,7 @@ packages = [
     "middleware.filesystem",
     "middleware.filesystem.read",
     "middleware.filesystem.read.readers",
+    "middleware.queue",
     "middleware.shell",
     "middleware.shell.hooks",
     "middleware.skills",
