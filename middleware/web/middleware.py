@@ -58,6 +58,7 @@ class WebMiddleware(AgentMiddleware):
         max_search_results: int = 5,
         timeout: int = 15,
         enabled_tools: dict[str, bool] | None = None,
+        verbose: bool = True,
     ):
         """
         初始化 Web middleware
@@ -70,6 +71,7 @@ class WebMiddleware(AgentMiddleware):
             fetch_limits: Fetch 限制配置
             max_search_results: 最大搜索结果数
             timeout: 请求超时时间
+            verbose: 是否输出详细日志
         """
         self.fetch_limits = fetch_limits or FetchLimits()
         self.max_search_results = max_search_results
@@ -77,6 +79,7 @@ class WebMiddleware(AgentMiddleware):
         self.enabled_tools = enabled_tools or {
             'web_search': True, 'read_url_content': True, 'view_web_content': True
         }
+        self.verbose = verbose
 
         self._searchers: list[tuple[str, Any]] = []
         if tavily_api_key:
@@ -93,9 +96,10 @@ class WebMiddleware(AgentMiddleware):
 
         self._content_cache: dict[str, FetchResult] = {}
 
-        print(f"[WebMiddleware] Initialized")
-        print(f"[WebMiddleware] Searchers: {[name for name, _ in self._searchers]}")
-        print(f"[WebMiddleware] Fetchers: {[name for name, _ in self._fetchers]}")
+        if self.verbose:
+            print(f"[WebMiddleware] Initialized")
+            print(f"[WebMiddleware] Searchers: {[name for name, _ in self._searchers]}")
+            print(f"[WebMiddleware] Fetchers: {[name for name, _ in self._fetchers]}")
 
     async def _web_search_impl(
         self,

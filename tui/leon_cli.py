@@ -246,6 +246,12 @@ def main():
         print("  leonai config             配置 API key 和其他设置")
         print("  leonai config show        显示当前配置")
         print()
+        print("非交互式运行:")
+        print('  leonai run "消息"         发送单条消息')
+        print("  leonai run --stdin        从 stdin 读取消息（空行分隔）")
+        print("  leonai run -i             交互模式（无 TUI）")
+        print("  leonai run -d             带 debug 输出")
+        print()
         print("Thread 管理:")
         print("  leonai thread ls          列出所有对话")
         print("  leonai thread list        列出所有对话")
@@ -295,6 +301,13 @@ def main():
             sys.exit(1)
         return
 
+    # Handle run command
+    if args.command == "run":
+        from tui.runner import cmd_run
+
+        cmd_run(args, unknown)
+        return
+
     config_manager = ConfigManager()
     config_manager.load_to_env()
 
@@ -320,6 +333,7 @@ def main():
             model_name=model_name or "claude-sonnet-4-5-20250929",
             profile=args.profile,
             workspace_root=workspace,
+            verbose=False,  # TUI mode: quiet initialization
         )
     except Exception as e:
         print(f"❌ 初始化失败: {e}")

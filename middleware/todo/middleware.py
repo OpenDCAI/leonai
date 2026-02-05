@@ -45,12 +45,14 @@ class TodoMiddleware(AgentMiddleware):
     TOOL_TASK_LIST = "TaskList"
     TOOL_TASK_UPDATE = "TaskUpdate"
 
-    def __init__(self):
+    def __init__(self, verbose: bool = True):
         """Initialize Todo middleware."""
         self._tasks: dict[str, Task] = {}
         self._counter = 0
+        self.verbose = verbose
 
-        print("[TodoMiddleware] Initialized")
+        if self.verbose:
+            print("[TodoMiddleware] Initialized")
 
     def _generate_id(self) -> str:
         """Generate sequential task ID."""

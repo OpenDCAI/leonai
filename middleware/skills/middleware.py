@@ -28,22 +28,25 @@ class SkillsMiddleware(AgentMiddleware):
 
     TOOL_LOAD_SKILL = "load_skill"
 
-    def __init__(self, skill_paths: list[str | Path], enabled_skills: dict[str, bool] | None = None):
+    def __init__(self, skill_paths: list[str | Path], enabled_skills: dict[str, bool] | None = None, verbose: bool = True):
         """
         Initialize Skills middleware
 
         Args:
             skill_paths: List of directories containing SKILL.md files
             enabled_skills: Dict of skill_name: enabled (None = all enabled)
+            verbose: Whether to output detailed logs
         """
         self.skill_paths = [Path(p).expanduser().resolve() for p in skill_paths]
         self.enabled_skills = enabled_skills or {}
+        self.verbose = verbose
         self._skills_index: dict[str, Path] = {}
         self._load_skills_index()
 
-        print(f"[SkillsMiddleware] Initialized with {len(self._skills_index)} skills")
-        if self._skills_index:
-            print(f"[SkillsMiddleware] Available: {', '.join(self._skills_index.keys())}")
+        if self.verbose:
+            print(f"[SkillsMiddleware] Initialized with {len(self._skills_index)} skills")
+            if self._skills_index:
+                print(f"[SkillsMiddleware] Available: {', '.join(self._skills_index.keys())}")
 
     def _load_skills_index(self):
         """Scan skill directories and build index from frontmatter"""

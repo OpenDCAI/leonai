@@ -53,6 +53,7 @@ class SearchMiddleware(AgentMiddleware):
         max_file_size: int = 10 * 1024 * 1024,  # 10MB
         prefer_system_tools: bool = True,
         enabled_tools: dict[str, bool] | None = None,
+        verbose: bool = True,
     ):
         """
         Initialize search middleware
@@ -62,21 +63,24 @@ class SearchMiddleware(AgentMiddleware):
             max_results: Maximum results (default 50)
             max_file_size: Maximum file size (bytes)
             prefer_system_tools: Whether to prefer system tools (ripgrep/fd)
+            verbose: Whether to output detailed logs
         """
         self.workspace_root = Path(workspace_root).resolve()
         self.max_results = max_results
         self.max_file_size = max_file_size
         self.prefer_system_tools = prefer_system_tools
         self.enabled_tools = enabled_tools or {'grep_search': True, 'find_by_name': True}
+        self.verbose = verbose
 
         # 检查系统工具可用性
         self.has_ripgrep = shutil.which("rg") is not None
         self.has_fd = shutil.which("fd") is not None
 
-        print(f"[SearchMiddleware] Initialized with workspace: {self.workspace_root}")
-        if self.prefer_system_tools:
-            print(f"[SearchMiddleware] ripgrep available: {self.has_ripgrep}")
-            print(f"[SearchMiddleware] fd available: {self.has_fd}")
+        if self.verbose:
+            print(f"[SearchMiddleware] Initialized with workspace: {self.workspace_root}")
+            if self.prefer_system_tools:
+                print(f"[SearchMiddleware] ripgrep available: {self.has_ripgrep}")
+                print(f"[SearchMiddleware] fd available: {self.has_fd}")
 
     def _validate_path(self, path: str) -> tuple[bool, str, Path | None]:
         """验证搜索路径"""
