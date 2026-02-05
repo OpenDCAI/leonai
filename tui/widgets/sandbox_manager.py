@@ -5,15 +5,15 @@ Lists all AgentBay sessions with actions: create, delete, pause, resume, metrics
 Launch with: leonai sandbox
 """
 
-import sys
 import os
+import sys
 
-# Suppress AgentBay SDK logs
+# Suppress AgentBay SDK logs (imports must come after stderr redirect)
 _original_stderr = sys.stderr
 sys.stderr = open(os.devnull, "w")
 
-from agentbay import AgentBay
-import agentbay._common.logger as sdk_logger
+import agentbay._common.logger as sdk_logger  # noqa: E402
+from agentbay import AgentBay  # noqa: E402
 
 
 class _NoOpLogger:
@@ -29,11 +29,11 @@ sdk_logger.log = _NoOpLogger()
 # Restore stderr for Textual
 sys.stderr = _original_stderr
 
-from textual.app import App, ComposeResult
-from textual.widgets import Header, Footer, DataTable, Static, Button
-from textual.containers import Horizontal, Vertical
-from textual.binding import Binding
-from textual import work
+from textual import work  # noqa: E402
+from textual.app import App, ComposeResult  # noqa: E402
+from textual.binding import Binding  # noqa: E402
+from textual.containers import Horizontal, Vertical, VerticalScroll  # noqa: E402
+from textual.widgets import Button, DataTable, Footer, Header, Static  # noqa: E402
 
 
 class SandboxManagerApp(App):
@@ -41,11 +41,12 @@ class SandboxManagerApp(App):
 
     CSS = """
     #main { height: 1fr; }
-    #sidebar { width: 25; border: solid green; padding: 1; }
+    #sidebar { width: 20; border: solid green; }
     #content { border: solid blue; padding: 1; }
-    #detail { height: 14; border: solid magenta; padding: 1; }
+    #detail { height: 10; border: solid magenta; padding: 1; }
     #status { height: 3; border: solid yellow; padding: 0 1; }
-    Button { margin: 1 0; width: 100%; }
+    Button { margin: 0; width: 100%; }
+    Button.muted { opacity: 0.5; }
     DataTable { height: 100%; }
     """
 
@@ -64,18 +65,19 @@ class SandboxManagerApp(App):
         super().__init__()
         self.agent_bay = AgentBay(api_key=api_key)
         self.sessions: list[dict] = []
+        self._pause_resume_support_by_session: dict[str, bool] = {}
 
     def compose(self) -> ComposeResult:
         yield Header()
         with Horizontal(id="main"):
-            with Vertical(id="sidebar"):
-                yield Button("Refresh [R]", id="btn-refresh", variant="primary")
-                yield Button("New [N]", id="btn-new", variant="success")
-                yield Button("Delete [D]", id="btn-delete", variant="error")
-                yield Button("Pause [P]", id="btn-pause", variant="warning")
-                yield Button("Resume [U]", id="btn-resume", variant="default")
-                yield Button("Metrics [M]", id="btn-metrics", variant="default")
-                yield Button("Open URL [O]", id="btn-url", variant="default")
+            with VerticalScroll(id="sidebar"):
+                yield Button("Refresh", id="btn-refresh", variant="primary")
+                yield Button("New", id="btn-new", variant="success")
+                yield Button("Delete", id="btn-delete", variant="error")
+                yield Button("Pause", id="btn-pause", variant="warning")
+                yield Button("Resume", id="btn-resume", variant="success")
+                yield Button("Metrics", id="btn-metrics", variant="primary")
+                yield Button("Open URL", id="btn-url", variant="primary")
             with Vertical(id="content"):
                 yield DataTable(id="table")
         yield Static("Select a session to view details", id="detail")
@@ -118,14 +120,26 @@ class SandboxManagerApp(App):
         self.sessions = sessions
         table = self.query_one("#table", DataTable)
         table.clear()
+        active_ids = set()
         for s in sessions:
+            active_ids.add(s["id"])
             table.add_row(s["id"], s["status"], s["thread"])
+        if self._pause_resume_support_by_session:
+            self._pause_resume_support_by_session = {
+                sid: supported
+                for sid, supported in self._pause_resume_support_by_session.items()
+                if sid in active_ids
+            }
         self.set_status(f"Found {len(sessions)} session(s)")
+        sid = self._get_selected_session(notify=False)
+        if sid:
+            self._apply_pause_resume_state(sid)
 
-    def _get_selected_session(self) -> str | None:
+    def _get_selected_session(self, notify: bool = True) -> str | None:
         table = self.query_one("#table", DataTable)
         if not self.sessions or table.cursor_row is None:
-            self.set_status("No session selected")
+            if notify:
+                self.set_status("No session selected")
             return None
         idx = table.cursor_row
         if idx >= len(self.sessions):
@@ -147,7 +161,7 @@ class SandboxManagerApp(App):
                 self.call_from_thread(self.set_status, f"Deleted {sid[:16]}")
                 self.do_refresh()
             else:
-                self.call_from_thread(self.set_status, f"Session not found")
+                self.call_from_thread(self.set_status, "Session not found")
         except Exception as e:
             self.call_from_thread(self.set_status, f"Delete failed: {e}")
 
@@ -165,11 +179,6 @@ class SandboxManagerApp(App):
         except Exception as e:
             self.call_from_thread(self.set_status, f"Create failed: {e}")
 
-    def action_pause_session(self) -> None:
-        sid = self._get_selected_session()
-        if sid:
-            self.do_pause(sid)
-
     @work(exclusive=True, thread=True)
     def do_pause(self, sid: str) -> None:
         self.call_from_thread(self.set_status, f"Pausing {sid[:16]}...")
@@ -178,19 +187,24 @@ class SandboxManagerApp(App):
             if result.success:
                 pause_result = self.agent_bay.beta_pause(result.session)
                 if pause_result.success:
+                    self._pause_resume_support_by_session[sid] = True
                     self.call_from_thread(self.set_status, f"Paused {sid[:16]}")
+                elif self._is_pause_resume_not_supported(pause_result):
+                    self._pause_resume_support_by_session[sid] = False
+                    self.call_from_thread(self._apply_pause_resume_state, sid)
+                    self.call_from_thread(self.set_status, "Pause/resume not available (account tier)")
                 else:
                     self.call_from_thread(self.set_status, f"Pause failed: {pause_result.error_message}")
                 self.do_refresh()
             else:
                 self.call_from_thread(self.set_status, "Session not found")
         except Exception as e:
-            self.call_from_thread(self.set_status, f"Pause failed: {e}")
-
-    def action_resume_session(self) -> None:
-        sid = self._get_selected_session()
-        if sid:
-            self.do_resume(sid)
+            if self._is_pause_resume_not_supported(e):
+                self._pause_resume_support_by_session[sid] = False
+                self.call_from_thread(self._apply_pause_resume_state, sid)
+                self.call_from_thread(self.set_status, "Pause/resume not available (account tier)")
+            else:
+                self.call_from_thread(self.set_status, f"Pause failed: {e}")
 
     @work(exclusive=True, thread=True)
     def do_resume(self, sid: str) -> None:
@@ -200,14 +214,24 @@ class SandboxManagerApp(App):
             if result.success:
                 resume_result = self.agent_bay.beta_resume(result.session)
                 if resume_result.success:
+                    self._pause_resume_support_by_session[sid] = True
                     self.call_from_thread(self.set_status, f"Resumed {sid[:16]}")
+                elif self._is_pause_resume_not_supported(resume_result):
+                    self._pause_resume_support_by_session[sid] = False
+                    self.call_from_thread(self._apply_pause_resume_state, sid)
+                    self.call_from_thread(self.set_status, "Pause/resume not available (account tier)")
                 else:
                     self.call_from_thread(self.set_status, f"Resume failed: {resume_result.error_message}")
                 self.do_refresh()
             else:
                 self.call_from_thread(self.set_status, "Session not found")
         except Exception as e:
-            self.call_from_thread(self.set_status, f"Resume failed: {e}")
+            if self._is_pause_resume_not_supported(e):
+                self._pause_resume_support_by_session[sid] = False
+                self.call_from_thread(self._apply_pause_resume_state, sid)
+                self.call_from_thread(self.set_status, "Pause/resume not available (account tier)")
+            else:
+                self.call_from_thread(self.set_status, f"Resume failed: {e}")
 
     def action_show_metrics(self) -> None:
         sid = self._get_selected_session()
@@ -272,6 +296,56 @@ class SandboxManagerApp(App):
     def _update_detail(self, text: str) -> None:
         self.query_one("#detail", Static).update(text)
 
+    def _is_pause_resume_not_supported(self, result_or_error: object) -> bool:
+        code = getattr(result_or_error, "code", "") or getattr(result_or_error, "error_code", "")
+        if code == "BenefitLevel.NotSupport":
+            return True
+        message = (
+            getattr(result_or_error, "error_message", "")
+            or getattr(result_or_error, "message", "")
+            or str(result_or_error)
+        )
+        return "BenefitLevel.NotSupport" in message
+
+    def _mute_pause_resume(self) -> None:
+        """Visually mute pause/resume buttons when not supported."""
+        pause_btn = self.query_one("#btn-pause", Button)
+        resume_btn = self.query_one("#btn-resume", Button)
+        pause_btn.add_class("muted")
+        resume_btn.add_class("muted")
+        pause_btn.label = "Pause (N/A)"
+        resume_btn.label = "Resume (N/A)"
+
+    def _unmute_pause_resume(self) -> None:
+        pause_btn = self.query_one("#btn-pause", Button)
+        resume_btn = self.query_one("#btn-resume", Button)
+        pause_btn.remove_class("muted")
+        resume_btn.remove_class("muted")
+        pause_btn.label = "Pause"
+        resume_btn.label = "Resume"
+
+    def _apply_pause_resume_state(self, sid: str) -> None:
+        if self._pause_resume_support_by_session.get(sid) is False:
+            self._mute_pause_resume()
+        else:
+            self._unmute_pause_resume()
+
+    def action_pause_session(self) -> None:
+        sid = self._get_selected_session()
+        if sid:
+            if self._pause_resume_support_by_session.get(sid) is False:
+                self.set_status("Pause not available (account tier)")
+                return
+            self.do_pause(sid)
+
+    def action_resume_session(self) -> None:
+        sid = self._get_selected_session()
+        if sid:
+            if self._pause_resume_support_by_session.get(sid) is False:
+                self.set_status("Resume not available (account tier)")
+                return
+            self.do_resume(sid)
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         actions = {
             "btn-refresh": self.action_refresh,
@@ -285,3 +359,13 @@ class SandboxManagerApp(App):
         action = actions.get(event.button.id)
         if action:
             action()
+
+    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        sid = self._get_selected_session(notify=False)
+        if sid:
+            self._apply_pause_resume_state(sid)
+
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        sid = self._get_selected_session(notify=False)
+        if sid:
+            self._apply_pause_resume_state(sid)
