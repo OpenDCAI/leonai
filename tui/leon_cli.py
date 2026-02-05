@@ -245,7 +245,13 @@ def main():
     parser = argparse.ArgumentParser(description="Leon AI - 你的 AI 编程助手", add_help=False)
     parser.add_argument("--profile", type=str, help="Profile 配置文件路径")
     parser.add_argument("--workspace", type=str, help="工作目录")
-    parser.add_argument("--sandbox-context-path", type=str, help="Sandbox 持久化挂载路径")
+    parser.add_argument("--sandbox-mount", dest="sandbox_context_path", type=str, help="Sandbox 持久化挂载路径")
+    parser.add_argument(
+        "--sandbox-context-path",
+        dest="sandbox_context_path",
+        type=str,
+        help=argparse.SUPPRESS,
+    )
     parser.add_argument("--thread", type=str, help="Thread ID (恢复对话)")
     parser.add_argument("-c", "--continue", dest="continue_last", action="store_true", help="继续上次对话")
     parser.add_argument("-h", "--help", action="store_true", help="显示帮助信息")
@@ -262,7 +268,7 @@ def main():
         print("  leonai -c                 继续上次对话")
         print("  leonai --profile <path>   使用指定 profile 启动")
         print("  leonai --workspace <dir>  指定工作目录")
-        print("  leonai --sandbox-context-path <path>  覆盖 sandbox 挂载路径")
+        print("  leonai --sandbox-mount <path>  覆盖 sandbox 挂载路径")
         print("  leonai --thread <id>      恢复指定对话")
         print("  leonai config             配置 API key 和其他设置")
         print("  leonai config show        显示当前配置")
