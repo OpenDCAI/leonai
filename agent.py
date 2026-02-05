@@ -84,6 +84,7 @@ class LeonAgent:
         exa_api_key: str | None = None,
         firecrawl_api_key: str | None = None,
         jina_api_key: str | None = None,
+        verbose: bool = False,
     ):
         """
         Initialize Leon Agent
@@ -102,21 +103,27 @@ class LeonAgent:
             exa_api_key: Exa API key（Web 搜索）
             firecrawl_api_key: Firecrawl API key（Web 搜索）
             jina_api_key: Jina API key（URL 内容获取）
+            verbose: 是否输出详细日志（默认 True）
         """
+        self.verbose = verbose
+
         # 加载 profile
         if isinstance(profile, (str, Path)):
             profile = AgentProfile.from_file(profile)
-            print(f"[LeonAgent] Profile: {profile} (from CLI argument)")
+            if self.verbose:
+                print(f"[LeonAgent] Profile: {profile} (from CLI argument)")
         elif profile is None:
             # 默认 profile 路径：~/.leon/profile.yaml
             default_profile = Path.home() / ".leon" / "profile.yaml"
             if default_profile.exists():
                 profile = AgentProfile.from_file(default_profile)
-                print(f"[LeonAgent] Profile: {default_profile}")
+                if self.verbose:
+                    print(f"[LeonAgent] Profile: {default_profile}")
             else:
                 # 首次运行，创建默认配置文件
                 profile = self._create_default_profile(default_profile)
-                print(f"[LeonAgent] Profile: {default_profile} (created)")
+                if self.verbose:
+                    print(f"[LeonAgent] Profile: {default_profile} (created)")
 
         # CLI 参数覆盖 profile
         if model_name is not None:
@@ -227,22 +234,43 @@ class LeonAgent:
             checkpointer=self.checkpointer,
         )
 
-        print("[LeonAgent] Initialized successfully")
-        print(f"[LeonAgent] Workspace: {self.workspace_root}")
-        print(f"[LeonAgent] Audit log: {self.enable_audit_log}")
+        if self.verbose:
+            print("[LeonAgent] Initialized successfully")
+            print(f"[LeonAgent] Workspace: {self.workspace_root}")
+            print(f"[LeonAgent] Audit log: {self.enable_audit_log}")
 
     def close(self):
         """Clean up resources"""
-        if hasattr(self, '_aiosqlite_conn') and self._aiosqlite_conn:
-            import asyncio
+        import asyncio
+        import os
+        import signal
+
+        # Close MCP client (kills subprocess)
+        if hasattr(self, '_mcp_client') and self._mcp_client:
             try:
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    loop.create_task(self._aiosqlite_conn.close())
-                else:
-                    loop.run_until_complete(self._aiosqlite_conn.close())
+                # Try graceful close first
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    loop.run_until_complete(self._mcp_client.close())
+                finally:
+                    loop.close()
             except Exception:
                 pass
+            self._mcp_client = None
+
+        # Close sqlite connection
+        if hasattr(self, '_aiosqlite_conn') and self._aiosqlite_conn:
+            try:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    loop.run_until_complete(self._aiosqlite_conn.close())
+                finally:
+                    loop.close()
+            except Exception:
+                pass
+            self._aiosqlite_conn = None
 
     def __del__(self):
         self.close()
@@ -327,6 +355,7 @@ tool:
                 hooks=file_hooks,
                 enabled_tools=fs_tools,
                 operation_recorder=get_recorder(),
+                verbose=self.verbose,
             ))
 
         # 3. Search
@@ -341,6 +370,7 @@ tool:
                 max_file_size=self.profile.tool.search.tools.grep_search.max_file_size,
                 prefer_system_tools=True,
                 enabled_tools=search_tools,
+                verbose=self.verbose,
             ))
 
         # 4. Web
@@ -358,6 +388,7 @@ tool:
                 max_search_results=self.profile.tool.web.tools.web_search.max_results,
                 timeout=self.profile.tool.web.timeout,
                 enabled_tools=web_tools,
+                verbose=self.verbose,
             ))
 
         # 5. Command
@@ -367,6 +398,7 @@ tool:
                 command_hooks.append(DangerousCommandsHook(
                     workspace_root=self.workspace_root,
                     block_network=self.block_network_commands,
+                    verbose=self.verbose,
                 ))
             command_hooks.append(PathSecurityHook(workspace_root=self.workspace_root))
             command_tools = {
@@ -378,17 +410,19 @@ tool:
                 default_timeout=self.profile.tool.command.tools.run_command.default_timeout,
                 hooks=command_hooks,
                 enabled_tools=command_tools,
+                verbose=self.verbose,
             ))
 
         # 6. Skills
         if self.profile.skills.enabled and self.profile.skills.paths:
             middleware.append(SkillsMiddleware(
                 skill_paths=self.profile.skills.paths,
-                enabled_skills=self.profile.skills.skills
+                enabled_skills=self.profile.skills.skills,
+                verbose=self.verbose,
             ))
 
         # 7. Todo (task management and progress tracking)
-        self._todo_middleware = TodoMiddleware()
+        self._todo_middleware = TodoMiddleware(verbose=self.verbose)
         middleware.append(self._todo_middleware)
 
         # 8. Subagent (sub-agent orchestration)
@@ -399,6 +433,7 @@ tool:
             parent_model=self.model_name,
             api_key=self.api_key,
             base_url=os.getenv("OPENAI_BASE_URL"),
+            verbose=self.verbose,
         )
         middleware.append(self._task_middleware)
 
@@ -422,6 +457,7 @@ tool:
 
         try:
             client = MultiServerMCPClient(configs, tool_name_prefix=False)
+            self._mcp_client = client  # Save reference for cleanup
             tools = await client.get_tools()
 
             # Apply mcp__ prefix to match Claude Code naming convention
@@ -438,10 +474,12 @@ tool:
             if any(cfg.allowed_tools for cfg in self.profile.mcp.servers.values()):
                 tools = [t for t in tools if self._is_tool_allowed(t)]
 
-            print(f"[LeonAgent] Loaded {len(tools)} MCP tools from {len(configs)} servers")
+            if self.verbose:
+                print(f"[LeonAgent] Loaded {len(tools)} MCP tools from {len(configs)} servers")
             return tools
         except Exception as e:
-            print(f"[LeonAgent] MCP initialization failed: {e}")
+            if self.verbose:
+                print(f"[LeonAgent] MCP initialization failed: {e}")
             return []
 
     async def _init_checkpointer(self):

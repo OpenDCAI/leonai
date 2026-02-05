@@ -54,26 +54,25 @@ class FileSystemMiddleware(AgentMiddleware):
         self,
         workspace_root: str | Path,
         *,
-        read_only: bool = False,
         max_file_size: int = 10 * 1024 * 1024,  # 10MB
         allowed_extensions: list[str] | None = None,
         hooks: list[Any] | None = None,
         enabled_tools: dict[str, bool] | None = None,
         operation_recorder: "FileOperationRecorder | None" = None,
+        verbose: bool = True,
     ):
         """
         初始化文件系统 middleware
 
         Args:
             workspace_root: 工作目录（所有操作限制在此目录内）
-            read_only: 只读模式（禁止写入和编辑）
             max_file_size: 最大文件大小（字节）
             allowed_extensions: 允许的文件扩展名（None 表示全部允许）
             hooks: 文件操作 hooks（用于安全检查和审计）
             operation_recorder: 文件操作记录器（用于时间旅行）
+            verbose: 是否输出详细日志
         """
         self.workspace_root = Path(workspace_root).resolve()
-        self.read_only = read_only
         self.max_file_size = max_file_size
         self.allowed_extensions = allowed_extensions
         self.hooks = hooks or []
@@ -83,14 +82,15 @@ class FileSystemMiddleware(AgentMiddleware):
         }
         self._read_files: set[Path] = set()
         self.operation_recorder = operation_recorder
+        self.verbose = verbose
 
         # 确保 workspace 存在
         self.workspace_root.mkdir(parents=True, exist_ok=True)
 
-        print(f"[FileSystemMiddleware] Initialized with workspace: {self.workspace_root}")
-        print(f"[FileSystemMiddleware] Read-only mode: {self.read_only}")
-        if self.hooks:
-            print(f"[FileSystemMiddleware] Loaded {len(self.hooks)} hooks")
+        if self.verbose:
+            print(f"[FileSystemMiddleware] Initialized with workspace: {self.workspace_root}")
+            if self.hooks:
+                print(f"[FileSystemMiddleware] Loaded {len(self.hooks)} hooks")
 
     def _validate_path(self, path: str, operation: str) -> tuple[bool, str, Path | None]:
         """
@@ -221,9 +221,6 @@ class FileSystemMiddleware(AgentMiddleware):
 
     def _write_file_impl(self, file_path: str, content: str) -> str:
         """实现 write_file"""
-        if self.read_only:
-            return "Write operation not allowed in read-only mode"
-
         is_valid, error, resolved = self._validate_path(file_path, "write")
         if not is_valid:
             return error
@@ -258,9 +255,6 @@ class FileSystemMiddleware(AgentMiddleware):
 
     def _edit_file_impl(self, file_path: str, old_string: str, new_string: str) -> str:
         """实现 edit_file (str_replace 模式)"""
-        if self.read_only:
-            return "Edit operation not allowed in read-only mode"
-
         is_valid, error, resolved = self._validate_path(file_path, "edit")
         if not is_valid:
             return error
@@ -316,9 +310,6 @@ class FileSystemMiddleware(AgentMiddleware):
 
     def _multi_edit_impl(self, file_path: str, edits: list[dict[str, str]]) -> str:
         """实现 multi_edit"""
-        if self.read_only:
-            return "Edit operation not allowed in read-only mode"
-
         is_valid, error, resolved = self._validate_path(file_path, "edit")
         if not is_valid:
             return error

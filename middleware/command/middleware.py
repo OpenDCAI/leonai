@@ -52,6 +52,7 @@ class CommandMiddleware(AgentMiddleware[CommandState]):
         hooks: list[Any] | None = None,
         env: dict[str, str] | None = None,
         enabled_tools: dict[str, bool] | None = None,
+        verbose: bool = True,
     ) -> None:
         """
         Initialize CommandMiddleware.
@@ -61,6 +62,7 @@ class CommandMiddleware(AgentMiddleware[CommandState]):
             default_timeout: Default timeout in seconds for blocking commands
             hooks: List of hook instances for command validation
             env: Additional environment variables
+            verbose: Whether to output detailed logs
         """
         AgentMiddleware.__init__(self)
 
@@ -69,13 +71,15 @@ class CommandMiddleware(AgentMiddleware[CommandState]):
         self.hooks = hooks or []
         self.env = env
         self.enabled_tools = enabled_tools or {'run_command': True, 'command_status': True}
+        self.verbose = verbose
 
         self._executor = get_executor(default_cwd=str(self.workspace_root))
 
-        shell_info = get_shell_info()
-        print(f"[Command] Initialized: {shell_info['shell_name']} on {shell_info['os']}")
-        print(f"[Command] Workspace: {self.workspace_root}")
-        print(f"[Command] Loaded {len(self.hooks)} hooks")
+        if self.verbose:
+            shell_info = get_shell_info()
+            print(f"[Command] Initialized: {shell_info['shell_name']} on {shell_info['os']}")
+            print(f"[Command] Workspace: {self.workspace_root}")
+            print(f"[Command] Loaded {len(self.hooks)} hooks")
 
         @tool(RUN_COMMAND_TOOL_NAME)
         async def run_command_tool(

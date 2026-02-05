@@ -50,6 +50,7 @@ class TaskMiddleware(AgentMiddleware):
         base_url: str | None = None,
         parent_middleware: list[Any] | None = None,
         checkpointer: Any = None,
+        verbose: bool = True,
     ):
         """
         Initialize Task middleware.
@@ -61,6 +62,7 @@ class TaskMiddleware(AgentMiddleware):
             base_url: API base URL
             parent_middleware: Parent agent's middleware stack (for tool inheritance)
             checkpointer: Checkpointer for conversation persistence
+            verbose: Whether to output detailed logs
         """
         self.workspace_root = Path(workspace_root).resolve()
         self.parent_model = parent_model
@@ -68,6 +70,7 @@ class TaskMiddleware(AgentMiddleware):
         self.base_url = base_url or os.getenv("OPENAI_BASE_URL")
         self.parent_middleware = parent_middleware or []
         self.checkpointer = checkpointer
+        self.verbose = verbose
 
         # Load agents from all sources
         self.loader = AgentLoader(self.workspace_root)
@@ -82,10 +85,11 @@ class TaskMiddleware(AgentMiddleware):
             base_url=self.base_url,
         )
 
-        if self.agents:
-            print(f"[TaskMiddleware] Loaded {len(self.agents)} agents: {', '.join(sorted(self.agents.keys()))}")
-        else:
-            print("[TaskMiddleware] No agents loaded")
+        if self.verbose:
+            if self.agents:
+                print(f"[TaskMiddleware] Loaded {len(self.agents)} agents: {', '.join(sorted(self.agents.keys()))}")
+            else:
+                print("[TaskMiddleware] No agents loaded")
 
     def _get_tool_schemas(self) -> list[dict]:
         """Get task tool schemas with dynamic agent enum."""
@@ -230,7 +234,7 @@ The agent will work independently and return results when complete.""",
         tool_call = request.tool_call
         tool_name = tool_call.get("name")
 
-        if tool_name not in (self.TOOL_TASK, self.TOOL_TASK_STATUS):
+        if tool_name not in (self.TOOL_TASK, self.TOOL_TASK_OUTPUT):
             return await handler(request)
 
         return await self._handle_tool_call(tool_call)
