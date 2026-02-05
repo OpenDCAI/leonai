@@ -84,6 +84,7 @@ class LeonAgent:
         exa_api_key: str | None = None,
         firecrawl_api_key: str | None = None,
         jina_api_key: str | None = None,
+        sandbox_context_path: str | None = None,
     ):
         """
         Initialize Leon Agent
@@ -103,6 +104,7 @@ class LeonAgent:
             exa_api_key: Exa API key（Web 搜索）
             firecrawl_api_key: Firecrawl API key（Web 搜索）
             jina_api_key: Jina API key（URL 内容获取）
+            sandbox_context_path: Sandbox context mount path（覆盖 profile）
         """
         # 加载 profile
         if isinstance(profile, (str, Path)):
@@ -137,6 +139,8 @@ class LeonAgent:
             profile.agent.enable_audit_log = enable_audit_log
         if enable_web_tools is not None:
             profile.tools.web.enabled = enable_web_tools
+        if sandbox_context_path is not None:
+            profile.sandbox.agentbay.context_path = sandbox_context_path
 
         self.profile = profile
         self.model_name = profile.agent.model
@@ -312,13 +316,8 @@ tool:
         middleware.append(PromptCachingMiddleware(ttl="5m", min_messages_to_cache=0))
 
         # 2. FileSystem
-        # @@@ Skip if sandbox is enabled and replaces local tools
-        sandbox_replaces_local = (
-            self.profile.sandbox.enabled and
-            self.profile.sandbox.replace_local_tools
-        )
-
-        if self.profile.tool.filesystem.enabled and not sandbox_replaces_local:
+        # @@@ Skip if sandbox is enabled (sandbox always replaces local tools)
+        if self.profile.tool.filesystem.enabled and not self.profile.sandbox.enabled:
             file_hooks = []
             if self.enable_audit_log:
                 file_hooks.append(FileAccessLoggerHook(workspace_root=self.workspace_root, log_file="file_access.log"))
@@ -376,8 +375,8 @@ tool:
             ))
 
         # 5. Command
-        # @@@ Skip if sandbox is enabled and replaces local tools
-        if self.profile.tool.command.enabled and not sandbox_replaces_local:
+        # @@@ Skip if sandbox is enabled (sandbox always replaces local tools)
+        if self.profile.tool.command.enabled and not self.profile.sandbox.enabled:
             command_hooks = []
             if self.block_dangerous_commands:
                 command_hooks.append(DangerousCommandsHook(
@@ -533,7 +532,7 @@ tool:
         shell_name = os.environ.get('SHELL', '/bin/bash').split('/')[-1]
 
         # @@@ Different prompt for sandbox vs local mode
-        if self.profile.sandbox.enabled and self.profile.sandbox.replace_local_tools:
+        if self.profile.sandbox.enabled:
             prompt = f"""You are a highly capable AI assistant with access to a remote sandbox environment.
 
 **Context:**
@@ -673,6 +672,7 @@ def create_leon_agent(
     model_name: str = "claude-sonnet-4-5-20250929",
     api_key: str | None = None,
     workspace_root: str | Path | None = None,
+    sandbox_context_path: str | None = None,
     **kwargs,
 ) -> LeonAgent:
     """
@@ -705,7 +705,11 @@ def create_leon_agent(
         )
     """
     return LeonAgent(
-        model_name=model_name, api_key=api_key, workspace_root=workspace_root, **kwargs
+        model_name=model_name,
+        api_key=api_key,
+        workspace_root=workspace_root,
+        sandbox_context_path=sandbox_context_path,
+        **kwargs,
     )
 
 
