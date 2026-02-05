@@ -93,7 +93,6 @@ class SubagentRunner:
                     }
                     new_mw = FileSystemMiddleware(
                         workspace_root=mw.workspace_root,
-                        read_only=mw.read_only,
                         max_file_size=mw.max_file_size,
                         allowed_extensions=mw.allowed_extensions,
                         hooks=mw.hooks,
@@ -171,10 +170,17 @@ class SubagentRunner:
         model_name = params.get("Model") or config.model or self.parent_model
 
         # Build model
-        model_kwargs = {"api_key": self.api_key}
         if self.base_url:
-            model_kwargs["base_url"] = self.base_url
-        model = init_chat_model(model_name, **model_kwargs)
+            # 有 base_url 时，强制使用 ChatOpenAI（OpenAI 兼容代理）
+            from langchain_openai import ChatOpenAI
+            model = ChatOpenAI(
+                model=model_name,
+                api_key=self.api_key,
+                base_url=self.base_url,
+            )
+        else:
+            # 无代理时，让 init_chat_model 根据模型名自动选择
+            model = init_chat_model(model_name, api_key=self.api_key)
 
         # Build filtered middleware
         middleware = self._build_subagent_middleware(config, all_middleware)
