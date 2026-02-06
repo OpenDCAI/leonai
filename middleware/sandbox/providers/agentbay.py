@@ -105,8 +105,13 @@ class AgentBayProvider(SandboxProvider):
                 status_result = result.session.get_status()
                 if status_result.success:
                     return status_result.status.lower()
-        except Exception:
-            pass
+            else:
+                message = str(getattr(result, "error_message", "") or getattr(result, "message", ""))
+                if "not found" in message.lower():
+                    return "deleted"
+        except Exception as exc:
+            if "not found" in str(exc).lower():
+                return "deleted"
         return "unknown"
 
     def execute(
