@@ -250,6 +250,9 @@ class SandboxManager:
             if row["provider"] != self.provider.name:
                 continue
             status = self.provider.get_session_status(row["session_id"])
+            if status == "deleted":
+                self._delete_from_db(row["thread_id"])
+                continue
             sessions.append({
                 "thread_id": row["thread_id"],
                 "session_id": row["session_id"],
