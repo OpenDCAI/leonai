@@ -32,6 +32,7 @@ class AgentBayProvider(SandboxProvider):
         api_key: str,
         region_id: str = "ap-southeast-1",
         default_context_path: str = "/root",
+        image_id: str | None = None,
     ):
         """
         Initialize AgentBay provider.
@@ -40,6 +41,7 @@ class AgentBayProvider(SandboxProvider):
             api_key: AgentBay API key
             region_id: Region (currently unused - SDK uses default)
             default_context_path: Default mount path for context sync
+            image_id: Optional AgentBay image ID
         """
         # @@@ Lazy import - only load SDK when provider is used
         from agentbay import AgentBay
@@ -47,12 +49,15 @@ class AgentBayProvider(SandboxProvider):
         # SDK reads region from env or uses default
         self.client = AgentBay(api_key=api_key)
         self.default_context_path = default_context_path
+        self.image_id = image_id
         self._sessions: dict[str, Any] = {}  # session_id -> Session object cache
 
     def create_session(self, context_id: str | None = None) -> SessionInfo:
         from agentbay import ContextSync, CreateSessionParams
 
         params = CreateSessionParams()
+        if self.image_id:
+            params.image_id = self.image_id
         if context_id:
             params.context_syncs = [
                 ContextSync(context_id=context_id, path=self.default_context_path)

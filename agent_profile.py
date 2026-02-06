@@ -128,6 +128,13 @@ class SandboxProviderConfig(BaseModel):
     api_key: str | None = None
     region_id: str = "ap-southeast-1"
     context_path: str = "/root"  # Default working directory in AgentBay containers
+    image_id: str | None = None  # AgentBay image ID (optional)
+
+
+class DockerSandboxConfig(BaseModel):
+    """Configuration for Docker sandbox provider."""
+    image: str = "ubuntu:22.04"
+    mount_path: str = "/workspace"
 
 
 class SandboxToolsConfig(BaseModel):
@@ -156,6 +163,7 @@ class SandboxConfig(BaseModel):
 
     # Provider-specific configs
     agentbay: SandboxProviderConfig = Field(default_factory=SandboxProviderConfig)
+    docker: DockerSandboxConfig = Field(default_factory=DockerSandboxConfig)
 
     # Lifecycle settings
     create: str = "lazy"  # 'lazy' or 'eager'

@@ -85,6 +85,8 @@ class LeonAgent:
         firecrawl_api_key: str | None = None,
         jina_api_key: str | None = None,
         sandbox_context_path: str | None = None,
+        sandbox_provider: str | None = None,
+        sandbox_docker_image: str | None = None,
         verbose: bool = False,
     ):
         """
@@ -105,6 +107,8 @@ class LeonAgent:
             firecrawl_api_key: Firecrawl API key（Web 搜索）
             jina_api_key: Jina API key（URL 内容获取）
             sandbox_context_path: Sandbox context mount path（覆盖 profile）
+            sandbox_provider: Sandbox provider（覆盖 profile）
+            sandbox_docker_image: Docker image（覆盖 profile）
             verbose: 是否输出详细日志（默认 True）
         """
         self.verbose = verbose
@@ -144,6 +148,10 @@ class LeonAgent:
             profile.tools.web.enabled = enable_web_tools
         if sandbox_context_path is not None:
             profile.sandbox.agentbay.context_path = sandbox_context_path
+        if sandbox_provider is not None:
+            profile.sandbox.provider = sandbox_provider
+        if sandbox_docker_image is not None:
+            profile.sandbox.docker.image = sandbox_docker_image
 
         self.profile = profile
         self.model_name = profile.agent.model
@@ -480,6 +488,7 @@ tool:
                         api_key=api_key,
                         region_id=self.profile.sandbox.agentbay.region_id,
                         default_context_path=self.profile.sandbox.agentbay.context_path,
+                        image_id=self.profile.sandbox.agentbay.image_id,
                     )
                     self._sandbox_manager = SandboxManager(
                         provider=provider,
@@ -501,6 +510,33 @@ tool:
                         enabled_tools=sandbox_tools,
                     ))
                     print(f"[LeonAgent] Sandbox enabled: {self.profile.sandbox.provider}")
+            elif self.profile.sandbox.provider == "docker":
+                from middleware.sandbox.providers.docker import DockerProvider
+
+                provider = DockerProvider(
+                    image=self.profile.sandbox.docker.image,
+                    mount_path=self.profile.sandbox.docker.mount_path,
+                )
+                self._sandbox_manager = SandboxManager(
+                    provider=provider,
+                    db_path=self.db_path,
+                    default_context_id=self.profile.sandbox.context_id,
+                )
+                sandbox_tools = {
+                    'read_file': self.profile.sandbox.tools.read_file,
+                    'write_file': self.profile.sandbox.tools.write_file,
+                    'edit_file': self.profile.sandbox.tools.edit_file,
+                    'list_dir': self.profile.sandbox.tools.list_dir,
+                    'run_command': self.profile.sandbox.tools.run_command,
+                    'sandbox_upload': self.profile.sandbox.tools.sandbox_upload,
+                    'sandbox_download': self.profile.sandbox.tools.sandbox_download,
+                }
+                middleware.append(SandboxMiddleware(
+                    manager=self._sandbox_manager,
+                    workspace_root=self.workspace_root,
+                    enabled_tools=sandbox_tools,
+                ))
+                print(f"[LeonAgent] Sandbox enabled: {self.profile.sandbox.provider}")
 
         return middleware
 
@@ -579,16 +615,28 @@ tool:
 
         # @@@ Different prompt for sandbox vs local mode
         if self.profile.sandbox.enabled:
-            prompt = f"""You are a highly capable AI assistant with access to a remote sandbox environment.
+            provider = self.profile.sandbox.provider
+            if provider == "docker":
+                env_label = "Local Docker sandbox (Ubuntu)"
+                mode_label = "Sandbox (isolated local container)"
+                working_dir = self.profile.sandbox.docker.mount_path
+                location_rule = "All file and command operations run in a local Docker container, NOT on the user's host filesystem."
+            else:
+                env_label = "Remote Linux sandbox (Ubuntu)"
+                mode_label = "Sandbox (isolated cloud environment)"
+                working_dir = self.profile.sandbox.agentbay.context_path
+                location_rule = "All file and command operations run in a remote sandbox, NOT on the user's local machine."
+
+            prompt = f"""You are a highly capable AI assistant with access to a sandbox environment.
 
 **Context:**
-- Environment: Remote Linux sandbox (Ubuntu)
-- Working Directory: /root
-- Mode: Sandbox (isolated cloud environment)
+- Environment: {env_label}
+- Working Directory: {working_dir}
+- Mode: {mode_label}
 
 **Important Rules:**
 
-1. **Sandbox Environment**: All file and command operations run in a remote sandbox, NOT on the user's local machine. The sandbox is an isolated Linux environment.
+1. **Sandbox Environment**: {location_rule} The sandbox is an isolated Linux environment.
 
 2. **Absolute Paths**: All file paths must be absolute paths.
    - ✅ Correct: `/root/project/test.py` or `/tmp/output.txt`
@@ -715,6 +763,8 @@ def create_leon_agent(
     api_key: str | None = None,
     workspace_root: str | Path | None = None,
     sandbox_context_path: str | None = None,
+    sandbox_provider: str | None = None,
+    sandbox_docker_image: str | None = None,
     **kwargs,
 ) -> LeonAgent:
     """
@@ -748,6 +798,8 @@ def create_leon_agent(
         api_key=api_key,
         workspace_root=workspace_root,
         sandbox_context_path=sandbox_context_path,
+        sandbox_provider=sandbox_provider,
+        sandbox_docker_image=sandbox_docker_image,
         **kwargs,
     )
 
