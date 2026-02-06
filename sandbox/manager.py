@@ -6,10 +6,32 @@ Handles lazy creation, auto-pause, and resume lifecycle.
 """
 
 import sqlite3
+import threading
 from datetime import datetime
 from pathlib import Path
 
 from sandbox.provider import SandboxProvider, SessionInfo
+
+DEFAULT_DB_PATH = Path.home() / ".leon" / "leon.db"
+
+
+def lookup_sandbox_for_thread(thread_id: str) -> str | None:
+    """Check if a thread has a sandbox session in the DB.
+
+    Returns provider name ('e2b', 'docker', 'agentbay') or None.
+    Pure SQLite lookup — no provider initialization needed.
+    """
+    if not DEFAULT_DB_PATH.exists():
+        return None
+    try:
+        with sqlite3.connect(str(DEFAULT_DB_PATH), timeout=5) as conn:
+            row = conn.execute(
+                "SELECT provider FROM sandbox_sessions WHERE thread_id = ?",
+                (thread_id,),
+            ).fetchone()
+            return row[0] if row else None
+    except Exception:
+        return None
 
 
 class SandboxManager:
@@ -36,28 +58,37 @@ class SandboxManager:
         default_context_id: str | None = None,
     ):
         self.provider = provider
-        self.db_path = db_path or (Path.home() / ".leon" / "leon.db")
+        self.db_path = db_path or DEFAULT_DB_PATH
         self.default_context_id = default_context_id
-        self._init_db()
+        self._lock = threading.Lock()
+        self._conn = self._init_db()
 
-    def _init_db(self):
-        """Create sandbox_sessions table if not exists."""
+    def _init_db(self) -> sqlite3.Connection:
+        """Create sandbox_sessions table if not exists. Returns persistent connection."""
         if isinstance(self.db_path, Path):
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(self.db_path, timeout=10) as conn:
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS sandbox_sessions (
-                    thread_id TEXT PRIMARY KEY,
-                    provider TEXT NOT NULL,
-                    session_id TEXT NOT NULL,
-                    context_id TEXT,
-                    status TEXT DEFAULT 'running',
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            conn.commit()
+        conn = sqlite3.connect(self.db_path, timeout=10, check_same_thread=False)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS sandbox_sessions (
+                thread_id TEXT PRIMARY KEY,
+                provider TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                context_id TEXT,
+                status TEXT DEFAULT 'running',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.commit()
+        return conn
+
+    def close(self):
+        """Close the persistent DB connection."""
+        try:
+            self._conn.close()
+        except Exception:
+            pass
 
     def get_or_create_session(self, thread_id: str) -> SessionInfo:
         """Get existing session for thread, or create new one."""
@@ -245,23 +276,23 @@ class SandboxManager:
     # ==================== DB Operations ====================
 
     def _get_from_db(self, thread_id: str) -> dict | None:
-        with sqlite3.connect(self.db_path, timeout=10) as conn:
-            conn.row_factory = sqlite3.Row
-            row = conn.execute(
+        with self._lock:
+            self._conn.row_factory = sqlite3.Row
+            row = self._conn.execute(
                 "SELECT * FROM sandbox_sessions WHERE thread_id = ?",
                 (thread_id,),
             ).fetchone()
             return dict(row) if row else None
 
     def _get_all_from_db(self) -> list[dict]:
-        with sqlite3.connect(self.db_path, timeout=10) as conn:
-            conn.row_factory = sqlite3.Row
-            rows = conn.execute("SELECT * FROM sandbox_sessions").fetchall()
+        with self._lock:
+            self._conn.row_factory = sqlite3.Row
+            rows = self._conn.execute("SELECT * FROM sandbox_sessions").fetchall()
             return [dict(row) for row in rows]
 
     def _save_to_db(self, thread_id: str, info: SessionInfo, context_id: str | None):
-        with sqlite3.connect(self.db_path, timeout=10) as conn:
-            conn.execute(
+        with self._lock:
+            self._conn.execute(
                 """
                 INSERT OR REPLACE INTO sandbox_sessions
                 (thread_id, provider, session_id, context_id, status, created_at, last_active)
@@ -277,28 +308,28 @@ class SandboxManager:
                     datetime.now(),
                 ),
             )
-            conn.commit()
+            self._conn.commit()
 
     def _update_status(self, thread_id: str, status: str):
-        with sqlite3.connect(self.db_path, timeout=10) as conn:
-            conn.execute(
+        with self._lock:
+            self._conn.execute(
                 "UPDATE sandbox_sessions SET status = ?, last_active = ? WHERE thread_id = ?",
                 (status, datetime.now(), thread_id),
             )
-            conn.commit()
+            self._conn.commit()
 
     def _update_last_active(self, thread_id: str):
-        with sqlite3.connect(self.db_path, timeout=10) as conn:
-            conn.execute(
+        with self._lock:
+            self._conn.execute(
                 "UPDATE sandbox_sessions SET last_active = ? WHERE thread_id = ?",
                 (datetime.now(), thread_id),
             )
-            conn.commit()
+            self._conn.commit()
 
     def _delete_from_db(self, thread_id: str):
-        with sqlite3.connect(self.db_path, timeout=10) as conn:
-            conn.execute(
+        with self._lock:
+            self._conn.execute(
                 "DELETE FROM sandbox_sessions WHERE thread_id = ?",
                 (thread_id,),
             )
-            conn.commit()
+            self._conn.commit()

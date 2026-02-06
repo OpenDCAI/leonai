@@ -24,10 +24,7 @@ class SandboxExecutor(BaseExecutor):
 
     shell_name = "sandbox"
     shell_command = ()
-    _is_sandbox = True  # marker for middleware to skip local-only logic
-
-    # Store completed results for command_status retrieval
-    _completed: dict[str, AsyncCommand] = {}
+    is_remote = True
 
     def __init__(
         self,
@@ -59,17 +56,14 @@ class SandboxExecutor(BaseExecutor):
         if timeout is not None:
             timeout_ms = min(int(timeout * 1000), 50000)
 
-        # Prepend cd if cwd specified
-        actual_cmd = command
-        if cwd:
-            actual_cmd = f"cd {cwd} && {command}"
-
+        # @@@ Pass cwd through to provider — providers handle cwd natively
         import asyncio
         result = await asyncio.to_thread(
             self._provider.execute,
             session_id,
-            actual_cmd,
+            command,
             timeout_ms=timeout_ms,
+            cwd=cwd,
         )
 
         return ExecuteResult(

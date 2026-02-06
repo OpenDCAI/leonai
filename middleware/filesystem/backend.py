@@ -47,6 +47,8 @@ class FileSystemBackend(ABC):
     - SandboxFileBackend: delegates to SandboxProvider
     """
 
+    is_remote: bool = False
+
     @abstractmethod
     def read_file(self, path: str) -> FileReadResult:
         """Read raw file content.

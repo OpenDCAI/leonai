@@ -62,10 +62,19 @@ class SandboxConfig(BaseModel):
         return cls(**data)
 
     def save(self, name: str) -> Path:
-        """Save config to ~/.leon/sandboxes/<name>.json."""
+        """Save config to ~/.leon/sandboxes/<name>.json.
+
+        Only serializes the active provider's config, not all three.
+        """
         path = Path.home() / ".leon" / "sandboxes" / f"{name}.json"
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(self.model_dump(), indent=2))
+        data = {"provider": self.provider, "on_exit": self.on_exit}
+        if self.context_id:
+            data["context_id"] = self.context_id
+        # Only include the active provider's config
+        if self.provider in ("agentbay", "docker", "e2b"):
+            data[self.provider] = getattr(self, self.provider).model_dump()
+        path.write_text(json.dumps(data, indent=2))
         return path
 
 

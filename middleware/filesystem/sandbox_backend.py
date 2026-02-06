@@ -28,7 +28,7 @@ class SandboxFileBackend(FileSystemBackend):
         get_session_id: Callable that returns the current session ID
     """
 
-    _is_sandbox = True  # marker for middleware to skip local-only logic
+    is_remote = True
 
     def __init__(
         self,

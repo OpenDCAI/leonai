@@ -76,7 +76,7 @@ class FileSystemMiddleware(AgentMiddleware):
             verbose: 是否输出详细日志
         """
         # @@@ Don't resolve workspace_root for sandbox — macOS firmlinks break it
-        if backend and hasattr(backend, '_is_sandbox'):
+        if backend and backend.is_remote:
             self.workspace_root = Path(workspace_root)
         else:
             self.workspace_root = Path(workspace_root).resolve()
@@ -100,7 +100,7 @@ class FileSystemMiddleware(AgentMiddleware):
             self.backend = backend
 
         # 确保 workspace 存在（only for local backend）
-        if not hasattr(self.backend, '_is_sandbox'):
+        if not self.backend.is_remote:
             self.workspace_root.mkdir(parents=True, exist_ok=True)
 
         if self.verbose:
@@ -123,7 +123,7 @@ class FileSystemMiddleware(AgentMiddleware):
         try:
             # @@@ Don't resolve() for sandbox — paths don't exist locally
             # macOS resolves /home → /System/Volumes/Data/home which breaks validation
-            if hasattr(self.backend, '_is_sandbox'):
+            if self.backend.is_remote:
                 resolved = Path(path)
             else:
                 resolved = Path(path).resolve()
@@ -440,11 +440,11 @@ class FileSystemMiddleware(AgentMiddleware):
         if not is_valid:
             return error
 
-        if not self.backend.file_exists(str(resolved)):
-            return f"Directory not found: {directory_path}"
-
+        # @@@ Check is_dir directly — file_exists() reads the file, which fails on directories
         if not self.backend.is_dir(str(resolved)):
-            return f"Not a directory: {directory_path}"
+            if self.backend.file_exists(str(resolved)):
+                return f"Not a directory: {directory_path}"
+            return f"Directory not found: {directory_path}"
 
         try:
             result = self.backend.list_dir(str(resolved))
