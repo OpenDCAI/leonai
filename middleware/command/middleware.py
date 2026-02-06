@@ -277,5 +277,11 @@ class CommandMiddleware(AgentMiddleware[CommandState]):
     async def awrap_model_call(self, request: ModelRequest, handler) -> ModelResponse:
         return await handler(request)
 
+    def wrap_tool_call(self, request, handler):
+        return handler(request)
+
+    async def awrap_tool_call(self, request, handler):
+        return await handler(request)
+
 
 __all__ = ["CommandMiddleware"]

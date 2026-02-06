@@ -80,7 +80,7 @@ class FileSystemMiddleware(AgentMiddleware):
             'read_file': True, 'write_file': True, 'edit_file': True,
             'multi_edit': True, 'list_dir': True
         }
-        self._read_files: set[Path] = set()
+        self._read_files: dict[Path, float] = {}  # path → mtime at read time
         self.operation_recorder = operation_recorder
         self.verbose = verbose
 
@@ -204,7 +204,7 @@ class FileSystemMiddleware(AgentMiddleware):
 
         # Track read files for "no read no write" enforcement
         if not result.error:
-            self._read_files.add(resolved)
+            self._read_files[resolved] = resolved.stat().st_mtime
 
         return result
 
@@ -237,7 +237,7 @@ class FileSystemMiddleware(AgentMiddleware):
                 f.write(content)
 
             # Mark as read since we just wrote it (AI knows the content)
-            self._read_files.add(resolved)
+            self._read_files[resolved] = resolved.stat().st_mtime
 
             # Record operation for time travel
             self._record_operation(
@@ -265,6 +265,11 @@ class FileSystemMiddleware(AgentMiddleware):
         # No read no write enforcement
         if resolved not in self._read_files:
             return "File has not been read yet. Read it first before writing to it."
+
+        # Staleness detection: file modified since last read
+        current_mtime = resolved.stat().st_mtime
+        if current_mtime != self._read_files[resolved]:
+            return "File has been modified since last read. Read it again before editing."
 
         # 禁止 no-op 编辑
         if old_string == new_string:
@@ -294,6 +299,9 @@ class FileSystemMiddleware(AgentMiddleware):
             with open(resolved, "w", encoding="utf-8") as f:
                 f.write(new_content)
 
+            # Update mtime after successful edit
+            self._read_files[resolved] = resolved.stat().st_mtime
+
             # Record operation for time travel
             self._record_operation(
                 operation_type="edit",
@@ -320,6 +328,11 @@ class FileSystemMiddleware(AgentMiddleware):
         # No read no write enforcement
         if resolved not in self._read_files:
             return "File has not been read yet. Read it first before writing to it."
+
+        # Staleness detection: file modified since last read
+        current_mtime = resolved.stat().st_mtime
+        if current_mtime != self._read_files[resolved]:
+            return "File has been modified since last read. Read it again before editing."
 
         try:
             # 读取文件
@@ -349,6 +362,9 @@ class FileSystemMiddleware(AgentMiddleware):
             # 写回文件
             with open(resolved, "w", encoding="utf-8") as f:
                 f.write(content)
+
+            # Update mtime after successful edit
+            self._read_files[resolved] = resolved.stat().st_mtime
 
             # Record operation for time travel
             self._record_operation(
