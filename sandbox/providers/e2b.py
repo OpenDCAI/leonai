@@ -109,6 +109,17 @@ class E2BProvider(SandboxProvider):
         except Exception:
             return "unknown"
 
+    def get_all_session_statuses(self) -> dict[str, str]:
+        """Batch status check — one API call for all sessions."""
+        from e2b import Sandbox
+
+        try:
+            paginator = Sandbox.list(api_key=self.api_key)
+            items = paginator.next_items()
+            return {s.sandbox_id: s.state.value for s in items}
+        except Exception:
+            return {}
+
     def execute(
         self,
         session_id: str,

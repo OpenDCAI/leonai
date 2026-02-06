@@ -178,11 +178,44 @@ class SandboxManager:
 
     def list_sessions(self) -> list[dict]:
         """List all tracked sessions with current status."""
+        rows = [
+            row for row in self._get_all_from_db()
+            if row["provider"] == self.provider.name
+        ]
+        if not rows:
+            return []
+
+        # @@@ Use batch status if provider supports it (1 API call vs N)
+        if hasattr(self.provider, 'get_all_session_statuses'):
+            status_map = self.provider.get_all_session_statuses()
+            sessions = []
+            for row in rows:
+                status = status_map.get(row["session_id"], "deleted")
+                if status == "deleted":
+                    self._delete_from_db(row["thread_id"])
+                    continue
+                sessions.append({
+                    "thread_id": row["thread_id"],
+                    "session_id": row["session_id"],
+                    "provider": row["provider"],
+                    "status": status,
+                    "context_id": row["context_id"],
+                    "created_at": row["created_at"],
+                    "last_active": row["last_active"],
+                })
+            return sessions
+
+        # Fallback: parallel per-session status checks
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(max_workers=min(len(rows), 8)) as pool:
+            statuses = list(pool.map(
+                lambda r: self.provider.get_session_status(r["session_id"]),
+                rows,
+            ))
+
         sessions = []
-        for row in self._get_all_from_db():
-            if row["provider"] != self.provider.name:
-                continue
-            status = self.provider.get_session_status(row["session_id"])
+        for row, status in zip(rows, statuses):
             if status == "deleted":
                 self._delete_from_db(row["thread_id"])
                 continue

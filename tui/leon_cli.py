@@ -275,16 +275,22 @@ def _init_sandbox_providers() -> tuple[dict, dict]:
 
 
 def _load_all_sessions(managers: dict) -> list[dict]:
-    """Load sessions from all managers."""
+    """Load sessions from all managers in parallel."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    def _fetch(manager):
+        return manager.list_sessions()
+
     sessions = []
-    for manager in managers.values():
-        for row in manager.list_sessions():
-            sessions.append({
-                "id": row["session_id"],
-                "status": row["status"],
-                "provider": row["provider"],
-                "thread": row["thread_id"],
-            })
+    with ThreadPoolExecutor(max_workers=len(managers) or 1) as pool:
+        for rows in pool.map(_fetch, managers.values()):
+            for row in rows:
+                sessions.append({
+                    "id": row["session_id"],
+                    "status": row["status"],
+                    "provider": row["provider"],
+                    "thread": row["thread_id"],
+                })
     return sessions
 
 
