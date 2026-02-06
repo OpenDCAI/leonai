@@ -46,10 +46,7 @@ class SandboxManagerApp(App):
     def __init__(self, api_key: str | None):
         super().__init__()
         self._providers = self._init_providers(api_key)
-        self._managers = {
-            name: SandboxManager(provider=provider)
-            for name, provider in self._providers.items()
-        }
+        self._managers = {name: SandboxManager(provider=provider) for name, provider in self._providers.items()}
         self.sessions: list[dict] = []
         self._pause_resume_support_by_session: dict[str, bool] = {}
 
@@ -92,6 +89,7 @@ class SandboxManagerApp(App):
                 config = SandboxConfig.load(name)
                 if config.provider == "agentbay":
                     from sandbox.providers.agentbay import AgentBayProvider
+
                     key = config.agentbay.api_key or api_key or os.getenv("AGENTBAY_API_KEY")
                     if key:
                         providers["agentbay"] = AgentBayProvider(
@@ -102,12 +100,14 @@ class SandboxManagerApp(App):
                         )
                 elif config.provider == "docker":
                     from sandbox.providers.docker import DockerProvider
+
                     providers["docker"] = DockerProvider(
                         image=config.docker.image,
                         mount_path=config.docker.mount_path,
                     )
                 elif config.provider == "e2b":
                     from sandbox.providers.e2b import E2BProvider
+
                     key = config.e2b.api_key or os.getenv("E2B_API_KEY")
                     if key:
                         providers["e2b"] = E2BProvider(
@@ -140,9 +140,7 @@ class SandboxManagerApp(App):
             table.add_row(s["id"], s["status"], s["provider"], s["thread"])
         if self._pause_resume_support_by_session:
             self._pause_resume_support_by_session = {
-                sid: supported
-                for sid, supported in self._pause_resume_support_by_session.items()
-                if sid in active_ids
+                sid: supported for sid, supported in self._pause_resume_support_by_session.items() if sid in active_ids
             }
         self.set_status(f"Found {len(sessions)} session(s)")
         sid = self._get_selected_session(notify=False)
@@ -153,12 +151,14 @@ class SandboxManagerApp(App):
         sessions: list[dict] = []
         for manager in self._managers.values():
             for row in manager.list_sessions():
-                sessions.append({
-                    "id": row["session_id"],
-                    "status": row["status"],
-                    "provider": row["provider"],
-                    "thread": row["thread_id"],
-                })
+                sessions.append(
+                    {
+                        "id": row["session_id"],
+                        "status": row["status"],
+                        "provider": row["provider"],
+                        "thread": row["thread_id"],
+                    }
+                )
         return sessions
 
     def _get_selected_session(self, notify: bool = True) -> str | None:
@@ -323,6 +323,7 @@ class SandboxManagerApp(App):
             url = provider.get_web_url(sid)
             if url:
                 import webbrowser
+
                 webbrowser.open(url)
                 self.call_from_thread(self.set_status, "Opened in browser")
             else:

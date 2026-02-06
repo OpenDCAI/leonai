@@ -98,7 +98,7 @@ def read_pptx(
 
 def _extract_slide_text(slide, slide_num: int, total_slides: int) -> str:
     """Extract text content from a slide."""
-    parts = [f"\n{'='*60}", f"Slide {slide_num}/{total_slides}", "=" * 60]
+    parts = [f"\n{'=' * 60}", f"Slide {slide_num}/{total_slides}", "=" * 60]
 
     for shape in slide.shapes:
         if hasattr(shape, "text") and shape.text.strip():

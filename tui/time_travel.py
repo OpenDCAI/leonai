@@ -1,9 +1,10 @@
 """Time travel manager for checkpoint navigation and file rollback"""
+
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from langgraph.checkpoint.sqlite import SqliteSaver
 
@@ -16,10 +17,11 @@ if TYPE_CHECKING:
 @dataclass
 class CheckpointInfo:
     """Information about a checkpoint"""
+
     checkpoint_id: str
     thread_id: str
     timestamp: datetime
-    user_message: Optional[str]  # First user message in this checkpoint
+    user_message: str | None  # First user message in this checkpoint
     file_operations_count: int
     is_current: bool = False
 
@@ -27,6 +29,7 @@ class CheckpointInfo:
 @dataclass
 class RewindResult:
     """Result of a rewind operation"""
+
     success: bool
     message: str
     reverted_operations: list[FileOperation]
@@ -65,9 +68,7 @@ class TimeTravelManager:
 
             for i, checkpoint_tuple in enumerate(history):
                 checkpoint = checkpoint_tuple.checkpoint
-                checkpoint_id = checkpoint_tuple.config["configurable"].get(
-                    "checkpoint_id", ""
-                )
+                checkpoint_id = checkpoint_tuple.config["configurable"].get("checkpoint_id", "")
 
                 # Extract timestamp
                 ts = checkpoint_tuple.metadata.get("created_at") if checkpoint_tuple.metadata else None
@@ -92,18 +93,18 @@ class TimeTravelManager:
                             break
 
                 # Count file operations for this checkpoint
-                file_ops_count = self.recorder.count_operations_for_checkpoint(
-                    thread_id, checkpoint_id
-                )
+                file_ops_count = self.recorder.count_operations_for_checkpoint(thread_id, checkpoint_id)
 
-                checkpoints.append(CheckpointInfo(
-                    checkpoint_id=checkpoint_id,
-                    thread_id=thread_id,
-                    timestamp=timestamp,
-                    user_message=user_message,
-                    file_operations_count=file_ops_count,
-                    is_current=(i == 0),  # First in history is current
-                ))
+                checkpoints.append(
+                    CheckpointInfo(
+                        checkpoint_id=checkpoint_id,
+                        thread_id=thread_id,
+                        timestamp=timestamp,
+                        user_message=user_message,
+                        file_operations_count=file_ops_count,
+                        is_current=(i == 0),  # First in history is current
+                    )
+                )
 
             # Reverse to show oldest first
             checkpoints.reverse()
@@ -130,9 +131,7 @@ class TimeTravelManager:
 
         return checkpoints
 
-    def get_operations_to_revert(
-        self, thread_id: str, target_checkpoint_id: str
-    ) -> list[FileOperation]:
+    def get_operations_to_revert(self, thread_id: str, target_checkpoint_id: str) -> list[FileOperation]:
         """Get list of operations that would be reverted when rewinding to target"""
         checkpoints = self.get_checkpoints(thread_id)
 
@@ -148,7 +147,7 @@ class TimeTravelManager:
 
         # Collect all operations from checkpoints after target
         operations_to_revert = []
-        for cp in checkpoints[target_idx + 1:]:
+        for cp in checkpoints[target_idx + 1 :]:
             ops = self.recorder.get_operations_for_checkpoint(thread_id, cp.checkpoint_id)
             operations_to_revert.extend(ops)
 
@@ -210,7 +209,7 @@ class TimeTravelManager:
             return
 
         # Get checkpoint IDs to delete (all after target)
-        ids_to_delete = [cp.checkpoint_id for cp in checkpoints[target_idx + 1:]]
+        ids_to_delete = [cp.checkpoint_id for cp in checkpoints[target_idx + 1 :]]
 
         if not ids_to_delete:
             return
@@ -222,20 +221,20 @@ class TimeTravelManager:
         # Delete from checkpoints table
         cursor.execute(
             f"DELETE FROM checkpoints WHERE thread_id = ? AND checkpoint_id IN ({placeholders})",
-            [thread_id] + ids_to_delete
+            [thread_id] + ids_to_delete,
         )
 
         # Delete from checkpoint_writes table
         cursor.execute(
             f"DELETE FROM checkpoint_writes WHERE thread_id = ? AND checkpoint_id IN ({placeholders})",
-            [thread_id] + ids_to_delete
+            [thread_id] + ids_to_delete,
         )
 
         # Delete from checkpoint_blobs table if exists
         try:
             cursor.execute(
                 f"DELETE FROM checkpoint_blobs WHERE thread_id = ? AND checkpoint_id IN ({placeholders})",
-                [thread_id] + ids_to_delete
+                [thread_id] + ids_to_delete,
             )
         except Exception:
             pass  # Table might not exist

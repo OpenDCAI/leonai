@@ -1,4 +1,5 @@
 """File operation recorder for time travel functionality"""
+
 import json
 import sqlite3
 import time
@@ -6,7 +7,6 @@ import uuid
 from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 # Context variables for tracking current thread and checkpoint
 current_thread_id: ContextVar[str] = ContextVar("current_thread_id", default="")
@@ -16,15 +16,16 @@ current_checkpoint_id: ContextVar[str] = ContextVar("current_checkpoint_id", def
 @dataclass
 class FileOperation:
     """Represents a single file operation"""
+
     id: str
     thread_id: str
     checkpoint_id: str
     timestamp: float
     operation_type: str  # 'write', 'edit', 'multi_edit'
     file_path: str
-    before_content: Optional[str]
+    before_content: str | None
     after_content: str
-    changes: Optional[list[dict]]  # For edit operations: [{old_string, new_string}]
+    changes: list[dict] | None  # For edit operations: [{old_string, new_string}]
     status: str = "applied"  # 'applied', 'reverted'
 
 
@@ -71,9 +72,9 @@ class FileOperationRecorder:
         checkpoint_id: str,
         operation_type: str,
         file_path: str,
-        before_content: Optional[str],
+        before_content: str | None,
         after_content: str,
-        changes: Optional[list[dict]] = None,
+        changes: list[dict] | None = None,
     ) -> str:
         """Record a file operation"""
         op_id = str(uuid.uuid4())
@@ -101,9 +102,7 @@ class FileOperationRecorder:
             conn.commit()
         return op_id
 
-    def get_operations_for_thread(
-        self, thread_id: str, status: str = "applied"
-    ) -> list[FileOperation]:
+    def get_operations_for_thread(self, thread_id: str, status: str = "applied") -> list[FileOperation]:
         """Get all operations for a thread"""
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
@@ -118,9 +117,7 @@ class FileOperationRecorder:
             rows = cursor.fetchall()
             return [self._row_to_operation(row) for row in rows]
 
-    def get_operations_after_checkpoint(
-        self, thread_id: str, checkpoint_id: str
-    ) -> list[FileOperation]:
+    def get_operations_after_checkpoint(self, thread_id: str, checkpoint_id: str) -> list[FileOperation]:
         """Get operations after a specific checkpoint (for rollback)"""
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
@@ -185,9 +182,7 @@ class FileOperationRecorder:
                 result.append(self._row_to_operation(row))
             return result
 
-    def get_operations_for_checkpoint(
-        self, thread_id: str, checkpoint_id: str
-    ) -> list[FileOperation]:
+    def get_operations_for_checkpoint(self, thread_id: str, checkpoint_id: str) -> list[FileOperation]:
         """Get all operations for a specific checkpoint"""
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
@@ -202,9 +197,7 @@ class FileOperationRecorder:
             rows = cursor.fetchall()
             return [self._row_to_operation(row) for row in rows]
 
-    def count_operations_for_checkpoint(
-        self, thread_id: str, checkpoint_id: str
-    ) -> int:
+    def count_operations_for_checkpoint(self, thread_id: str, checkpoint_id: str) -> int:
         """Count operations for a specific checkpoint"""
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.execute(
@@ -259,7 +252,7 @@ class FileOperationRecorder:
 
 
 # Global recorder instance (initialized lazily)
-_recorder: Optional[FileOperationRecorder] = None
+_recorder: FileOperationRecorder | None = None
 
 
 def get_recorder() -> FileOperationRecorder:

@@ -1,21 +1,21 @@
 """History browser widget - shows conversation history with arrow key navigation"""
 
 from textual.app import ComposeResult
-from textual.containers import Container, VerticalScroll
+from textual.containers import Container
 from textual.screen import ModalScreen
-from textual.widgets import Label, ListItem, ListView, Static
+from textual.widgets import Label, ListItem, ListView
 
 
 class HistoryBrowser(ModalScreen):
     """Modal screen for browsing input history
-    
+
     Usage:
     - Press ESC twice to open
     - Arrow keys to navigate
     - Enter to select
     - ESC to cancel
     """
-    
+
     CSS = """
     HistoryBrowser {
         align: center middle;
@@ -57,21 +57,21 @@ class HistoryBrowser(ModalScreen):
         background: $primary;
     }
     """
-    
+
     BINDINGS = [
         ("escape", "dismiss_browser", "关闭"),
         ("enter", "select_history", "选择"),
     ]
-    
+
     def __init__(self, history: list[str], **kwargs):
         super().__init__(**kwargs)
         self.history = history
         self.selected_index = -1
-    
+
     def compose(self) -> ComposeResult:
         with Container(id="history-dialog"):
             yield Label("📜 历史输入记录", id="history-title")
-            
+
             if self.history:
                 with ListView(id="history-list"):
                     # 倒序显示（最新的在上面）
@@ -81,22 +81,22 @@ class HistoryBrowser(ModalScreen):
                         yield ListItem(Label(f"{len(self.history) - i}. {display_text}"))
             else:
                 yield Label("暂无历史记录", id="history-list")
-            
+
             yield Label("↑/↓: 选择  Enter: 确认  ESC: 取消", id="history-hint")
-    
+
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         """Handle selection from ListView"""
         # 计算实际的历史索引（因为是倒序显示）
         self.selected_index = len(self.history) - 1 - event.list_view.index
         self.dismiss(self.selected_index)
-    
+
     def action_select_history(self) -> None:
         """Select current highlighted item"""
         list_view = self.query_one("#history-list", ListView)
         if list_view.index is not None:
             self.selected_index = len(self.history) - 1 - list_view.index
             self.dismiss(self.selected_index)
-    
+
     def action_dismiss_browser(self) -> None:
         """Close without selection"""
         self.dismiss(None)

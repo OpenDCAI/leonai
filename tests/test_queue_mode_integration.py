@@ -3,7 +3,6 @@
 import asyncio
 import threading
 import time
-from pathlib import Path
 
 # Test requires running from project root with dependencies installed
 
@@ -27,6 +26,7 @@ def test_queue_mode_steer():
 
     # Create agent with minimal config (no MCP to speed up)
     from agent_profile import AgentProfile
+
     profile = AgentProfile.default()
     profile.mcp.enabled = False
 
@@ -77,7 +77,7 @@ def test_queue_mode_steer():
                             content = getattr(msg, "content", "")
                             if "[STEER]" in str(content):
                                 steer_injected = True
-                                print(f"[TEST] Steer message detected in AI response!")
+                                print("[TEST] Steer message detected in AI response!")
 
                             tool_calls = getattr(msg, "tool_calls", [])
                             for tc in tool_calls:
@@ -89,7 +89,7 @@ def test_queue_mode_steer():
                             content = str(getattr(msg, "content", ""))[:100]
                             tool_results_seen.append(content)
                             if "Skipped" in content:
-                                print(f"[TEST] Tool was SKIPPED!")
+                                print("[TEST] Tool was SKIPPED!")
                             else:
                                 print(f"[TEST] Tool result: {content[:50]}...")
 
@@ -97,11 +97,12 @@ def test_queue_mode_steer():
                             content = getattr(msg, "content", "")
                             if "[STEER]" in str(content):
                                 steer_injected = True
-                                print(f"[TEST] Steer HumanMessage injected!")
+                                print("[TEST] Steer HumanMessage injected!")
 
         except Exception as e:
             print(f"[TEST] Error: {e}")
             import traceback
+
             traceback.print_exc()
 
     # Run in new event loop
@@ -109,13 +110,13 @@ def test_queue_mode_steer():
 
     steer_thread.join()
 
-    print("\n" + "="*50)
+    print("\n" + "=" * 50)
     print("[TEST] Results:")
     print(f"  Tool calls seen: {tool_calls_seen}")
     print(f"  Tool results: {len(tool_results_seen)}")
     print(f"  Steer injected: {steer_injected}")
     print(f"  Any skipped: {'Skipped' in str(tool_results_seen)}")
-    print("="*50)
+    print("=" * 50)
 
     # Cleanup
     agent.close()

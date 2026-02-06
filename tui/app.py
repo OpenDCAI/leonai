@@ -1,19 +1,15 @@
 """Main Textual App for Leon CLI"""
 
 import asyncio
-import os
-import queue
-import threading
 import uuid
 from pathlib import Path
-from typing import Any
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, VerticalScroll
 from textual.widgets import Footer, Header, Static
 
-from tui.operations import current_checkpoint_id, current_thread_id, get_recorder
+from tui.operations import current_checkpoint_id, current_thread_id
 from tui.widgets.chat_input import ChatInput
 from tui.widgets.checkpoint_browser import CheckpointBrowser
 from tui.widgets.history_browser import HistoryBrowser
@@ -27,8 +23,8 @@ try:
     from sandbox.thread_context import set_current_thread_id as set_sandbox_thread_id
 except ImportError:
     set_sandbox_thread_id = None
-from middleware.queue import QueueMode, get_queue_manager
 from middleware.monitor import AgentState
+from middleware.queue import QueueMode, get_queue_manager
 
 
 class WelcomeBanner(Static):
@@ -130,17 +126,17 @@ class LeonApp(App):
         self._agent_worker = None
         self._quit_pending = False
         # Queue mode from agent config
-        self._queue_mode = self._parse_queue_mode(getattr(agent, 'queue_mode', 'steer'))
+        self._queue_mode = self._parse_queue_mode(getattr(agent, "queue_mode", "steer"))
         get_queue_manager().set_mode(self._queue_mode)
 
         # 注册状态变化回调：IDLE 时自动处理 followup
-        if hasattr(agent, 'runtime'):
+        if hasattr(agent, "runtime"):
             agent.runtime.state.on_state_changed(self._on_state_changed)
 
     @property
     def _is_agent_active(self) -> bool:
         """Agent 是否正在执行（基于 AgentState 状态机）"""
-        if hasattr(self.agent, 'runtime'):
+        if hasattr(self.agent, "runtime"):
             return self.agent.runtime.is_running()
         return False
 
@@ -254,7 +250,14 @@ class LeonApp(App):
                 get_queue_manager().set_mode(self._queue_mode)
                 self.notify(f"✓ 队列模式: {mode_name}")
             else:
-                self.notify(f"⚠ 未知模式: {mode_name}。可用: steer, followup, collect, steer-backlog, interrupt", severity="warning")
+                self.notify(
+                    f"⚠ 未知模式: {mode_name}。可用: steer, followup, collect, steer-backlog, interrupt",
+                    severity="warning",
+                )
+            return
+
+        if content.lower() == "/compact":
+            self._trigger_compact()
             return
 
         # Queue mode routing: if agent is active, queue the message
@@ -292,42 +295,42 @@ class LeonApp(App):
             self.agent.runtime.transition(AgentState.ACTIVE)
         self._quit_pending = False
         self._agent_worker = self.run_worker(self._handle_submission(content), exclusive=False)
-    
+
     async def _handle_submission(self, content: str) -> None:
         """Handle message submission asynchronously to ensure proper rendering"""
         import time
+
         t0 = time.perf_counter()
-        
+
         messages_container = self.query_one("#messages", Container)
         chat_container = self.query_one("#chat-container", VerticalScroll)
         chat_input = self.query_one("#chat-input", ChatInput)
-        
+
         # CRITICAL: Use await mount() to ensure user message renders BEFORE agent starts
         user_msg = UserMessage(content)
         await messages_container.mount(user_msg)
         t_mount = (time.perf_counter() - t0) * 1000
-        
+
         # Show thinking spinner
         thinking = ThinkingSpinner()
         await messages_container.mount(thinking)
-        
+
         # Single scroll after mounting both widgets
         chat_container.scroll_end(animate=False)
-        
+
         # FORCE screen update to make message visible NOW
         self.refresh()
         await asyncio.sleep(0.05)  # Give UI time to actually render
-        
+
         # Log timing
         print(f"\n[LATENCY] User message rendered in {t_mount:.2f}ms")
-        
+
         # NOW process with agent (user message is already visible)
         t_agent_start = time.perf_counter()
         await self._process_message(content, thinking)
         t_agent_total = (time.perf_counter() - t_agent_start) * 1000
         print(f"[LATENCY] Agent processing took {t_agent_total:.2f}ms\n")
 
-    
     async def _process_message(self, message: str, thinking_spinner: ThinkingSpinner | None = None) -> None:
         """Process message with agent using async astream"""
         import time
@@ -353,7 +356,7 @@ class LeonApp(App):
         if set_sandbox_thread_id:
             set_sandbox_thread_id(self.thread_id)
         # Eagerly create sandbox session before invoke (avoids sync SQLite during async tool calls)
-        if hasattr(self.agent, '_sandbox'):
+        if hasattr(self.agent, "_sandbox"):
             self.agent._sandbox.ensure_session(self.thread_id)
         # Generate a checkpoint ID for this interaction
         checkpoint_id = f"{self.thread_id}-{uuid.uuid4().hex[:8]}"
@@ -367,28 +370,28 @@ class LeonApp(App):
             ):
                 if not chunk:
                     continue
-                
+
                 # Process chunk
                 for node_name, node_update in chunk.items():
                     if not isinstance(node_update, dict) or "messages" not in node_update:
                         continue
-                    
+
                     new_messages = node_update["messages"]
                     if not new_messages:
                         continue
-                    
+
                     if not isinstance(new_messages, (list, tuple)):
                         new_messages = [new_messages]
-                    
+
                     for msg in new_messages:
                         msg_class = msg.__class__.__name__
-                        
+
                         if msg_class == "HumanMessage":
                             continue
 
                         if msg_class == "AIMessage":
                             raw_content = getattr(msg, "content", "")
-                            
+
                             if isinstance(raw_content, str):
                                 content = raw_content
                             elif isinstance(raw_content, list):
@@ -401,12 +404,12 @@ class LeonApp(App):
                                 content = "".join(text_parts)
                             else:
                                 content = str(raw_content)
-                            
+
                             if content and content != last_content:
                                 if thinking_spinner and thinking_spinner.is_mounted:
                                     await thinking_spinner.remove()
                                     thinking_spinner = None
-                                
+
                                 if not self._current_assistant_msg:
                                     self._current_assistant_msg = AssistantMessage()
                                     await messages_container.mount(self._current_assistant_msg)
@@ -417,28 +420,28 @@ class LeonApp(App):
                                     last_update_time = current_time
                                 else:
                                     self._current_assistant_msg.update_content(content)
-                                
+
                                 last_content = content
                                 self._last_assistant_message = content
-                            
+
                             tool_calls = getattr(msg, "tool_calls", [])
                             if tool_calls:
                                 self._current_assistant_msg = None
-                                
+
                                 for tool_call in tool_calls:
                                     tool_id = tool_call.get("id", "")
                                     tool_name = tool_call.get("name", "unknown")
-                                    
+
                                     if tool_id and tool_id not in self._shown_tool_calls:
                                         if thinking_spinner and thinking_spinner.is_mounted:
                                             thinking_spinner.set_tool_execution(tool_name)
-                                        
+
                                         tool_widget = ToolCallMessage(
                                             tool_name,
                                             tool_call.get("args", {}),
                                         )
                                         await messages_container.mount(tool_widget)
-                                        
+
                                         self._tool_call_widgets[tool_id] = tool_widget
                                         self._shown_tool_calls.add(tool_id)
 
@@ -447,7 +450,7 @@ class LeonApp(App):
                             if tool_call_id and tool_call_id not in self._shown_tool_results:
                                 if tool_call_id in self._tool_call_widgets:
                                     self._tool_call_widgets[tool_call_id].mark_completed()
-                                
+
                                 await messages_container.mount(ToolResultMessage(msg.content))
                                 self._shown_tool_results.add(tool_call_id)
 
@@ -498,30 +501,53 @@ class LeonApp(App):
         if followup_content:
             self.agent.runtime.transition(AgentState.ACTIVE)
             self._quit_pending = False
-            self._agent_worker = self.run_worker(
-                self._handle_submission(followup_content),
-                exclusive=False
-            )
+            self._agent_worker = self.run_worker(self._handle_submission(followup_content), exclusive=False)
+
+    def _trigger_compact(self) -> None:
+        """Handle /compact command — manual context compaction"""
+        if not hasattr(self.agent, "_memory_middleware"):
+            self.notify("⚠ Memory 中间件未启用", severity="warning")
+            return
+        self.run_worker(self._do_compact(), exclusive=False)
+
+    async def _do_compact(self) -> None:
+        """Execute manual compaction asynchronously"""
+        config = {"configurable": {"thread_id": self.thread_id}}
+        try:
+            state = await self.agent.agent.aget_state(config)
+            if not state or not state.values.get("messages"):
+                self.notify("⚠ 没有消息可压缩", severity="warning")
+                return
+
+            messages = state.values["messages"]
+            result = await self.agent._memory_middleware.force_compact(messages)
+            if result:
+                stats = result["stats"]
+                self.notify(f"✓ 压缩完成: {stats['summarized']} 条消息已摘要，保留 {stats['kept']} 条近期消息")
+            else:
+                self.notify("⚠ 消息不足，无需压缩", severity="information")
+        except Exception as e:
+            self.notify(f"⚠ 压缩失败: {e}", severity="error")
 
     def action_history_up(self) -> None:
         """Navigate to previous input in history"""
         chat_input = self.query_one("#chat-input", ChatInput)
         chat_input.navigate_history("up")
-    
+
     def action_history_down(self) -> None:
         """Navigate to next input in history"""
         chat_input = self.query_one("#chat-input", ChatInput)
         chat_input.navigate_history("down")
-    
+
     def action_show_history(self) -> None:
         """Show history browser (double-ESC or /history)"""
         chat_input = self.query_one("#chat-input", ChatInput)
         history = chat_input.get_history()
-        
+
         if not history:
             self.notify("暂无历史记录", severity="information")
             return
-        
+
         def handle_history_selection(selected_index: int | None) -> None:
             """Handle history selection from browser"""
             # Always refocus input after dialog closes
@@ -530,31 +556,32 @@ class LeonApp(App):
             if selected_index is not None:
                 chat_input.set_text(history[selected_index])
                 self.notify(f"✓ 已加载历史记录 #{selected_index + 1}")
-        
+
         self.push_screen(HistoryBrowser(history), handle_history_selection)
-    
+
     def _rollback_history(self, steps: int) -> None:
         """Rollback to N steps ago in history"""
         chat_input = self.query_one("#chat-input", ChatInput)
         history = chat_input.get_history()
-        
+
         if not history:
             self.notify("暂无历史记录", severity="warning")
             return
-        
+
         if steps < 1 or steps > len(history):
             self.notify(f"⚠ 回退步数必须在 1-{len(history)} 之间", severity="warning")
             return
-        
+
         # 回退到倒数第N条
         target_index = len(history) - steps
         chat_input.set_text(history[target_index])
         self.notify(f"✓ 已回退到 {steps} 步前的输入")
-    
+
     def action_copy_last_message(self) -> None:
         """Copy last assistant message to clipboard"""
         if self._last_assistant_message:
             import pyperclip
+
             try:
                 pyperclip.copy(self._last_assistant_message)
                 self.notify("✓ 已复制最后一条消息")
@@ -562,25 +589,24 @@ class LeonApp(App):
                 self.notify("⚠ 复制失败（需要安装 pyperclip）", severity="warning")
         else:
             self.notify("⚠ 没有可复制的消息", severity="warning")
-    
+
     def action_export_conversation(self) -> None:
         """Export conversation to markdown file"""
         import datetime
-        from pathlib import Path
-        
+
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         export_path = self.workspace_root / f"conversation_{timestamp}.md"
-        
+
         messages_container = self.query_one("#messages", Container)
-        
-        content = f"# Leon Agent 对话记录\n\n"
+
+        content = "# Leon Agent 对话记录\n\n"
         content += f"**导出时间**: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
         content += f"**Thread ID**: {self.thread_id}\n\n"
         content += "---\n\n"
-        
+
         for widget in messages_container.children:
             widget_class = widget.__class__.__name__
-            
+
             if widget_class == "UserMessage":
                 content += f"## 👤 用户\n\n{widget._content}\n\n"
             elif widget_class == "AssistantMessage":
@@ -594,13 +620,13 @@ class LeonApp(App):
                 content += "\n"
             elif widget_class == "ToolResultMessage":
                 content += f"### 📤 工具返回\n\n```\n{widget._result}\n```\n\n"
-        
+
         try:
             export_path.write_text(content, encoding="utf-8")
             self.notify(f"✓ 对话已导出到: {export_path.name}")
         except Exception as e:
             self.notify(f"⚠ 导出失败: {str(e)}", severity="error")
-    
+
     def _show_help(self) -> None:
         """Show help information as system message"""
         help_text = """Leon 帮助信息
@@ -621,6 +647,7 @@ class LeonApp(App):
   • /resume: 切换到其他对话
   • /rollback N 或 /回退 N: 回退到N步前的输入
   • /mode <模式>: 切换队列模式
+  • /compact: 手动压缩上下文（生成摘要，释放 token 空间）
   • /clear: 清空对话历史
   • /exit 或 /quit: 退出程序
 
@@ -633,22 +660,22 @@ class LeonApp(App):
 """
         messages_container = self.query_one("#messages")
         chat_container = self.query_one("#chat-container", VerticalScroll)
-        
+
         help_msg = SystemMessage(help_text)
         messages_container.mount(help_msg)
         # Scroll after help message is mounted
         self.call_after_refresh(lambda: chat_container.scroll_end(animate=False))
-    
+
     def _update_status_bar(self) -> None:
         """Update status bar with message count and runtime status"""
         status_bar = self.query_one("#status-bar", StatusBar)
         status_bar.update_stats(self._message_count)
 
         # 更新运行时状态
-        if hasattr(self.agent, 'runtime'):
+        if hasattr(self.agent, "runtime"):
             runtime_status = self.agent.runtime.get_status_line()
             status_bar.update_runtime_status(runtime_status)
-    
+
     def action_interrupt_agent(self) -> None:
         """Handle ESC - interrupt running agent"""
         if self._is_agent_active and self._agent_worker:
@@ -669,14 +696,14 @@ class LeonApp(App):
             self._quit_pending = False
             self.notify("⚠ 正在中断...", timeout=2)
             return
-        
+
         # Double Ctrl+C to quit
         if self._quit_pending:
             self.exit()
         else:
             self._quit_pending = True
             self.notify("再按一次 Ctrl+C 退出，或按 Ctrl+D 直接退出", timeout=3)
-    
+
     def action_clear_history(self) -> None:
         """Clear chat history"""
         # Generate new thread ID
@@ -706,7 +733,7 @@ class LeonApp(App):
 
     def action_time_travel(self) -> None:
         """Time travel - rewind to a previous checkpoint (ESC ESC)"""
-        if not hasattr(self.agent, 'checkpointer'):
+        if not hasattr(self.agent, "checkpointer"):
             self.notify("⚠ 时间旅行功能不可用", severity="warning")
             return
 
@@ -749,10 +776,7 @@ class LeonApp(App):
             else:
                 self.notify(f"⚠ {result.message}", severity="warning")
 
-        self.push_screen(
-            CheckpointBrowser(checkpoints, current_checkpoint_id_val),
-            handle_rewind
-        )
+        self.push_screen(CheckpointBrowser(checkpoints, current_checkpoint_id_val), handle_rewind)
 
     def _show_resume_dialog(self) -> None:
         """Show dialog to switch to another conversation (/resume command)"""
@@ -767,8 +791,9 @@ class LeonApp(App):
 
         # Get thread info for display
         thread_info = {}
-        if hasattr(self.agent, 'checkpointer'):
+        if hasattr(self.agent, "checkpointer"):
             from tui.time_travel import TimeTravelManager
+
             time_travel_mgr = TimeTravelManager()
             for tid in threads:
                 try:
@@ -799,10 +824,7 @@ class LeonApp(App):
                 self.run_worker(self._load_history(), exclusive=False)
                 self.notify(f"✓ 已切换到对话: {self.thread_id}")
 
-        self.push_screen(
-            ThreadSelector(threads, self.thread_id, thread_info),
-            handle_thread_selection
-        )
+        self.push_screen(ThreadSelector(threads, self.thread_id, thread_info), handle_thread_selection)
 
     async def _load_history(self) -> None:
         """加载历史 messages"""

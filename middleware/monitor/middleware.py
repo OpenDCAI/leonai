@@ -1,16 +1,21 @@
 """Monitor Middleware - 监控容器"""
-from typing import Any, Callable, Awaitable
+
+from collections.abc import Awaitable, Callable
+from typing import Any
+
 from langchain.agents.middleware.types import (
     AgentMiddleware,
+    ModelCallResult,
     ModelRequest,
     ModelResponse,
-    ModelCallResult,
 )
+
 from .base import BaseMonitor
-from .token_monitor import TokenMonitor
 from .context_monitor import ContextMonitor
-from .state_monitor import StateMonitor, AgentState
+from .cost import CostCalculator, fetch_openrouter_pricing
 from .runtime import AgentRuntime
+from .state_monitor import StateMonitor
+from .token_monitor import TokenMonitor
 
 
 class MonitorMiddleware(AgentMiddleware):
@@ -22,13 +27,18 @@ class MonitorMiddleware(AgentMiddleware):
 
     tools = []  # 不注入工具
 
-    def __init__(self, context_limit: int = 100000, verbose: bool = False):
+    def __init__(self, context_limit: int = 100000, model_name: str = "", verbose: bool = False):
         self.verbose = verbose
 
         # 内置 monitors
         self._token_monitor = TokenMonitor()
         self._context_monitor = ContextMonitor(context_limit=context_limit)
         self._state_monitor = StateMonitor()
+
+        # 注入成本计算器（先拉取 OpenRouter 定价）
+        if model_name:
+            fetch_openrouter_pricing()
+            self._token_monitor.cost_calculator = CostCalculator(model_name)
 
         # 可扩展的 monitors 列表
         self._monitors: list[BaseMonitor] = [

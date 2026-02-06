@@ -7,8 +7,8 @@ Implements SandboxProvider using Alibaba Cloud's AgentBay SDK.
 from typing import Any
 
 from sandbox.provider import (
-    ProviderExecResult,
     Metrics,
+    ProviderExecResult,
     SandboxProvider,
     SessionInfo,
 )
@@ -48,9 +48,7 @@ class AgentBayProvider(SandboxProvider):
         if self.image_id:
             params.image_id = self.image_id
         if context_id:
-            params.context_syncs = [
-                ContextSync(context_id=context_id, path=self.default_context_path)
-            ]
+            params.context_syncs = [ContextSync(context_id=context_id, path=self.default_context_path)]
 
         result = self.client.create(params)
         if not result.success:
@@ -144,11 +142,13 @@ class AgentBayProvider(SandboxProvider):
             return []
         items = []
         for entry in result.entries or []:
-            items.append({
-                "name": entry.name,
-                "type": "directory" if entry.is_directory else "file",
-                "size": entry.size or 0,
-            })
+            items.append(
+                {
+                    "name": entry.name,
+                    "type": "directory" if entry.is_directory else "file",
+                    "size": entry.size or 0,
+                }
+            )
         return items
 
     def get_metrics(self, session_id: str) -> Metrics | None:
@@ -179,16 +179,13 @@ class AgentBayProvider(SandboxProvider):
         session = self._get_session(session_id)
         result = session.computer.list_visible_apps()
         if result.success:
-            return [
-                {"pid": app.pid, "name": app.name, "cmd": app.cmd}
-                for app in (result.data or [])
-            ]
+            return [{"pid": app.pid, "name": app.name, "cmd": app.cmd} for app in (result.data or [])]
         return []
 
     def get_web_url(self, session_id: str) -> str | None:
         """Get AgentBay web UI URL for the session."""
         session = self._get_session(session_id)
-        return getattr(session, 'resource_url', None)
+        return getattr(session, "resource_url", None)
 
     def _get_session(self, session_id: str):
         """Get session object, fetching from API if not cached."""

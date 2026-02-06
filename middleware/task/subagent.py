@@ -36,19 +36,17 @@ class SubagentRunner:
         parent_model: str,
         workspace_root: Path,
         api_key: str,
-        base_url: str | None = None,
+        model_kwargs: dict[str, Any] | None = None,
     ):
         self.agents = agents
         self.parent_model = parent_model
         self.workspace_root = workspace_root
         self.api_key = api_key
-        self.base_url = base_url
+        self.model_kwargs = model_kwargs or {}
         self._active_tasks: dict[str, asyncio.Task] = {}
         self._task_results: dict[str, TaskResult] = {}
 
-    def _build_subagent_middleware(
-        self, config: AgentConfig, all_middleware: list[Any]
-    ) -> list[Any]:
+    def _build_subagent_middleware(self, config: AgentConfig, all_middleware: list[Any]) -> list[Any]:
         """Build middleware stack for subagent based on allowed tools."""
         from middleware.command import CommandMiddleware
         from middleware.filesystem import FileSystemMiddleware
@@ -169,18 +167,8 @@ class SubagentRunner:
         # Determine model
         model_name = params.get("Model") or config.model or self.parent_model
 
-        # Build model
-        if self.base_url:
-            # 有 base_url 时，强制使用 ChatOpenAI（OpenAI 兼容代理）
-            from langchain_openai import ChatOpenAI
-            model = ChatOpenAI(
-                model=model_name,
-                api_key=self.api_key,
-                base_url=self.base_url,
-            )
-        else:
-            # 无代理时，让 init_chat_model 根据模型名自动选择
-            model = init_chat_model(model_name, api_key=self.api_key)
+        # Build model (unified path via init_chat_model)
+        model = init_chat_model(model_name, api_key=self.api_key, **self.model_kwargs)
 
         # Build filtered middleware
         middleware = self._build_subagent_middleware(config, all_middleware)
@@ -211,11 +199,7 @@ class SubagentRunner:
 
         if params.get("RunInBackground"):
             # Background execution
-            task = asyncio.create_task(
-                self._execute_agent(
-                    agent, prompt, subagent_thread_id, max_turns, task_id
-                )
-            )
+            task = asyncio.create_task(self._execute_agent(agent, prompt, subagent_thread_id, max_turns, task_id))
             self._active_tasks[task_id] = task
             return TaskResult(
                 task_id=task_id,
@@ -224,9 +208,7 @@ class SubagentRunner:
             )
         else:
             # Synchronous execution
-            return await self._execute_agent(
-                agent, prompt, subagent_thread_id, max_turns, task_id
-            )
+            return await self._execute_agent(agent, prompt, subagent_thread_id, max_turns, task_id)
 
     async def _execute_agent(
         self,
@@ -248,11 +230,7 @@ class SubagentRunner:
             messages = result.get("messages", [])
             if messages:
                 last_message = messages[-1]
-                content = (
-                    last_message.content
-                    if hasattr(last_message, "content")
-                    else str(last_message)
-                )
+                content = last_message.content if hasattr(last_message, "content") else str(last_message)
             else:
                 content = "No response generated."
 
@@ -284,7 +262,7 @@ class SubagentRunner:
 
 **Context:**
 - Workspace: `{self.workspace_root}`
-- Available tools: {', '.join(config.tools)}
+- Available tools: {", ".join(config.tools)}
 
 **Important Rules:**
 1. All file paths must be absolute paths.

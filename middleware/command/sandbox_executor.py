@@ -58,6 +58,7 @@ class SandboxExecutor(BaseExecutor):
 
         # @@@ Pass cwd through to provider — providers handle cwd natively
         import asyncio
+
         result = await asyncio.to_thread(
             self._provider.execute,
             session_id,

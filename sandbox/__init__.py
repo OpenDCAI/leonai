@@ -35,18 +35,22 @@ def create_sandbox(
 
     if provider == "local":
         from sandbox.local import LocalSandbox
+
         return LocalSandbox(workspace_root=workspace_root or str(Path.cwd()))
 
     if provider == "agentbay":
         from sandbox.agentbay import AgentBaySandbox
+
         return AgentBaySandbox(config=config, db_path=db_path)
 
     if provider == "docker":
         from sandbox.docker import DockerSandbox
+
         return DockerSandbox(config=config, db_path=db_path)
 
     if provider == "e2b":
         from sandbox.e2b import E2BSandbox
+
         return E2BSandbox(config=config, db_path=db_path)
 
     raise ValueError(f"Unknown sandbox provider: {provider}")

@@ -66,7 +66,8 @@ class E2BSandbox(Sandbox):
 
         self._fs = SandboxFileBackend(self._manager, _get_session_id)
         self._shell = SandboxExecutor(
-            self._manager, _get_session_id,
+            self._manager,
+            _get_session_id,
             default_cwd=e2b.cwd,
         )
         self._get_session_id = _get_session_id
@@ -111,5 +112,6 @@ class E2BSandbox(Sandbox):
 
     def ensure_session(self, thread_id: str) -> None:
         from sandbox.thread_context import set_current_thread_id
+
         set_current_thread_id(thread_id)
         self._get_session_id()

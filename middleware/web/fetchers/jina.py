@@ -59,10 +59,7 @@ class JinaFetcher(BaseFetcher):
                 result.title = title_line.lstrip("#").strip()
 
             chunk_data = self._split_into_chunks(content)
-            result.chunks = [
-                ContentChunk(position=pos, content=cont, heading=head)
-                for pos, cont, head in chunk_data
-            ]
+            result.chunks = [ContentChunk(position=pos, content=cont, heading=head) for pos, cont, head in chunk_data]
             result.total_chunks = len(result.chunks)
 
             result.content = content

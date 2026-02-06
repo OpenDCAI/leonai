@@ -9,7 +9,16 @@ from pathlib import Path
 from middleware.filesystem.read.types import FileType, ReadResult
 
 IMAGE_EXTENSIONS: set[str] = {
-    "png", "jpg", "jpeg", "gif", "bmp", "webp", "ico", "tiff", "heic", "heif",
+    "png",
+    "jpg",
+    "jpeg",
+    "gif",
+    "bmp",
+    "webp",
+    "ico",
+    "tiff",
+    "heic",
+    "heif",
 }
 
 MAX_IMAGE_SIZE: int = 20 * 1024 * 1024  # 20MB

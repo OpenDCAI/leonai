@@ -70,7 +70,7 @@ def read_pdf(
         page = doc[page_num]
         text = page.get_text()
 
-        page_header = f"\n{'='*60}\nPage {page_num + 1}/{total_pages}\n{'='*60}\n"
+        page_header = f"\n{'=' * 60}\nPage {page_num + 1}/{total_pages}\n{'=' * 60}\n"
 
         if total_chars + len(page_header) + len(text) > limits.max_chars:
             truncated = True

@@ -173,7 +173,7 @@ class ZshExecutor(BaseExecutor):
         command_id: str,
         command_line: str,
         cwd: str,
-        result: "ExecuteResult",
+        result: ExecuteResult,
     ) -> None:
         """Store a completed result for later retrieval."""
         async_cmd = AsyncCommand(

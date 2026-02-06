@@ -17,6 +17,7 @@ except ImportError:
     # Fallback for environments without langchain
     class AgentMiddleware:
         pass
+
     ModelRequest = Any
     ModelResponse = Any
     ModelCallResult = Any

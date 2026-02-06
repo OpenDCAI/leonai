@@ -1,9 +1,10 @@
 from .base import BaseMonitor
-from .token_monitor import TokenMonitor
 from .context_monitor import ContextMonitor
-from .state_monitor import StateMonitor, AgentState, AgentFlags
-from .runtime import AgentRuntime
+from .cost import CostCalculator, fetch_openrouter_pricing
 from .middleware import MonitorMiddleware
+from .runtime import AgentRuntime
+from .state_monitor import AgentFlags, AgentState, StateMonitor
+from .token_monitor import TokenMonitor
 
 __all__ = [
     "BaseMonitor",
@@ -12,6 +13,8 @@ __all__ = [
     "StateMonitor",
     "AgentState",
     "AgentFlags",
+    "CostCalculator",
+    "fetch_openrouter_pricing",
     "AgentRuntime",
     "MonitorMiddleware",
 ]

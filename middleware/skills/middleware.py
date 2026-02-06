@@ -28,7 +28,9 @@ class SkillsMiddleware(AgentMiddleware):
 
     TOOL_LOAD_SKILL = "load_skill"
 
-    def __init__(self, skill_paths: list[str | Path], enabled_skills: dict[str, bool] | None = None, verbose: bool = True):
+    def __init__(
+        self, skill_paths: list[str | Path], enabled_skills: dict[str, bool] | None = None, verbose: bool = True
+    ):
         """
         Initialize Skills middleware
 
@@ -68,22 +70,22 @@ class SkillsMiddleware(AgentMiddleware):
 
     def _parse_frontmatter(self, content: str) -> dict[str, str]:
         """Parse YAML frontmatter from SKILL.md"""
-        match = re.match(r'^---\s*\n(.*?)\n---\s*\n', content, re.DOTALL)
+        match = re.match(r"^---\s*\n(.*?)\n---\s*\n", content, re.DOTALL)
         if not match:
             return {}
 
         frontmatter = match.group(1)
         metadata = {}
-        for line in frontmatter.split('\n'):
-            if ':' in line:
-                key, value = line.split(':', 1)
+        for line in frontmatter.split("\n"):
+            if ":" in line:
+                key, value = line.split(":", 1)
                 metadata[key.strip()] = value.strip()
         return metadata
 
     def _load_skill_impl(self, skill_name: str) -> str:
         """Load skill content"""
         if skill_name not in self._skills_index:
-            available = ', '.join(self._skills_index.keys())
+            available = ", ".join(self._skills_index.keys())
             return f"Skill '{skill_name}' not found.\nAvailable skills: {available}"
 
         # Check if skill is disabled
@@ -94,7 +96,7 @@ class SkillsMiddleware(AgentMiddleware):
         try:
             content = skill_file.read_text(encoding="utf-8")
             # Remove frontmatter, return instructions only
-            content = re.sub(r'^---\s*\n.*?\n---\s*\n', '', content, flags=re.DOTALL)
+            content = re.sub(r"^---\s*\n.*?\n---\s*\n", "", content, flags=re.DOTALL)
             return f"Loaded skill: {skill_name}\n\n{content}"
         except Exception as e:
             return f"Error loading skill '{skill_name}': {e}"
@@ -102,7 +104,7 @@ class SkillsMiddleware(AgentMiddleware):
     def _get_tool_schema(self) -> dict:
         """Get load_skill tool schema"""
         available_skills = list(self._skills_index.keys())
-        skills_list = '\n'.join(f"- {name}" for name in available_skills)
+        skills_list = "\n".join(f"- {name}" for name in available_skills)
 
         return {
             "type": "function",
@@ -118,7 +120,7 @@ class SkillsMiddleware(AgentMiddleware):
                     "properties": {
                         "skill_name": {
                             "type": "string",
-                            "description": f"Name of the skill to load. Available: {', '.join(available_skills)}"
+                            "description": f"Name of the skill to load. Available: {', '.join(available_skills)}",
                         }
                     },
                     "required": ["skill_name"],

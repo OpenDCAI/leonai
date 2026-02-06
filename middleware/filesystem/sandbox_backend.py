@@ -93,11 +93,13 @@ class SandboxFileBackend(FileSystemBackend):
                 name = item.get("name", "?")
                 item_type = item.get("type", "file")
                 size = item.get("size", 0)
-                entries.append(DirEntry(
-                    name=name,
-                    is_dir=(item_type == "directory"),
-                    size=size,
-                ))
+                entries.append(
+                    DirEntry(
+                        name=name,
+                        is_dir=(item_type == "directory"),
+                        size=size,
+                    )
+                )
             return DirListResult(entries=entries)
         except Exception as e:
             return DirListResult(error=str(e))

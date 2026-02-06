@@ -10,23 +10,22 @@ from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.text import Text
 
-
 console = Console()
 
 
 class ConfigManager:
     """管理 Leon 的配置"""
-    
+
     def __init__(self):
         self.config_dir = Path.home() / ".leon"
         self.config_file = self.config_dir / "config.env"
         self.config_dir.mkdir(parents=True, exist_ok=True)
-    
+
     def get(self, key: str) -> str | None:
         """获取配置值"""
         if not self.config_file.exists():
             return None
-        
+
         for line in self.config_file.read_text().splitlines():
             line = line.strip()
             if line and not line.startswith("#") and "=" in line:
@@ -34,24 +33,24 @@ class ConfigManager:
                 if k.strip() == key:
                     return v.strip()
         return None
-    
+
     def set(self, key: str, value: str):
         """设置配置值"""
         config = {}
-        
+
         if self.config_file.exists():
             for line in self.config_file.read_text().splitlines():
                 line = line.strip()
                 if line and not line.startswith("#") and "=" in line:
                     k, v = line.split("=", 1)
                     config[k.strip()] = v.strip()
-        
+
         config[key] = value
-        
+
         with self.config_file.open("w") as f:
             for k, v in config.items():
                 f.write(f"{k}={v}\n")
-    
+
     def list_all(self) -> dict[str, str]:
         """列出所有配置"""
         config = {}
@@ -62,7 +61,7 @@ class ConfigManager:
                     k, v = line.split("=", 1)
                     config[k.strip()] = v.strip()
         return config
-    
+
     def load_to_env(self):
         """加载配置到环境变量"""
         for key, value in self.list_all().items():
@@ -114,12 +113,14 @@ def interactive_config():
     title.append(" 配置向导", style="bold white")
 
     console.print()
-    console.print(Panel(
-        "[dim]OpenAI 兼容格式 API · 直接回车使用默认值[/dim]",
-        title=title,
-        border_style="bright_blue",
-        padding=(0, 2),
-    ))
+    console.print(
+        Panel(
+            "[dim]OpenAI 兼容格式 API · 直接回车使用默认值[/dim]",
+            title=title,
+            border_style="bright_blue",
+            padding=(0, 2),
+        )
+    )
     console.print()
 
     try:
@@ -128,7 +129,7 @@ def interactive_config():
         if current_key:
             masked = current_key[:8] + "..." if len(current_key) > 8 else "***"
             api_key = Prompt.ask(
-                f"  [bright_cyan]1.[/] API_KEY",
+                "  [bright_cyan]1.[/] API_KEY",
                 default=masked,
                 show_default=True,
                 console=console,
@@ -196,15 +197,17 @@ def show_config():
         return
 
     console.print()
-    console.print(Panel(
-        "\n".join(
-            f"  [bright_cyan]{k}[/] = [dim]{v[:8] + '...' if 'KEY' in k.upper() and len(v) > 8 else v}[/dim]"
-            for k, v in config.items()
-        ),
-        title="[bold]📋 当前配置[/]",
-        border_style="bright_blue",
-        padding=(0, 2),
-    ))
+    console.print(
+        Panel(
+            "\n".join(
+                f"  [bright_cyan]{k}[/] = [dim]{v[:8] + '...' if 'KEY' in k.upper() and len(v) > 8 else v}[/dim]"
+                for k, v in config.items()
+            ),
+            title="[bold]📋 当前配置[/]",
+            border_style="bright_blue",
+            padding=(0, 2),
+        )
+    )
     console.print(f"  [dim]配置文件: {manager.config_file}[/dim]")
     console.print()
 
@@ -212,7 +215,7 @@ def show_config():
 def main():
     """配置命令入口"""
     import sys
-    
+
     if len(sys.argv) > 1 and sys.argv[1] == "show":
         show_config()
     else:

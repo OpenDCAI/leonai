@@ -1,13 +1,17 @@
 """执行状态监控"""
+
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from dataclasses import dataclass
-from typing import Any, Callable, List
+from typing import Any
+
 from .base import BaseMonitor
 
 
 class AgentState(Enum):
     """Agent 运行时状态"""
+
     INITIALIZING = "initializing"
     READY = "ready"
     ACTIVE = "active"
@@ -21,6 +25,7 @@ class AgentState(Enum):
 @dataclass
 class AgentFlags:
     """Agent 状态标志位"""
+
     isStreaming: bool = False
     isCompacting: bool = False
     isWaiting: bool = False
@@ -54,7 +59,7 @@ class StateMonitor(BaseMonitor):
         self.flags = AgentFlags()
         self.created_at = datetime.now()
         self.last_activity = datetime.now()
-        self._callbacks: List[Callable[[AgentState, AgentState], None]] = []
+        self._callbacks: list[Callable[[AgentState, AgentState], None]] = []
 
     def on_request(self, request: dict[str, Any]) -> None:
         """请求前：记录活动时间（不做状态转移，由外部控制）"""

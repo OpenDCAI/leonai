@@ -35,8 +35,7 @@ def _maybe_import_langchain_openai() -> Any:
         return ChatOpenAI
     except Exception as e:  # noqa: BLE001
         raise RuntimeError(
-            "langchain-openai is not installed. Install it with: uv add langchain-openai\n"
-            "(Then run: uv sync)"
+            "langchain-openai is not installed. Install it with: uv add langchain-openai\n(Then run: uv sync)"
         ) from e
 
 

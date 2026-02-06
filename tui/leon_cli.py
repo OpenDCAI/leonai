@@ -64,6 +64,7 @@ def cmd_thread_list(args):
 
     # Get message counts using TimeTravelManager
     from tui.time_travel import TimeTravelManager
+
     time_travel_mgr = TimeTravelManager()
 
     table = Table(title="对话列表")
@@ -218,7 +219,7 @@ def cmd_thread_rm(args):
     if session_mgr.delete_thread(thread_id):
         console.print(f"[green]✓ 已删除对话: {thread_id}[/green]")
     else:
-        console.print(f"[red]✗ 删除失败[/red]")
+        console.print("[red]✗ 删除失败[/red]")
 
 
 def _init_sandbox_providers() -> tuple[dict, dict]:
@@ -240,6 +241,7 @@ def _init_sandbox_providers() -> tuple[dict, dict]:
             config = SandboxConfig.load(name)
             if config.provider == "agentbay":
                 from sandbox.providers.agentbay import AgentBayProvider
+
                 key = config.agentbay.api_key or os.getenv("AGENTBAY_API_KEY")
                 if key:
                     providers["agentbay"] = AgentBayProvider(
@@ -250,12 +252,14 @@ def _init_sandbox_providers() -> tuple[dict, dict]:
                     )
             elif config.provider == "docker":
                 from sandbox.providers.docker import DockerProvider
+
                 providers["docker"] = DockerProvider(
                     image=config.docker.image,
                     mount_path=config.docker.mount_path,
                 )
             elif config.provider == "e2b":
                 from sandbox.providers.e2b import E2BProvider
+
                 key = config.e2b.api_key or os.getenv("E2B_API_KEY")
                 if key:
                     providers["e2b"] = E2BProvider(
@@ -267,10 +271,7 @@ def _init_sandbox_providers() -> tuple[dict, dict]:
         except Exception as e:
             print(f"[sandbox] Failed to load {name}: {e}")
 
-    managers = {
-        name: SandboxManager(provider=provider)
-        for name, provider in providers.items()
-    }
+    managers = {name: SandboxManager(provider=provider) for name, provider in providers.items()}
     return providers, managers
 
 
@@ -285,12 +286,14 @@ def _load_all_sessions(managers: dict) -> list[dict]:
     with ThreadPoolExecutor(max_workers=len(managers) or 1) as pool:
         for rows in pool.map(_fetch, managers.values()):
             for row in rows:
-                sessions.append({
-                    "id": row["session_id"],
-                    "status": row["status"],
-                    "provider": row["provider"],
-                    "thread": row["thread_id"],
-                })
+                sessions.append(
+                    {
+                        "id": row["session_id"],
+                        "status": row["status"],
+                        "provider": row["provider"],
+                        "thread": row["thread_id"],
+                    }
+                )
     return sessions
 
 
@@ -311,6 +314,7 @@ def cmd_sandbox(args):
         api_key = os.getenv("AGENTBAY_API_KEY")
         try:
             from tui.widgets.sandbox_manager import SandboxManagerApp
+
             SandboxManagerApp(api_key=api_key).run()
         except ImportError as e:
             print(f"Failed to import sandbox manager: {e}")
@@ -319,6 +323,7 @@ def cmd_sandbox(args):
 
     from rich.console import Console
     from rich.table import Table
+
     console = Console()
 
     providers, managers = _init_sandbox_providers()
@@ -434,7 +439,9 @@ def cmd_sandbox(args):
                 console.print(f"  CPU:     {metrics.cpu_percent:.1f}%")
                 console.print(f"  Memory:  {metrics.memory_used_mb:.0f}MB / {metrics.memory_total_mb:.0f}MB")
                 console.print(f"  Disk:    {metrics.disk_used_gb:.1f}GB / {metrics.disk_total_gb:.1f}GB")
-                console.print(f"  Network: RX {metrics.network_rx_kbps:.1f} KB/s | TX {metrics.network_tx_kbps:.1f} KB/s")
+                console.print(
+                    f"  Network: RX {metrics.network_rx_kbps:.1f} KB/s | TX {metrics.network_tx_kbps:.1f} KB/s"
+                )
                 if target["provider"] == "agentbay":
                     url = provider.get_web_url(target["id"])
                     if url:
@@ -457,11 +464,13 @@ def cmd_sandbox(args):
             console.print("[yellow]Cancelled.[/yellow]")
             return
         from concurrent.futures import ThreadPoolExecutor
+
         def _destroy(s):
             mgr = managers.get(s["provider"])
             if mgr:
                 mgr.destroy_session(s["thread"])
             return s["id"]
+
         with ThreadPoolExecutor(max_workers=min(len(sessions), 8)) as pool:
             for sid in pool.map(_destroy, sessions):
                 console.print(f"  [red]Destroyed:[/red] {sid}")
@@ -476,6 +485,7 @@ def main():
     """主函数"""
     parser = argparse.ArgumentParser(description="Leon AI - 你的 AI 编程助手", add_help=False)
     parser.add_argument("--profile", type=str, help="Profile 配置文件路径")
+    parser.add_argument("--model", type=str, help="模型名称（覆盖 profile 和环境变量）")
     parser.add_argument("--workspace", type=str, help="工作目录")
     parser.add_argument("--sandbox", type=str, help="Sandbox 名称 (从 ~/.leon/sandboxes/<name>.json 加载，默认 local)")
     parser.add_argument("--thread", type=str, help="Thread ID (恢复对话)")
@@ -492,6 +502,7 @@ def main():
         print("用法:")
         print("  leonai                    启动 Leon (新对话)")
         print("  leonai -c                 继续上次对话")
+        print("  leonai --model <name>     使用指定模型")
         print("  leonai --profile <path>   使用指定 profile 启动")
         print("  leonai --workspace <dir>  指定工作目录")
         print("  leonai --sandbox <name>   使用指定 sandbox 配置")
@@ -590,7 +601,7 @@ def main():
 
     workspace = Path(args.workspace) if args.workspace else Path.cwd()
 
-    model_name = os.getenv("MODEL_NAME") or None
+    model_name = getattr(args, "model", None) or os.getenv("MODEL_NAME") or None
 
     from agent import create_leon_agent
     from tui.app import run_tui
@@ -615,9 +626,10 @@ def main():
         print(f"📝 新对话: {thread_id}")
 
     # @@@ Auto-detect sandbox when resuming a thread
-    sandbox_arg = getattr(args, 'sandbox', None)
+    sandbox_arg = getattr(args, "sandbox", None)
     if not sandbox_arg and (args.thread or args.continue_last):
         from sandbox.manager import lookup_sandbox_for_thread
+
         detected = lookup_sandbox_for_thread(thread_id)
         if detected:
             config_path = Path.home() / ".leon" / "sandboxes" / f"{detected}.json"
@@ -639,7 +651,7 @@ def main():
         print(f"❌ 初始化失败: {e}")
         sys.exit(1)
 
-    print(f"✅ Agent 已就绪")
+    print("✅ Agent 已就绪")
     print(f"📁 工作目录: {agent.workspace_root}\n")
 
     try:
