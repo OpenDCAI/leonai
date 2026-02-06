@@ -1,8 +1,8 @@
 """
-Sandbox middleware with factory pattern.
+Sandbox middleware for remote execution environments.
 
-Creates tools dynamically based on provider. Same interface (read_file, write_file,
-run_command) regardless of backend - provider is swapped at config time.
+Provides same tool interface (read_file, write_file, run_command) as local
+middleware, but executes in cloud sandbox. Provider is swapped at config time.
 """
 
 from __future__ import annotations
@@ -39,10 +39,10 @@ def get_current_thread_id() -> str | None:
 
 class SandboxMiddleware(AgentMiddleware):
     """
-    Sandbox middleware using factory pattern.
+    Sandbox middleware using provider/strategy pattern.
 
-    Tools are created dynamically based on provider configuration.
-    Same interface (read_file, write_file, run_command) regardless of backend.
+    Provides same tool interface as local middleware (read_file, write_file,
+    run_command) but executes in remote sandbox via injected provider.
 
     Session lifecycle:
     - Lazy creation on first tool call
@@ -117,7 +117,7 @@ class SandboxMiddleware(AgentMiddleware):
     def _write_file_impl(self, file_path: str, content: str) -> str:
         session_id = self._get_session_id()
         try:
-            result = self.manager.provider.write_file(session_id, file_path, content)
+            self.manager.provider.write_file(session_id, file_path, content)
             # Mark as read since we just wrote it
             self._read_files.add(file_path)
             lines = content.count("\n") + 1
