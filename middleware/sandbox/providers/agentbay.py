@@ -166,28 +166,6 @@ class AgentBayProvider(SandboxProvider):
             })
         return items
 
-    def upload(self, session_id: str, local_path: str, remote_path: str) -> str:
-        session = self._get_session(session_id)
-        result = session.file_system.upload_file(
-            local_path=local_path,
-            remote_path=remote_path,
-            wait=True,
-            wait_timeout=300.0,
-        )
-        if not result.success:
-            raise OSError(result.error_message)
-        return f"Uploaded: {local_path} -> {remote_path}"
-
-    def download(self, session_id: str, remote_path: str, local_path: str) -> str:
-        session = self._get_session(session_id)
-        result = session.file_system.download_file(
-            remote_path=remote_path,
-            local_path=local_path,
-        )
-        if not result.success:
-            raise OSError(result.error_message)
-        return f"Downloaded: {remote_path} -> {local_path}"
-
     def get_metrics(self, session_id: str) -> Metrics | None:
         session = self._get_session(session_id)
         result = session.get_metrics()

@@ -157,20 +157,6 @@ class DockerProvider(SandboxProvider):
             items.append({"name": name, "type": item_type, "size": size})
         return items
 
-    def upload(self, session_id: str, local_path: str, remote_path: str) -> str:
-        container_id = self._get_container_id(session_id)
-        result = self._run(["docker", "cp", local_path, f"{container_id}:{remote_path}"], check=False)
-        if result.returncode != 0:
-            raise IOError(result.stderr.strip() or "Failed to upload file")
-        return f"Uploaded: {local_path} -> {remote_path}"
-
-    def download(self, session_id: str, remote_path: str, local_path: str) -> str:
-        container_id = self._get_container_id(session_id)
-        result = self._run(["docker", "cp", f"{container_id}:{remote_path}", local_path], check=False)
-        if result.returncode != 0:
-            raise IOError(result.stderr.strip() or "Failed to download file")
-        return f"Downloaded: {remote_path} -> {local_path}"
-
     def get_metrics(self, session_id: str) -> Metrics | None:
         container_id = self._get_container_id(session_id, allow_missing=True)
         if not container_id:

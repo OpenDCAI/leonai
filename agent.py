@@ -523,8 +523,6 @@ tool:
                     'edit_file': self.profile.sandbox.tools.edit_file,
                     'list_dir': self.profile.sandbox.tools.list_dir,
                     'run_command': self.profile.sandbox.tools.run_command,
-                    'sandbox_upload': self.profile.sandbox.tools.sandbox_upload,
-                    'sandbox_download': self.profile.sandbox.tools.sandbox_download,
                 }
                 middleware.append(SandboxMiddleware(
                     manager=self._sandbox_manager,
@@ -644,11 +642,9 @@ tool:
    - ✅ Correct: `{working_dir}/project/test.py` or `/tmp/output.txt`
    - ❌ Wrong: `test.py` or `./test.py`
 
-3. **Available Tools**: You have tools for file operations (read_file, write_file, edit_file, list_dir), command execution (run_command), and file transfer (sandbox_upload, sandbox_download).
+3. **Available Tools**: You have tools for file operations (read_file, write_file, edit_file, list_dir) and command execution (run_command).
 
-4. **File Transfer**: Use sandbox_upload to copy files from user's local machine to sandbox, and sandbox_download to copy files from sandbox to local.
-
-5. **Security**: The sandbox is isolated. You can install packages, run any commands, and modify files freely within the sandbox.
+4. **Security**: The sandbox is isolated. You can install packages, run any commands, and modify files freely within the sandbox.
 """
         else:
             prompt = f"""You are a highly capable AI assistant with access to file and system tools.

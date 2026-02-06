@@ -185,38 +185,6 @@ class SandboxProvider(ABC):
         """
         pass
 
-    # ==================== Transfer ====================
-
-    @abstractmethod
-    def upload(self, session_id: str, local_path: str, remote_path: str) -> str:
-        """
-        Upload local file to sandbox.
-
-        Args:
-            session_id: Target session
-            local_path: Path on local machine
-            remote_path: Destination path in sandbox
-
-        Returns:
-            Success message
-        """
-        pass
-
-    @abstractmethod
-    def download(self, session_id: str, remote_path: str, local_path: str) -> str:
-        """
-        Download file from sandbox to local machine.
-
-        Args:
-            session_id: Target session
-            remote_path: Path in sandbox
-            local_path: Destination path on local machine
-
-        Returns:
-            Success message
-        """
-        pass
-
     # ==================== Inspection ====================
 
     @abstractmethod

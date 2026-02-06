@@ -144,8 +144,6 @@ class SandboxToolsConfig(BaseModel):
     edit_file: bool = True
     list_dir: bool = True
     run_command: bool = True
-    sandbox_upload: bool = True
-    sandbox_download: bool = True
 
 
 class SandboxConfig(BaseModel):
