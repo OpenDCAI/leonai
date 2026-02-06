@@ -15,8 +15,8 @@ import os
 from typing import Any
 
 from sandbox.provider import (
-    ProviderExecResult,
     Metrics,
+    ProviderExecResult,
     SandboxProvider,
     SessionInfo,
 )

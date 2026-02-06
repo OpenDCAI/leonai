@@ -6,9 +6,8 @@
 
 from datetime import datetime
 from pathlib import Path
-from typing import Any
 
-from .base import BashHook, HookResult
+from .base import HookResult
 
 
 class FileAccessLoggerHook:

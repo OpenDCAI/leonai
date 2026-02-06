@@ -47,7 +47,7 @@ class TaskMiddleware(AgentMiddleware):
         workspace_root: str | Path,
         parent_model: str,
         api_key: str | None = None,
-        base_url: str | None = None,
+        model_kwargs: dict[str, Any] | None = None,
         parent_middleware: list[Any] | None = None,
         checkpointer: Any = None,
         verbose: bool = True,
@@ -59,7 +59,7 @@ class TaskMiddleware(AgentMiddleware):
             workspace_root: Workspace directory
             parent_model: Parent agent's model name
             api_key: API key for sub-agents
-            base_url: API base URL
+            model_kwargs: Model kwargs to pass to init_chat_model (base_url, model_provider, etc.)
             parent_middleware: Parent agent's middleware stack (for tool inheritance)
             checkpointer: Checkpointer for conversation persistence
             verbose: Whether to output detailed logs
@@ -67,7 +67,7 @@ class TaskMiddleware(AgentMiddleware):
         self.workspace_root = Path(workspace_root).resolve()
         self.parent_model = parent_model
         self.api_key = api_key or os.getenv("OPENAI_API_KEY") or os.getenv("ANTHROPIC_API_KEY")
-        self.base_url = base_url or os.getenv("OPENAI_BASE_URL")
+        self.model_kwargs = model_kwargs or {}
         self.parent_middleware = parent_middleware or []
         self.checkpointer = checkpointer
         self.verbose = verbose
@@ -82,7 +82,7 @@ class TaskMiddleware(AgentMiddleware):
             parent_model=self.parent_model,
             workspace_root=self.workspace_root,
             api_key=self.api_key,
-            base_url=self.base_url,
+            model_kwargs=self.model_kwargs,
         )
 
         if self.verbose:

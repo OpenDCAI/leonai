@@ -1,8 +1,9 @@
 """Checkpoint browser widget for time travel"""
+
 from datetime import datetime
 
 from textual.app import ComposeResult
-from textual.containers import Container, Vertical, VerticalScroll
+from textual.containers import Container
 from textual.screen import ModalScreen
 from textual.widgets import Button, Label, ListItem, ListView, Static
 
@@ -181,9 +182,7 @@ class CheckpointBrowser(ModalScreen):
 
         warning = self.query_one("#checkpoint-warning", Static)
         if checkpoints_to_revert:
-            warning.update(
-                f"⚠ 回退将撤销 {', '.join(checkpoints_to_revert)} 的 {ops_to_revert} 个文件修改"
-            )
+            warning.update(f"⚠ 回退将撤销 {', '.join(checkpoints_to_revert)} 的 {ops_to_revert} 个文件修改")
         else:
             warning.update("")
 

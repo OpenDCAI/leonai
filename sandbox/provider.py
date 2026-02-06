@@ -12,6 +12,7 @@ from typing import Any
 @dataclass
 class SessionInfo:
     """Information about a sandbox session."""
+
     session_id: str
     provider: str
     status: str  # 'running', 'paused', 'deleted', 'unknown'
@@ -21,6 +22,7 @@ class SessionInfo:
 @dataclass
 class ProviderExecResult:
     """Result of command execution in a sandbox provider."""
+
     output: str
     exit_code: int = 0
     error: str | None = None
@@ -29,6 +31,7 @@ class ProviderExecResult:
 @dataclass
 class Metrics:
     """Resource usage metrics."""
+
     cpu_percent: float
     memory_used_mb: float
     memory_total_mb: float

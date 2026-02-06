@@ -1,8 +1,8 @@
 """Queue Mode types for message injection during agent execution"""
 
+import time
 from dataclasses import dataclass, field
 from enum import Enum
-import time
 
 
 class QueueMode(Enum):

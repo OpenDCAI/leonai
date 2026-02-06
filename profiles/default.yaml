@@ -1,5 +1,11 @@
 agent:
   model: "claude-sonnet-4-5-20250929"
+  model_provider: null    # 可选：openai / anthropic / bedrock 等，null 时自动推断
+  api_key: null           # 通用 API key，null 时从环境变量读取
+  base_url: null          # 通用 base URL，null 时从环境变量读取
+  temperature: null
+  max_tokens: null
+  model_kwargs: {}        # 透传给 init_chat_model 的额外参数
   workspace_root: null
 
 system_prompt: null

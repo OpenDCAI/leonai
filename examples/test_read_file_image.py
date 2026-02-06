@@ -58,7 +58,7 @@ def main() -> None:
     image_path = Path(__file__).resolve().parents[1] / "image.png"
     result = read_file(image_path)
 
-    print(f"# read_file result")
+    print("# read_file result")
     print(f"file_path: {result.file_path}")
     print(f"content_blocks: {bool(result.content_blocks)}")
     if result.content_blocks:

@@ -91,11 +91,7 @@ class PromptCachingMiddleware(AgentMiddleware):
                 warn(msg, stacklevel=3)
             return False
 
-        messages_count = (
-            len(request.messages) + 1
-            if request.system_message
-            else len(request.messages)
-        )
+        messages_count = len(request.messages) + 1 if request.system_message else len(request.messages)
         return messages_count >= self.min_messages_to_cache
 
     def wrap_model_call(

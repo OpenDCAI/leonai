@@ -1,6 +1,4 @@
 """Thread selector widget for switching conversations"""
-from datetime import datetime
-from typing import Optional
 
 from textual.app import ComposeResult
 from textual.containers import Container
@@ -112,7 +110,7 @@ class ThreadSelector(ModalScreen):
         self.threads = threads
         self.current_thread = current_thread
         self.thread_info = thread_info or {}
-        self.selected_thread: Optional[str] = None
+        self.selected_thread: str | None = None
 
     def compose(self) -> ComposeResult:
         with Container(id="thread-dialog"):

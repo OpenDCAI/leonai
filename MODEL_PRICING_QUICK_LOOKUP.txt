@@ -1,0 +1,77 @@
+================================================================================
+                    LEON 项目 - 模型定价快速查询表
+================================================================================
+
+【完整定价表】USD per 1M tokens
+
+┌─────────────────────────────┬────────┬────────┬──────────┬──────────┐
+│ 模型                        │ 输入   │ 输出   │ 缓存读   │ 缓存写   │
+├─────────────────────────────┼────────┼────────┼──────────┼──────────┤
+│ claude-sonnet-4-5-20250929  │ $3.00  │ $15.00 │ $0.30    │ $3.75    │
+│ claude-opus-4-20250514      │ $15.00 │ $75.00 │ $1.50    │ $18.75   │
+│ claude-haiku-3-5-20241022   │ $0.80  │ $4.00  │ $0.08    │ $1.00    │
+│ gpt-4o                      │ $2.50  │ $10.00 │ $1.25    │ $2.50    │
+│ gpt-4o-mini                 │ $0.15  │ $0.60  │ $0.075   │ $0.15    │
+│ o1                          │ $15.00 │ $60.00 │ $7.50    │ $15.00   │
+│ o3-mini                     │ $1.10  │ $4.40  │ $0.55    │ $1.10    │
+│ deepseek-chat               │ $0.27  │ $1.10  │ $0.07    │ $0.27    │
+└─────────────────────────────┴────────┴────────┴──────────┴──────────┘
+
+【模型别名】
+  claude-3-5-sonnet → claude-sonnet-4-5-20250929
+  claude-3-opus → claude-opus-4-20250514
+  claude-3-5-haiku → claude-haiku-3-5-20241022
+
+【成本计算公式】
+  成本 = Σ(token_i × price_i / 1,000,000)
+
+【Token 分项】
+  1. input_tokens       - 调整后的输入（排除缓存）
+  2. output_tokens      - 调整后的输出（排除推理）
+  3. reasoning_tokens   - 推理 token（o1/o3）
+  4. cache_read_tokens  - 缓存命中
+  5. cache_write_tokens - 缓存创建
+  6. total_tokens       - 总计
+
+【Context Window】
+  Anthropic: 200K (claude-sonnet/opus/haiku)
+  OpenAI: 128K (gpt-4o/gpt-4o-mini/o1/o3-mini)
+  DeepSeek: 4K-64K (取决于版本)
+
+【推荐选择】
+  最便宜: gpt-4o-mini ($0.15/$0.60)
+  最强:   claude-opus-4-20250514 ($15.00/$75.00)
+  平衡:   claude-sonnet-4-5-20250929 ($3.00/$15.00)
+
+【文件位置】
+  定价表:     /middleware/monitor/cost.py
+  Token 监控: /middleware/monitor/token_monitor.py
+  成本计算:   /middleware/monitor/cost.py (CostCalculator)
+  Agent 配置: /agent_profile.py
+  Agent 核心: /agent.py
+
+【配置示例】
+  agent:
+    model: claude-sonnet-4-5-20250929
+    max_tokens: 4096
+    temperature: 0.7
+
+【环境变量】
+  OPENAI_API_KEY
+  ANTHROPIC_API_KEY
+  TAVILY_API_KEY
+
+【使用示例】
+  from middleware.monitor.cost import CostCalculator
+  
+  calc = CostCalculator("claude-sonnet-4-5-20250929")
+  tokens = {
+      "input_tokens": 1000,
+      "output_tokens": 500,
+      "cache_read_tokens": 100,
+      "cache_write_tokens": 50,
+  }
+  result = calc.calculate(tokens)
+  print(result["total"])  # Decimal("0.0106875")
+
+================================================================================

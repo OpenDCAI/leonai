@@ -58,18 +58,22 @@ class LocalBackend(FileSystemBackend):
             entries = []
             for item in sorted(p.iterdir()):
                 if item.is_file():
-                    entries.append(DirEntry(
-                        name=item.name,
-                        is_dir=False,
-                        size=item.stat().st_size,
-                    ))
+                    entries.append(
+                        DirEntry(
+                            name=item.name,
+                            is_dir=False,
+                            size=item.stat().st_size,
+                        )
+                    )
                 elif item.is_dir():
                     count = sum(1 for _ in item.iterdir())
-                    entries.append(DirEntry(
-                        name=item.name,
-                        is_dir=True,
-                        children_count=count,
-                    ))
+                    entries.append(
+                        DirEntry(
+                            name=item.name,
+                            is_dir=True,
+                            children_count=count,
+                        )
+                    )
             return DirListResult(entries=entries)
         except Exception as e:
             return DirListResult(error=str(e))

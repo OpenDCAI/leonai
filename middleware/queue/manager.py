@@ -2,7 +2,6 @@
 
 import threading
 from collections import deque
-from typing import Optional
 
 from .types import QueueMessage, QueueMode
 
@@ -32,7 +31,7 @@ class MessageQueueManager:
         with self._lock:
             return self._current_mode
 
-    def enqueue(self, content: str, mode: Optional[QueueMode] = None) -> None:
+    def enqueue(self, content: str, mode: QueueMode | None = None) -> None:
         """
         Enqueue a message with the specified mode.
 
@@ -58,7 +57,7 @@ class MessageQueueManager:
                 self._followup_queue.append(msg)
             # INTERRUPT is handled directly by TUI, not queued
 
-    def get_steer(self) -> Optional[str]:
+    def get_steer(self) -> str | None:
         """
         Get and remove the next steer message.
 
@@ -71,7 +70,7 @@ class MessageQueueManager:
                 return msg.content
             return None
 
-    def get_followup(self) -> Optional[str]:
+    def get_followup(self) -> str | None:
         """
         Get and remove the next followup message.
 
@@ -83,7 +82,7 @@ class MessageQueueManager:
                 return msg.content
             return None
 
-    def flush_collect(self) -> Optional[str]:
+    def flush_collect(self) -> str | None:
         """
         Flush collect buffer and return merged content.
 
@@ -126,7 +125,7 @@ class MessageQueueManager:
 
 
 # Global singleton
-_queue_manager: Optional[MessageQueueManager] = None
+_queue_manager: MessageQueueManager | None = None
 _manager_lock = threading.Lock()
 
 

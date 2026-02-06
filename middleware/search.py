@@ -69,7 +69,7 @@ class SearchMiddleware(AgentMiddleware):
         self.max_results = max_results
         self.max_file_size = max_file_size
         self.prefer_system_tools = prefer_system_tools
-        self.enabled_tools = enabled_tools or {'grep_search': True, 'find_by_name': True}
+        self.enabled_tools = enabled_tools or {"grep_search": True, "find_by_name": True}
         self.verbose = verbose
 
         # 检查系统工具可用性
@@ -98,9 +98,7 @@ class SearchMiddleware(AgentMiddleware):
         except ValueError:
             return (
                 False,
-                f"Path outside workspace\n"
-                f"   Workspace: {self.workspace_root}\n"
-                f"   Attempted: {resolved}",
+                f"Path outside workspace\n   Workspace: {self.workspace_root}\n   Attempted: {resolved}",
                 None,
             )
 
@@ -131,16 +129,12 @@ class SearchMiddleware(AgentMiddleware):
         # 尝试使用 ripgrep（性能最佳）
         if self.prefer_system_tools and self.has_ripgrep:
             try:
-                return self._ripgrep_search(
-                    resolved, Query, CaseSensitive, FixedStrings, Includes, MatchPerLine
-                )
+                return self._ripgrep_search(resolved, Query, CaseSensitive, FixedStrings, Includes, MatchPerLine)
             except Exception as e:
                 print(f"[SearchMiddleware] ripgrep failed, fallback to Python: {e}")
 
         # Fallback 到 Python 实现
-        return self._python_grep_search(
-            resolved, Query, CaseSensitive, FixedStrings, Includes, MatchPerLine
-        )
+        return self._python_grep_search(resolved, Query, CaseSensitive, FixedStrings, Includes, MatchPerLine)
 
     def _ripgrep_search(
         self,
@@ -197,7 +191,7 @@ class SearchMiddleware(AgentMiddleware):
                 for line in output.split("\n"):
                     if not line:
                         continue
-                    
+
                     if match_per_line:
                         # ripgrep -C 输出格式：
                         # 行号:匹配内容（匹配行）
@@ -205,7 +199,7 @@ class SearchMiddleware(AgentMiddleware):
                         # -- （分隔符，忽略）
                         if line == "--":
                             continue
-                        
+
                         # 直接使用 ripgrep 的格式（已经是 行号:内容 或 行号-内容）
                         lines.append(line)
                     else:
@@ -283,7 +277,7 @@ class SearchMiddleware(AgentMiddleware):
                 break
 
             try:
-                with open(file_path, "r", encoding="utf-8") as f:
+                with open(file_path, encoding="utf-8") as f:
                     lines = f.readlines()
 
                 match_line_nums = []
@@ -296,21 +290,21 @@ class SearchMiddleware(AgentMiddleware):
                         # Show matching line + context
                         context_lines = 2  # 前后各 2 行
                         displayed_lines = set()
-                        
+
                         for match_line in match_line_nums:
                             # 计算上下文范围
                             start = max(1, match_line - context_lines)
                             end = min(len(lines), match_line + context_lines)
-                            
+
                             for line_num in range(start, end + 1):
                                 if line_num not in displayed_lines:
                                     displayed_lines.add(line_num)
                                     line_content = lines[line_num - 1].rstrip()
-                                    
+
                                     # 匹配行用 :，上下文行用 -
                                     marker = ":" if line_num in match_line_nums else "-"
                                     results.append(f"{line_num}{marker}{line_content}")
-                                    
+
                             count += 1
                             if count >= self.max_results:
                                 break
@@ -396,9 +390,7 @@ class SearchMiddleware(AgentMiddleware):
 
         # 执行命令
         try:
-            result = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=30, cwd=str(self.workspace_root)
-            )
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, cwd=str(self.workspace_root))
 
             if result.returncode == 0:
                 output = result.stdout.strip()

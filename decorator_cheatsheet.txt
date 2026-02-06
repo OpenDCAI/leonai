@@ -1,0 +1,391 @@
+"""
+Python 装饰器快速参考卡
+
+┌─────────────────────────────────────────────────────────────────────┐
+│                         装饰器基本概念                                 │
+└─────────────────────────────────────────────────────────────────────┘
+
+装饰器 = 返回函数的高阶函数
+语法糖: @decorator  <==>  func = decorator(func)
+
+
+┌─────────────────────────────────────────────────────────────────────┐
+│                        函数装饰器模板                                  │
+└─────────────────────────────────────────────────────────────────────┘
+
+【基础模板】
+┌─────────────────────────────────────────────────────────────────────┐
+│ from functools import wraps                                         │
+│                                                                     │
+│ def my_decorator(func):                                             │
+│     @wraps(func)  # ⭐ 重要：保留元数据                               │
+│     def wrapper(*args, **kwargs):                                   │
+│         # 前置逻辑                                                    │
+│         result = func(*args, **kwargs)                              │
+│         # 后置逻辑                                                    │
+│         return result                                               │
+│     return wrapper                                                  │
+│                                                                     │
+│ @my_decorator                                                       │
+│ def my_function():                                                  │
+│     pass                                                            │
+└─────────────────────────────────────────────────────────────────────┘
+
+【带参数模板】
+┌─────────────────────────────────────────────────────────────────────┐
+│ def decorator_with_args(param1, param2):                            │
+│     def decorator(func):                                            │
+│         @wraps(func)                                                │
+│         def wrapper(*args, **kwargs):                               │
+│             # 可以使用 param1, param2                                │
+│             return func(*args, **kwargs)                            │
+│         return wrapper                                              │
+│     return decorator                                                │
+│                                                                     │
+│ @decorator_with_args("value1", "value2")                            │
+│ def my_function():                                                  │
+│     pass                                                            │
+└─────────────────────────────────────────────────────────────────────┘
+
+
+┌─────────────────────────────────────────────────────────────────────┐
+│                         类装饰器模板                                   │
+└─────────────────────────────────────────────────────────────────────┘
+
+【基础模板】
+┌─────────────────────────────────────────────────────────────────────┐
+│ from functools import wraps                                         │
+│                                                                     │
+│ class MyDecorator:                                                  │
+│     def __init__(self, func):                                       │
+│         wraps(func)(self)  # ⭐ 重要：保留元数据                      │
+│         self.func = func                                            │
+│         # 初始化状态                                                  │
+│                                                                     │
+│     def __call__(self, *args, **kwargs):                            │
+│         # 前置逻辑                                                    │
+│         result = self.func(*args, **kwargs)                         │
+│         # 后置逻辑                                                    │
+│         return result                                               │
+│                                                                     │
+│ @MyDecorator                                                        │
+│ def my_function():                                                  │
+│     pass                                                            │
+└─────────────────────────────────────────────────────────────────────┘
+
+【带参数模板】
+┌─────────────────────────────────────────────────────────────────────┐
+│ class DecoratorWithArgs:                                            │
+│     def __init__(self, param1, param2):                             │
+│         self.param1 = param1                                        │
+│         self.param2 = param2                                        │
+│                                                                     │
+│     def __call__(self, func):                                       │
+│         @wraps(func)                                                │
+│         def wrapper(*args, **kwargs):                               │
+│             # 可以使用 self.param1, self.param2                      │
+│             return func(*args, **kwargs)                            │
+│         return wrapper                                              │
+│                                                                     │
+│ @DecoratorWithArgs("value1", "value2")                              │
+│ def my_function():                                                  │
+│     pass                                                            │
+└─────────────────────────────────────────────────────────────────────┘
+
+
+┌─────────────────────────────────────────────────────────────────────┐
+│                       对比决策树                                       │
+└─────────────────────────────────────────────────────────────────────┘
+
+                    需要装饰器？
+                        │
+                       YES
+                        │
+                ┌───────┴───────┐
+                │               │
+          简单功能？         复杂功能？
+                │               │
+          ┌─────┴─────┐   ┌─────┴─────┐
+          │           │   │           │
+       不需要      需要额外  需要管理   需要提供
+       保存状态    方法？    复杂状态？  公共接口？
+          │           │   │           │
+          ↓           ↓   ↓           ↓
+      函数装饰器   类装饰器 类装饰器    类装饰器
+
+
+┌─────────────────────────────────────────────────────────────────────┐
+│                    函数装饰器 vs 类装饰器                               │
+└─────────────────────────────────────────────────────────────────────┘
+
+┌──────────────┬──────────────────┬──────────────────────┐
+│   特性       │   函数装饰器      │      类装饰器         │
+├──────────────┼──────────────────┼──────────────────────┤
+│ 实现复杂度   │ ⭐⭐ 简单         │ ⭐⭐⭐ 中等           │
+│ 状态管理     │ ⭐⭐ 闭包        │ ⭐⭐⭐⭐ 实例属性     │
+│ 可扩展性     │ ⭐⭐ 受限        │ ⭐⭐⭐⭐⭐ 优秀       │
+│ 性能         │ ⭐⭐⭐⭐ 快      │ ⭐⭐⭐ 略慢          │
+│ 代码组织     │ ⭐⭐⭐ 函数式    │ ⭐⭐⭐⭐ 面向对象     │
+│ 调试难度     │ ⭐⭐⭐ 较难      │ ⭐⭐ 较易             │
+└──────────────┴──────────────────┴──────────────────────┘
+
+
+┌─────────────────────────────────────────────────────────────────────┐
+│                        常用装饰器示例                                  │
+└─────────────────────────────────────────────────────────────────────┘
+
+【1. 计时器】
+def timer(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        import time
+        start = time.time()
+        result = func(*args, **kwargs)
+        print(f"{func.__name__}: {time.time()-start:.4f}s")
+        return result
+    return wrapper
+
+【2. 日志】
+def logger(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        print(f"Calling {func.__name__}")
+        result = func(*args, **kwargs)
+        print(f"{func.__name__} returned {result}")
+        return result
+    return wrapper
+
+【3. 缓存】
+def cache(func):
+    cached = {}
+    @wraps(func)
+    def wrapper(*args):
+        if args not in cached:
+            cached[args] = func(*args)
+        return cached[args]
+    return wrapper
+
+【4. 重试】
+def retry(times=3):
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            for i in range(times):
+                try:
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    if i == times - 1:
+                        raise
+        return wrapper
+    return decorator
+
+【5. 类型检查】
+def validate_types(**type_hints):
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            for name, expected_type in type_hints.items():
+                if name in kwargs:
+                    if not isinstance(kwargs[name], expected_type):
+                        raise TypeError(f"{name} must be {expected_type}")
+            return func(*args, **kwargs)
+        return wrapper
+    return decorator
+
+【6. 单例模式（装饰类）】
+def singleton(cls):
+    instances = {}
+    @wraps(cls)
+    def get_instance(*args, **kwargs):
+        if cls not in instances:
+            instances[cls] = cls(*args, **kwargs)
+        return instances[cls]
+    return get_instance
+
+
+┌─────────────────────────────────────────────────────────────────────┐
+│                        最佳实践                                        │
+└─────────────────────────────────────────────────────────────────────┘
+
+✅ DO's:
+  • 总是使用 @wraps 保留函数元数据
+  • 使用 *args, **kwargs 支持任意参数
+  • 保持装饰器的透明性（不改变函数行为）
+  • 为装饰器添加文档字符串
+  • 简单场景用函数，复杂场景用类
+
+❌ DON'Ts:
+  • 不要忘记 @wraps
+  • 不要在装饰器中改变函数签名
+  • 不要过度使用装饰器（避免堆叠太多）
+  • 不要在装饰器中引入副作用
+  • 不要在不需要时使用类装饰器
+
+
+┌─────────────────────────────────────────────────────────────────────┐
+│                    堆叠装饰器执行顺序                                   │
+└─────────────────────────────────────────────────────────────────────┘
+
+@decorator1        ←─── 最后执行
+@decorator2        ←─── 第二执行
+@decorator3        ←─── 第一执行
+def func():
+    pass
+
+等价于: func = decorator1(decorator2(decorator3(func)))
+
+执行顺序：从下到上装饰，从上到下执行
+
+
+┌─────────────────────────────────────────────────────────────────────┐
+│                      常见陷阱                                          │
+└─────────────────────────────────────────────────────────────────────┘
+
+【陷阱 1: 忘记 @wraps】
+❌ 错误:
+    def bad_decorator(func):
+        def wrapper():
+            return func()
+        return wrapper
+    
+    @bad_decorator
+    def my_func():
+        """文档"""
+        pass
+    
+    print(my_func.__name__)  # "wrapper" 而不是 "my_func"
+
+✅ 正确:
+    from functools import wraps
+    
+    def good_decorator(func):
+        @wraps(func)
+        def wrapper():
+            return func()
+        return wrapper
+
+【陷阱 2: 装饰器参数混淆】
+❌ 错误:
+    @repeat(3)  # repeat 返回装饰器
+    def func():
+        pass
+
+✅ 正确结构:
+    def repeat(times):      # 接收参数
+        def decorator(func): # 接收函数
+            @wraps(func)
+            def wrapper(*args, **kwargs):  # 实际执行
+                ...
+
+【陷阱 3: 类装饰器忘记 __call__】
+❌ 错误:
+    class MyDecorator:
+        def __init__(self, func):
+            self.func = func
+        # 缺少 __call__ 方法
+
+✅ 正确:
+    class MyDecorator:
+        def __init__(self, func):
+            self.func = func
+        
+        def __call__(self, *args, **kwargs):
+            return self.func(*args, **kwargs)
+
+
+┌─────────────────────────────────────────────────────────────────────┐
+│                      实用技巧                                          │
+└─────────────────────────────────────────────────────────────────────┘
+
+【技巧 1: 可选参数的装饰器】
+def smart_decorator(func=None, *, option=False):
+    def decorator(f):
+        @wraps(f)
+        def wrapper(*args, **kwargs):
+            if option:
+                print("Option enabled")
+            return f(*args, **kwargs)
+        return wrapper
+    
+    if func is None:
+        return decorator
+    else:
+        return decorator(func)
+
+# 两种用法都可以:
+@smart_decorator
+def func1(): pass
+
+@smart_decorator(option=True)
+def func2(): pass
+
+【技巧 2: 装饰器类继承】
+class BaseDecorator:
+    def __init__(self, func):
+        wraps(func)(self)
+        self.func = func
+    
+    def __call__(self, *args, **kwargs):
+        self.before()
+        result = self.func(*args, **kwargs)
+        self.after()
+        return result
+    
+    def before(self):
+        pass
+    
+    def after(self):
+        pass
+
+class LoggingDecorator(BaseDecorator):
+    def before(self):
+        print(f"Calling {self.func.__name__}")
+    
+    def after(self):
+        print(f"Finished {self.func.__name__}")
+
+【技巧 3: 使用 functools.lru_cache】
+from functools import lru_cache
+
+@lru_cache(maxsize=128)  # 内置的高性能缓存装饰器
+def fibonacci(n):
+    if n < 2:
+        return n
+    return fibonacci(n-1) + fibonacci(n-2)
+
+
+┌─────────────────────────────────────────────────────────────────────┐
+│                      学习路径                                          │
+└─────────────────────────────────────────────────────────────────────┘
+
+Level 1: 基础
+  □ 理解闭包和高阶函数
+  □ 掌握简单的函数装饰器
+  □ 学会使用 @wraps
+
+Level 2: 中级
+  □ 掌握带参数的装饰器（三层嵌套）
+  □ 理解装饰器的执行顺序
+  □ 学会堆叠多个装饰器
+
+Level 3: 高级
+  □ 掌握类装饰器
+  □ 理解 __call__ 魔法方法
+  □ 装饰类而不是函数
+
+Level 4: 专家
+  □ 实现可选参数的装饰器
+  □ 使用装饰器实现设计模式
+  □ 编写可复用的装饰器库
+
+
+┌─────────────────────────────────────────────────────────────────────┐
+│                    参考资源                                            │
+└─────────────────────────────────────────────────────────────────────┘
+
+• PEP 318 - Decorators for Functions and Methods
+• Python 官方文档 - functools 模块
+• Real Python - Primer on Python Decorators
+• Python Cookbook - Chapter 9: Metaprogramming
+
+"""

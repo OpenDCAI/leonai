@@ -38,7 +38,7 @@ class PathSecurityHook(BashHook):
         command = command.strip()
 
         # 检查是否试图 cd 到绝对路径
-        cd_absolute = re.search(r'\bcd\s+(/[^\s;|&]*)', command)
+        cd_absolute = re.search(r"\bcd\s+(/[^\s;|&]*)", command)
         if cd_absolute:
             target_path = Path(cd_absolute.group(1)).resolve()
             if not self._is_within_workspace(target_path):
@@ -53,8 +53,8 @@ class PathSecurityHook(BashHook):
                 )
 
         # 检查是否使用 ../ 向上遍历
-        if self.strict_mode and '..' in command:
-            if re.search(r'\.\./|/\.\.|cd\s+\.\.', command):
+        if self.strict_mode and ".." in command:
+            if re.search(r"\.\./|/\.\.|cd\s+\.\.", command):
                 return HookResult.block_command(
                     error_message=(
                         f"❌ SECURITY ERROR: Path traversal detected in command\n"
@@ -66,10 +66,10 @@ class PathSecurityHook(BashHook):
                 )
 
         # 检查绝对路径访问
-        absolute_paths = re.findall(r'\s(/[^\s;|&]+)', command)
+        absolute_paths = re.findall(r"\s(/[^\s;|&]+)", command)
         for abs_path in absolute_paths:
             # 跳过常见的系统命令
-            if abs_path.startswith(('/bin/', '/usr/', '/etc/bash', '/dev/','/tmp/')):
+            if abs_path.startswith(("/bin/", "/usr/", "/etc/bash", "/dev/", "/tmp/")):
                 continue
 
             try:

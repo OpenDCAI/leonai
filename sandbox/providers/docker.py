@@ -10,7 +10,7 @@ import shlex
 import subprocess
 import uuid
 
-from sandbox.provider import ProviderExecResult, Metrics, SandboxProvider, SessionInfo
+from sandbox.provider import Metrics, ProviderExecResult, SandboxProvider, SessionInfo
 
 
 class DockerProvider(SandboxProvider):
@@ -35,9 +35,13 @@ class DockerProvider(SandboxProvider):
         container_name = session_id
 
         cmd = [
-            "docker", "run", "-d",
-            "--name", container_name,
-            "--label", f"leon.session_id={session_id}",
+            "docker",
+            "run",
+            "-d",
+            "--name",
+            container_name,
+            "--label",
+            f"leon.session_id={session_id}",
         ]
 
         if context_id:
@@ -113,7 +117,7 @@ class DockerProvider(SandboxProvider):
             check=False,
         )
         if result.returncode != 0:
-            raise IOError(result.stderr.strip() or "Failed to read file")
+            raise OSError(result.stderr.strip() or "Failed to read file")
         return result.stdout
 
     def write_file(self, session_id: str, path: str, content: str) -> str:
@@ -121,7 +125,7 @@ class DockerProvider(SandboxProvider):
         cmd = ["docker", "exec", "-i", container_id, "/bin/sh", "-lc", f"cat > {shlex.quote(path)}"]
         result = self._run(cmd, input_text=content, check=False)
         if result.returncode != 0:
-            raise IOError(result.stderr.strip() or "Failed to write file")
+            raise OSError(result.stderr.strip() or "Failed to write file")
         return f"Written: {path}"
 
     def list_dir(self, session_id: str, path: str) -> list[dict]:
@@ -129,9 +133,9 @@ class DockerProvider(SandboxProvider):
         script = (
             f"cd {shlex.quote(path)} 2>/dev/null || exit 1; "
             "ls -A1 2>/dev/null | while IFS= read -r f; do "
-            "if [ -d \"$f\" ]; then t=directory; else t=file; fi; "
-            "s=$(stat -c %s \"$f\" 2>/dev/null || wc -c <\"$f\" 2>/dev/null || echo 0); "
-            "printf \"%s\\t%s\\t%s\\n\" \"$t\" \"$s\" \"$f\"; "
+            'if [ -d "$f" ]; then t=directory; else t=file; fi; '
+            's=$(stat -c %s "$f" 2>/dev/null || wc -c <"$f" 2>/dev/null || echo 0); '
+            'printf "%s\\t%s\\t%s\\n" "$t" "$s" "$f"; '
             "done"
         )
         result = self._run(
@@ -159,7 +163,10 @@ class DockerProvider(SandboxProvider):
             return None
         result = self._run(
             [
-                "docker", "stats", "--no-stream", "--format",
+                "docker",
+                "stats",
+                "--no-stream",
+                "--format",
                 "{{.CPUPerc}}\t{{.MemUsage}}\t{{.NetIO}}\t{{.BlockIO}}",
                 container_id,
             ],
@@ -209,8 +216,11 @@ class DockerProvider(SandboxProvider):
         check: bool = True,
     ) -> subprocess.CompletedProcess[str]:
         result = subprocess.run(
-            cmd, input=input_text, text=True,
-            capture_output=True, timeout=timeout,
+            cmd,
+            input=input_text,
+            text=True,
+            capture_output=True,
+            timeout=timeout,
         )
         if check and result.returncode != 0:
             raise RuntimeError(result.stderr.strip() or "Docker command failed")
@@ -237,20 +247,30 @@ class DockerProvider(SandboxProvider):
 
     def _parse_size_mb(self, value: str) -> float:
         num, unit = self._split_size(value)
-        if unit == "b": return num / 1024 / 1024
-        if unit == "kb": return num / 1024
-        if unit == "mb": return num
-        if unit == "gb": return num * 1024
-        if unit == "tb": return num * 1024 * 1024
+        if unit == "b":
+            return num / 1024 / 1024
+        if unit == "kb":
+            return num / 1024
+        if unit == "mb":
+            return num
+        if unit == "gb":
+            return num * 1024
+        if unit == "tb":
+            return num * 1024 * 1024
         return 0.0
 
     def _parse_size_kb(self, value: str) -> float:
         num, unit = self._split_size(value)
-        if unit == "b": return num / 1024
-        if unit == "kb": return num
-        if unit == "mb": return num * 1024
-        if unit == "gb": return num * 1024 * 1024
-        if unit == "tb": return num * 1024 * 1024 * 1024
+        if unit == "b":
+            return num / 1024
+        if unit == "kb":
+            return num
+        if unit == "mb":
+            return num * 1024
+        if unit == "gb":
+            return num * 1024 * 1024
+        if unit == "tb":
+            return num * 1024 * 1024 * 1024
         return 0.0
 
     def _split_size(self, value: str) -> tuple[float, str]:

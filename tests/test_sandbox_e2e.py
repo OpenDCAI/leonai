@@ -27,12 +27,14 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Load config.env so API keys are available
 from tui.config import ConfigManager
+
 ConfigManager().load_to_env()
 
 
 def _can_docker() -> bool:
     """Check if Docker is available."""
     import subprocess
+
     try:
         subprocess.run(["docker", "info"], capture_output=True, timeout=5)
         return True
@@ -45,9 +47,11 @@ def _can_e2b() -> bool:
         return True
     # Check sandbox config file
     from pathlib import Path
+
     config_file = Path.home() / ".leon" / "sandboxes" / "e2b.json"
     if config_file.exists():
         import json
+
         data = json.loads(config_file.read_text())
         key = data.get("e2b", {}).get("api_key")
         if key:
@@ -59,6 +63,7 @@ def _can_e2b() -> bool:
 def _invoke_and_extract(agent, message: str, thread_id: str) -> dict:
     """Invoke agent via async runner and extract tool calls + response."""
     import asyncio
+
     from sandbox.thread_context import set_current_thread_id
     from tui.runner import NonInteractiveRunner
 
@@ -81,9 +86,9 @@ def _get_model_name() -> str:
 # Docker E2E
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.skipif(not _can_docker(), reason="Docker not available")
 class TestDockerSandboxE2E:
-
     def test_agent_init_and_command(self):
         """Agent initializes with docker sandbox and can run commands."""
         from agent import create_leon_agent
@@ -111,13 +116,11 @@ class TestDockerSandboxE2E:
                 thread_id,
             )
 
-            print(f"\n--- Result ---")
+            print("\n--- Result ---")
             print(f"Response: {extracted['response'][:500]}")
             print(f"Tool calls: {extracted['tool_calls']}")
 
-            assert "run_command" in extracted["tool_calls"], (
-                f"Expected run_command in {extracted['tool_calls']}"
-            )
+            assert "run_command" in extracted["tool_calls"], f"Expected run_command in {extracted['tool_calls']}"
 
         finally:
             if agent:
@@ -143,13 +146,11 @@ class TestDockerSandboxE2E:
                 thread_id,
             )
 
-            print(f"\n--- Result ---")
+            print("\n--- Result ---")
             print(f"Response: {extracted['response'][:500]}")
             print(f"Tool calls: {extracted['tool_calls']}")
 
-            assert "write_file" in extracted["tool_calls"], (
-                f"Expected write_file in {extracted['tool_calls']}"
-            )
+            assert "write_file" in extracted["tool_calls"], f"Expected write_file in {extracted['tool_calls']}"
 
         finally:
             if agent:
@@ -160,9 +161,9 @@ class TestDockerSandboxE2E:
 # E2B E2E
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.skipif(not _can_e2b(), reason="E2B_API_KEY not set")
 class TestE2BSandboxE2E:
-
     def test_agent_init_and_command(self):
         """Agent initializes with e2b sandbox and can run commands."""
         from agent import create_leon_agent
@@ -188,13 +189,11 @@ class TestE2BSandboxE2E:
                 thread_id,
             )
 
-            print(f"\n--- Result ---")
+            print("\n--- Result ---")
             print(f"Response: {extracted['response'][:500]}")
             print(f"Tool calls: {extracted['tool_calls']}")
 
-            assert "run_command" in extracted["tool_calls"], (
-                f"Expected run_command in {extracted['tool_calls']}"
-            )
+            assert "run_command" in extracted["tool_calls"], f"Expected run_command in {extracted['tool_calls']}"
 
         finally:
             if agent:
@@ -220,13 +219,11 @@ class TestE2BSandboxE2E:
                 thread_id,
             )
 
-            print(f"\n--- Result ---")
+            print("\n--- Result ---")
             print(f"Response: {extracted['response'][:500]}")
             print(f"Tool calls: {extracted['tool_calls']}")
 
-            assert "write_file" in extracted["tool_calls"], (
-                f"Expected write_file in {extracted['tool_calls']}"
-            )
+            assert "write_file" in extracted["tool_calls"], f"Expected write_file in {extracted['tool_calls']}"
 
         finally:
             if agent:

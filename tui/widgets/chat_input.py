@@ -155,53 +155,53 @@ class ChatInput(Vertical):
         """Focus the input"""
         if self._text_area:
             self._text_area.focus()
-    
+
     def navigate_history(self, direction: str) -> None:
         """Navigate through input history
-        
+
         Args:
             direction: 'up' or 'down'
         """
         if not self._text_area or not self._history:
             return
-        
+
         if direction == "up":
             if self._history_index == -1:
                 self._current_draft = self._text_area.text
                 self._history_index = len(self._history) - 1
             elif self._history_index > 0:
                 self._history_index -= 1
-            
+
             if 0 <= self._history_index < len(self._history):
                 self._text_area.text = self._history[self._history_index]
                 self._text_area.move_cursor_relative(rows=1000, columns=1000)
-        
+
         elif direction == "down":
             if self._history_index == -1:
                 return
-            
+
             self._history_index += 1
-            
+
             if self._history_index >= len(self._history):
                 self._text_area.text = self._current_draft
                 self._history_index = -1
             else:
                 self._text_area.text = self._history[self._history_index]
                 self._text_area.move_cursor_relative(rows=1000, columns=1000)
-    
+
     def get_history(self) -> list[str]:
         """Get input history"""
         return self._history
-    
+
     def set_text(self, text: str) -> None:
         """Set input text programmatically"""
         if self._text_area:
             self._text_area.text = text
             self._text_area.move_cursor_relative(rows=1000, columns=1000)
-    
+
     def check_double_esc(self) -> bool:
         """Check if ESC was pressed twice within threshold
-        
+
         Returns:
             True if double-ESC detected
         """

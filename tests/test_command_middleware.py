@@ -1,6 +1,7 @@
 """Tests for CommandMiddleware."""
 
 import asyncio
+
 import pytest
 
 from middleware.command import CommandMiddleware
@@ -77,7 +78,7 @@ class TestAsyncExecution:
         executor = get_executor()
         async_cmd = await executor.execute_async("echo async_test")
         assert async_cmd.command_id is not None
-        
+
         result = await executor.wait_for(async_cmd.command_id, timeout=5.0)
         assert result is not None
         assert result.success
@@ -87,12 +88,12 @@ class TestAsyncExecution:
     async def test_get_status(self):
         executor = get_executor()
         async_cmd = await executor.execute_async("sleep 0.1 && echo done")
-        
+
         status = await executor.get_status(async_cmd.command_id)
         assert status is not None
-        
+
         await asyncio.sleep(0.2)
-        
+
         status = await executor.get_status(async_cmd.command_id)
         assert status is not None
         assert status.done

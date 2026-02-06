@@ -76,9 +76,7 @@ class WebMiddleware(AgentMiddleware):
         self.fetch_limits = fetch_limits or FetchLimits()
         self.max_search_results = max_search_results
         self.timeout = timeout
-        self.enabled_tools = enabled_tools or {
-            'web_search': True, 'read_url_content': True, 'view_web_content': True
-        }
+        self.enabled_tools = enabled_tools or {"web_search": True, "read_url_content": True, "view_web_content": True}
         self.verbose = verbose
 
         self._searchers: list[tuple[str, Any]] = []
@@ -97,7 +95,7 @@ class WebMiddleware(AgentMiddleware):
         self._content_cache: dict[str, FetchResult] = {}
 
         if self.verbose:
-            print(f"[WebMiddleware] Initialized")
+            print("[WebMiddleware] Initialized")
             print(f"[WebMiddleware] Searchers: {[name for name, _ in self._searchers]}")
             print(f"[WebMiddleware] Fetchers: {[name for name, _ in self._fetchers]}")
 

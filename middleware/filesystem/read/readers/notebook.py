@@ -106,7 +106,7 @@ def _format_cell(cell: dict, cell_num: int, total_cells: int) -> str:
         source_text = str(source)
 
     parts = [
-        f"\n{'─'*60}",
+        f"\n{'─' * 60}",
         f"Cell [{cell_num}] ({cell_type}) | {cell_num + 1}/{total_cells}",
         "─" * 60,
     ]

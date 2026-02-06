@@ -1,6 +1,5 @@
 """Test script for new TUI features"""
 
-import asyncio
 from pathlib import Path
 
 from agent import create_leon_agent
@@ -11,7 +10,7 @@ def main():
     """Run TUI with test agent"""
     workspace = Path(__file__).parent / "workspace"
     workspace.mkdir(exist_ok=True)
-    
+
     print("🚀 启动 Leon TUI - 测试新功能")
     print("\n新功能列表:")
     print("1. ✅ 对话历史导航 (Ctrl+↑/↓)")
@@ -25,9 +24,9 @@ def main():
     print("- 使用 Ctrl+Y 复制 AI 回复")
     print("- 使用 Ctrl+E 导出对话到 workspace/")
     print("- 检查状态栏的消息计数\n")
-    
+
     agent = create_leon_agent(workspace_root=workspace)
-    
+
     try:
         run_tui(agent, workspace, thread_id="test-features")
     except KeyboardInterrupt:

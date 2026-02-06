@@ -1,9 +1,8 @@
 """Session management for TUI resume"""
+
 import json
 import sqlite3
-from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 
 class SessionManager:
@@ -34,7 +33,7 @@ class SessionManager:
 
         self.session_file.write_text(json.dumps(data, indent=2))
 
-    def get_last_thread_id(self) -> Optional[str]:
+    def get_last_thread_id(self) -> str | None:
         """获取最后使用的 thread_id"""
         data = self._load_data()
         return data.get("last_thread_id")
@@ -63,10 +62,12 @@ class SessionManager:
                 for row in cursor.fetchall():
                     thread_id = row["thread_id"]
                     if thread_id:
-                        threads.append({
-                            "thread_id": thread_id,
-                            "last_active": None,
-                        })
+                        threads.append(
+                            {
+                                "thread_id": thread_id,
+                                "last_active": None,
+                            }
+                        )
         except Exception as e:
             print(f"[SessionManager] Error reading threads from DB: {e}")
 

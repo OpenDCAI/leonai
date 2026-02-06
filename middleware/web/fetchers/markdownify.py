@@ -66,10 +66,7 @@ class MarkdownifyFetcher(BaseFetcher):
             result.total_chars = len(content)
 
             chunk_data = self._split_into_chunks(content)
-            result.chunks = [
-                ContentChunk(position=pos, content=cont, heading=head)
-                for pos, cont, head in chunk_data
-            ]
+            result.chunks = [ContentChunk(position=pos, content=cont, heading=head) for pos, cont, head in chunk_data]
             result.total_chunks = len(result.chunks)
 
             result.content = content
@@ -109,10 +106,7 @@ class MarkdownifyFetcher(BaseFetcher):
                 tag.decompose()
 
             main_content = (
-                soup.find("main")
-                or soup.find("article")
-                or soup.find("div", class_="content")
-                or soup.find("body")
+                soup.find("main") or soup.find("article") or soup.find("div", class_="content") or soup.find("body")
             )
 
             if main_content:
@@ -146,10 +140,7 @@ class MarkdownifyFetcher(BaseFetcher):
             tag.decompose()
 
         main_content = (
-            soup.find("main")
-            or soup.find("article")
-            or soup.find("div", class_="content")
-            or soup.find("body")
+            soup.find("main") or soup.find("article") or soup.find("div", class_="content") or soup.find("body")
         )
 
         if main_content:

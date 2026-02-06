@@ -59,7 +59,7 @@ class FileSystemMiddleware(AgentMiddleware):
         allowed_extensions: list[str] | None = None,
         hooks: list[Any] | None = None,
         enabled_tools: dict[str, bool] | None = None,
-        operation_recorder: "FileOperationRecorder | None" = None,
+        operation_recorder: FileOperationRecorder | None = None,
         backend: FileSystemBackend | None = None,
         verbose: bool = True,
     ):
@@ -84,8 +84,11 @@ class FileSystemMiddleware(AgentMiddleware):
         self.allowed_extensions = allowed_extensions
         self.hooks = hooks or []
         self.enabled_tools = enabled_tools or {
-            'read_file': True, 'write_file': True, 'edit_file': True,
-            'multi_edit': True, 'list_dir': True
+            "read_file": True,
+            "write_file": True,
+            "edit_file": True,
+            "multi_edit": True,
+            "list_dir": True,
         }
         # path → mtime at read time (None means mtime unavailable, e.g. sandbox)
         self._read_files: dict[Path, float | None] = {}
@@ -95,6 +98,7 @@ class FileSystemMiddleware(AgentMiddleware):
         # Backend: default to LocalBackend
         if backend is None:
             from middleware.filesystem.local_backend import LocalBackend
+
             self.backend = LocalBackend()
         else:
             self.backend = backend
@@ -136,9 +140,7 @@ class FileSystemMiddleware(AgentMiddleware):
         except ValueError:
             return (
                 False,
-                f"Path outside workspace\n"
-                f"   Workspace: {self.workspace_root}\n"
-                f"   Attempted: {resolved}",
+                f"Path outside workspace\n   Workspace: {self.workspace_root}\n   Attempted: {resolved}",
                 None,
             )
 
@@ -147,8 +149,7 @@ class FileSystemMiddleware(AgentMiddleware):
             if resolved.suffix.lstrip(".") not in self.allowed_extensions:
                 return (
                     False,
-                    f"File type not allowed: {resolved.suffix}\n"
-                    f"   Allowed: {', '.join(self.allowed_extensions)}",
+                    f"File type not allowed: {resolved.suffix}\n   Allowed: {', '.join(self.allowed_extensions)}",
                     None,
                 )
 
@@ -215,6 +216,7 @@ class FileSystemMiddleware(AgentMiddleware):
 
         # Local backend: use rich read dispatcher (PDF/PPTX/notebook/image)
         from middleware.filesystem.local_backend import LocalBackend
+
         if isinstance(self.backend, LocalBackend):
             limits = ReadLimits(
                 max_lines=1000,
@@ -478,7 +480,10 @@ class FileSystemMiddleware(AgentMiddleware):
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "file_path": {"type": "string", "description": "Absolute file path (e.g., /path/to/file). Do NOT use '.' or '..'"},
+                            "file_path": {
+                                "type": "string",
+                                "description": "Absolute file path (e.g., /path/to/file). Do NOT use '.' or '..'",
+                            },
                             "offset": {"type": "integer", "description": "Start line (1-indexed, optional)"},
                             "limit": {"type": "integer", "description": "Number of lines to read (optional)"},
                         },
@@ -494,7 +499,10 @@ class FileSystemMiddleware(AgentMiddleware):
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "file_path": {"type": "string", "description": "Absolute file path (e.g., /path/to/file). Do NOT use '.' or '..'"},
+                            "file_path": {
+                                "type": "string",
+                                "description": "Absolute file path (e.g., /path/to/file). Do NOT use '.' or '..'",
+                            },
                             "content": {"type": "string", "description": "File content"},
                         },
                         "required": ["file_path", "content"],
@@ -515,9 +523,18 @@ class FileSystemMiddleware(AgentMiddleware):
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "file_path": {"type": "string", "description": "Absolute file path (e.g., /path/to/file). Do NOT use '.' or '..'"},
-                            "old_string": {"type": "string", "description": "Exact string to replace (must be unique and match exactly)"},
-                            "new_string": {"type": "string", "description": "Replacement string (must differ from old_string)"},
+                            "file_path": {
+                                "type": "string",
+                                "description": "Absolute file path (e.g., /path/to/file). Do NOT use '.' or '..'",
+                            },
+                            "old_string": {
+                                "type": "string",
+                                "description": "Exact string to replace (must be unique and match exactly)",
+                            },
+                            "new_string": {
+                                "type": "string",
+                                "description": "Replacement string (must differ from old_string)",
+                            },
                         },
                         "required": ["file_path", "old_string", "new_string"],
                     },
@@ -531,7 +548,10 @@ class FileSystemMiddleware(AgentMiddleware):
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "file_path": {"type": "string", "description": "Absolute file path (e.g., /path/to/file). Do NOT use '.' or '..'"},
+                            "file_path": {
+                                "type": "string",
+                                "description": "Absolute file path (e.g., /path/to/file). Do NOT use '.' or '..'",
+                            },
                             "edits": {
                                 "type": "array",
                                 "items": {
@@ -557,7 +577,10 @@ class FileSystemMiddleware(AgentMiddleware):
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "directory_path": {"type": "string", "description": "Absolute directory path (e.g., /path/to/dir). Do NOT use '.' or '..'"},
+                            "directory_path": {
+                                "type": "string",
+                                "description": "Absolute directory path (e.g., /path/to/dir). Do NOT use '.' or '..'",
+                            },
                         },
                         "required": ["directory_path"],
                     },
@@ -605,9 +628,7 @@ class FileSystemMiddleware(AgentMiddleware):
             return self._make_read_tool_message(result, tool_call.get("id", ""))
 
         elif tool_name == self.TOOL_WRITE_FILE:
-            result = self._write_file_impl(
-                file_path=args.get("file_path", ""), content=args.get("content", "")
-            )
+            result = self._write_file_impl(file_path=args.get("file_path", ""), content=args.get("content", ""))
             return ToolMessage(content=result, tool_call_id=tool_call.get("id", ""))
 
         elif tool_name == self.TOOL_EDIT_FILE:
@@ -619,9 +640,7 @@ class FileSystemMiddleware(AgentMiddleware):
             return ToolMessage(content=result, tool_call_id=tool_call.get("id", ""))
 
         elif tool_name == self.TOOL_MULTI_EDIT:
-            result = self._multi_edit_impl(
-                file_path=args.get("file_path", ""), edits=args.get("edits", [])
-            )
+            result = self._multi_edit_impl(file_path=args.get("file_path", ""), edits=args.get("edits", []))
             return ToolMessage(content=result, tool_call_id=tool_call.get("id", ""))
 
         elif tool_name == self.TOOL_LIST_DIR:
@@ -651,9 +670,7 @@ class FileSystemMiddleware(AgentMiddleware):
             return self._make_read_tool_message(result, tool_call.get("id", ""))
 
         elif tool_name == self.TOOL_WRITE_FILE:
-            result = self._write_file_impl(
-                file_path=args.get("file_path", ""), content=args.get("content", "")
-            )
+            result = self._write_file_impl(file_path=args.get("file_path", ""), content=args.get("content", ""))
             return ToolMessage(content=result, tool_call_id=tool_call.get("id", ""))
 
         elif tool_name == self.TOOL_EDIT_FILE:
@@ -665,9 +682,7 @@ class FileSystemMiddleware(AgentMiddleware):
             return ToolMessage(content=result, tool_call_id=tool_call.get("id", ""))
 
         elif tool_name == self.TOOL_MULTI_EDIT:
-            result = self._multi_edit_impl(
-                file_path=args.get("file_path", ""), edits=args.get("edits", [])
-            )
+            result = self._multi_edit_impl(file_path=args.get("file_path", ""), edits=args.get("edits", []))
             return ToolMessage(content=result, tool_call_id=tool_call.get("id", ""))
 
         elif tool_name == self.TOOL_LIST_DIR:

@@ -1,9 +1,10 @@
 """Tests for Queue Mode middleware"""
 
-import pytest
 import threading
 import time
 from pathlib import Path
+
+import pytest
 
 # Read source files directly without importing middleware package
 project_root = Path(__file__).parent.parent
@@ -20,7 +21,7 @@ manager_code = (project_root / "middleware/queue/manager.py").read_text()
 # Replace relative import with injected values
 manager_code = manager_code.replace(
     "from .types import QueueMessage, QueueMode",
-    ""  # Remove import, we'll inject
+    "",  # Remove import, we'll inject
 )
 manager_ns = {
     "QueueMessage": QueueMessage,
@@ -34,10 +35,12 @@ MessageQueueManager = manager_ns["MessageQueueManager"]
 get_queue_manager = manager_ns["get_queue_manager"]
 reset_queue_manager = manager_ns["reset_queue_manager"]
 
+
 # Mock HumanMessage for middleware test (avoid langchain dependency)
 class MockHumanMessage:
     def __init__(self, content):
         self.content = content
+
 
 # Mock ToolMessage
 class MockToolMessage:
@@ -45,25 +48,21 @@ class MockToolMessage:
         self.content = content
         self.tool_call_id = tool_call_id
 
+
 # Mock AgentMiddleware base class
 class MockAgentMiddleware:
     @property
     def name(self):
         return self.__class__.__name__
 
+
 # Load middleware module
 middleware_code = (project_root / "middleware/queue/middleware.py").read_text()
 # Remove imports we'll inject
-middleware_code = middleware_code.replace(
-    "from langchain_core.messages import HumanMessage, ToolMessage",
-    ""
-)
-middleware_code = middleware_code.replace(
-    "from .manager import get_queue_manager",
-    ""
-)
+middleware_code = middleware_code.replace("from langchain_core.messages import HumanMessage, ToolMessage", "")
+middleware_code = middleware_code.replace("from .manager import get_queue_manager", "")
 # Replace the try/except import block
-import_block = '''try:
+import_block = """try:
     from langchain.agents.middleware.types import (
         AgentMiddleware,
         ModelCallResult,
@@ -78,10 +77,10 @@ except ImportError:
     ModelRequest = Any
     ModelResponse = Any
     ModelCallResult = Any
-    ToolCallRequest = Any'''
+    ToolCallRequest = Any"""
 middleware_code = middleware_code.replace(import_block, "")
 
-from collections.abc import Callable, Awaitable
+from collections.abc import Awaitable, Callable
 
 middleware_ns = {
     "get_queue_manager": get_queue_manager,

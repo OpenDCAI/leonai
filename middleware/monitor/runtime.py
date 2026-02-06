@@ -1,8 +1,10 @@
 """Agent 运行时状态聚合"""
+
 from typing import Any
-from .token_monitor import TokenMonitor
+
 from .context_monitor import ContextMonitor
-from .state_monitor import StateMonitor, AgentState, AgentFlags
+from .state_monitor import AgentFlags, AgentState, StateMonitor
+from .token_monitor import TokenMonitor
 
 
 class AgentRuntime:
@@ -47,12 +49,40 @@ class AgentRuntime:
         return self.token.total_tokens
 
     @property
+    def input_tokens(self) -> int:
+        return self.token.input_tokens
+
+    @property
+    def output_tokens(self) -> int:
+        return self.token.output_tokens
+
+    @property
+    def reasoning_tokens(self) -> int:
+        return self.token.reasoning_tokens
+
+    @property
+    def cache_read_tokens(self) -> int:
+        return self.token.cache_read_tokens
+
+    @property
+    def cache_write_tokens(self) -> int:
+        return self.token.cache_write_tokens
+
+    # 向后兼容
+    @property
     def prompt_tokens(self) -> int:
         return self.token.prompt_tokens
 
     @property
     def completion_tokens(self) -> int:
         return self.token.completion_tokens
+
+    # ========== 成本代理 ==========
+
+    @property
+    def cost(self) -> float:
+        """当前累计成本（USD）"""
+        return float(self.token.get_cost().get("total", 0))
 
     # ========== 上下文代理 ==========
 
@@ -84,6 +114,8 @@ class AgentRuntime:
         # 标志位
         if self.flags.isStreaming:
             parts.append("streaming")
+        if self.flags.isCompacting:
+            parts.append("compacting")
         if self.flags.isWaiting:
             parts.append("waiting")
         if self.flags.isBlocked:
@@ -94,6 +126,11 @@ class AgentRuntime:
         # Token 使用
         if self.total_tokens > 0:
             parts.append(f"tokens:{self.total_tokens}")
+
+        # 成本
+        cost = self.cost
+        if cost > 0:
+            parts.append(f"${cost:.2f}")
 
         # 上下文
         ctx = self.context.get_metrics()

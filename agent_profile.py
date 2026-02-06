@@ -1,4 +1,5 @@
 """Agent Profile - 配置数据结构与加载"""
+
 import os
 from pathlib import Path
 from typing import Any
@@ -9,8 +10,32 @@ except ImportError:
     raise ImportError("需要安装 pydantic: pip install pydantic")
 
 
+class PruningConfig(BaseModel):
+    soft_trim_chars: int = 3000
+    hard_clear_threshold: int = 10000
+    protect_recent: int = 3
+
+
+class CompactionStrategyConfig(BaseModel):
+    reserve_tokens: int = 16384
+    keep_recent_tokens: int = 20000
+    summary_model: str | None = None
+
+
+class MemoryConfig(BaseModel):
+    enabled: bool = True
+    pruning: PruningConfig = Field(default_factory=PruningConfig)
+    compaction: CompactionStrategyConfig = Field(default_factory=CompactionStrategyConfig)
+
+
 class AgentConfig(BaseModel):
     model: str = "claude-sonnet-4-5-20250929"
+    model_provider: str | None = None  # 显式指定 provider（openai/anthropic/bedrock 等）
+    api_key: str | None = None  # 通用 API key
+    base_url: str | None = None  # 通用 base URL
+    temperature: float | None = None
+    max_tokens: int | None = None
+    model_kwargs: dict[str, Any] = Field(default_factory=dict)
     workspace_root: str | None = None
     enable_audit_log: bool = True
     allowed_extensions: list[str] | None = None
@@ -18,6 +43,8 @@ class AgentConfig(BaseModel):
     block_network_commands: bool = False
     # Queue mode: steer, followup, collect, steer_backlog, interrupt
     queue_mode: str = "steer"
+    context_limit: int = 100000
+    memory: MemoryConfig = Field(default_factory=MemoryConfig)
 
 
 class ReadFileConfig(BaseModel):
@@ -129,7 +156,6 @@ class AgentProfile(BaseModel):
     mcp: MCPConfig = Field(default_factory=MCPConfig)
     skills: SkillsConfig = Field(default_factory=SkillsConfig)
 
-
     @classmethod
     def from_file(cls, path: str | Path) -> "AgentProfile":
         """从 YAML/JSON/TOML 加载"""
@@ -141,9 +167,11 @@ class AgentProfile(BaseModel):
 
         if path.suffix in [".yaml", ".yml"]:
             import yaml
+
             data = yaml.safe_load(content)
         elif path.suffix == ".json":
             import json
+
             data = json.loads(content)
         elif path.suffix == ".toml":
             try:

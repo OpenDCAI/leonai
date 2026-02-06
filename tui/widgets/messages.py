@@ -136,7 +136,7 @@ class ToolCallMessage(Vertical):
     def compose(self):
         text = Text()
         text.append("🔧 ", style="bold yellow")
-        text.append(f"调用工具: ", style="yellow")
+        text.append("调用工具: ", style="yellow")
         text.append(self._tool_name, style="bold yellow")
         text.append("\n")
 
@@ -151,17 +151,17 @@ class ToolCallMessage(Vertical):
 
         yield Static(text)
         yield Static(f"⚡ {self._status}", classes="tool-status", id="tool-status")
-    
+
     def on_mount(self) -> None:
         """Cache status widget reference"""
         self._status_widget = self.query_one("#tool-status", Static)
-    
+
     def update_status(self, status: str) -> None:
         """Update tool execution status"""
         self._status = status
         if self._status_widget:
             self._status_widget.update(f"⚡ {status}")
-    
+
     def mark_completed(self) -> None:
         """Mark tool execution as completed"""
         self.update_status("✅ 完成")

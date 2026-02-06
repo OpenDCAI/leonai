@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from pathlib import Path
-from typing import Any, NotRequired
+from typing import Any
 
 from langchain.agents.middleware import AgentMiddleware, AgentState
 from langchain.agents.middleware.types import ModelRequest, ModelResponse
@@ -28,6 +28,7 @@ DEFAULT_MAX_OUTPUT_CHARS = 50000
 
 class CommandState(AgentState):
     """State for command middleware."""
+
     pass
 
 
@@ -76,7 +77,7 @@ class CommandMiddleware(AgentMiddleware[CommandState]):
         self.default_timeout = default_timeout
         self.hooks = hooks or []
         self.env = env
-        self.enabled_tools = enabled_tools or {'run_command': True, 'command_status': True}
+        self.enabled_tools = enabled_tools or {"run_command": True, "command_status": True}
         self.verbose = verbose
 
         # Use provided executor or auto-detect
@@ -87,11 +88,11 @@ class CommandMiddleware(AgentMiddleware[CommandState]):
 
         if self.verbose:
             executor_name = type(self._executor).__name__
-            if hasattr(self._executor, 'shell_name'):
+            if hasattr(self._executor, "shell_name"):
                 shell_label = self._executor.shell_name
             else:
                 shell_info = get_shell_info()
-                shell_label = shell_info['shell_name']
+                shell_label = shell_info["shell_name"]
             print(f"[Command] Initialized: {shell_label} (executor: {executor_name})")
             print(f"[Command] Workspace: {self.workspace_root}")
             print(f"[Command] Loaded {len(self.hooks)} hooks")
@@ -199,8 +200,8 @@ class CommandMiddleware(AgentMiddleware[CommandState]):
                     result=result,
                 )
                 output = (
-                    output[:DEFAULT_MAX_OUTPUT_CHARS] + 
-                    f"\n\n... (truncated, showing {DEFAULT_MAX_OUTPUT_CHARS} of {len(output)} chars)\n"
+                    output[:DEFAULT_MAX_OUTPUT_CHARS]
+                    + f"\n\n... (truncated, showing {DEFAULT_MAX_OUTPUT_CHARS} of {len(output)} chars)\n"
                     f"CommandId: {command_id}\n"
                     f"Use command_status with this CommandId to read the full output."
                 )
@@ -234,11 +235,11 @@ class CommandMiddleware(AgentMiddleware[CommandState]):
         """Truncate output to last max_chars, showing truncation info."""
         if len(output) <= max_chars:
             return output
-        
+
         truncated_part = output[:-max_chars]
-        truncated_lines = truncated_part.count('\n')
+        truncated_lines = truncated_part.count("\n")
         kept_part = output[-max_chars:]
-        
+
         return f"<truncated {truncated_lines} lines>\n{kept_part}"
 
     async def _get_command_status(

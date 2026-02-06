@@ -51,7 +51,7 @@ class NonInteractiveRunner:
         }
 
         if self.debug and not self.json_output:
-            print(f"\n{'='*50}")
+            print(f"\n{'=' * 50}")
             print(f"=== Turn {self.turn_count} ===")
             print(f"[USER] {message}")
 
@@ -59,14 +59,16 @@ class NonInteractiveRunner:
         t0 = time.perf_counter()
 
         # @@@ Set sandbox thread context and ensure session before invoke
-        if hasattr(self.agent, '_sandbox') and self.agent._sandbox.name != "local":
+        if hasattr(self.agent, "_sandbox") and self.agent._sandbox.name != "local":
             from sandbox.thread_context import set_current_thread_id
+
             set_current_thread_id(self.thread_id)
             self.agent._sandbox.ensure_session(self.thread_id)
 
         # 状态转移：→ ACTIVE
-        if hasattr(self.agent, 'runtime'):
+        if hasattr(self.agent, "runtime"):
             from middleware.monitor import AgentState
+
             self.agent.runtime.transition(AgentState.ACTIVE)
 
         try:
@@ -87,8 +89,9 @@ class NonInteractiveRunner:
             result["error"] = str(e)
         finally:
             # 状态转移：→ IDLE
-            if hasattr(self.agent, 'runtime'):
+            if hasattr(self.agent, "runtime"):
                 from middleware.monitor import AgentState
+
                 if self.agent.runtime.current_state == AgentState.ACTIVE:
                     self.agent.runtime.transition(AgentState.IDLE)
 
@@ -107,23 +110,46 @@ class NonInteractiveRunner:
         if not self.debug or self.json_output:
             return
 
-        if hasattr(self.agent, 'runtime'):
+        if hasattr(self.agent, "runtime"):
             status = self.agent.runtime.get_status_dict()
 
             # 状态
-            state_info = status.get('state', {})
+            state_info = status.get("state", {})
             print(f"\n[STATE] {state_info.get('state', 'unknown')}")
 
             # Token 统计
-            tokens = status.get('tokens', {})
-            if tokens.get('total_tokens', 0) > 0:
-                print(f"[TOKENS] total={tokens['total_tokens']} (prompt={tokens['prompt_tokens']}, completion={tokens['completion_tokens']})")
+            tokens = status.get("tokens", {})
+            if tokens.get("total_tokens", 0) > 0:
+                print(
+                    f"[TOKENS] total={tokens['total_tokens']} "
+                    f"(in={tokens.get('input_tokens', 0)}, "
+                    f"out={tokens.get('output_tokens', 0)}, "
+                    f"cache_r={tokens.get('cache_read_tokens', 0)}, "
+                    f"cache_w={tokens.get('cache_write_tokens', 0)}, "
+                    f"reasoning={tokens.get('reasoning_tokens', 0)})"
+                )
+                cost = tokens.get("cost", 0)
+                if cost > 0:
+                    print(f"[COST] ${cost:.4f}")
                 print(f"[LLM_CALLS] {tokens['call_count']}")
 
             # 上下文统计
-            context = status.get('context', {})
-            if context.get('estimated_tokens', 0) > 0:
+            context = status.get("context", {})
+            if context.get("estimated_tokens", 0) > 0:
                 print(f"[CONTEXT] ~{context['estimated_tokens']} tokens ({context['usage_percent']}% of limit)")
+
+            # Memory 状态
+            if hasattr(self.agent, "_memory_middleware"):
+                mm = self.agent._memory_middleware
+                parts = []
+                if mm._cached_summary:
+                    parts.append(f"summary_cached=yes (up_to_idx={mm._compact_up_to_index})")
+                else:
+                    parts.append("summary_cached=no")
+                flags = status.get("state", {}).get("flags", {})
+                if flags.get("compacting"):
+                    parts.append("COMPACTING")
+                print(f"[MEMORY] {', '.join(parts)}")
 
     def _process_chunk(self, chunk: dict, result: dict) -> None:
         """Process streaming chunk, extract tool calls and response"""
@@ -205,11 +231,7 @@ class NonInteractiveRunner:
 
             mgr = get_queue_manager()
             sizes = mgr.queue_sizes()
-            print(
-                f"\n[QUEUE] steer={sizes['steer']}, "
-                f"followup={sizes['followup']}, "
-                f"collect={sizes['collect']}"
-            )
+            print(f"\n[QUEUE] steer={sizes['steer']}, followup={sizes['followup']}, collect={sizes['collect']}")
         except Exception:
             pass
 
@@ -285,7 +307,7 @@ class NonInteractiveRunner:
         if not self.debug or self.json_output:
             return
 
-        print(f"\n{'='*50}")
+        print(f"\n{'=' * 50}")
         print("[SUMMARY]")
         print(f"  Thread: {self.thread_id}")
         print(f"  Total turns: {self.turn_count}")
@@ -345,9 +367,10 @@ def cmd_run(args, unknown_args: list[str]) -> None:
     thread_id = args.thread or f"run-{uuid.uuid4().hex[:8]}"
 
     # @@@ Auto-detect sandbox when resuming a thread
-    sandbox_arg = getattr(args, 'sandbox', None)
+    sandbox_arg = getattr(args, "sandbox", None)
     if not sandbox_arg and args.thread:
         from sandbox.manager import lookup_sandbox_for_thread
+
         detected = lookup_sandbox_for_thread(thread_id)
         if detected:
             config_path = Path.home() / ".leon" / "sandboxes" / f"{detected}.json"
@@ -388,13 +411,13 @@ def cmd_run(args, unknown_args: list[str]) -> None:
 
     # Create agent
     if debug_mode:
-        print(f"[DEBUG] Initializing agent...", flush=True)
+        print("[DEBUG] Initializing agent...", flush=True)
         print(f"[DEBUG] Workspace: {workspace}", flush=True)
         print(f"[DEBUG] Thread: {thread_id}", flush=True)
 
     from agent import create_leon_agent
 
-    model_name = os.getenv("MODEL_NAME") or "claude-sonnet-4-5-20250929"
+    model_name = getattr(args, "model", None) or os.getenv("MODEL_NAME") or "claude-sonnet-4-5-20250929"
 
     try:
         agent = create_leon_agent(
@@ -409,7 +432,7 @@ def cmd_run(args, unknown_args: list[str]) -> None:
         return
 
     if debug_mode:
-        print(f"[DEBUG] Agent ready", flush=True)
+        print("[DEBUG] Agent ready", flush=True)
 
     # Create runner
     runner = NonInteractiveRunner(
