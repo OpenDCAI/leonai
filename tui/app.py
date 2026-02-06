@@ -160,10 +160,6 @@ class LeonApp(App):
         chat_input = self.query_one("#chat-input", ChatInput)
         chat_input.focus_input()
 
-        # Ensure scroll container can receive focus for scrolling
-        chat_container = self.query_one("#chat-container", VerticalScroll)
-        chat_container.can_focus = True
-
         # 加载历史 messages
         self.run_worker(self._load_history(), exclusive=False)
 
