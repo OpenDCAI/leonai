@@ -28,6 +28,7 @@ try:
 except ImportError:
     set_sandbox_thread_id = None
 from middleware.queue import QueueMode, get_queue_manager
+from middleware.monitor import AgentState
 
 
 class WelcomeBanner(Static):
@@ -126,12 +127,28 @@ class LeonApp(App):
         self._message_count = 0
         self._last_assistant_message = ""
         # Agent interruption support
-        self._agent_running = False
         self._agent_worker = None
         self._quit_pending = False
         # Queue mode from agent config
         self._queue_mode = self._parse_queue_mode(getattr(agent, 'queue_mode', 'steer'))
         get_queue_manager().set_mode(self._queue_mode)
+
+        # 注册状态变化回调：IDLE 时自动处理 followup
+        if hasattr(agent, 'runtime'):
+            agent.runtime.state.on_state_changed(self._on_state_changed)
+
+    @property
+    def _is_agent_active(self) -> bool:
+        """Agent 是否正在执行（基于 AgentState 状态机）"""
+        if hasattr(self.agent, 'runtime'):
+            return self.agent.runtime.is_running()
+        return False
+
+    def _on_state_changed(self, old_state: AgentState, new_state: AgentState) -> None:
+        """状态变化回调：状态驱动的队列处理"""
+        if new_state == AgentState.IDLE:
+            # IDLE 时自动处理 followup 队列
+            self.call_after_refresh(self._state_driven_followup)
 
     def _parse_queue_mode(self, mode_str: str) -> QueueMode:
         """Parse queue mode string to enum"""
@@ -240,8 +257,8 @@ class LeonApp(App):
                 self.notify(f"⚠ 未知模式: {mode_name}。可用: steer, followup, collect, steer-backlog, interrupt", severity="warning")
             return
 
-        # Queue mode routing: if agent is running, queue the message
-        if self._agent_running:
+        # Queue mode routing: if agent is active, queue the message
+        if self._is_agent_active:
             queue_manager = get_queue_manager()
             if self._queue_mode == QueueMode.INTERRUPT:
                 # Interrupt mode: cancel current run
@@ -261,8 +278,18 @@ class LeonApp(App):
                 self.notify(f"✓ 消息已{label}")
             return
 
-        # Run async handler with worker tracking for interruption
-        self._agent_running = True
+        # 从 SUSPENDED/ERROR 恢复
+        current = self.agent.runtime.current_state
+        if current == AgentState.SUSPENDED:
+            self.agent.runtime.transition(AgentState.ACTIVE)
+        elif current == AgentState.ERROR:
+            self.agent.runtime.transition(AgentState.RECOVERING)
+            self.agent.runtime.transition(AgentState.READY)
+            self.agent.runtime.set_flag("hasError", False)
+            self.agent.runtime.transition(AgentState.ACTIVE)
+        else:
+            # READY/IDLE → ACTIVE
+            self.agent.runtime.transition(AgentState.ACTIVE)
         self._quit_pending = False
         self._agent_worker = self.run_worker(self._handle_submission(content), exclusive=False)
     
@@ -425,12 +452,17 @@ class LeonApp(App):
             # Agent was interrupted by user
             interrupt_msg = SystemMessage("⚠ 已中断")
             await messages_container.mount(interrupt_msg)
+            # 中断 → SUSPENDED
+            self.agent.runtime.transition(AgentState.SUSPENDED)
         except Exception as e:
             error_msg = AssistantMessage(f"❌ 错误: {str(e)}")
             await messages_container.mount(error_msg)
+            # 错误 → ERROR
+            self.agent.runtime.state.mark_error(e)
         finally:
-            # Reset agent state
-            self._agent_running = False
+            # ACTIVE → IDLE（仅在正常完成时，中断/错误已在 except 中处理）
+            if self.agent.runtime.current_state == AgentState.ACTIVE:
+                self.agent.runtime.transition(AgentState.IDLE)
             self._agent_worker = None
 
             if thinking_spinner and thinking_spinner.is_mounted:
@@ -447,23 +479,21 @@ class LeonApp(App):
             chat_input = self.query_one("#chat-input", ChatInput)
             self.call_after_refresh(chat_input.focus_input)
 
-            # Process followup queue
-            await self._process_followup_queue()
+            # followup 由 _on_state_changed 回调在 IDLE 时自动触发
 
-    async def _process_followup_queue(self) -> None:
-        """Process any pending followup messages after agent run completes"""
+    def _state_driven_followup(self) -> None:
+        """状态驱动的 followup 处理（由 IDLE 状态回调触发）"""
         queue_manager = get_queue_manager()
 
-        # First, flush any collected messages
+        # flush collected messages
         collected = queue_manager.flush_collect()
         if collected:
             queue_manager.enqueue(collected, QueueMode.FOLLOWUP)
 
-        # Process followup queue
+        # process followup queue
         followup_content = queue_manager.get_followup()
         if followup_content:
-            # Start a new run with the followup message
-            self._agent_running = True
+            self.agent.runtime.transition(AgentState.ACTIVE)
             self._quit_pending = False
             self._agent_worker = self.run_worker(
                 self._handle_submission(followup_content),
@@ -607,26 +637,31 @@ class LeonApp(App):
         self.call_after_refresh(lambda: chat_container.scroll_end(animate=False))
     
     def _update_status_bar(self) -> None:
-        """Update status bar with message count"""
+        """Update status bar with message count and runtime status"""
         status_bar = self.query_one("#status-bar", StatusBar)
         status_bar.update_stats(self._message_count)
+
+        # 更新运行时状态
+        if hasattr(self.agent, 'runtime'):
+            runtime_status = self.agent.runtime.get_status_line()
+            status_bar.update_runtime_status(runtime_status)
     
     def action_interrupt_agent(self) -> None:
         """Handle ESC - interrupt running agent"""
-        if self._agent_running and self._agent_worker:
+        if self._is_agent_active and self._agent_worker:
             self._agent_worker.cancel()
             self.notify("⚠ 正在中断...", timeout=2)
 
     def action_quit_or_interrupt(self) -> None:
         """Handle Ctrl+C - interrupt agent or quit on double press.
-        
+
         Priority:
         1. If agent is running, interrupt it
         2. If double press (quit_pending), quit
         3. Otherwise show quit hint
         """
         # If agent is running, interrupt it
-        if self._agent_running and self._agent_worker:
+        if self._is_agent_active and self._agent_worker:
             self._agent_worker.cancel()
             self._quit_pending = False
             self.notify("⚠ 正在中断...", timeout=2)

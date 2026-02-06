@@ -58,6 +58,11 @@ class NonInteractiveRunner:
         config = {"configurable": {"thread_id": self.thread_id}}
         t0 = time.perf_counter()
 
+        # 状态转移：→ ACTIVE
+        if hasattr(self.agent, 'runtime'):
+            from middleware.monitor import AgentState
+            self.agent.runtime.transition(AgentState.ACTIVE)
+
         try:
             async for chunk in self.agent.agent.astream(
                 {"messages": [{"role": "user", "content": message}]},
@@ -74,15 +79,45 @@ class NonInteractiveRunner:
         except Exception as e:
             self._debug_print(f"\n[ERROR] {e}")
             result["error"] = str(e)
+        finally:
+            # 状态转移：→ IDLE
+            if hasattr(self.agent, 'runtime'):
+                from middleware.monitor import AgentState
+                if self.agent.runtime.current_state == AgentState.ACTIVE:
+                    self.agent.runtime.transition(AgentState.IDLE)
 
         elapsed = time.perf_counter() - t0
         result["duration"] = round(elapsed, 2)
 
         if self.debug and not self.json_output:
             self._print_queue_status()
+            self._print_runtime_state()
             print(f"\n[TURN] Duration: {elapsed:.2f}s")
 
         return result
+
+    def _print_runtime_state(self) -> None:
+        """Print runtime state (if available)"""
+        if not self.debug or self.json_output:
+            return
+
+        if hasattr(self.agent, 'runtime'):
+            status = self.agent.runtime.get_status_dict()
+
+            # 状态
+            state_info = status.get('state', {})
+            print(f"\n[STATE] {state_info.get('state', 'unknown')}")
+
+            # Token 统计
+            tokens = status.get('tokens', {})
+            if tokens.get('total_tokens', 0) > 0:
+                print(f"[TOKENS] total={tokens['total_tokens']} (prompt={tokens['prompt_tokens']}, completion={tokens['completion_tokens']})")
+                print(f"[LLM_CALLS] {tokens['call_count']}")
+
+            # 上下文统计
+            context = status.get('context', {})
+            if context.get('estimated_tokens', 0) > 0:
+                print(f"[CONTEXT] ~{context['estimated_tokens']} tokens ({context['usage_percent']}% of limit)")
 
     def _process_chunk(self, chunk: dict, result: dict) -> None:
         """Process streaming chunk, extract tool calls and response"""
