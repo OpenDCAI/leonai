@@ -444,9 +444,32 @@ def cmd_sandbox(args):
         except Exception as e:
             console.print(f"[red]Failed to get metrics: {e}[/red]")
 
+    elif subcommand == "destroy-all-sessions":
+        sessions = _load_all_sessions(managers)
+        if not sessions:
+            console.print("[yellow]No active sessions.[/yellow]")
+            return
+        console.print(f"[bold red]This will destroy {len(sessions)} session(s):[/bold red]")
+        for s in sessions:
+            console.print(f"  {s['id']}  ({s['provider']}, {s['status']})")
+        confirm = input("\nType 'yes' to confirm: ")
+        if confirm != "yes":
+            console.print("[yellow]Cancelled.[/yellow]")
+            return
+        from concurrent.futures import ThreadPoolExecutor
+        def _destroy(s):
+            mgr = managers.get(s["provider"])
+            if mgr:
+                mgr.destroy_session(s["thread"])
+            return s["id"]
+        with ThreadPoolExecutor(max_workers=min(len(sessions), 8)) as pool:
+            for sid in pool.map(_destroy, sessions):
+                console.print(f"  [red]Destroyed:[/red] {sid}")
+        console.print(f"[green]Done. {len(sessions)} session(s) destroyed.[/green]")
+
     else:
         console.print(f"[red]Unknown subcommand: {subcommand}[/red]")
-        console.print("Available: ls, new, rm, pause, resume, metrics")
+        console.print("Available: ls, new, rm, pause, resume, metrics, destroy-all-sessions")
 
 
 def main():
