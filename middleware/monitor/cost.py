@@ -1,8 +1,8 @@
 """模型成本计算
 
 定价来源优先级：
-1. OpenRouter API（启动时异步拉取，缓存到 ~/.leon/pricing_cache.json）
-2. 本地 fallback 表（离线可用）
+1. OpenRouter API（启动时拉取，缓存到 ~/.leon/pricing_cache.json，24h TTL）
+2. 本地 bundled 文件（pricing_bundled.json，随代码发布，离线兜底）
 """
 
 from __future__ import annotations
@@ -13,66 +13,12 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
-# ===== 本地 fallback 表（离线 / API 不可用时使用）=====
-# 单价：USD per 1M tokens
-_FALLBACK_COSTS: dict[str, dict[str, Decimal]] = {
-    # Anthropic
-    "claude-opus-4-6": {
-        "input": Decimal("5.00"),
-        "output": Decimal("25.00"),
-        "cache_read": Decimal("0.50"),
-        "cache_write": Decimal("6.25"),
-    },
-    "claude-sonnet-4-5-20250929": {
-        "input": Decimal("3.00"),
-        "output": Decimal("15.00"),
-        "cache_read": Decimal("0.30"),
-        "cache_write": Decimal("3.75"),
-    },
-    "claude-haiku-4-5-20251001": {
-        "input": Decimal("1.00"),
-        "output": Decimal("5.00"),
-        "cache_read": Decimal("0.10"),
-        "cache_write": Decimal("1.25"),
-    },
-    # OpenAI
-    "gpt-4o": {
-        "input": Decimal("2.50"),
-        "output": Decimal("10.00"),
-        "cache_read": Decimal("1.25"),
-        "cache_write": Decimal("2.50"),
-    },
-    "gpt-4o-mini": {
-        "input": Decimal("0.15"),
-        "output": Decimal("0.60"),
-        "cache_read": Decimal("0.075"),
-        "cache_write": Decimal("0.15"),
-    },
-    "gpt-4.1": {
-        "input": Decimal("2.00"),
-        "output": Decimal("8.00"),
-        "cache_read": Decimal("0.50"),
-        "cache_write": Decimal("2.00"),
-    },
-    "gpt-4.1-mini": {
-        "input": Decimal("0.40"),
-        "output": Decimal("1.60"),
-        "cache_read": Decimal("0.10"),
-        "cache_write": Decimal("0.40"),
-    },
-    # DeepSeek
-    "deepseek-chat": {
-        "input": Decimal("0.28"),
-        "output": Decimal("0.42"),
-        "cache_read": Decimal("0.028"),
-        "cache_write": Decimal("0.28"),
-    },
-}
+# 定价数据（运行时填充）
+_pricing_data: dict[str, dict[str, Decimal]] = {}
+_initialized = False
 
-# OpenRouter API 拉取的定价（运行时填充）
-_openrouter_costs: dict[str, dict[str, Decimal]] = {}
-
-# 缓存配置
+# 路径
+_BUNDLED_PATH = Path(__file__).parent / "pricing_bundled.json"
 _CACHE_PATH = Path.home() / ".leon" / "pricing_cache.json"
 _CACHE_TTL = 86400  # 24 小时
 
@@ -198,20 +144,23 @@ def _serialize_costs(costs: dict[str, dict[str, Decimal]]) -> dict[str, dict[str
 
 
 def fetch_openrouter_pricing() -> dict[str, dict[str, Decimal]]:
-    """从 OpenRouter API 拉取定价，带磁盘缓存
+    """加载定价数据：API 缓存 → OpenRouter API → bundled 文件
 
     同步调用（启动时一次性），超时 5 秒。
-    返回 {model_name: {input, output, cache_read, cache_write}} per 1M tokens。
     """
-    global _openrouter_costs
+    global _pricing_data, _initialized
 
-    # 1. 尝试磁盘缓存
+    if _initialized:
+        return _pricing_data
+
+    # 1. 尝试磁盘缓存（24h TTL）
     cached = _load_cache()
     if cached:
-        _openrouter_costs = _deserialize_costs(cached)
-        return _openrouter_costs
+        _pricing_data = _deserialize_costs(cached)
+        _initialized = True
+        return _pricing_data
 
-    # 2. 拉取 API
+    # 2. 拉取 OpenRouter API
     try:
         import urllib.request
 
@@ -221,31 +170,45 @@ def fetch_openrouter_pricing() -> dict[str, dict[str, Decimal]]:
         )
         with urllib.request.urlopen(req, timeout=5) as resp:
             data = json.loads(resp.read())
+
+        models = data.get("data", [])
+        result: dict[str, dict[str, Decimal]] = {}
+        for model in models:
+            parsed = _parse_openrouter_model(model)
+            if parsed:
+                name, costs = parsed
+                if name not in result:
+                    result[name] = costs
+
+        if result:
+            _pricing_data = result
+            _save_cache(_serialize_costs(result))
+            _initialized = True
+            return _pricing_data
+    except Exception:
+        pass
+
+    # 3. 加载 bundled 文件（最终兜底）
+    _pricing_data = _load_bundled()
+    _initialized = True
+    return _pricing_data
+
+
+def _load_bundled() -> dict[str, dict[str, Decimal]]:
+    """从随代码发布的 pricing_bundled.json 加载"""
+    if not _BUNDLED_PATH.exists():
+        return {}
+    try:
+        data = json.loads(_BUNDLED_PATH.read_text())
+        return _deserialize_costs(data.get("models", data))
     except Exception:
         return {}
-
-    models = data.get("data", [])
-    result: dict[str, dict[str, Decimal]] = {}
-    for model in models:
-        parsed = _parse_openrouter_model(model)
-        if parsed:
-            name, costs = parsed
-            # 同名模型保留第一个（OpenRouter 按热度排序）
-            if name not in result:
-                result[name] = costs
-
-    _openrouter_costs = result
-
-    # 3. 写入缓存
-    _save_cache(_serialize_costs(result))
-
-    return result
 
 
 class CostCalculator:
     """基于模型单价表计算 token 成本
 
-    查找优先级：OpenRouter 缓存 → 本地 fallback → 前缀匹配 → 空（不计费）
+    查找优先级：精确匹配 → 前缀匹配 → 空（不计费）
     """
 
     def __init__(self, model_name: str):
@@ -254,25 +217,39 @@ class CostCalculator:
 
     def _resolve_costs(self, model_name: str) -> dict[str, Decimal]:
         """解析模型单价"""
-        # 1. OpenRouter 精确匹配
-        if model_name in _openrouter_costs:
-            return _openrouter_costs[model_name]
+        # 1. 精确匹配
+        if model_name in _pricing_data:
+            return _pricing_data[model_name]
 
-        # 2. 本地 fallback 精确匹配
-        if model_name in _FALLBACK_COSTS:
-            return _FALLBACK_COSTS[model_name]
+        # 2. 规范化匹配：Anthropic API 用 claude-sonnet-4-5-20250929，
+        # OpenRouter 用 claude-sonnet-4.5，尝试去掉日期后缀 + 横杠转点号
+        normalized = self._normalize_model_name(model_name)
+        if normalized != model_name and normalized in _pricing_data:
+            return _pricing_data[normalized]
 
-        # 3. OpenRouter 前缀匹配
-        for key in sorted(_openrouter_costs.keys(), key=len, reverse=True):
+        # 3. 前缀匹配（如 gpt-4o-2024-08-06 → gpt-4o）
+        for key in sorted(_pricing_data.keys(), key=len, reverse=True):
             if model_name.startswith(key):
-                return _openrouter_costs[key]
-
-        # 4. 本地 fallback 前缀匹配
-        for key in sorted(_FALLBACK_COSTS.keys(), key=len, reverse=True):
-            if model_name.startswith(key):
-                return _FALLBACK_COSTS[key]
+                return _pricing_data[key]
 
         return {}
+
+    @staticmethod
+    def _normalize_model_name(name: str) -> str:
+        """规范化模型名：去日期后缀，版本号横杠转点号
+
+        claude-sonnet-4-5-20250929 → claude-sonnet-4.5
+        claude-haiku-4-5-20251001 → claude-haiku-4.5
+        claude-opus-4-1-20250805 → claude-opus-4.1
+        """
+        import re
+
+        # 去掉末尾的日期后缀 -YYYYMMDD
+        name = re.sub(r"-\d{8}$", "", name)
+        # 版本号横杠转点号：claude-sonnet-4-5 → claude-sonnet-4.5
+        # 匹配 -数字-数字 结尾（版本号模式）
+        name = re.sub(r"-(\d+)-(\d+)$", r"-\1.\2", name)
+        return name
 
     def calculate(self, tokens: dict) -> dict:
         """返回各项成本（USD）
