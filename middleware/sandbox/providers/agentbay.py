@@ -9,7 +9,6 @@ from typing import Any
 from middleware.sandbox.provider import (
     ExecuteResult,
     Metrics,
-    ProviderCapabilities,
     SandboxProvider,
     SessionInfo,
 )
@@ -49,8 +48,6 @@ class AgentBayProvider(SandboxProvider):
         self.client = AgentBay(api_key=api_key)
         self.default_context_path = default_context_path
         self._sessions: dict[str, Any] = {}  # session_id -> Session object cache
-        # @@@ Capability detection - set after first pause/resume attempt
-        self._pause_resume_supported: bool | None = None  # None = unknown
 
     def create_session(self, context_id: str | None = None) -> SessionInfo:
         from agentbay import ContextSync, CreateSessionParams
@@ -84,21 +81,12 @@ class AgentBayProvider(SandboxProvider):
     def pause_session(self, session_id: str) -> bool:
         session = self._get_session(session_id)
         result = self.client.beta_pause(session)
-        # @@@ Detect account tier limitation
-        if not result.success and getattr(result, 'code', '') == 'BenefitLevel.NotSupport':
-            self._pause_resume_supported = False
-        elif result.success:
-            self._pause_resume_supported = True
         return result.success
 
     def resume_session(self, session_id: str) -> bool:
         session = self._get_session(session_id)
         result = self.client.beta_resume(session)
-        # @@@ Detect account tier limitation
-        if not result.success and getattr(result, 'code', '') == 'BenefitLevel.NotSupport':
-            self._pause_resume_supported = False
-        elif result.success:
-            self._pause_resume_supported = True
+        if result.success:
             # Re-fetch session object after resume
             get_result = self.client.get(session_id)
             if get_result.success:
@@ -228,21 +216,6 @@ class AgentBayProvider(SandboxProvider):
         """Get AgentBay web UI URL for the session."""
         session = self._get_session(session_id)
         return getattr(session, 'resource_url', None)
-
-    def get_capabilities(self) -> ProviderCapabilities:
-        """Get AgentBay provider capabilities."""
-        pause_ok = self._pause_resume_supported
-        reason = None
-        if pause_ok is False:
-            reason = "Account tier does not support pause/resume"
-        return ProviderCapabilities(
-            pause_resume=pause_ok is not False,  # True or None (unknown)
-            pause_resume_reason=reason,
-            metrics=True,
-            screenshot=True,
-            web_url=True,
-            file_transfer=True,
-        )
 
     def _get_session(self, session_id: str):
         """Get session object, fetching from API if not cached."""
