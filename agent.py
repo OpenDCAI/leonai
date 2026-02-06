@@ -48,6 +48,7 @@ from middleware.shell.hooks.file_access_logger import FileAccessLoggerHook
 from middleware.shell.hooks.file_permission import FilePermissionHook
 from middleware.shell.hooks.path_security import PathSecurityHook
 from middleware.web import WebMiddleware
+from middleware.monitor import MonitorMiddleware, AgentState
 
 # Import file operation recorder for time travel
 from tui.operations import get_recorder
@@ -247,10 +248,16 @@ class LeonAgent:
             checkpointer=self.checkpointer,
         )
 
+        # 从 MonitorMiddleware 获取 runtime
+        self.runtime = self._monitor_middleware.runtime
+
         if self.verbose:
             print("[LeonAgent] Initialized successfully")
             print(f"[LeonAgent] Workspace: {self.workspace_root}")
             print(f"[LeonAgent] Audit log: {self.enable_audit_log}")
+
+        # 初始化完成，转移到 READY 状态
+        self._monitor_middleware.mark_ready()
 
     def close(self):
         """Clean up resources"""
@@ -271,8 +278,10 @@ class LeonAgent:
 
         # Close SQLite connection
         import asyncio
-        import os
-        import signal
+
+        # 状态转移：→ TERMINATED
+        if hasattr(self, '_monitor_middleware'):
+            self._monitor_middleware.mark_terminated()
 
         # Close MCP client (kills subprocess)
         if hasattr(self, '_mcp_client') and self._mcp_client:
@@ -524,6 +533,13 @@ tool:
                 ))
                 print(f"[LeonAgent] Sandbox enabled: {self.profile.sandbox.provider}")
 
+        # 10. Monitor (状态监控，放在最后以捕获所有请求/响应)
+        self._monitor_middleware = MonitorMiddleware(
+            context_limit=100000,
+            verbose=self.verbose,
+        )
+        middleware.append(self._monitor_middleware)
+
         return middleware
 
     async def _init_mcp_tools(self) -> list:
@@ -715,11 +731,18 @@ When NOT to use Todo:
         Returns:
             Agent 响应（包含消息和状态）
         """
-        result = self.agent.invoke(
-            {"messages": [{"role": "user", "content": message}]},
-            config={"configurable": {"thread_id": thread_id}},
-        )
-        return result
+        # 状态由 MonitorMiddleware 自动管理
+        try:
+            result = self.agent.invoke(
+                {"messages": [{"role": "user", "content": message}]},
+                config={"configurable": {"thread_id": thread_id}},
+            )
+            return result
+
+        except Exception as e:
+            # 标记错误状态
+            self._monitor_middleware.mark_error(e)
+            raise
 
     def get_response(self, message: str, thread_id: str = "default", **kwargs) -> str:
         """
