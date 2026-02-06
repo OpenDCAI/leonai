@@ -43,10 +43,10 @@ from middleware.task import TaskMiddleware
 from middleware.todo import TodoMiddleware
 
 # 导入 hooks
-from middleware.shell.hooks.dangerous_commands import DangerousCommandsHook
-from middleware.shell.hooks.file_access_logger import FileAccessLoggerHook
-from middleware.shell.hooks.file_permission import FilePermissionHook
-from middleware.shell.hooks.path_security import PathSecurityHook
+from middleware.command.hooks.dangerous_commands import DangerousCommandsHook
+from middleware.command.hooks.file_access_logger import FileAccessLoggerHook
+from middleware.command.hooks.file_permission import FilePermissionHook
+from middleware.command.hooks.path_security import PathSecurityHook
 from middleware.web import WebMiddleware
 from middleware.monitor import MonitorMiddleware, AgentState
 
@@ -85,9 +85,7 @@ class LeonAgent:
         exa_api_key: str | None = None,
         firecrawl_api_key: str | None = None,
         jina_api_key: str | None = None,
-        sandbox_context_path: str | None = None,
-        sandbox_provider: str | None = None,
-        sandbox_docker_image: str | None = None,
+        sandbox: Any = None,
         verbose: bool = False,
     ):
         """
@@ -107,9 +105,7 @@ class LeonAgent:
             exa_api_key: Exa API key（Web 搜索）
             firecrawl_api_key: Firecrawl API key（Web 搜索）
             jina_api_key: Jina API key（URL 内容获取）
-            sandbox_context_path: Sandbox context mount path（覆盖 profile）
-            sandbox_provider: Sandbox provider（覆盖 profile）
-            sandbox_docker_image: Docker image（覆盖 profile）
+            sandbox: Sandbox instance, name string, or None for local
             verbose: 是否输出详细日志（默认 True）
         """
         self.verbose = verbose
@@ -147,12 +143,6 @@ class LeonAgent:
             profile.agent.enable_audit_log = enable_audit_log
         if enable_web_tools is not None:
             profile.tools.web.enabled = enable_web_tools
-        if sandbox_context_path is not None:
-            profile.sandbox.agentbay.context_path = sandbox_context_path
-        if sandbox_provider is not None:
-            profile.sandbox.provider = sandbox_provider
-        if sandbox_docker_image is not None:
-            profile.sandbox.docker.image = sandbox_docker_image
 
         self.profile = profile
         self.model_name = profile.agent.model
@@ -184,6 +174,22 @@ class LeonAgent:
         self.queue_mode = profile.agent.queue_mode
         self._session_pool: dict[str, Any] = {}
         self.db_path = Path.home() / ".leon" / "leon.db"
+
+        # Initialize sandbox (infrastructure layer — before middleware stack)
+        from sandbox import Sandbox as SandboxBase, SandboxConfig, create_sandbox, resolve_sandbox_name
+
+        if isinstance(sandbox, SandboxBase):
+            self._sandbox = sandbox
+        elif isinstance(sandbox, str) or sandbox is None:
+            sandbox_name = resolve_sandbox_name(sandbox)
+            sandbox_config = SandboxConfig.load(sandbox_name)
+            self._sandbox = create_sandbox(
+                sandbox_config,
+                workspace_root=str(self.workspace_root),
+                db_path=self.db_path,
+            )
+        else:
+            raise TypeError(f"sandbox must be Sandbox, str, or None, got {type(sandbox)}")
 
         # 初始化模型
         base_url = os.getenv("OPENAI_BASE_URL")
@@ -261,18 +267,10 @@ class LeonAgent:
 
     def close(self):
         """Clean up resources"""
-        # Pause sandbox sessions on exit
-        if hasattr(self, '_sandbox_manager') and self._sandbox_manager:
+        # Close sandbox (pause/destroy sessions)
+        if hasattr(self, '_sandbox') and self._sandbox:
             try:
-                on_exit = self.profile.sandbox.on_exit
-                if on_exit == "pause":
-                    count = self._sandbox_manager.pause_all_sessions()
-                    if count > 0:
-                        print(f"[LeonAgent] Paused {count} sandbox session(s)")
-                elif on_exit == "destroy":
-                    for session in self._sandbox_manager.list_sessions():
-                        self._sandbox_manager.destroy_session(session["thread_id"])
-                    print("[LeonAgent] Destroyed all sandbox sessions")
+                self._sandbox.close()
             except Exception as e:
                 print(f"[LeonAgent] Sandbox cleanup error: {e}")
 
@@ -363,15 +361,10 @@ tool:
     def _build_middleware_stack(self) -> list:
         """构建 middleware 栈"""
         middleware = []
-        sandbox_enabled = self.profile.sandbox.enabled
-        if sandbox_enabled and self.profile.sandbox.provider == "agentbay":
-            api_key = (
-                self.profile.sandbox.agentbay.api_key
-                or os.getenv("AGENTBAY_API_KEY")
-            )
-            if not api_key:
-                print("[LeonAgent] Warning: Sandbox enabled but AGENTBAY_API_KEY not set")
-                sandbox_enabled = False
+
+        # Get backends from sandbox (infrastructure layer)
+        fs_backend = self._sandbox.fs()    # None → LocalBackend (default)
+        cmd_executor = self._sandbox.shell()  # None → OS auto-detect (default)
 
         # 0. Steering (highest priority - checks for steer messages before model calls)
         middleware.append(SteeringMiddleware())
@@ -379,9 +372,8 @@ tool:
         # 1. Prompt Caching（架构级，固定启用）
         middleware.append(PromptCachingMiddleware(ttl="5m", min_messages_to_cache=0))
 
-        # 2. FileSystem
-        # @@@ Skip if sandbox is enabled (sandbox always replaces local tools)
-        if self.profile.tool.filesystem.enabled and not sandbox_enabled:
+        # 2. FileSystem (always loaded — sandbox swaps backend, not middleware)
+        if self.profile.tool.filesystem.enabled:
             file_hooks = []
             if self.enable_audit_log:
                 file_hooks.append(FileAccessLoggerHook(workspace_root=self.workspace_root, log_file="file_access.log"))
@@ -403,6 +395,7 @@ tool:
                 hooks=file_hooks,
                 enabled_tools=fs_tools,
                 operation_recorder=get_recorder(),
+                backend=fs_backend,
                 verbose=self.verbose,
             ))
 
@@ -439,9 +432,8 @@ tool:
                 verbose=self.verbose,
             ))
 
-        # 5. Command
-        # @@@ Skip if sandbox is enabled (sandbox always replaces local tools)
-        if self.profile.tool.command.enabled and not sandbox_enabled:
+        # 5. Command (always loaded — sandbox swaps executor, not middleware)
+        if self.profile.tool.command.enabled:
             command_hooks = []
             if self.block_dangerous_commands:
                 command_hooks.append(DangerousCommandsHook(
@@ -459,6 +451,7 @@ tool:
                 default_timeout=self.profile.tool.command.tools.run_command.default_timeout,
                 hooks=command_hooks,
                 enabled_tools=command_tools,
+                executor=cmd_executor,
                 verbose=self.verbose,
             ))
 
@@ -486,52 +479,7 @@ tool:
         )
         middleware.append(self._task_middleware)
 
-        # 9. Sandbox (isolated execution environment)
-        # @@@ Sandbox replaces local tools when enabled - must be last to override
-        self._sandbox_manager = None
-        if sandbox_enabled:
-            from middleware.sandbox import SandboxManager, SandboxMiddleware
-            from middleware.sandbox.providers.agentbay import AgentBayProvider
-
-            # Initialize provider based on config
-            if self.profile.sandbox.provider == "agentbay":
-                provider = AgentBayProvider(
-                    api_key=api_key,
-                    region_id=self.profile.sandbox.agentbay.region_id,
-                    default_context_path=self.profile.sandbox.agentbay.context_path,
-                    image_id=self.profile.sandbox.agentbay.image_id,
-                )
-            elif self.profile.sandbox.provider == "docker":
-                from middleware.sandbox.providers.docker import DockerProvider
-
-                provider = DockerProvider(
-                    image=self.profile.sandbox.docker.image,
-                    mount_path=self.profile.sandbox.docker.mount_path,
-                )
-            else:
-                provider = None
-
-            if provider:
-                self._sandbox_manager = SandboxManager(
-                    provider=provider,
-                    db_path=self.db_path,
-                    default_context_id=self.profile.sandbox.context_id,
-                )
-                sandbox_tools = {
-                    'read_file': self.profile.sandbox.tools.read_file,
-                    'write_file': self.profile.sandbox.tools.write_file,
-                    'edit_file': self.profile.sandbox.tools.edit_file,
-                    'list_dir': self.profile.sandbox.tools.list_dir,
-                    'run_command': self.profile.sandbox.tools.run_command,
-                }
-                middleware.append(SandboxMiddleware(
-                    manager=self._sandbox_manager,
-                    workspace_root=self.workspace_root,
-                    enabled_tools=sandbox_tools,
-                ))
-                print(f"[LeonAgent] Sandbox enabled: {self.profile.sandbox.provider}")
-
-        # 10. Monitor (状态监控，放在最后以捕获所有请求/响应)
+        # 9. Monitor (状态监控，放在最后以捕获所有请求/响应)
         self._monitor_middleware = MonitorMiddleware(
             context_limit=100000,
             verbose=self.verbose,
@@ -614,17 +562,14 @@ tool:
         shell_name = os.environ.get('SHELL', '/bin/bash').split('/')[-1]
 
         # @@@ Different prompt for sandbox vs local mode
-        if self.profile.sandbox.enabled:
-            provider = self.profile.sandbox.provider
-            if provider == "docker":
-                env_label = "Local Docker sandbox (Ubuntu)"
+        if self._sandbox.name != "local":
+            env_label = self._sandbox.env_label
+            working_dir = self._sandbox.working_dir
+            if self._sandbox.name == "docker":
                 mode_label = "Sandbox (isolated local container)"
-                working_dir = self.profile.sandbox.docker.mount_path
                 location_rule = "All file and command operations run in a local Docker container, NOT on the user's host filesystem."
             else:
-                env_label = "Remote Linux sandbox (Ubuntu)"
                 mode_label = "Sandbox (isolated cloud environment)"
-                working_dir = self.profile.sandbox.agentbay.context_path
                 location_rule = "All file and command operations run in a remote sandbox, NOT on the user's local machine."
 
             prompt = f"""You are a highly capable AI assistant with access to a sandbox environment.
@@ -767,9 +712,7 @@ def create_leon_agent(
     model_name: str = "claude-sonnet-4-5-20250929",
     api_key: str | None = None,
     workspace_root: str | Path | None = None,
-    sandbox_context_path: str | None = None,
-    sandbox_provider: str | None = None,
-    sandbox_docker_image: str | None = None,
+    sandbox: Any = None,
     **kwargs,
 ) -> LeonAgent:
     """
@@ -779,6 +722,7 @@ def create_leon_agent(
         model_name: Anthropic 模型名称
         api_key: API key
         workspace_root: 工作目录
+        sandbox: Sandbox instance, name string, or None for local
         **kwargs: 其他配置参数
 
     Returns:
@@ -788,10 +732,8 @@ def create_leon_agent(
         # 基本用法
         agent = create_leon_agent()
 
-        # 限制文件类型
-        agent = create_leon_agent(
-            allowed_file_extensions=["py", "txt", "md"]
-        )
+        # 使用 sandbox
+        agent = create_leon_agent(sandbox="agentbay")
 
         # 自定义工作目录
         agent = create_leon_agent(
@@ -802,9 +744,7 @@ def create_leon_agent(
         model_name=model_name,
         api_key=api_key,
         workspace_root=workspace_root,
-        sandbox_context_path=sandbox_context_path,
-        sandbox_provider=sandbox_provider,
-        sandbox_docker_image=sandbox_docker_image,
+        sandbox=sandbox,
         **kwargs,
     )
 

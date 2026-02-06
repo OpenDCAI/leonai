@@ -6,7 +6,7 @@ Implements SandboxProvider using Alibaba Cloud's AgentBay SDK.
 
 from typing import Any
 
-from middleware.sandbox.provider import (
+from sandbox.provider import (
     ExecuteResult,
     Metrics,
     SandboxProvider,
@@ -34,23 +34,12 @@ class AgentBayProvider(SandboxProvider):
         default_context_path: str = "/root",
         image_id: str | None = None,
     ):
-        """
-        Initialize AgentBay provider.
-
-        Args:
-            api_key: AgentBay API key
-            region_id: Region (currently unused - SDK uses default)
-            default_context_path: Default mount path for context sync
-            image_id: Optional AgentBay image ID
-        """
-        # @@@ Lazy import - only load SDK when provider is used
         from agentbay import AgentBay
 
-        # SDK reads region from env or uses default
         self.client = AgentBay(api_key=api_key)
         self.default_context_path = default_context_path
         self.image_id = image_id
-        self._sessions: dict[str, Any] = {}  # session_id -> Session object cache
+        self._sessions: dict[str, Any] = {}
 
     def create_session(self, context_id: str | None = None) -> SessionInfo:
         from agentbay import ContextSync, CreateSessionParams
@@ -92,7 +81,6 @@ class AgentBayProvider(SandboxProvider):
         session = self._get_session(session_id)
         result = self.client.beta_resume(session)
         if result.success:
-            # Re-fetch session object after resume
             get_result = self.client.get(session_id)
             if get_result.success:
                 self._sessions[session_id] = get_result.session
@@ -122,8 +110,6 @@ class AgentBayProvider(SandboxProvider):
         cwd: str | None = None,
     ) -> ExecuteResult:
         session = self._get_session(session_id)
-
-        # @@@ AgentBay caps timeout at 50000ms
         timeout_ms = min(timeout_ms, 50000)
 
         result = session.command.execute_command(
@@ -156,7 +142,6 @@ class AgentBayProvider(SandboxProvider):
         result = session.file_system.list_directory(path)
         if not result.success:
             return []
-        # Normalize to common format
         items = []
         for entry in result.entries or []:
             items.append({
@@ -165,6 +150,28 @@ class AgentBayProvider(SandboxProvider):
                 "size": entry.size or 0,
             })
         return items
+
+    def upload(self, session_id: str, local_path: str, remote_path: str) -> str:
+        session = self._get_session(session_id)
+        result = session.file_system.upload_file(
+            local_path=local_path,
+            remote_path=remote_path,
+            wait=True,
+            wait_timeout=300.0,
+        )
+        if not result.success:
+            raise OSError(result.error_message)
+        return f"Uploaded: {local_path} -> {remote_path}"
+
+    def download(self, session_id: str, remote_path: str, local_path: str) -> str:
+        session = self._get_session(session_id)
+        result = session.file_system.download_file(
+            remote_path=remote_path,
+            local_path=local_path,
+        )
+        if not result.success:
+            raise OSError(result.error_message)
+        return f"Downloaded: {remote_path} -> {local_path}"
 
     def get_metrics(self, session_id: str) -> Metrics | None:
         session = self._get_session(session_id)

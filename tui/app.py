@@ -22,9 +22,9 @@ from tui.widgets.messages import AssistantMessage, SystemMessage, ToolCallMessag
 from tui.widgets.status import StatusBar
 from tui.widgets.thread_selector import ThreadSelector
 
-# Import sandbox thread_id setter if available
+# Import sandbox thread_id setter
 try:
-    from middleware.sandbox.middleware import set_current_thread_id as set_sandbox_thread_id
+    from sandbox.thread_context import set_current_thread_id as set_sandbox_thread_id
 except ImportError:
     set_sandbox_thread_id = None
 from middleware.queue import QueueMode, get_queue_manager

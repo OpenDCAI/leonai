@@ -6,7 +6,7 @@ import pytest
 from middleware.command import CommandMiddleware
 from middleware.command.base import ExecuteResult
 from middleware.command.dispatcher import get_executor, get_shell_info
-from middleware.shell.hooks.dangerous_commands import DangerousCommandsHook
+from middleware.command.hooks.dangerous_commands import DangerousCommandsHook
 
 
 class TestExecuteResult:

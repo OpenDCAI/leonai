@@ -10,7 +10,7 @@ import shlex
 import subprocess
 import uuid
 
-from middleware.sandbox.provider import ExecuteResult, Metrics, SandboxProvider, SessionInfo
+from sandbox.provider import ExecuteResult, Metrics, SandboxProvider, SessionInfo
 
 
 class DockerProvider(SandboxProvider):
@@ -35,13 +35,9 @@ class DockerProvider(SandboxProvider):
         container_name = session_id
 
         cmd = [
-            "docker",
-            "run",
-            "-d",
-            "--name",
-            container_name,
-            "--label",
-            f"leon.session_id={session_id}",
+            "docker", "run", "-d",
+            "--name", container_name,
+            "--label", f"leon.session_id={session_id}",
         ]
 
         if context_id:
@@ -157,16 +153,27 @@ class DockerProvider(SandboxProvider):
             items.append({"name": name, "type": item_type, "size": size})
         return items
 
+    def upload(self, session_id: str, local_path: str, remote_path: str) -> str:
+        container_id = self._get_container_id(session_id)
+        result = self._run(["docker", "cp", local_path, f"{container_id}:{remote_path}"], check=False)
+        if result.returncode != 0:
+            raise IOError(result.stderr.strip() or "Failed to upload file")
+        return f"Uploaded: {local_path} -> {remote_path}"
+
+    def download(self, session_id: str, remote_path: str, local_path: str) -> str:
+        container_id = self._get_container_id(session_id)
+        result = self._run(["docker", "cp", f"{container_id}:{remote_path}", local_path], check=False)
+        if result.returncode != 0:
+            raise IOError(result.stderr.strip() or "Failed to download file")
+        return f"Downloaded: {remote_path} -> {local_path}"
+
     def get_metrics(self, session_id: str) -> Metrics | None:
         container_id = self._get_container_id(session_id, allow_missing=True)
         if not container_id:
             return None
         result = self._run(
             [
-                "docker",
-                "stats",
-                "--no-stream",
-                "--format",
+                "docker", "stats", "--no-stream", "--format",
                 "{{.CPUPerc}}\t{{.MemUsage}}\t{{.NetIO}}\t{{.BlockIO}}",
                 container_id,
             ],
@@ -216,11 +223,8 @@ class DockerProvider(SandboxProvider):
         check: bool = True,
     ) -> subprocess.CompletedProcess[str]:
         result = subprocess.run(
-            cmd,
-            input=input_text,
-            text=True,
-            capture_output=True,
-            timeout=timeout,
+            cmd, input=input_text, text=True,
+            capture_output=True, timeout=timeout,
         )
         if check and result.returncode != 0:
             raise RuntimeError(result.stderr.strip() or "Docker command failed")
@@ -234,47 +238,33 @@ class DockerProvider(SandboxProvider):
             return 0.0
 
     def _parse_mem_usage(self, value: str) -> tuple[float, float]:
-        # "12.3MiB / 1.934GiB"
         parts = [p.strip() for p in value.split("/")]
         if len(parts) != 2:
             return 0.0, 0.0
         return self._parse_size_mb(parts[0]), self._parse_size_mb(parts[1])
 
     def _parse_io(self, value: str) -> tuple[float, float]:
-        # "1.2kB / 3.4MB"
         parts = [p.strip() for p in value.split("/")]
         if len(parts) != 2:
             return 0.0, 0.0
-        rx_kb = self._parse_size_kb(parts[0])
-        tx_kb = self._parse_size_kb(parts[1])
-        return rx_kb, tx_kb
+        return self._parse_size_kb(parts[0]), self._parse_size_kb(parts[1])
 
     def _parse_size_mb(self, value: str) -> float:
         num, unit = self._split_size(value)
-        if unit == "b":
-            return num / 1024 / 1024
-        if unit == "kb":
-            return num / 1024
-        if unit == "mb":
-            return num
-        if unit == "gb":
-            return num * 1024
-        if unit == "tb":
-            return num * 1024 * 1024
+        if unit == "b": return num / 1024 / 1024
+        if unit == "kb": return num / 1024
+        if unit == "mb": return num
+        if unit == "gb": return num * 1024
+        if unit == "tb": return num * 1024 * 1024
         return 0.0
 
     def _parse_size_kb(self, value: str) -> float:
         num, unit = self._split_size(value)
-        if unit == "b":
-            return num / 1024
-        if unit == "kb":
-            return num
-        if unit == "mb":
-            return num * 1024
-        if unit == "gb":
-            return num * 1024 * 1024
-        if unit == "tb":
-            return num * 1024 * 1024 * 1024
+        if unit == "b": return num / 1024
+        if unit == "kb": return num
+        if unit == "mb": return num * 1024
+        if unit == "gb": return num * 1024 * 1024
+        if unit == "tb": return num * 1024 * 1024 * 1024
         return 0.0
 
     def _split_size(self, value: str) -> tuple[float, str]:

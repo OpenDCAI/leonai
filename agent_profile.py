@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 try:
-    from pydantic import BaseModel, Field, field_validator
+    from pydantic import BaseModel, ConfigDict, Field, field_validator
 except ImportError:
     raise ImportError("需要安装 pydantic: pip install pydantic")
 
@@ -120,65 +120,14 @@ class SkillsConfig(BaseModel):
     skills: dict[str, bool] = Field(default_factory=dict)  # skill_name: enabled
 
 
-# ==================== Sandbox Configuration ====================
-
-
-class SandboxProviderConfig(BaseModel):
-    """Configuration for a specific sandbox provider."""
-    api_key: str | None = None
-    region_id: str = "ap-southeast-1"
-    context_path: str = "/root"  # Default working directory in AgentBay containers
-    image_id: str | None = None  # AgentBay image ID (optional)
-
-
-class DockerSandboxConfig(BaseModel):
-    """Configuration for Docker sandbox provider."""
-    image: str = "ubuntu:22.04"
-    mount_path: str = "/workspace"
-
-
-class SandboxToolsConfig(BaseModel):
-    """Which sandbox tools to enable."""
-    read_file: bool = True
-    write_file: bool = True
-    edit_file: bool = True
-    list_dir: bool = True
-    run_command: bool = True
-
-
-class SandboxConfig(BaseModel):
-    """
-    Sandbox configuration for isolated execution environments.
-
-    Lifecycle:
-    - create: 'lazy' (first tool call) or 'eager' (thread start)
-    - on_thread_switch: 'pause' or 'keep_running'
-    - on_exit: 'pause' or 'destroy'
-    """
-    enabled: bool = False  # Disabled by default
-    provider: str = "agentbay"  # 'agentbay', 'e2b', 'docker'
-    context_id: str | None = None  # Persistent context for data
-
-    # Provider-specific configs
-    agentbay: SandboxProviderConfig = Field(default_factory=SandboxProviderConfig)
-    docker: DockerSandboxConfig = Field(default_factory=DockerSandboxConfig)
-
-    # Lifecycle settings
-    create: str = "lazy"  # 'lazy' or 'eager'
-    on_thread_switch: str = "pause"  # 'pause' or 'keep_running'
-    on_exit: str = "pause"  # 'pause' or 'destroy'
-
-    # Tool configuration
-    tools: SandboxToolsConfig = Field(default_factory=SandboxToolsConfig)
-
-
 class AgentProfile(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     agent: AgentConfig = Field(default_factory=AgentConfig)
     system_prompt: str | None = None
     tool: ToolConfig = Field(default_factory=ToolConfig)
     mcp: MCPConfig = Field(default_factory=MCPConfig)
     skills: SkillsConfig = Field(default_factory=SkillsConfig)
-    sandbox: SandboxConfig = Field(default_factory=SandboxConfig)
 
 
     @classmethod

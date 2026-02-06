@@ -52,6 +52,7 @@ class CommandMiddleware(AgentMiddleware[CommandState]):
         hooks: list[Any] | None = None,
         env: dict[str, str] | None = None,
         enabled_tools: dict[str, bool] | None = None,
+        executor: BaseExecutor | None = None,
         verbose: bool = True,
     ) -> None:
         """
@@ -62,6 +63,7 @@ class CommandMiddleware(AgentMiddleware[CommandState]):
             default_timeout: Default timeout in seconds for blocking commands
             hooks: List of hook instances for command validation
             env: Additional environment variables
+            executor: External executor (default: auto-detect OS shell)
             verbose: Whether to output detailed logs
         """
         AgentMiddleware.__init__(self)
@@ -73,11 +75,20 @@ class CommandMiddleware(AgentMiddleware[CommandState]):
         self.enabled_tools = enabled_tools or {'run_command': True, 'command_status': True}
         self.verbose = verbose
 
-        self._executor = get_executor(default_cwd=str(self.workspace_root))
+        # Use provided executor or auto-detect
+        if executor is not None:
+            self._executor = executor
+        else:
+            self._executor = get_executor(default_cwd=str(self.workspace_root))
 
         if self.verbose:
-            shell_info = get_shell_info()
-            print(f"[Command] Initialized: {shell_info['shell_name']} on {shell_info['os']}")
+            executor_name = type(self._executor).__name__
+            if hasattr(self._executor, 'shell_name'):
+                shell_label = self._executor.shell_name
+            else:
+                shell_info = get_shell_info()
+                shell_label = shell_info['shell_name']
+            print(f"[Command] Initialized: {shell_label} (executor: {executor_name})")
             print(f"[Command] Workspace: {self.workspace_root}")
             print(f"[Command] Loaded {len(self.hooks)} hooks")
 

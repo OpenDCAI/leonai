@@ -55,59 +55,27 @@ class SandboxProvider(ABC):
 
     @abstractmethod
     def create_session(self, context_id: str | None = None) -> SessionInfo:
-        """
-        Create a new sandbox session.
-
-        Args:
-            context_id: Optional persistent context to attach (for data persistence)
-
-        Returns:
-            SessionInfo with session_id and status
-        """
+        """Create a new sandbox session."""
         pass
 
     @abstractmethod
     def destroy_session(self, session_id: str, sync: bool = True) -> bool:
-        """
-        Destroy a session.
-
-        Args:
-            session_id: Session to destroy
-            sync: If True, persist data before destruction
-
-        Returns:
-            True if successful
-        """
+        """Destroy a session."""
         pass
 
     @abstractmethod
     def pause_session(self, session_id: str) -> bool:
-        """
-        Pause a session (reduce cost, keep state).
-
-        Returns:
-            True if successful
-        """
+        """Pause a session (reduce cost, keep state)."""
         pass
 
     @abstractmethod
     def resume_session(self, session_id: str) -> bool:
-        """
-        Resume a paused session.
-
-        Returns:
-            True if successful
-        """
+        """Resume a paused session."""
         pass
 
     @abstractmethod
     def get_session_status(self, session_id: str) -> str:
-        """
-        Get session status.
-
-        Returns:
-            One of: 'running', 'paused', 'deleted', 'unknown'
-        """
+        """Get session status: 'running', 'paused', 'deleted', 'unknown'."""
         pass
 
     # ==================== Execution ====================
@@ -120,112 +88,53 @@ class SandboxProvider(ABC):
         timeout_ms: int = 30000,
         cwd: str | None = None,
     ) -> ExecuteResult:
-        """
-        Execute shell command in sandbox.
-
-        Args:
-            session_id: Target session
-            command: Shell command to execute
-            timeout_ms: Timeout in milliseconds
-            cwd: Working directory
-
-        Returns:
-            ExecuteResult with output and exit code
-        """
+        """Execute shell command in sandbox."""
         pass
 
     # ==================== Filesystem ====================
 
     @abstractmethod
     def read_file(self, session_id: str, path: str) -> str:
-        """
-        Read file content from sandbox.
-
-        Args:
-            session_id: Target session
-            path: Absolute path in sandbox
-
-        Returns:
-            File content as string
-
-        Raises:
-            IOError: If file cannot be read
-        """
+        """Read file content from sandbox."""
         pass
 
     @abstractmethod
     def write_file(self, session_id: str, path: str, content: str) -> str:
-        """
-        Write file to sandbox.
-
-        Args:
-            session_id: Target session
-            path: Absolute path in sandbox
-            content: File content
-
-        Returns:
-            Success message
-
-        Raises:
-            IOError: If file cannot be written
-        """
+        """Write file to sandbox."""
         pass
 
     @abstractmethod
     def list_dir(self, session_id: str, path: str) -> list[dict]:
-        """
-        List directory contents.
+        """List directory contents."""
+        pass
 
-        Args:
-            session_id: Target session
-            path: Directory path
+    # ==================== Transfer ====================
 
-        Returns:
-            List of dicts with keys: name, type ('file'|'directory'), size
-        """
+    @abstractmethod
+    def upload(self, session_id: str, local_path: str, remote_path: str) -> str:
+        """Upload local file to sandbox."""
+        pass
+
+    @abstractmethod
+    def download(self, session_id: str, remote_path: str, local_path: str) -> str:
+        """Download file from sandbox to local machine."""
         pass
 
     # ==================== Inspection ====================
 
     @abstractmethod
     def get_metrics(self, session_id: str) -> Metrics | None:
-        """
-        Get resource usage metrics.
-
-        Returns:
-            Metrics object or None if unavailable
-        """
+        """Get resource usage metrics."""
         pass
 
     def screenshot(self, session_id: str) -> bytes | None:
-        """
-        Take screenshot of sandbox display.
-
-        Optional - not all providers support this.
-
-        Returns:
-            PNG/JPEG bytes or None
-        """
+        """Take screenshot of sandbox display (optional)."""
         return None
 
     def list_processes(self, session_id: str) -> list[dict]:
-        """
-        List running processes.
-
-        Optional - not all providers support this.
-
-        Returns:
-            List of dicts with keys: pid, name, cmd
-        """
+        """List running processes (optional)."""
         return []
 
     def get_web_url(self, session_id: str) -> str | None:
-        """
-        Get web UI URL for the sandbox session.
-
-        Optional - not all providers support this.
-
-        Returns:
-            URL string or None if unavailable
-        """
+        """Get web UI URL for the sandbox session (optional)."""
         return None
