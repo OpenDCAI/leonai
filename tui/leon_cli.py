@@ -221,21 +221,226 @@ def cmd_thread_rm(args):
         console.print(f"[red]✗ 删除失败[/red]")
 
 
+def _init_sandbox_providers() -> tuple[dict, dict]:
+    """Load sandbox providers and managers from ~/.leon/sandboxes/*.json.
+
+    Returns (providers, managers) dicts keyed by provider name.
+    """
+    from sandbox.config import SandboxConfig
+    from sandbox.manager import SandboxManager
+
+    providers: dict[str, object] = {}
+    sandboxes_dir = Path.home() / ".leon" / "sandboxes"
+    if not sandboxes_dir.exists():
+        return {}, {}
+
+    for config_file in sandboxes_dir.glob("*.json"):
+        name = config_file.stem
+        try:
+            config = SandboxConfig.load(name)
+            if config.provider == "agentbay":
+                from sandbox.providers.agentbay import AgentBayProvider
+                key = config.agentbay.api_key or os.getenv("AGENTBAY_API_KEY")
+                if key:
+                    providers["agentbay"] = AgentBayProvider(
+                        api_key=key,
+                        region_id=config.agentbay.region_id,
+                        default_context_path=config.agentbay.context_path,
+                        image_id=config.agentbay.image_id,
+                    )
+            elif config.provider == "docker":
+                from sandbox.providers.docker import DockerProvider
+                providers["docker"] = DockerProvider(
+                    image=config.docker.image,
+                    mount_path=config.docker.mount_path,
+                )
+            elif config.provider == "e2b":
+                from sandbox.providers.e2b import E2BProvider
+                key = config.e2b.api_key or os.getenv("E2B_API_KEY")
+                if key:
+                    providers["e2b"] = E2BProvider(
+                        api_key=key,
+                        template=config.e2b.template,
+                        default_cwd=config.e2b.cwd,
+                        timeout=config.e2b.timeout,
+                    )
+        except Exception as e:
+            print(f"[sandbox] Failed to load {name}: {e}")
+
+    managers = {
+        name: SandboxManager(provider=provider)
+        for name, provider in providers.items()
+    }
+    return providers, managers
+
+
+def _load_all_sessions(managers: dict) -> list[dict]:
+    """Load sessions from all managers."""
+    sessions = []
+    for manager in managers.values():
+        for row in manager.list_sessions():
+            sessions.append({
+                "id": row["session_id"],
+                "status": row["status"],
+                "provider": row["provider"],
+                "thread": row["thread_id"],
+            })
+    return sessions
+
+
+def _find_session(sessions: list[dict], session_id_prefix: str) -> dict | None:
+    """Find session by ID or prefix."""
+    for s in sessions:
+        if s["id"] == session_id_prefix or s["id"].startswith(session_id_prefix):
+            return s
+    return None
+
+
 def cmd_sandbox(args):
-    """Launch sandbox session manager TUI"""
-    import os
+    """Handle sandbox subcommands."""
+    subcommand = args.subcommand
 
-    api_key = os.getenv("AGENTBAY_API_KEY")
-    if not api_key:
-        print("⚠️  AGENTBAY_API_KEY not set - AgentBay sessions hidden")
+    # No subcommand → launch TUI
+    if subcommand is None:
+        api_key = os.getenv("AGENTBAY_API_KEY")
+        try:
+            from tui.widgets.sandbox_manager import SandboxManagerApp
+            SandboxManagerApp(api_key=api_key).run()
+        except ImportError as e:
+            print(f"Failed to import sandbox manager: {e}")
+            sys.exit(1)
+        return
 
-    try:
-        from tui.widgets.sandbox_manager import SandboxManagerApp
-        SandboxManagerApp(api_key=api_key).run()
-    except ImportError as e:
-        print(f"❌ Failed to import sandbox manager: {e}")
-        print("Make sure wuying-agentbay-sdk is installed: uv pip install wuying-agentbay-sdk")
-        sys.exit(1)
+    from rich.console import Console
+    from rich.table import Table
+    console = Console()
+
+    providers, managers = _init_sandbox_providers()
+    if not managers:
+        console.print("[yellow]No sandbox providers configured.[/yellow]")
+        console.print("Add config files to ~/.leon/sandboxes/ (see docs/SANDBOX.md)")
+        return
+
+    if subcommand in ("ls", "list"):
+        sessions = _load_all_sessions(managers)
+        if not sessions:
+            console.print("[yellow]No active sessions.[/yellow]")
+            return
+        table = Table(title="Sandbox Sessions")
+        table.add_column("Session ID", style="cyan")
+        table.add_column("Status", style="green")
+        table.add_column("Provider", style="magenta")
+        table.add_column("Thread", style="white")
+        for s in sessions:
+            status_style = {"running": "green", "paused": "yellow"}.get(s["status"], "red")
+            table.add_row(s["id"], f"[{status_style}]{s['status']}[/{status_style}]", s["provider"], s["thread"])
+        console.print(table)
+
+    elif subcommand == "new":
+        provider_name = args.extra_args[0] if args.extra_args else None
+        if not provider_name:
+            # Pick first available
+            for name in ("agentbay", "e2b", "docker"):
+                if name in managers:
+                    provider_name = name
+                    break
+        if not provider_name or provider_name not in managers:
+            console.print(f"[red]Provider not available: {provider_name or 'none'}[/red]")
+            console.print(f"Available: {', '.join(managers.keys())}")
+            return
+        manager = managers[provider_name]
+        thread_id = f"sandbox-{os.urandom(4).hex()}"
+        try:
+            info = manager.get_or_create_session(thread_id)
+            console.print(f"[green]Created {provider_name} session:[/green] {info.session_id}")
+            console.print(f"  Thread: {thread_id}")
+        except Exception as e:
+            console.print(f"[red]Failed to create session: {e}[/red]")
+
+    elif subcommand in ("rm", "delete"):
+        if not args.extra_args:
+            console.print("Usage: leonai sandbox rm <session_id>")
+            return
+        sessions = _load_all_sessions(managers)
+        target = _find_session(sessions, args.extra_args[0])
+        if not target:
+            console.print(f"[red]Session not found: {args.extra_args[0]}[/red]")
+            return
+        manager = managers.get(target["provider"])
+        if manager and manager.destroy_session(target["thread"]):
+            console.print(f"[green]Deleted:[/green] {target['id']}")
+        else:
+            console.print("[red]Delete failed[/red]")
+
+    elif subcommand == "pause":
+        if not args.extra_args:
+            console.print("Usage: leonai sandbox pause <session_id>")
+            return
+        sessions = _load_all_sessions(managers)
+        target = _find_session(sessions, args.extra_args[0])
+        if not target:
+            console.print(f"[red]Session not found: {args.extra_args[0]}[/red]")
+            return
+        manager = managers.get(target["provider"])
+        try:
+            if manager and manager.pause_session(target["thread"]):
+                console.print(f"[green]Paused:[/green] {target['id']}")
+            else:
+                console.print("[red]Pause failed[/red]")
+        except Exception as e:
+            console.print(f"[red]Pause failed: {e}[/red]")
+
+    elif subcommand == "resume":
+        if not args.extra_args:
+            console.print("Usage: leonai sandbox resume <session_id>")
+            return
+        sessions = _load_all_sessions(managers)
+        target = _find_session(sessions, args.extra_args[0])
+        if not target:
+            console.print(f"[red]Session not found: {args.extra_args[0]}[/red]")
+            return
+        manager = managers.get(target["provider"])
+        try:
+            if manager and manager.resume_session(target["thread"]):
+                console.print(f"[green]Resumed:[/green] {target['id']}")
+            else:
+                console.print("[red]Resume failed[/red]")
+        except Exception as e:
+            console.print(f"[red]Resume failed: {e}[/red]")
+
+    elif subcommand == "metrics":
+        if not args.extra_args:
+            console.print("Usage: leonai sandbox metrics <session_id>")
+            return
+        sessions = _load_all_sessions(managers)
+        target = _find_session(sessions, args.extra_args[0])
+        if not target:
+            console.print(f"[red]Session not found: {args.extra_args[0]}[/red]")
+            return
+        provider = providers.get(target["provider"])
+        if not provider:
+            console.print("[red]Provider unavailable[/red]")
+            return
+        try:
+            metrics = provider.get_metrics(target["id"])
+            if metrics:
+                console.print(f"[bold]Session:[/bold] {target['id']}")
+                console.print(f"  CPU:     {metrics.cpu_percent:.1f}%")
+                console.print(f"  Memory:  {metrics.memory_used_mb:.0f}MB / {metrics.memory_total_mb:.0f}MB")
+                console.print(f"  Disk:    {metrics.disk_used_gb:.1f}GB / {metrics.disk_total_gb:.1f}GB")
+                console.print(f"  Network: RX {metrics.network_rx_kbps:.1f} KB/s | TX {metrics.network_tx_kbps:.1f} KB/s")
+                if target["provider"] == "agentbay":
+                    url = provider.get_web_url(target["id"])
+                    if url:
+                        console.print(f"  URL:     {url}")
+            else:
+                console.print("[yellow]Metrics not available for this provider.[/yellow]")
+        except Exception as e:
+            console.print(f"[red]Failed to get metrics: {e}[/red]")
+
+    else:
+        console.print(f"[red]Unknown subcommand: {subcommand}[/red]")
+        console.print("Available: ls, new, rm, pause, resume, metrics")
 
 
 def main():
@@ -279,7 +484,13 @@ def main():
         print("  leonai thread rm <thread_id>        删除对话")
         print()
         print("Sandbox 管理:")
-        print("  leonai sandbox            打开 sandbox 会话管理器")
+        print("  leonai sandbox            打开 sandbox 会话管理器 (TUI)")
+        print("  leonai sandbox ls         列出所有 sandbox 会话")
+        print("  leonai sandbox new [provider]  创建新会话 (agentbay/e2b/docker)")
+        print("  leonai sandbox pause <id>      暂停会话")
+        print("  leonai sandbox resume <id>     恢复会话")
+        print("  leonai sandbox rm <id>         删除会话")
+        print("  leonai sandbox metrics <id>    查看会话资源指标")
         return
 
     # Handle config command

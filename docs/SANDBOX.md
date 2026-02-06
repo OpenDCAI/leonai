@@ -18,7 +18,13 @@ leonai --sandbox agentbay
 leonai run --sandbox docker "List files in the workspace"
 
 # Inspect and manage sandbox sessions
-leonai sandbox
+leonai sandbox              # TUI manager
+leonai sandbox ls           # List sessions
+leonai sandbox new docker   # Create session
+leonai sandbox pause <id>   # Pause session
+leonai sandbox resume <id>  # Resume session
+leonai sandbox rm <id>      # Delete session
+leonai sandbox metrics <id> # Show resource metrics
 ```
 
 ## Configuration
@@ -167,13 +173,39 @@ Next startup, same thread
 
 `pause` is the default and recommended for development — you keep installed packages, created files, and running processes across LEON restarts.
 
-## Sandbox Session Manager
+## Session Management
+
+### CLI Commands
+
+All TUI operations are available as CLI subcommands:
+
+```bash
+# List all sessions across all providers
+leonai sandbox ls
+
+# Create a new session (picks first available provider if omitted)
+leonai sandbox new
+leonai sandbox new docker
+leonai sandbox new e2b
+
+# Pause / resume / delete (accepts session ID prefix)
+leonai sandbox pause iolzc
+leonai sandbox resume iolzc
+leonai sandbox rm iolzc
+
+# Show CPU, memory, disk, network metrics
+leonai sandbox metrics iolzc
+```
+
+Session IDs can be abbreviated — any unique prefix works.
+
+### TUI Manager
 
 ```bash
 leonai sandbox
 ```
 
-Opens a TUI for inspecting and managing sandbox sessions across all configured providers.
+Opens a full-screen TUI for managing sessions interactively.
 
 ### Layout
 
