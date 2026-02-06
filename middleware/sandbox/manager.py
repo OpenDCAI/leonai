@@ -248,9 +248,8 @@ class SandboxManager:
         sessions = []
         for row in self._get_all_from_db():
             if row["provider"] != self.provider.name:
-                status = "unknown"
-            else:
-                status = self.provider.get_session_status(row["session_id"])
+                continue
+            status = self.provider.get_session_status(row["session_id"])
             sessions.append({
                 "thread_id": row["thread_id"],
                 "session_id": row["session_id"],

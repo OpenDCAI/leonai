@@ -122,12 +122,12 @@ class SandboxManagerApp(App):
 
     def _load_sessions(self) -> list[dict]:
         sessions: list[dict] = []
-        for provider_name, manager in self._managers.items():
+        for manager in self._managers.values():
             for row in manager.list_sessions():
                 sessions.append({
                     "id": row["session_id"],
                     "status": row["status"],
-                    "provider": provider_name,
+                    "provider": row["provider"],
                     "thread": row["thread_id"],
                 })
         return sessions
