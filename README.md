@@ -46,7 +46,6 @@ LEON 采用 Profile-driven 架构，通过 YAML/JSON/TOML 配置文件统一管�
 agent:
   model: "claude-sonnet-4-5-20250929"
   workspace_root: null
-  read_only: false
   enable_audit_log: true
 
 tool:
@@ -210,12 +209,11 @@ mcp:
 
 1. **命令拦截**：危险命令黑名单（`rm -rf`, `sudo` 等）
 2. **路径安全**：强制绝对路径，Workspace 限制
-3. **文件权限**：扩展名白名单，只读模式
+3. **文件权限**：扩展名白名单
 4. **审计日志**：文件访问和命令执行记录
 
 ```yaml
 agent:
-  read_only: true                    # 只读模式
   allowed_extensions: [py, txt, md]  # 扩展名白名单
   block_dangerous_commands: true     # 拦截危险命令
   block_network_commands: true       # 拦截网络命令
