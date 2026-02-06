@@ -25,6 +25,7 @@ from langchain.agents.middleware.types import (
 )
 from langchain_core.messages import ToolMessage
 
+from middleware.filesystem.backend import FileSystemBackend
 from middleware.filesystem.read import ReadLimits, ReadResult
 from middleware.filesystem.read import read_file as read_file_dispatch
 
@@ -59,6 +60,7 @@ class FileSystemMiddleware(AgentMiddleware):
         hooks: list[Any] | None = None,
         enabled_tools: dict[str, bool] | None = None,
         operation_recorder: "FileOperationRecorder | None" = None,
+        backend: FileSystemBackend | None = None,
         verbose: bool = True,
     ):
         """
@@ -70,6 +72,7 @@ class FileSystemMiddleware(AgentMiddleware):
             allowed_extensions: 允许的文件扩展名（None 表示全部允许）
             hooks: 文件操作 hooks（用于安全检查和审计）
             operation_recorder: 文件操作记录器（用于时间旅行）
+            backend: FileSystemBackend (default: LocalBackend)
             verbose: 是否输出详细日志
         """
         self.workspace_root = Path(workspace_root).resolve()
@@ -80,15 +83,25 @@ class FileSystemMiddleware(AgentMiddleware):
             'read_file': True, 'write_file': True, 'edit_file': True,
             'multi_edit': True, 'list_dir': True
         }
-        self._read_files: dict[Path, float] = {}  # path → mtime at read time
+        # path → mtime at read time (None means mtime unavailable, e.g. sandbox)
+        self._read_files: dict[Path, float | None] = {}
         self.operation_recorder = operation_recorder
         self.verbose = verbose
 
-        # 确保 workspace 存在
-        self.workspace_root.mkdir(parents=True, exist_ok=True)
+        # Backend: default to LocalBackend
+        if backend is None:
+            from middleware.filesystem.local_backend import LocalBackend
+            self.backend = LocalBackend()
+        else:
+            self.backend = backend
+
+        # 确保 workspace 存在（only for local backend）
+        if not hasattr(self.backend, '_is_sandbox'):
+            self.workspace_root.mkdir(parents=True, exist_ok=True)
 
         if self.verbose:
-            print(f"[FileSystemMiddleware] Initialized with workspace: {self.workspace_root}")
+            backend_name = type(self.backend).__name__
+            print(f"[FileSystemMiddleware] Initialized with workspace: {self.workspace_root} (backend: {backend_name})")
             if self.hooks:
                 print(f"[FileSystemMiddleware] Loaded {len(self.hooks)} hooks")
 
@@ -173,7 +186,7 @@ class FileSystemMiddleware(AgentMiddleware):
             print(f"[FileSystemMiddleware] Failed to record operation: {e}")
 
     def _read_file_impl(self, file_path: str, offset: int = 0, limit: int | None = None) -> ReadResult:
-        """实现 read_file - 委托给 read dispatcher 处理不同文件类型"""
+        """实现 read_file - 本地用 read dispatcher，sandbox 用 backend.read_file"""
         is_valid, error, resolved = self._validate_path(file_path, "read")
         if not is_valid:
             return ReadResult(
@@ -182,31 +195,61 @@ class FileSystemMiddleware(AgentMiddleware):
                 error=error,
             )
 
-        if resolved.stat().st_size > self.max_file_size:
+        # Check file size via backend
+        file_size = self.backend.file_size(str(resolved))
+        if file_size is not None and file_size > self.max_file_size:
             return ReadResult(
                 file_path=file_path,
                 file_type=None,  # type: ignore[arg-type]
-                error=f"File too large: {resolved.stat().st_size} bytes (max: {self.max_file_size})",
+                error=f"File too large: {file_size} bytes (max: {self.max_file_size})",
             )
 
-        limits = ReadLimits(
-            max_lines=1000,
-            max_chars=100_000,
-            max_line_length=2000,
-        )
+        # Local backend: use rich read dispatcher (PDF/PPTX/notebook/image)
+        from middleware.filesystem.local_backend import LocalBackend
+        if isinstance(self.backend, LocalBackend):
+            limits = ReadLimits(
+                max_lines=1000,
+                max_chars=100_000,
+                max_line_length=2000,
+            )
+            result = read_file_dispatch(
+                path=resolved,
+                limits=limits,
+                offset=offset if offset > 0 else None,
+                limit=limit,
+            )
+            if not result.error:
+                self._read_files[resolved] = self.backend.file_mtime(str(resolved))
+            return result
 
-        result = read_file_dispatch(
-            path=resolved,
-            limits=limits,
-            offset=offset if offset > 0 else None,
-            limit=limit,
-        )
+        # Sandbox backend: basic text read + manual line numbering
+        try:
+            raw = self.backend.read_file(str(resolved))
+            lines = raw.content.split("\n")
+            # Apply offset/limit
+            start = max(0, offset - 1) if offset > 0 else 0
+            end = start + limit if limit else len(lines)
+            selected = lines[start:end]
+            numbered = [f"{start + i + 1:>6}\t{line}" for i, line in enumerate(selected)]
+            content = "\n".join(numbered)
 
-        # Track read files for "no read no write" enforcement
-        if not result.error:
-            self._read_files[resolved] = resolved.stat().st_mtime
+            self._read_files[resolved] = self.backend.file_mtime(str(resolved))
 
-        return result
+            return ReadResult(
+                file_path=file_path,
+                file_type=None,  # type: ignore[arg-type]
+                content=content,
+                total_lines=len(lines),
+                lines_read=len(selected),
+                start_line=start + 1,
+                total_size=raw.size or len(raw.content),
+            )
+        except Exception as e:
+            return ReadResult(
+                file_path=file_path,
+                file_type=None,  # type: ignore[arg-type]
+                error=str(e),
+            )
 
     def _make_read_tool_message(self, result: ReadResult, tool_call_id: str) -> ToolMessage:
         """Create ToolMessage from ReadResult, using content_blocks for images."""
@@ -225,19 +268,16 @@ class FileSystemMiddleware(AgentMiddleware):
         if not is_valid:
             return error
 
-        if resolved.exists():
+        if self.backend.file_exists(str(resolved)):
             return f"File already exists: {file_path}\nUse edit_file to modify existing files"
 
         try:
-            # 创建父目录
-            resolved.parent.mkdir(parents=True, exist_ok=True)
-
-            # 写入文件
-            with open(resolved, "w", encoding="utf-8") as f:
-                f.write(content)
+            result = self.backend.write_file(str(resolved), content)
+            if not result.success:
+                return f"Error writing file: {result.error}"
 
             # Mark as read since we just wrote it (AI knows the content)
-            self._read_files[resolved] = resolved.stat().st_mtime
+            self._read_files[resolved] = self.backend.file_mtime(str(resolved))
 
             # Record operation for time travel
             self._record_operation(
@@ -259,17 +299,19 @@ class FileSystemMiddleware(AgentMiddleware):
         if not is_valid:
             return error
 
-        if not resolved.exists():
+        if not self.backend.file_exists(str(resolved)):
             return f"File not found: {file_path}"
 
         # No read no write enforcement
         if resolved not in self._read_files:
             return "File has not been read yet. Read it first before writing to it."
 
-        # Staleness detection: file modified since last read
-        current_mtime = resolved.stat().st_mtime
-        if current_mtime != self._read_files[resolved]:
-            return "File has been modified since last read. Read it again before editing."
+        # Staleness detection: skip if mtime unavailable (sandbox)
+        stored_mtime = self._read_files[resolved]
+        if stored_mtime is not None:
+            current_mtime = self.backend.file_mtime(str(resolved))
+            if current_mtime is not None and current_mtime != stored_mtime:
+                return "File has been modified since last read. Read it again before editing."
 
         # 禁止 no-op 编辑
         if old_string == new_string:
@@ -277,8 +319,8 @@ class FileSystemMiddleware(AgentMiddleware):
 
         try:
             # 读取文件
-            with open(resolved, encoding="utf-8") as f:
-                content = f.read()
+            raw = self.backend.read_file(str(resolved))
+            content = raw.content
 
             # 检查 old_string 是否存在
             if old_string not in content:
@@ -296,11 +338,12 @@ class FileSystemMiddleware(AgentMiddleware):
             new_content = content.replace(old_string, new_string)
 
             # 写回文件
-            with open(resolved, "w", encoding="utf-8") as f:
-                f.write(new_content)
+            result = self.backend.write_file(str(resolved), new_content)
+            if not result.success:
+                return f"Error editing file: {result.error}"
 
             # Update mtime after successful edit
-            self._read_files[resolved] = resolved.stat().st_mtime
+            self._read_files[resolved] = self.backend.file_mtime(str(resolved))
 
             # Record operation for time travel
             self._record_operation(
@@ -322,23 +365,24 @@ class FileSystemMiddleware(AgentMiddleware):
         if not is_valid:
             return error
 
-        if not resolved.exists():
+        if not self.backend.file_exists(str(resolved)):
             return f"File not found: {file_path}"
 
         # No read no write enforcement
         if resolved not in self._read_files:
             return "File has not been read yet. Read it first before writing to it."
 
-        # Staleness detection: file modified since last read
-        current_mtime = resolved.stat().st_mtime
-        if current_mtime != self._read_files[resolved]:
-            return "File has been modified since last read. Read it again before editing."
+        # Staleness detection: skip if mtime unavailable (sandbox)
+        stored_mtime = self._read_files[resolved]
+        if stored_mtime is not None:
+            current_mtime = self.backend.file_mtime(str(resolved))
+            if current_mtime is not None and current_mtime != stored_mtime:
+                return "File has been modified since last read. Read it again before editing."
 
         try:
             # 读取文件
-            with open(resolved, encoding="utf-8") as f:
-                content = f.read()
-
+            raw = self.backend.read_file(str(resolved))
+            content = raw.content
             original_content = content
 
             # 验证所有编辑
@@ -360,11 +404,12 @@ class FileSystemMiddleware(AgentMiddleware):
                     content = content.replace(old_str, new_str, 1)
 
             # 写回文件
-            with open(resolved, "w", encoding="utf-8") as f:
-                f.write(content)
+            result = self.backend.write_file(str(resolved), content)
+            if not result.success:
+                return f"Error in multi_edit: {result.error}"
 
             # Update mtime after successful edit
-            self._read_files[resolved] = resolved.stat().st_mtime
+            self._read_files[resolved] = self.backend.file_mtime(str(resolved))
 
             # Record operation for time travel
             self._record_operation(
@@ -386,24 +431,27 @@ class FileSystemMiddleware(AgentMiddleware):
         if not is_valid:
             return error
 
-        if not resolved.exists():
+        if not self.backend.file_exists(str(resolved)):
             return f"Directory not found: {directory_path}"
 
-        if not resolved.is_dir():
+        if not self.backend.is_dir(str(resolved)):
             return f"Not a directory: {directory_path}"
 
         try:
-            items = []
-            for item in sorted(resolved.iterdir()):
-                if item.is_file():
-                    size = item.stat().st_size
-                    items.append(f"\t{item.name} ({size} bytes)")
-                elif item.is_dir():
-                    count = sum(1 for _ in item.iterdir())
-                    items.append(f"\t{item.name}/ ({count} items)")
+            result = self.backend.list_dir(str(resolved))
+            if result.error:
+                return f"Error listing directory: {result.error}"
 
-            if not items:
+            if not result.entries:
                 return f"{directory_path}: Empty directory"
+
+            items = []
+            for entry in result.entries:
+                if entry.is_dir:
+                    count_str = f" ({entry.children_count} items)" if entry.children_count is not None else ""
+                    items.append(f"\t{entry.name}/{count_str}")
+                else:
+                    items.append(f"\t{entry.name} ({entry.size} bytes)")
 
             return f"{directory_path}/\n" + "\n".join(items)
 

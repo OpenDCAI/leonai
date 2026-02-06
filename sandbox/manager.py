@@ -1,7 +1,7 @@
 """
 Sandbox session manager.
 
-Tracks thread_id ↔ session_id mapping with SQLite persistence.
+Tracks thread_id <-> session_id mapping with SQLite persistence.
 Handles lazy creation, auto-pause, and resume lifecycle.
 """
 
@@ -9,7 +9,7 @@ import sqlite3
 from datetime import datetime
 from pathlib import Path
 
-from middleware.sandbox.provider import SandboxProvider, SessionInfo
+from sandbox.provider import SandboxProvider, SessionInfo
 
 
 class SandboxManager:
@@ -17,7 +17,7 @@ class SandboxManager:
     Manages sandbox sessions across threads.
 
     Responsibilities:
-    - Track thread_id ↔ session_id mapping
+    - Track thread_id <-> session_id mapping
     - Persist to SQLite for resume across LEON restarts
     - Handle lazy creation and auto-pause lifecycle
 
@@ -35,14 +35,6 @@ class SandboxManager:
         db_path: Path | None = None,
         default_context_id: str | None = None,
     ):
-        """
-        Initialize sandbox manager.
-
-        Args:
-            provider: Sandbox provider implementation
-            db_path: Path to SQLite database (default: ~/.leon/leon.db)
-            default_context_id: Default context for data persistence
-        """
         self.provider = provider
         self.db_path = db_path or (Path.home() / ".leon" / "leon.db")
         self.default_context_id = default_context_id
@@ -50,7 +42,6 @@ class SandboxManager:
 
     def _init_db(self):
         """Create sandbox_sessions table if not exists."""
-        # Handle both Path and string (e.g., ':memory:')
         if isinstance(self.db_path, Path):
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
         with sqlite3.connect(self.db_path) as conn:
@@ -68,18 +59,7 @@ class SandboxManager:
             conn.commit()
 
     def get_or_create_session(self, thread_id: str) -> SessionInfo:
-        """
-        Get existing session for thread, or create new one.
-
-        Automatically resumes paused sessions.
-
-        Args:
-            thread_id: LEON thread identifier
-
-        Returns:
-            SessionInfo with active session
-        """
-        # Check DB for existing session
+        """Get existing session for thread, or create new one."""
         existing = self._get_from_db(thread_id)
 
         if existing:
@@ -98,7 +78,6 @@ class SandboxManager:
                     )
 
                 elif status == "paused":
-                    # Resume paused session
                     if self.provider.resume_session(session_id):
                         self._update_status(thread_id, "running")
                         return SessionInfo(
@@ -107,10 +86,8 @@ class SandboxManager:
                             status="running",
                         )
 
-                # Session is gone or in bad state, clean up DB entry
                 self._delete_from_db(thread_id)
 
-        # Create new session
         context_id = self.default_context_id
         info = self.provider.create_session(context_id=context_id)
         self._save_to_db(thread_id, info, context_id)
@@ -118,15 +95,7 @@ class SandboxManager:
         return info
 
     def get_session(self, thread_id: str) -> SessionInfo | None:
-        """
-        Get session info without creating.
-
-        Args:
-            thread_id: LEON thread identifier
-
-        Returns:
-            SessionInfo or None if no session exists
-        """
+        """Get session info without creating."""
         existing = self._get_from_db(thread_id)
         if not existing:
             return None
@@ -145,15 +114,7 @@ class SandboxManager:
         return self._get_from_db(thread_id) is not None
 
     def pause_session(self, thread_id: str) -> bool:
-        """
-        Pause session for thread.
-
-        Args:
-            thread_id: LEON thread identifier
-
-        Returns:
-            True if successful
-        """
+        """Pause session for thread."""
         existing = self._get_from_db(thread_id)
         if not existing:
             return False
@@ -166,15 +127,7 @@ class SandboxManager:
         return False
 
     def resume_session(self, thread_id: str) -> bool:
-        """
-        Resume paused session for thread.
-
-        Args:
-            thread_id: LEON thread identifier
-
-        Returns:
-            True if successful
-        """
+        """Resume paused session for thread."""
         existing = self._get_from_db(thread_id)
         if not existing:
             return False
@@ -187,16 +140,7 @@ class SandboxManager:
         return False
 
     def destroy_session(self, thread_id: str, sync: bool = True) -> bool:
-        """
-        Destroy session for thread.
-
-        Args:
-            thread_id: LEON thread identifier
-            sync: If True, persist data before destruction
-
-        Returns:
-            True if successful
-        """
+        """Destroy session for thread."""
         existing = self._get_from_db(thread_id)
         if not existing:
             return False
@@ -209,14 +153,7 @@ class SandboxManager:
         return False
 
     def pause_all_sessions(self) -> int:
-        """
-        Pause all running sessions.
-
-        Called on LEON exit.
-
-        Returns:
-            Number of sessions paused
-        """
+        """Pause all running sessions. Called on LEON exit."""
         count = 0
         for row in self._get_all_from_db():
             if row["provider"] != self.provider.name:
@@ -239,12 +176,7 @@ class SandboxManager:
         return count
 
     def list_sessions(self) -> list[dict]:
-        """
-        List all tracked sessions with current status.
-
-        Returns:
-            List of session info dicts
-        """
+        """List all tracked sessions with current status."""
         sessions = []
         for row in self._get_all_from_db():
             if row["provider"] != self.provider.name:
@@ -265,12 +197,7 @@ class SandboxManager:
         return sessions
 
     def cleanup_stale_sessions(self) -> int:
-        """
-        Remove DB entries for sessions that no longer exist.
-
-        Returns:
-            Number of entries cleaned up
-        """
+        """Remove DB entries for sessions that no longer exist."""
         count = 0
         for row in self._get_all_from_db():
             if row["provider"] != self.provider.name:

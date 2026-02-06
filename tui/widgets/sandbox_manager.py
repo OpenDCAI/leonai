@@ -13,9 +13,9 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, DataTable, Footer, Header, Static
 
-from middleware.sandbox import SandboxManager
-from middleware.sandbox.providers.agentbay import AgentBayProvider
-from middleware.sandbox.providers.docker import DockerProvider
+from sandbox.manager import SandboxManager
+from sandbox.providers.agentbay import AgentBayProvider
+from sandbox.providers.docker import DockerProvider
 
 
 class SandboxManagerApp(App):
