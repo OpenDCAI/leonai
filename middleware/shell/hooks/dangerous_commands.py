@@ -59,6 +59,7 @@ class DangerousCommandsHook(BashHook):
         workspace_root: Path | str | None = None,
         block_network: bool = False,
         custom_blocked: list[str] | None = None,
+        verbose: bool = True,
         **kwargs,
     ):
         """
@@ -68,9 +69,11 @@ class DangerousCommandsHook(BashHook):
             workspace_root: 工作目录
             block_network: 是否拦截网络命令
             custom_blocked: 自定义拦截的命令模式（正则表达式）
+            verbose: 是否输出详细日志
             **kwargs: 其他配置参数
         """
         super().__init__(workspace_root, **kwargs)
+        self.verbose = verbose
 
         # 构建拦截列表
         self.blocked_patterns = self.DEFAULT_BLOCKED_COMMANDS.copy()
@@ -84,7 +87,8 @@ class DangerousCommandsHook(BashHook):
         # 编译正则表达式
         self.compiled_patterns = [re.compile(pattern, re.IGNORECASE) for pattern in self.blocked_patterns]
 
-        print(f"[DangerousCommands] Loaded {len(self.compiled_patterns)} blocked command patterns")
+        if self.verbose:
+            print(f"[DangerousCommands] Loaded {len(self.compiled_patterns)} blocked command patterns")
 
     def check_command(self, command: str, context: dict[str, Any]) -> HookResult:
         """检查命令是否危险"""

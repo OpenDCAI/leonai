@@ -27,6 +27,7 @@ try:
     from middleware.sandbox.middleware import set_current_thread_id as set_sandbox_thread_id
 except ImportError:
     set_sandbox_thread_id = None
+from middleware.queue import QueueMode, get_queue_manager
 
 
 class WelcomeBanner(Static):
@@ -103,7 +104,7 @@ class LeonApp(App):
     """
 
     BINDINGS = [
-        Binding("ctrl+c", "quit_or_interrupt", "中断/退出", show=False),
+        # 注意：不绑定 ctrl+c，让终端处理复制。用 ctrl+d 或 escape 退出
         Binding("ctrl+d", "quit", "退出", show=False),
         Binding("ctrl+l", "clear_history", "清空历史", show=False),
         Binding("ctrl+up", "history_up", "历史上一条", show=False),
@@ -111,6 +112,7 @@ class LeonApp(App):
         Binding("ctrl+e", "export_conversation", "导出对话", show=False),
         Binding("ctrl+y", "copy_last_message", "复制最后消息", show=False),
         Binding("ctrl+b", "show_sandbox", "沙箱", show=False),
+        Binding("escape", "interrupt_agent", "中断", show=False),
     ]
 
     def __init__(self, agent, workspace_root: Path, thread_id: str = "default", session_mgr=None):
@@ -128,6 +130,21 @@ class LeonApp(App):
         self._agent_running = False
         self._agent_worker = None
         self._quit_pending = False
+        # Queue mode from agent config
+        self._queue_mode = self._parse_queue_mode(getattr(agent, 'queue_mode', 'steer'))
+        get_queue_manager().set_mode(self._queue_mode)
+
+    def _parse_queue_mode(self, mode_str: str) -> QueueMode:
+        """Parse queue mode string to enum"""
+        mode_map = {
+            "steer": QueueMode.STEER,
+            "followup": QueueMode.FOLLOWUP,
+            "collect": QueueMode.COLLECT,
+            "steer_backlog": QueueMode.STEER_BACKLOG,
+            "steer-backlog": QueueMode.STEER_BACKLOG,
+            "interrupt": QueueMode.INTERRUPT,
+        }
+        return mode_map.get(mode_str.lower(), QueueMode.STEER)
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -150,7 +167,20 @@ class LeonApp(App):
 
         # 加载历史 messages
         self.run_worker(self._load_history(), exclusive=False)
-    
+
+    def on_click(self, event) -> None:
+        """Refocus input after any click"""
+        # 延迟执行，让其他点击事件先处理
+        self.call_after_refresh(self._refocus_input)
+
+    def _refocus_input(self) -> None:
+        """Refocus input if no modal is open"""
+        # 检查是否有模态框打开
+        if self.query("HistoryBrowser") or self.query("CheckpointBrowser") or self.query("ThreadSelector"):
+            return
+        chat_input = self.query_one("#chat-input", ChatInput)
+        chat_input.focus_input()
+
     def on_key(self, event) -> None:
         """Handle global key events for double-ESC detection"""
         if event.key == "escape":
@@ -196,6 +226,45 @@ class LeonApp(App):
             except ValueError:
                 self.notify("⚠ 用法: /rollback <数字> 或 /回退 <数字>", severity="warning")
                 return
+
+        # Handle /mode command to switch queue mode
+        if content.lower().startswith("/mode "):
+            mode_name = content[6:].strip().lower()
+            mode_map = {
+                "steer": QueueMode.STEER,
+                "followup": QueueMode.FOLLOWUP,
+                "collect": QueueMode.COLLECT,
+                "steer-backlog": QueueMode.STEER_BACKLOG,
+                "interrupt": QueueMode.INTERRUPT,
+            }
+            if mode_name in mode_map:
+                self._queue_mode = mode_map[mode_name]
+                get_queue_manager().set_mode(self._queue_mode)
+                self.notify(f"✓ 队列模式: {mode_name}")
+            else:
+                self.notify(f"⚠ 未知模式: {mode_name}。可用: steer, followup, collect, steer-backlog, interrupt", severity="warning")
+            return
+
+        # Queue mode routing: if agent is running, queue the message
+        if self._agent_running:
+            queue_manager = get_queue_manager()
+            if self._queue_mode == QueueMode.INTERRUPT:
+                # Interrupt mode: cancel current run
+                if self._agent_worker:
+                    self._agent_worker.cancel()
+                    self.notify("⚠ 已中断")
+            else:
+                # Queue the message
+                queue_manager.enqueue(content, self._queue_mode)
+                mode_labels = {
+                    QueueMode.STEER: "转向",
+                    QueueMode.FOLLOWUP: "排队",
+                    QueueMode.COLLECT: "收集",
+                    QueueMode.STEER_BACKLOG: "转向+排队",
+                }
+                label = mode_labels.get(self._queue_mode, "排队")
+                self.notify(f"✓ 消息已{label}")
+            return
 
         # Run async handler with worker tracking for interruption
         self._agent_running = True
@@ -368,20 +437,43 @@ class LeonApp(App):
             # Reset agent state
             self._agent_running = False
             self._agent_worker = None
-            
+
             if thinking_spinner and thinking_spinner.is_mounted:
                 await thinking_spinner.remove()
-            
+
             if self._current_assistant_msg and last_content:
                 self._current_assistant_msg.update_content(last_content)
-            
+
             self._message_count += 1
             self._update_status_bar()
-            
+
             chat_container.scroll_end(animate=False)
-            
+
             chat_input = self.query_one("#chat-input", ChatInput)
             self.call_after_refresh(chat_input.focus_input)
+
+            # Process followup queue
+            await self._process_followup_queue()
+
+    async def _process_followup_queue(self) -> None:
+        """Process any pending followup messages after agent run completes"""
+        queue_manager = get_queue_manager()
+
+        # First, flush any collected messages
+        collected = queue_manager.flush_collect()
+        if collected:
+            queue_manager.enqueue(collected, QueueMode.FOLLOWUP)
+
+        # Process followup queue
+        followup_content = queue_manager.get_followup()
+        if followup_content:
+            # Start a new run with the followup message
+            self._agent_running = True
+            self._quit_pending = False
+            self._agent_worker = self.run_worker(
+                self._handle_submission(followup_content),
+                exclusive=False
+            )
 
     def action_history_up(self) -> None:
         """Navigate to previous input in history"""
@@ -404,6 +496,9 @@ class LeonApp(App):
         
         def handle_history_selection(selected_index: int | None) -> None:
             """Handle history selection from browser"""
+            # Always refocus input after dialog closes
+            self.call_after_refresh(chat_input.focus_input)
+
             if selected_index is not None:
                 chat_input.set_text(history[selected_index])
                 self.notify(f"✓ 已加载历史记录 #{selected_index + 1}")
@@ -498,8 +593,16 @@ class LeonApp(App):
   • /history: 查看历史输入
   • /resume: 切换到其他对话
   • /rollback N 或 /回退 N: 回退到N步前的输入
+  • /mode <模式>: 切换队列模式
   • /clear: 清空对话历史
   • /exit 或 /quit: 退出程序
+
+队列模式 (Agent 运行时输入消息的处理方式):
+  • steer: 注入当前运行，改变执行方向（默认）
+  • followup: 等当前运行结束后处理
+  • collect: 收集多条消息，合并后处理
+  • steer-backlog: 注入 + 保留为 followup
+  • interrupt: 中断当前运行
 """
         messages_container = self.query_one("#messages")
         chat_container = self.query_one("#chat-container", VerticalScroll)
@@ -514,6 +617,12 @@ class LeonApp(App):
         status_bar = self.query_one("#status-bar", StatusBar)
         status_bar.update_stats(self._message_count)
     
+    def action_interrupt_agent(self) -> None:
+        """Handle ESC - interrupt running agent"""
+        if self._agent_running and self._agent_worker:
+            self._agent_worker.cancel()
+            self.notify("⚠ 正在中断...", timeout=2)
+
     def action_quit_or_interrupt(self) -> None:
         """Handle Ctrl+C - interrupt agent or quit on double press.
         
@@ -597,6 +706,10 @@ class LeonApp(App):
         current_checkpoint_id_val = checkpoints[-1].checkpoint_id if checkpoints else ""
 
         def handle_rewind(target_checkpoint_id: str | None) -> None:
+            # Always refocus input after dialog closes
+            chat_input = self.query_one("#chat-input", ChatInput)
+            self.call_after_refresh(chat_input.focus_input)
+
             if not target_checkpoint_id:
                 return
 

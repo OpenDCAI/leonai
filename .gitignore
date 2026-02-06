@@ -14,6 +14,7 @@ CLAUDE.md
 .venv
 
 # IDE
+.cursor/
 .windsurf/
 .vscode/
 .idea/
@@ -30,3 +31,5 @@ node_modules/
 .env
 
 docs/assets/
+
+/survey

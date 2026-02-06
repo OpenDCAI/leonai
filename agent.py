@@ -36,6 +36,7 @@ from agent_profile import AgentProfile
 from middleware.command import CommandMiddleware
 from middleware.filesystem import FileSystemMiddleware
 from middleware.prompt_caching import PromptCachingMiddleware
+from middleware.queue import SteeringMiddleware
 from middleware.search import SearchMiddleware
 from middleware.skills import SkillsMiddleware
 from middleware.task import TaskMiddleware
@@ -74,7 +75,6 @@ class LeonAgent:
         workspace_root: str | Path | None = None,
         *,
         profile: AgentProfile | str | Path | None = None,
-        read_only: bool | None = None,
         allowed_file_extensions: list[str] | None = None,
         block_dangerous_commands: bool | None = None,
         block_network_commands: bool | None = None,
@@ -85,6 +85,7 @@ class LeonAgent:
         firecrawl_api_key: str | None = None,
         jina_api_key: str | None = None,
         sandbox_context_path: str | None = None,
+        verbose: bool = False,
     ):
         """
         Initialize Leon Agent
@@ -94,7 +95,6 @@ class LeonAgent:
             api_key: API key (默认从环境变量读取)
             workspace_root: 工作目录（所有操作限制在此目录内）
             profile: Agent Profile (配置文件路径或对象)
-            read_only: 只读模式（禁止写入和编辑）
             allowed_file_extensions: 允许的文件扩展名（None 表示全部允许）
             block_dangerous_commands: 是否拦截危险命令
             block_network_commands: 是否拦截网络命令
@@ -105,30 +105,33 @@ class LeonAgent:
             firecrawl_api_key: Firecrawl API key（Web 搜索）
             jina_api_key: Jina API key（URL 内容获取）
             sandbox_context_path: Sandbox context mount path（覆盖 profile）
+            verbose: 是否输出详细日志（默认 True）
         """
+        self.verbose = verbose
+
         # 加载 profile
         if isinstance(profile, (str, Path)):
             profile = AgentProfile.from_file(profile)
-            print(f"[LeonAgent] Profile: {profile} (from CLI argument)")
+            if self.verbose:
+                print(f"[LeonAgent] Profile: {profile} (from CLI argument)")
         elif profile is None:
             # 默认 profile 路径：~/.leon/profile.yaml
             default_profile = Path.home() / ".leon" / "profile.yaml"
             if default_profile.exists():
                 profile = AgentProfile.from_file(default_profile)
-                print(f"[LeonAgent] Profile: {default_profile}")
+                if self.verbose:
+                    print(f"[LeonAgent] Profile: {default_profile}")
             else:
                 # 首次运行，创建默认配置文件
                 profile = self._create_default_profile(default_profile)
-                print(f"[LeonAgent] Profile: {default_profile} (created)")
+                if self.verbose:
+                    print(f"[LeonAgent] Profile: {default_profile} (created)")
 
         # CLI 参数覆盖 profile
         if model_name is not None:
             profile.agent.model = model_name
         if workspace_root is not None:
             profile.agent.workspace_root = str(workspace_root)
-        if read_only is not None:
-            profile.agent.read_only = read_only
-            profile.tools.filesystem.read_only = read_only
         if allowed_file_extensions is not None:
             profile.tools.filesystem.allowed_extensions = allowed_file_extensions
         if block_dangerous_commands is not None:
@@ -164,22 +167,28 @@ class LeonAgent:
         self.workspace_root.mkdir(parents=True, exist_ok=True)
 
         # 配置参数
-        self.read_only = profile.agent.read_only
         self.allowed_file_extensions = profile.agent.allowed_extensions
         self.block_dangerous_commands = profile.agent.block_dangerous_commands
         self.block_network_commands = profile.agent.block_network_commands
         self.enable_audit_log = profile.agent.enable_audit_log
         self.enable_web_tools = profile.tool.web.enabled
+        self.queue_mode = profile.agent.queue_mode
         self._session_pool: dict[str, Any] = {}
         self.db_path = Path.home() / ".leon" / "leon.db"
 
         # 初始化模型
-        model_kwargs = {"api_key": self.api_key}
         base_url = os.getenv("OPENAI_BASE_URL")
         if base_url:
-            model_kwargs["base_url"] = base_url
-
-        self.model = init_chat_model(self.model_name, **model_kwargs)
+            # 有 OPENAI_BASE_URL 时，强制使用 ChatOpenAI（OpenAI 兼容代理）
+            from langchain_openai import ChatOpenAI
+            self.model = ChatOpenAI(
+                model=self.model_name,
+                api_key=self.api_key,
+                base_url=base_url,
+            )
+        else:
+            # 无代理时，让 init_chat_model 根据模型名自动选择
+            self.model = init_chat_model(self.model_name, api_key=self.api_key)
 
         # 构建 middleware 栈
         middleware = self._build_middleware_stack()
@@ -230,10 +239,10 @@ class LeonAgent:
             checkpointer=self.checkpointer,
         )
 
-        print("[LeonAgent] Initialized successfully")
-        print(f"[LeonAgent] Workspace: {self.workspace_root}")
-        print(f"[LeonAgent] Read-only: {self.read_only}")
-        print(f"[LeonAgent] Audit log: {self.enable_audit_log}")
+        if self.verbose:
+            print("[LeonAgent] Initialized successfully")
+            print(f"[LeonAgent] Workspace: {self.workspace_root}")
+            print(f"[LeonAgent] Audit log: {self.enable_audit_log}")
 
     def close(self):
         """Clean up resources"""
@@ -253,16 +262,36 @@ class LeonAgent:
                 print(f"[LeonAgent] Sandbox cleanup error: {e}")
 
         # Close SQLite connection
-        if hasattr(self, '_aiosqlite_conn') and self._aiosqlite_conn:
-            import asyncio
+        import asyncio
+        import os
+        import signal
+
+        # Close MCP client (kills subprocess)
+        if hasattr(self, '_mcp_client') and self._mcp_client:
             try:
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    loop.create_task(self._aiosqlite_conn.close())
-                else:
-                    loop.run_until_complete(self._aiosqlite_conn.close())
+                # Try graceful close first
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    loop.run_until_complete(self._mcp_client.close())
+                finally:
+                    loop.close()
             except Exception:
                 pass
+            self._mcp_client = None
+
+        # Close sqlite connection
+        if hasattr(self, '_aiosqlite_conn') and self._aiosqlite_conn:
+            try:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    loop.run_until_complete(self._aiosqlite_conn.close())
+                finally:
+                    loop.close()
+            except Exception:
+                pass
+            self._aiosqlite_conn = None
 
     def __del__(self):
         self.close()
@@ -277,9 +306,15 @@ class LeonAgent:
 
 agent:
   model: claude-sonnet-4-5-20250929
-  read_only: false
   enable_audit_log: true
   block_dangerous_commands: true
+  # Queue mode: Agent 运行时输入消息的处理方式
+  # - steer: 注入当前运行，改变执行方向（默认）
+  # - followup: 等当前运行结束后处理
+  # - collect: 收集多条消息，合并后处理
+  # - steer_backlog: 注入 + 保留为 followup
+  # - interrupt: 中断当前运行
+  queue_mode: steer
 
 tool:
   filesystem:
@@ -312,6 +347,9 @@ tool:
         """构建 middleware 栈"""
         middleware = []
 
+        # 0. Steering (highest priority - checks for steer messages before model calls)
+        middleware.append(SteeringMiddleware())
+
         # 1. Prompt Caching（架构级，固定启用）
         middleware.append(PromptCachingMiddleware(ttl="5m", min_messages_to_cache=0))
 
@@ -323,7 +361,6 @@ tool:
                 file_hooks.append(FileAccessLoggerHook(workspace_root=self.workspace_root, log_file="file_access.log"))
             file_hooks.append(FilePermissionHook(
                 workspace_root=self.workspace_root,
-                read_only=self.read_only,
                 allowed_extensions=self.allowed_file_extensions,
             ))
             fs_tools = {
@@ -335,12 +372,12 @@ tool:
             }
             middleware.append(FileSystemMiddleware(
                 workspace_root=self.workspace_root,
-                read_only=self.read_only,
                 max_file_size=self.profile.tool.filesystem.tools.read_file.max_file_size,
                 allowed_extensions=self.allowed_file_extensions,
                 hooks=file_hooks,
                 enabled_tools=fs_tools,
                 operation_recorder=get_recorder(),
+                verbose=self.verbose,
             ))
 
         # 3. Search
@@ -355,6 +392,7 @@ tool:
                 max_file_size=self.profile.tool.search.tools.grep_search.max_file_size,
                 prefer_system_tools=True,
                 enabled_tools=search_tools,
+                verbose=self.verbose,
             ))
 
         # 4. Web
@@ -372,6 +410,7 @@ tool:
                 max_search_results=self.profile.tool.web.tools.web_search.max_results,
                 timeout=self.profile.tool.web.timeout,
                 enabled_tools=web_tools,
+                verbose=self.verbose,
             ))
 
         # 5. Command
@@ -382,6 +421,7 @@ tool:
                 command_hooks.append(DangerousCommandsHook(
                     workspace_root=self.workspace_root,
                     block_network=self.block_network_commands,
+                    verbose=self.verbose,
                 ))
             command_hooks.append(PathSecurityHook(workspace_root=self.workspace_root))
             command_tools = {
@@ -393,17 +433,19 @@ tool:
                 default_timeout=self.profile.tool.command.tools.run_command.default_timeout,
                 hooks=command_hooks,
                 enabled_tools=command_tools,
+                verbose=self.verbose,
             ))
 
         # 6. Skills
         if self.profile.skills.enabled and self.profile.skills.paths:
             middleware.append(SkillsMiddleware(
                 skill_paths=self.profile.skills.paths,
-                enabled_skills=self.profile.skills.skills
+                enabled_skills=self.profile.skills.skills,
+                verbose=self.verbose,
             ))
 
         # 7. Todo (task management and progress tracking)
-        self._todo_middleware = TodoMiddleware()
+        self._todo_middleware = TodoMiddleware(verbose=self.verbose)
         middleware.append(self._todo_middleware)
 
         # 8. Subagent (sub-agent orchestration)
@@ -414,6 +456,7 @@ tool:
             parent_model=self.model_name,
             api_key=self.api_key,
             base_url=os.getenv("OPENAI_BASE_URL"),
+            verbose=self.verbose,
         )
         middleware.append(self._task_middleware)
 
@@ -479,6 +522,7 @@ tool:
 
         try:
             client = MultiServerMCPClient(configs, tool_name_prefix=False)
+            self._mcp_client = client  # Save reference for cleanup
             tools = await client.get_tools()
 
             # Apply mcp__ prefix to match Claude Code naming convention
@@ -495,10 +539,12 @@ tool:
             if any(cfg.allowed_tools for cfg in self.profile.mcp.servers.values()):
                 tools = [t for t in tools if self._is_tool_allowed(t)]
 
-            print(f"[LeonAgent] Loaded {len(tools)} MCP tools from {len(configs)} servers")
+            if self.verbose:
+                print(f"[LeonAgent] Loaded {len(tools)} MCP tools from {len(configs)} servers")
             return tools
         except Exception as e:
-            print(f"[LeonAgent] MCP initialization failed: {e}")
+            if self.verbose:
+                print(f"[LeonAgent] MCP initialization failed: {e}")
             return []
 
     async def _init_checkpointer(self):
@@ -561,7 +607,6 @@ tool:
 - Workspace: `{self.workspace_root}`
 - OS: {os_name}
 - Shell: {shell_name}
-- Read-Only: {'Yes' if self.read_only else 'No'}
 
 **Important Rules:**
 
@@ -615,9 +660,6 @@ When NOT to use Todo:
 - Single, straightforward tasks
 - Trivial operations that don't need tracking
 """
-
-        if self.read_only:
-            prompt += "\n5. **READ-ONLY MODE**: Write and edit operations are disabled.\n"
 
         if self.allowed_file_extensions:
             prompt += f"\n6. **File Type Restriction**: Only these extensions allowed: {', '.join(self.allowed_file_extensions)}\n"
@@ -690,9 +732,6 @@ def create_leon_agent(
     Examples:
         # 基本用法
         agent = create_leon_agent()
-
-        # 只读模式
-        agent = create_leon_agent(read_only=True)
 
         # 限制文件类型
         agent = create_leon_agent(
