@@ -262,8 +262,9 @@ class SandboxManagerApp(App):
                     f"Memory: {metrics.memory_used_mb:.0f}MB / {metrics.memory_total_mb:.0f}MB\n"
                     f"Disk: {metrics.disk_used_gb:.1f}GB / {metrics.disk_total_gb:.1f}GB\n"
                     f"Network: RX {metrics.network_rx_kbps:.1f} KB/s | TX {metrics.network_tx_kbps:.1f} KB/s\n"
-                    f"\nWeb URL: {url[:60]}..." if url else ""
                 )
+                if url:
+                    detail += f"\nWeb URL: {url[:60]}..."
                 self.call_from_thread(self._update_detail, detail)
                 self.call_from_thread(self.set_status, "Metrics loaded")
             else:
