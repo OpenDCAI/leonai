@@ -22,6 +22,11 @@ from tui.widgets.messages import AssistantMessage, SystemMessage, ToolCallMessag
 from tui.widgets.status import StatusBar
 from tui.widgets.thread_selector import ThreadSelector
 
+# Import sandbox thread_id setter if available
+try:
+    from middleware.sandbox.middleware import set_current_thread_id as set_sandbox_thread_id
+except ImportError:
+    set_sandbox_thread_id = None
 from middleware.queue import QueueMode, get_queue_manager
 
 
@@ -321,6 +326,9 @@ class LeonApp(App):
 
         # Set context variables for file operation recording
         current_thread_id.set(self.thread_id)
+        # Set sandbox thread_id if sandbox middleware is available
+        if set_sandbox_thread_id:
+            set_sandbox_thread_id(self.thread_id)
         # Generate a checkpoint ID for this interaction
         checkpoint_id = f"{self.thread_id}-{uuid.uuid4().hex[:8]}"
         current_checkpoint_id.set(checkpoint_id)
