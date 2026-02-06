@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from sandbox.base import Sandbox
-from sandbox.config import AgentBayConfig, SandboxConfig
+from sandbox.config import SandboxConfig
 from sandbox.manager import SandboxManager
 from sandbox.providers.agentbay import AgentBayProvider
 from sandbox.thread_context import get_current_thread_id

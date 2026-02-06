@@ -69,7 +69,7 @@ class CommandMiddleware(AgentMiddleware[CommandState]):
         AgentMiddleware.__init__(self)
 
         # @@@ Don't resolve workspace_root for sandbox — macOS firmlinks break it
-        if executor is not None and hasattr(executor, '_is_sandbox'):
+        if executor is not None and executor.is_remote:
             self.workspace_root = Path(workspace_root)
         else:
             self.workspace_root = Path(workspace_root).resolve()

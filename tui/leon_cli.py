@@ -591,30 +591,14 @@ def main():
     workspace = Path(args.workspace) if args.workspace else Path.cwd()
 
     model_name = os.getenv("MODEL_NAME") or None
-    print("🚀 初始化 Leon Agent...")
 
     from agent import create_leon_agent
     from tui.app import run_tui
 
-    try:
-        agent = create_leon_agent(
-            model_name=model_name or "claude-sonnet-4-5-20250929",
-            profile=args.profile,
-            workspace_root=workspace,
-            sandbox=getattr(args, 'sandbox', None),
-            verbose=False,  # TUI mode: quiet initialization
-        )
-    except Exception as e:
-        print(f"❌ 初始化失败: {e}")
-        sys.exit(1)
-
-    print(f"✅ Agent 已就绪")
-    print(f"📁 工作目录: {agent.workspace_root}\n")
-
     # Session 管理
     session_mgr = SessionManager()
 
-    # 确定 thread_id
+    # @@@ Resolve thread_id BEFORE agent creation — needed for sandbox auto-detection
     if args.thread:
         thread_id = args.thread
         print(f"📝 恢复对话: {thread_id}")
@@ -629,6 +613,34 @@ def main():
     else:
         thread_id = f"tui-{uuid.uuid4().hex[:8]}"
         print(f"📝 新对话: {thread_id}")
+
+    # @@@ Auto-detect sandbox when resuming a thread
+    sandbox_arg = getattr(args, 'sandbox', None)
+    if not sandbox_arg and (args.thread or args.continue_last):
+        from sandbox.manager import lookup_sandbox_for_thread
+        detected = lookup_sandbox_for_thread(thread_id)
+        if detected:
+            config_path = Path.home() / ".leon" / "sandboxes" / f"{detected}.json"
+            if config_path.exists():
+                sandbox_arg = detected
+                print(f"🔄 Auto-detected sandbox: {detected}")
+
+    print("🚀 初始化 Leon Agent...")
+
+    try:
+        agent = create_leon_agent(
+            model_name=model_name or "claude-sonnet-4-5-20250929",
+            profile=args.profile,
+            workspace_root=workspace,
+            sandbox=sandbox_arg,
+            verbose=False,  # TUI mode: quiet initialization
+        )
+    except Exception as e:
+        print(f"❌ 初始化失败: {e}")
+        sys.exit(1)
+
+    print(f"✅ Agent 已就绪")
+    print(f"📁 工作目录: {agent.workspace_root}\n")
 
     try:
         run_tui(agent, agent.workspace_root, thread_id, session_mgr)

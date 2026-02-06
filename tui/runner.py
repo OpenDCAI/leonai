@@ -58,6 +58,12 @@ class NonInteractiveRunner:
         config = {"configurable": {"thread_id": self.thread_id}}
         t0 = time.perf_counter()
 
+        # @@@ Set sandbox thread context and ensure session before invoke
+        if hasattr(self.agent, '_sandbox') and self.agent._sandbox.name != "local":
+            from sandbox.thread_context import set_current_thread_id
+            set_current_thread_id(self.thread_id)
+            self.agent._sandbox.ensure_session(self.thread_id)
+
         # 状态转移：→ ACTIVE
         if hasattr(self.agent, 'runtime'):
             from middleware.monitor import AgentState
@@ -338,6 +344,16 @@ def cmd_run(args, unknown_args: list[str]) -> None:
     workspace = Path(args.workspace) if args.workspace else Path.cwd()
     thread_id = args.thread or f"run-{uuid.uuid4().hex[:8]}"
 
+    # @@@ Auto-detect sandbox when resuming a thread
+    sandbox_arg = getattr(args, 'sandbox', None)
+    if not sandbox_arg and args.thread:
+        from sandbox.manager import lookup_sandbox_for_thread
+        detected = lookup_sandbox_for_thread(thread_id)
+        if detected:
+            config_path = Path.home() / ".leon" / "sandboxes" / f"{detected}.json"
+            if config_path.exists():
+                sandbox_arg = detected
+
     # Validate mode combinations
     mode_count = sum([bool(message), stdin_mode, interactive_mode])
     if mode_count > 1:
@@ -385,7 +401,7 @@ def cmd_run(args, unknown_args: list[str]) -> None:
             model_name=model_name,
             profile=args.profile,
             workspace_root=workspace,
-            sandbox=getattr(args, 'sandbox', None),
+            sandbox=sandbox_arg,
             verbose=debug_mode,  # Only show middleware logs in debug mode
         )
     except Exception as e:

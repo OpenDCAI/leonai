@@ -163,8 +163,6 @@ class LeonAgent:
         else:
             self.workspace_root = Path.cwd()
 
-        self.workspace_root.mkdir(parents=True, exist_ok=True)
-
         # 配置参数
         self.allowed_file_extensions = profile.agent.allowed_extensions
         self.block_dangerous_commands = profile.agent.block_dangerous_commands
@@ -194,6 +192,8 @@ class LeonAgent:
         # @@@ Override workspace_root for sandbox mode — path validation must use sandbox paths
         if self._sandbox.name != "local":
             self.workspace_root = Path(self._sandbox.working_dir)
+        else:
+            self.workspace_root.mkdir(parents=True, exist_ok=True)
 
         # 初始化模型
         base_url = os.getenv("OPENAI_BASE_URL")

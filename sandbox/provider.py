@@ -19,8 +19,8 @@ class SessionInfo:
 
 
 @dataclass
-class ExecuteResult:
-    """Result of command execution."""
+class ProviderExecResult:
+    """Result of command execution in a sandbox provider."""
     output: str
     exit_code: int = 0
     error: str | None = None
@@ -44,9 +44,8 @@ class SandboxProvider(ABC):
 
     Implementations:
     - AgentBayProvider: Alibaba Cloud sandbox
-    - E2BProvider: E2B cloud sandbox (future)
-    - DockerProvider: Local Docker containers (future)
-    - LocalProvider: Passthrough, no isolation (future)
+    - E2BProvider: E2B cloud sandbox
+    - DockerProvider: Local Docker containers
     """
 
     name: str  # Provider identifier: 'agentbay', 'e2b', 'docker', 'local'
@@ -87,7 +86,7 @@ class SandboxProvider(ABC):
         command: str,
         timeout_ms: int = 30000,
         cwd: str | None = None,
-    ) -> ExecuteResult:
+    ) -> ProviderExecResult:
         """Execute shell command in sandbox."""
         pass
 
@@ -106,18 +105,6 @@ class SandboxProvider(ABC):
     @abstractmethod
     def list_dir(self, session_id: str, path: str) -> list[dict]:
         """List directory contents."""
-        pass
-
-    # ==================== Transfer ====================
-
-    @abstractmethod
-    def upload(self, session_id: str, local_path: str, remote_path: str) -> str:
-        """Upload local file to sandbox."""
-        pass
-
-    @abstractmethod
-    def download(self, session_id: str, remote_path: str, local_path: str) -> str:
-        """Download file from sandbox to local machine."""
         pass
 
     # ==================== Inspection ====================

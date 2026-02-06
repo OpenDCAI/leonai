@@ -7,7 +7,7 @@ Implements SandboxProvider using Alibaba Cloud's AgentBay SDK.
 from typing import Any
 
 from sandbox.provider import (
-    ExecuteResult,
+    ProviderExecResult,
     Metrics,
     SandboxProvider,
     SessionInfo,
@@ -108,7 +108,7 @@ class AgentBayProvider(SandboxProvider):
         command: str,
         timeout_ms: int = 30000,
         cwd: str | None = None,
-    ) -> ExecuteResult:
+    ) -> ProviderExecResult:
         session = self._get_session(session_id)
         timeout_ms = min(timeout_ms, 50000)
 
@@ -119,9 +119,9 @@ class AgentBayProvider(SandboxProvider):
         )
 
         if not result.success:
-            return ExecuteResult(output="", error=result.error_message)
+            return ProviderExecResult(output="", error=result.error_message)
 
-        return ExecuteResult(output=result.output or "")
+        return ProviderExecResult(output=result.output or "")
 
     def read_file(self, session_id: str, path: str) -> str:
         session = self._get_session(session_id)
@@ -150,28 +150,6 @@ class AgentBayProvider(SandboxProvider):
                 "size": entry.size or 0,
             })
         return items
-
-    def upload(self, session_id: str, local_path: str, remote_path: str) -> str:
-        session = self._get_session(session_id)
-        result = session.file_system.upload_file(
-            local_path=local_path,
-            remote_path=remote_path,
-            wait=True,
-            wait_timeout=300.0,
-        )
-        if not result.success:
-            raise OSError(result.error_message)
-        return f"Uploaded: {local_path} -> {remote_path}"
-
-    def download(self, session_id: str, remote_path: str, local_path: str) -> str:
-        session = self._get_session(session_id)
-        result = session.file_system.download_file(
-            remote_path=remote_path,
-            local_path=local_path,
-        )
-        if not result.success:
-            raise OSError(result.error_message)
-        return f"Downloaded: {remote_path} -> {local_path}"
 
     def get_metrics(self, session_id: str) -> Metrics | None:
         session = self._get_session(session_id)

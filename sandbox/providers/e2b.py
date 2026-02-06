@@ -15,7 +15,7 @@ import os
 from typing import Any
 
 from sandbox.provider import (
-    ExecuteResult,
+    ProviderExecResult,
     Metrics,
     SandboxProvider,
     SessionInfo,
@@ -126,7 +126,7 @@ class E2BProvider(SandboxProvider):
         command: str,
         timeout_ms: int = 30000,
         cwd: str | None = None,
-    ) -> ExecuteResult:
+    ) -> ProviderExecResult:
         sandbox = self._get_sandbox(session_id)
         try:
             result = sandbox.commands.run(
@@ -138,12 +138,12 @@ class E2BProvider(SandboxProvider):
             if result.stderr:
                 output += f"\n{result.stderr}" if output else result.stderr
 
-            return ExecuteResult(
+            return ProviderExecResult(
                 output=output,
                 exit_code=result.exit_code,
             )
         except Exception as e:
-            return ExecuteResult(output="", error=str(e))
+            return ProviderExecResult(output="", error=str(e))
 
     def read_file(self, session_id: str, path: str) -> str:
         sandbox = self._get_sandbox(session_id)
@@ -168,19 +168,6 @@ class E2BProvider(SandboxProvider):
             ]
         except Exception:
             return []
-
-    def upload(self, session_id: str, local_path: str, remote_path: str) -> str:
-        sandbox = self._get_sandbox(session_id)
-        with open(local_path, "rb") as f:
-            sandbox.files.write(remote_path, f.read())
-        return f"Uploaded: {local_path} -> {remote_path}"
-
-    def download(self, session_id: str, remote_path: str, local_path: str) -> str:
-        sandbox = self._get_sandbox(session_id)
-        content = sandbox.files.read(remote_path, format="bytes")
-        with open(local_path, "wb") as f:
-            f.write(content)
-        return f"Downloaded: {remote_path} -> {local_path}"
 
     def get_metrics(self, session_id: str) -> Metrics | None:
         return None
