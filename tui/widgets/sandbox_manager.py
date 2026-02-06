@@ -88,11 +88,11 @@ class SandboxManagerApp(App):
             try:
                 providers["agentbay"] = AgentBayProvider(api_key=api_key)
             except Exception as e:
-                self.set_status(f"AgentBay init failed: {e}")
+                print(f"[SandboxManager] AgentBay init failed: {e}")
         try:
             providers["docker"] = DockerProvider(image="ubuntu:22.04")
         except Exception as e:
-            self.set_status(f"Docker init failed: {e}")
+            print(f"[SandboxManager] Docker init failed: {e}")
         return providers
 
     def action_refresh(self) -> None:

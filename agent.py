@@ -354,6 +354,15 @@ tool:
     def _build_middleware_stack(self) -> list:
         """构建 middleware 栈"""
         middleware = []
+        sandbox_enabled = self.profile.sandbox.enabled
+        if sandbox_enabled and self.profile.sandbox.provider == "agentbay":
+            api_key = (
+                self.profile.sandbox.agentbay.api_key
+                or os.getenv("AGENTBAY_API_KEY")
+            )
+            if not api_key:
+                print("[LeonAgent] Warning: Sandbox enabled but AGENTBAY_API_KEY not set")
+                sandbox_enabled = False
 
         # 0. Steering (highest priority - checks for steer messages before model calls)
         middleware.append(SteeringMiddleware())
@@ -363,7 +372,7 @@ tool:
 
         # 2. FileSystem
         # @@@ Skip if sandbox is enabled (sandbox always replaces local tools)
-        if self.profile.tool.filesystem.enabled and not self.profile.sandbox.enabled:
+        if self.profile.tool.filesystem.enabled and not sandbox_enabled:
             file_hooks = []
             if self.enable_audit_log:
                 file_hooks.append(FileAccessLoggerHook(workspace_root=self.workspace_root, log_file="file_access.log"))
@@ -423,7 +432,7 @@ tool:
 
         # 5. Command
         # @@@ Skip if sandbox is enabled (sandbox always replaces local tools)
-        if self.profile.tool.command.enabled and not self.profile.sandbox.enabled:
+        if self.profile.tool.command.enabled and not sandbox_enabled:
             command_hooks = []
             if self.block_dangerous_commands:
                 command_hooks.append(DangerousCommandsHook(
@@ -471,45 +480,18 @@ tool:
         # 9. Sandbox (isolated execution environment)
         # @@@ Sandbox replaces local tools when enabled - must be last to override
         self._sandbox_manager = None
-        if self.profile.sandbox.enabled:
+        if sandbox_enabled:
             from middleware.sandbox import SandboxManager, SandboxMiddleware
             from middleware.sandbox.providers.agentbay import AgentBayProvider
 
             # Initialize provider based on config
             if self.profile.sandbox.provider == "agentbay":
-                api_key = (
-                    self.profile.sandbox.agentbay.api_key
-                    or os.getenv("AGENTBAY_API_KEY")
+                provider = AgentBayProvider(
+                    api_key=api_key,
+                    region_id=self.profile.sandbox.agentbay.region_id,
+                    default_context_path=self.profile.sandbox.agentbay.context_path,
+                    image_id=self.profile.sandbox.agentbay.image_id,
                 )
-                if not api_key:
-                    print("[LeonAgent] Warning: Sandbox enabled but AGENTBAY_API_KEY not set")
-                else:
-                    provider = AgentBayProvider(
-                        api_key=api_key,
-                        region_id=self.profile.sandbox.agentbay.region_id,
-                        default_context_path=self.profile.sandbox.agentbay.context_path,
-                        image_id=self.profile.sandbox.agentbay.image_id,
-                    )
-                    self._sandbox_manager = SandboxManager(
-                        provider=provider,
-                        db_path=self.db_path,
-                        default_context_id=self.profile.sandbox.context_id,
-                    )
-                    sandbox_tools = {
-                        'read_file': self.profile.sandbox.tools.read_file,
-                        'write_file': self.profile.sandbox.tools.write_file,
-                        'edit_file': self.profile.sandbox.tools.edit_file,
-                        'list_dir': self.profile.sandbox.tools.list_dir,
-                        'run_command': self.profile.sandbox.tools.run_command,
-                        'sandbox_upload': self.profile.sandbox.tools.sandbox_upload,
-                        'sandbox_download': self.profile.sandbox.tools.sandbox_download,
-                    }
-                    middleware.append(SandboxMiddleware(
-                        manager=self._sandbox_manager,
-                        workspace_root=self.workspace_root,
-                        enabled_tools=sandbox_tools,
-                    ))
-                    print(f"[LeonAgent] Sandbox enabled: {self.profile.sandbox.provider}")
             elif self.profile.sandbox.provider == "docker":
                 from middleware.sandbox.providers.docker import DockerProvider
 
@@ -517,6 +499,10 @@ tool:
                     image=self.profile.sandbox.docker.image,
                     mount_path=self.profile.sandbox.docker.mount_path,
                 )
+            else:
+                provider = None
+
+            if provider:
                 self._sandbox_manager = SandboxManager(
                     provider=provider,
                     db_path=self.db_path,
@@ -639,7 +625,7 @@ tool:
 1. **Sandbox Environment**: {location_rule} The sandbox is an isolated Linux environment.
 
 2. **Absolute Paths**: All file paths must be absolute paths.
-   - ✅ Correct: `/root/project/test.py` or `/tmp/output.txt`
+   - ✅ Correct: `{working_dir}/project/test.py` or `/tmp/output.txt`
    - ❌ Wrong: `test.py` or `./test.py`
 
 3. **Available Tools**: You have tools for file operations (read_file, write_file, edit_file, list_dir), command execution (run_command), and file transfer (sandbox_upload, sandbox_download).
