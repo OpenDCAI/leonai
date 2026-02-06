@@ -71,6 +71,7 @@ packages = [
     "middleware.filesystem.read",
     "middleware.filesystem.read.readers",
     "middleware.queue",
+    "middleware.memory",
     "middleware.skills",
     "middleware.monitor",
     "middleware.task",
