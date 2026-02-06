@@ -11,6 +11,7 @@ Key differences from AgentBay:
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from sandbox.provider import (
@@ -34,6 +35,8 @@ class E2BProvider(SandboxProvider):
         timeout: int = 300,
     ):
         self.api_key = api_key
+        # @@@ E2B SDK methods like beta_pause() read from env, not from instance
+        os.environ["E2B_API_KEY"] = api_key
         self.template = template
         self.default_cwd = default_cwd
         self.timeout = timeout
