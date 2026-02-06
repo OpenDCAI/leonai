@@ -132,7 +132,7 @@ class DockerProvider(SandboxProvider):
         container_id = self._get_container_id(session_id)
         script = (
             f"cd {shlex.quote(path)} 2>/dev/null || exit 1; "
-            "for f in $(ls -A 2>/dev/null); do "
+            "ls -A1 2>/dev/null | while IFS= read -r f; do "
             "if [ -d \"$f\" ]; then t=directory; else t=file; fi; "
             "s=$(stat -c %s \"$f\" 2>/dev/null || wc -c <\"$f\" 2>/dev/null || echo 0); "
             "printf \"%s\\t%s\\t%s\\n\" \"$t\" \"$s\" \"$f\"; "
