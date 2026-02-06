@@ -6,8 +6,6 @@ Launch with: leonai sandbox
 """
 
 import os
-import sqlite3
-from pathlib import Path
 
 from textual import work
 from textual.app import App, ComposeResult
@@ -52,7 +50,6 @@ class SandboxManagerApp(App):
             name: SandboxManager(provider=provider)
             for name, provider in self._providers.items()
         }
-        self._db_path = Path.home() / ".leon" / "leon.db"
         self.sessions: list[dict] = []
         self._pause_resume_support_by_session: dict[str, bool] = {}
 
@@ -101,7 +98,7 @@ class SandboxManagerApp(App):
     @work(exclusive=True, thread=True)
     def do_refresh(self) -> None:
         self.call_from_thread(self.set_status, "Loading sessions...")
-        sessions = self._load_sessions_from_db()
+        sessions = self._load_sessions()
         self.call_from_thread(self._update_table, sessions)
 
     def _update_table(self, sessions: list[dict]) -> None:
@@ -123,22 +120,13 @@ class SandboxManagerApp(App):
         if sid:
             self._apply_pause_resume_state(sid)
 
-    def _load_sessions_from_db(self) -> list[dict]:
+    def _load_sessions(self) -> list[dict]:
         sessions: list[dict] = []
-        if not self._db_path.exists():
-            return sessions
-        with sqlite3.connect(self._db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            rows = conn.execute("SELECT * FROM sandbox_sessions").fetchall()
-            for row in rows:
-                provider_name = row["provider"]
-                provider = self._providers.get(provider_name)
-                status = "unknown"
-                if provider:
-                    status = provider.get_session_status(row["session_id"])
+        for provider_name, manager in self._managers.items():
+            for row in manager.list_sessions():
                 sessions.append({
                     "id": row["session_id"],
-                    "status": status,
+                    "status": row["status"],
                     "provider": provider_name,
                     "thread": row["thread_id"],
                 })
