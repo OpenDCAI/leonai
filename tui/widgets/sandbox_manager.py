@@ -6,6 +6,7 @@ Launch with: leonai sandbox
 """
 
 import os
+from pathlib import Path
 
 from textual import work
 from textual.app import App, ComposeResult
@@ -13,9 +14,8 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, DataTable, Footer, Header, Static
 
+from sandbox.config import SandboxConfig
 from sandbox.manager import SandboxManager
-from sandbox.providers.agentbay import AgentBayProvider
-from sandbox.providers.docker import DockerProvider
 
 
 class SandboxManagerApp(App):
@@ -80,16 +80,45 @@ class SandboxManagerApp(App):
         self.query_one("#status", Static).update(msg)
 
     def _init_providers(self, api_key: str | None) -> dict[str, object]:
+        """Load providers from ~/.leon/sandboxes/*.json config files."""
         providers: dict[str, object] = {}
-        if api_key:
+        sandboxes_dir = Path.home() / ".leon" / "sandboxes"
+        if not sandboxes_dir.exists():
+            return providers
+
+        for config_file in sandboxes_dir.glob("*.json"):
+            name = config_file.stem
             try:
-                providers["agentbay"] = AgentBayProvider(api_key=api_key)
+                config = SandboxConfig.load(name)
+                if config.provider == "agentbay":
+                    from sandbox.providers.agentbay import AgentBayProvider
+                    key = config.agentbay.api_key or api_key or os.getenv("AGENTBAY_API_KEY")
+                    if key:
+                        providers["agentbay"] = AgentBayProvider(
+                            api_key=key,
+                            region_id=config.agentbay.region_id,
+                            default_context_path=config.agentbay.context_path,
+                            image_id=config.agentbay.image_id,
+                        )
+                elif config.provider == "docker":
+                    from sandbox.providers.docker import DockerProvider
+                    providers["docker"] = DockerProvider(
+                        image=config.docker.image,
+                        mount_path=config.docker.mount_path,
+                    )
+                elif config.provider == "e2b":
+                    from sandbox.providers.e2b import E2BProvider
+                    key = config.e2b.api_key or os.getenv("E2B_API_KEY")
+                    if key:
+                        providers["e2b"] = E2BProvider(
+                            api_key=key,
+                            template=config.e2b.template,
+                            default_cwd=config.e2b.cwd,
+                            timeout=config.e2b.timeout,
+                        )
             except Exception as e:
-                print(f"[SandboxManager] AgentBay init failed: {e}")
-        try:
-            providers["docker"] = DockerProvider(image="ubuntu:22.04")
-        except Exception as e:
-            print(f"[SandboxManager] Docker init failed: {e}")
+                print(f"[SandboxManager] Failed to load {name}: {e}")
+
         return providers
 
     def action_refresh(self) -> None:
@@ -390,8 +419,7 @@ class SandboxManagerApp(App):
         return None
 
     def _default_provider_for_create(self) -> str | None:
-        if "agentbay" in self._managers:
-            return "agentbay"
-        if "docker" in self._managers:
-            return "docker"
+        for name in ("agentbay", "e2b", "docker"):
+            if name in self._managers:
+                return name
         return None

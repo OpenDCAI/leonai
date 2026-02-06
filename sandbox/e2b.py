@@ -1,4 +1,4 @@
-"""AgentBaySandbox — cloud sandbox via Alibaba AgentBay.
+"""E2BSandbox — cloud sandbox via E2B.
 
 Creates SandboxFileBackend and SandboxExecutor at init time,
 caching them for the agent's lifetime.
@@ -11,9 +11,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from sandbox.base import Sandbox
-from sandbox.config import AgentBayConfig, SandboxConfig
+from sandbox.config import E2BConfig, SandboxConfig
 from sandbox.manager import SandboxManager
-from sandbox.providers.agentbay import AgentBayProvider
+from sandbox.providers.e2b import E2BProvider
 from sandbox.thread_context import get_current_thread_id
 
 if TYPE_CHECKING:
@@ -21,30 +21,29 @@ if TYPE_CHECKING:
     from middleware.filesystem.backend import FileSystemBackend
 
 
-class AgentBaySandbox(Sandbox):
-    """Cloud sandbox backed by AgentBay."""
+class E2BSandbox(Sandbox):
+    """Cloud sandbox backed by E2B."""
 
     def __init__(
         self,
         config: SandboxConfig,
         db_path: Path | None = None,
     ) -> None:
-        ab = config.agentbay
-        api_key = ab.api_key or os.getenv("AGENTBAY_API_KEY")
+        e2b = config.e2b
+        api_key = e2b.api_key or os.getenv("E2B_API_KEY")
         if not api_key:
-            raise ValueError("AgentBay sandbox requires AGENTBAY_API_KEY")
+            raise ValueError("E2B sandbox requires E2B_API_KEY")
 
-        provider = AgentBayProvider(
+        provider = E2BProvider(
             api_key=api_key,
-            region_id=ab.region_id,
-            default_context_path=ab.context_path,
-            image_id=ab.image_id,
+            template=e2b.template,
+            default_cwd=e2b.cwd,
+            timeout=e2b.timeout,
         )
 
         self._manager = SandboxManager(
             provider=provider,
             db_path=db_path,
-            default_context_id=config.context_id,
         )
         self._config = config
         self._on_exit = config.on_exit
@@ -68,23 +67,23 @@ class AgentBaySandbox(Sandbox):
         self._fs = SandboxFileBackend(self._manager, _get_session_id)
         self._shell = SandboxExecutor(
             self._manager, _get_session_id,
-            default_cwd=ab.context_path,
+            default_cwd=e2b.cwd,
         )
         self._get_session_id = _get_session_id
 
-        print(f"[AgentBaySandbox] Initialized (region={ab.region_id})")
+        print(f"[E2BSandbox] Initialized (template={e2b.template})")
 
     @property
     def name(self) -> str:
-        return "agentbay"
+        return "e2b"
 
     @property
     def working_dir(self) -> str:
-        return self._config.agentbay.context_path
+        return self._config.e2b.cwd
 
     @property
     def env_label(self) -> str:
-        return "Remote Linux sandbox (Ubuntu)"
+        return "Remote Linux sandbox (E2B)"
 
     def fs(self) -> FileSystemBackend:
         return self._fs
@@ -102,13 +101,13 @@ class AgentBaySandbox(Sandbox):
             if self._on_exit == "pause":
                 count = self._manager.pause_all_sessions()
                 if count > 0:
-                    print(f"[AgentBaySandbox] Paused {count} session(s)")
+                    print(f"[E2BSandbox] Paused {count} session(s)")
             elif self._on_exit == "destroy":
                 for session in self._manager.list_sessions():
                     self._manager.destroy_session(session["thread_id"])
-                print("[AgentBaySandbox] Destroyed all sessions")
+                print("[E2BSandbox] Destroyed all sessions")
         except Exception as e:
-            print(f"[AgentBaySandbox] Cleanup error: {e}")
+            print(f"[E2BSandbox] Cleanup error: {e}")
 
     def ensure_session(self, thread_id: str) -> None:
         from sandbox.thread_context import set_current_thread_id

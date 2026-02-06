@@ -41,12 +41,17 @@ class DockerSandbox(Sandbox):
         self._config = config
         self._on_exit = config.on_exit
 
+        # @@@ Cache session_id per thread to avoid hitting SQLite on every tool call
+        _session_cache: dict[str, str] = {}
+
         def _get_session_id() -> str:
             thread_id = get_current_thread_id()
             if not thread_id:
                 raise RuntimeError("No thread_id set. Call set_current_thread_id first.")
-            info = self._manager.get_or_create_session(thread_id)
-            return info.session_id
+            if thread_id not in _session_cache:
+                info = self._manager.get_or_create_session(thread_id)
+                _session_cache[thread_id] = info.session_id
+            return _session_cache[thread_id]
 
         from middleware.command.sandbox_executor import SandboxExecutor
         from middleware.filesystem.sandbox_backend import SandboxFileBackend
@@ -56,6 +61,7 @@ class DockerSandbox(Sandbox):
             self._manager, _get_session_id,
             default_cwd=dc.mount_path,
         )
+        self._get_session_id = _get_session_id
 
         print(f"[DockerSandbox] Initialized (image={dc.image})")
 
@@ -93,3 +99,8 @@ class DockerSandbox(Sandbox):
                 print("[DockerSandbox] Destroyed all sessions")
         except Exception as e:
             print(f"[DockerSandbox] Cleanup error: {e}")
+
+    def ensure_session(self, thread_id: str) -> None:
+        from sandbox.thread_context import set_current_thread_id
+        set_current_thread_id(thread_id)
+        self._get_session_id()

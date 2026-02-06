@@ -75,7 +75,11 @@ class FileSystemMiddleware(AgentMiddleware):
             backend: FileSystemBackend (default: LocalBackend)
             verbose: 是否输出详细日志
         """
-        self.workspace_root = Path(workspace_root).resolve()
+        # @@@ Don't resolve workspace_root for sandbox — macOS firmlinks break it
+        if backend and hasattr(backend, '_is_sandbox'):
+            self.workspace_root = Path(workspace_root)
+        else:
+            self.workspace_root = Path(workspace_root).resolve()
         self.max_file_size = max_file_size
         self.allowed_extensions = allowed_extensions
         self.hooks = hooks or []
@@ -117,7 +121,12 @@ class FileSystemMiddleware(AgentMiddleware):
             return False, f"Path must be absolute: {path}", None
 
         try:
-            resolved = Path(path).resolve()
+            # @@@ Don't resolve() for sandbox — paths don't exist locally
+            # macOS resolves /home → /System/Volumes/Data/home which breaks validation
+            if hasattr(self.backend, '_is_sandbox'):
+                resolved = Path(path)
+            else:
+                resolved = Path(path).resolve()
         except Exception as e:
             return False, f"Invalid path: {path} ({e})", None
 

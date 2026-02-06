@@ -49,3 +49,11 @@ class Sandbox(ABC):
     def close(self) -> None:
         """Clean up on agent exit. Default: no-op."""
         pass
+
+    def ensure_session(self, thread_id: str) -> None:
+        """Eagerly create/resume session for thread. Default: no-op.
+
+        Called before agent.invoke() to avoid lazy SQLite access
+        during async tool calls.
+        """
+        pass

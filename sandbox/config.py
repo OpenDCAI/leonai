@@ -20,8 +20,15 @@ class AgentBayConfig(BaseModel):
 
 
 class DockerConfig(BaseModel):
-    image: str = "ubuntu:22.04"
+    image: str = "python:3.12-slim"
     mount_path: str = "/workspace"
+
+
+class E2BConfig(BaseModel):
+    api_key: str | None = None
+    template: str = "base"
+    cwd: str = "/home/user"
+    timeout: int = 300  # seconds
 
 
 class SandboxConfig(BaseModel):
@@ -31,10 +38,11 @@ class SandboxConfig(BaseModel):
     "local" is the implicit default and needs no config file.
     """
 
-    provider: str = "local"  # "local" | "agentbay" | "docker"
+    provider: str = "local"  # "local" | "agentbay" | "docker" | "e2b"
     context_id: str | None = None
     agentbay: AgentBayConfig = Field(default_factory=AgentBayConfig)
     docker: DockerConfig = Field(default_factory=DockerConfig)
+    e2b: E2BConfig = Field(default_factory=E2BConfig)
     on_exit: str = "pause"  # "pause" | "destroy"
 
     @classmethod

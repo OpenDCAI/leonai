@@ -44,7 +44,8 @@ class SandboxManager:
         """Create sandbox_sessions table if not exists."""
         if isinstance(self.db_path, Path):
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(self.db_path, timeout=10) as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS sandbox_sessions (
                     thread_id TEXT PRIMARY KEY,
@@ -211,7 +212,7 @@ class SandboxManager:
     # ==================== DB Operations ====================
 
     def _get_from_db(self, thread_id: str) -> dict | None:
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(self.db_path, timeout=10) as conn:
             conn.row_factory = sqlite3.Row
             row = conn.execute(
                 "SELECT * FROM sandbox_sessions WHERE thread_id = ?",
@@ -220,13 +221,13 @@ class SandboxManager:
             return dict(row) if row else None
 
     def _get_all_from_db(self) -> list[dict]:
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(self.db_path, timeout=10) as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute("SELECT * FROM sandbox_sessions").fetchall()
             return [dict(row) for row in rows]
 
     def _save_to_db(self, thread_id: str, info: SessionInfo, context_id: str | None):
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(self.db_path, timeout=10) as conn:
             conn.execute(
                 """
                 INSERT OR REPLACE INTO sandbox_sessions
@@ -246,7 +247,7 @@ class SandboxManager:
             conn.commit()
 
     def _update_status(self, thread_id: str, status: str):
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(self.db_path, timeout=10) as conn:
             conn.execute(
                 "UPDATE sandbox_sessions SET status = ?, last_active = ? WHERE thread_id = ?",
                 (status, datetime.now(), thread_id),
@@ -254,7 +255,7 @@ class SandboxManager:
             conn.commit()
 
     def _update_last_active(self, thread_id: str):
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(self.db_path, timeout=10) as conn:
             conn.execute(
                 "UPDATE sandbox_sessions SET last_active = ? WHERE thread_id = ?",
                 (datetime.now(), thread_id),
@@ -262,7 +263,7 @@ class SandboxManager:
             conn.commit()
 
     def _delete_from_db(self, thread_id: str):
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(self.db_path, timeout=10) as conn:
             conn.execute(
                 "DELETE FROM sandbox_sessions WHERE thread_id = ?",
                 (thread_id,),

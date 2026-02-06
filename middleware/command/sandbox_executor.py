@@ -24,6 +24,7 @@ class SandboxExecutor(BaseExecutor):
 
     shell_name = "sandbox"
     shell_command = ()
+    _is_sandbox = True  # marker for middleware to skip local-only logic
 
     # Store completed results for command_status retrieval
     _completed: dict[str, AsyncCommand] = {}

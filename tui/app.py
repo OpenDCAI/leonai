@@ -352,6 +352,9 @@ class LeonApp(App):
         # Set sandbox thread_id if sandbox middleware is available
         if set_sandbox_thread_id:
             set_sandbox_thread_id(self.thread_id)
+        # Eagerly create sandbox session before invoke (avoids sync SQLite during async tool calls)
+        if hasattr(self.agent, '_sandbox'):
+            self.agent._sandbox.ensure_session(self.thread_id)
         # Generate a checkpoint ID for this interaction
         checkpoint_id = f"{self.thread_id}-{uuid.uuid4().hex[:8]}"
         current_checkpoint_id.set(checkpoint_id)

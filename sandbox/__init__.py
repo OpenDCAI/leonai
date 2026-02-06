@@ -45,6 +45,10 @@ def create_sandbox(
         from sandbox.docker import DockerSandbox
         return DockerSandbox(config=config, db_path=db_path)
 
+    if provider == "e2b":
+        from sandbox.e2b import E2BSandbox
+        return E2BSandbox(config=config, db_path=db_path)
+
     raise ValueError(f"Unknown sandbox provider: {provider}")
 
 
