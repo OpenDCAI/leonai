@@ -38,6 +38,23 @@ class Metrics:
     network_tx_kbps: float
 
 
+@dataclass
+class ProviderCapabilities:
+    """
+    Provider capability flags.
+
+    Used by TUI to show/hide or enable/disable features based on
+    what the provider supports. Capabilities can be static (provider
+    doesn't support feature) or dynamic (account tier limitation).
+    """
+    pause_resume: bool = True  # Can pause/resume sessions
+    pause_resume_reason: str | None = None  # Why disabled (e.g., "Account tier")
+    metrics: bool = True  # Can get resource metrics
+    screenshot: bool = False  # Can take screenshots
+    web_url: bool = False  # Has web UI URL
+    file_transfer: bool = True  # Can upload/download files
+
+
 class SandboxProvider(ABC):
     """
     Abstract interface for sandbox providers.
@@ -261,3 +278,15 @@ class SandboxProvider(ABC):
             URL string or None if unavailable
         """
         return None
+
+    def get_capabilities(self) -> ProviderCapabilities:
+        """
+        Get provider capabilities.
+
+        Override to report what features this provider supports.
+        Can be called to update UI state (e.g., disable pause button).
+
+        Returns:
+            ProviderCapabilities with feature flags
+        """
+        return ProviderCapabilities()

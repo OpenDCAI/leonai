@@ -2,7 +2,13 @@
 
 from middleware.sandbox.manager import SandboxManager
 from middleware.sandbox.middleware import SandboxMiddleware
-from middleware.sandbox.provider import SandboxProvider, SessionInfo, ExecuteResult, Metrics
+from middleware.sandbox.provider import (
+    ExecuteResult,
+    Metrics,
+    ProviderCapabilities,
+    SandboxProvider,
+    SessionInfo,
+)
 
 __all__ = [
     "SandboxMiddleware",
@@ -11,4 +17,5 @@ __all__ = [
     "SessionInfo",
     "ExecuteResult",
     "Metrics",
+    "ProviderCapabilities",
 ]
