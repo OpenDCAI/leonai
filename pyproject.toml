@@ -75,6 +75,7 @@ packages = [
     "middleware.shell",
     "middleware.shell.hooks",
     "middleware.skills",
+    "middleware.monitor",
     "middleware.task",
     "middleware.todo",
     "middleware.web",
