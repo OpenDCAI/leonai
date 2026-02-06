@@ -47,7 +47,8 @@ pdf = ["pymupdf>=1.24.0"]
 pptx = ["python-pptx>=1.0.0"]
 docs = ["pymupdf>=1.24.0", "python-pptx>=1.0.0"]
 sandbox = ["wuying-agentbay-sdk>=0.10.0"]
-all = ["pymupdf>=1.24.0", "python-pptx>=1.0.0", "wuying-agentbay-sdk>=0.10.0"]
+e2b = ["e2b>=2.13.0"]
+all = ["pymupdf>=1.24.0", "python-pptx>=1.0.0", "wuying-agentbay-sdk>=0.10.0", "e2b>=2.13.0"]
 
 [project.scripts]
 leonai = "tui.leon_cli:main"

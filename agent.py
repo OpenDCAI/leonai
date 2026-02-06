@@ -191,6 +191,10 @@ class LeonAgent:
         else:
             raise TypeError(f"sandbox must be Sandbox, str, or None, got {type(sandbox)}")
 
+        # @@@ Override workspace_root for sandbox mode — path validation must use sandbox paths
+        if self._sandbox.name != "local":
+            self.workspace_root = Path(self._sandbox.working_dir)
+
         # 初始化模型
         base_url = os.getenv("OPENAI_BASE_URL")
         if base_url:
@@ -274,10 +278,8 @@ class LeonAgent:
             except Exception as e:
                 print(f"[LeonAgent] Sandbox cleanup error: {e}")
 
-        # Close SQLite connection
         import asyncio
 
-        # 状态转移：→ TERMINATED
         if hasattr(self, '_monitor_middleware'):
             self._monitor_middleware.mark_terminated()
 
@@ -374,13 +376,15 @@ tool:
 
         # 2. FileSystem (always loaded — sandbox swaps backend, not middleware)
         if self.profile.tool.filesystem.enabled:
+            # @@@ Skip file hooks for sandbox — they write to local disk
             file_hooks = []
-            if self.enable_audit_log:
-                file_hooks.append(FileAccessLoggerHook(workspace_root=self.workspace_root, log_file="file_access.log"))
-            file_hooks.append(FilePermissionHook(
-                workspace_root=self.workspace_root,
-                allowed_extensions=self.allowed_file_extensions,
-            ))
+            if self._sandbox.name == "local":
+                if self.enable_audit_log:
+                    file_hooks.append(FileAccessLoggerHook(workspace_root=self.workspace_root, log_file="file_access.log"))
+                file_hooks.append(FilePermissionHook(
+                    workspace_root=self.workspace_root,
+                    allowed_extensions=self.allowed_file_extensions,
+                ))
             fs_tools = {
                 'read_file': self.profile.tool.filesystem.tools.read_file.enabled,
                 'write_file': self.profile.tool.filesystem.tools.write_file,
@@ -434,14 +438,16 @@ tool:
 
         # 5. Command (always loaded — sandbox swaps executor, not middleware)
         if self.profile.tool.command.enabled:
+            # @@@ Skip command hooks for sandbox — they resolve paths locally
             command_hooks = []
-            if self.block_dangerous_commands:
-                command_hooks.append(DangerousCommandsHook(
-                    workspace_root=self.workspace_root,
-                    block_network=self.block_network_commands,
-                    verbose=self.verbose,
-                ))
-            command_hooks.append(PathSecurityHook(workspace_root=self.workspace_root))
+            if self._sandbox.name == "local":
+                if self.block_dangerous_commands:
+                    command_hooks.append(DangerousCommandsHook(
+                        workspace_root=self.workspace_root,
+                        block_network=self.block_network_commands,
+                        verbose=self.verbose,
+                    ))
+                command_hooks.append(PathSecurityHook(workspace_root=self.workspace_root))
             command_tools = {
                 'run_command': self.profile.tool.command.tools.run_command.enabled,
                 'command_status': self.profile.tool.command.tools.command_status,
@@ -536,6 +542,8 @@ tool:
         db_path = Path.home() / ".leon" / "leon.db"
         db_path.parent.mkdir(parents=True, exist_ok=True)
         conn = await aiosqlite.connect(str(db_path))
+        # @@@ WAL mode allows concurrent reads/writes from sandbox manager
+        await conn.execute("PRAGMA journal_mode=WAL")
         self.checkpointer = AsyncSqliteSaver(conn)
         await self.checkpointer.setup()
         return conn
@@ -672,16 +680,17 @@ When NOT to use Todo:
         Returns:
             Agent 响应（包含消息和状态）
         """
-        # 状态由 MonitorMiddleware 自动管理
-        try:
-            result = self.agent.invoke(
+        import asyncio
+
+        async def _ainvoke():
+            return await self.agent.ainvoke(
                 {"messages": [{"role": "user", "content": message}]},
                 config={"configurable": {"thread_id": thread_id}},
             )
-            return result
 
+        try:
+            return asyncio.run(_ainvoke())
         except Exception as e:
-            # 标记错误状态
             self._monitor_middleware.mark_error(e)
             raise
 

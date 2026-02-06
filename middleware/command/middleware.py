@@ -68,7 +68,11 @@ class CommandMiddleware(AgentMiddleware[CommandState]):
         """
         AgentMiddleware.__init__(self)
 
-        self.workspace_root = Path(workspace_root).resolve()
+        # @@@ Don't resolve workspace_root for sandbox — macOS firmlinks break it
+        if executor is not None and hasattr(executor, '_is_sandbox'):
+            self.workspace_root = Path(workspace_root)
+        else:
+            self.workspace_root = Path(workspace_root).resolve()
         self.default_timeout = default_timeout
         self.hooks = hooks or []
         self.env = env

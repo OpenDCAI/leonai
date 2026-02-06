@@ -1,0 +1,185 @@
+"""
+E2B sandbox provider.
+
+Implements SandboxProvider using E2B's cloud sandbox SDK.
+
+Key differences from AgentBay:
+- No persistent storage (context_id ignored) -- pause is the only way to preserve state
+- Pause/resume via beta API: beta_pause() / Sandbox.connect()
+- Uses beta_create(auto_pause=True) so sandboxes pause on timeout instead of dying
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from sandbox.provider import (
+    ExecuteResult,
+    Metrics,
+    SandboxProvider,
+    SessionInfo,
+)
+
+
+class E2BProvider(SandboxProvider):
+    """E2B cloud sandbox provider."""
+
+    name = "e2b"
+
+    def __init__(
+        self,
+        api_key: str,
+        template: str = "base",
+        default_cwd: str = "/home/user",
+        timeout: int = 300,
+    ):
+        self.api_key = api_key
+        self.template = template
+        self.default_cwd = default_cwd
+        self.timeout = timeout
+        self._sandboxes: dict[str, Any] = {}
+
+    def create_session(self, context_id: str | None = None) -> SessionInfo:
+        from e2b import Sandbox
+
+        sandbox = Sandbox.beta_create(
+            template=self.template,
+            timeout=self.timeout,
+            auto_pause=True,
+            api_key=self.api_key,
+        )
+        self._sandboxes[sandbox.sandbox_id] = sandbox
+
+        return SessionInfo(
+            session_id=sandbox.sandbox_id,
+            provider=self.name,
+            status="running",
+        )
+
+    def destroy_session(self, session_id: str, sync: bool = True) -> bool:
+        from e2b import Sandbox
+
+        try:
+            sandbox = self._sandboxes.pop(session_id, None)
+            if sandbox:
+                sandbox.kill()
+            else:
+                Sandbox.kill(session_id, api_key=self.api_key)
+            return True
+        except Exception:
+            return False
+
+    def pause_session(self, session_id: str) -> bool:
+        try:
+            sandbox = self._get_sandbox(session_id)
+            sandbox.beta_pause()
+            self._sandboxes.pop(session_id, None)
+            return True
+        except Exception:
+            return False
+
+    def resume_session(self, session_id: str) -> bool:
+        from e2b import Sandbox
+
+        try:
+            sandbox = Sandbox.connect(
+                session_id,
+                timeout=self.timeout,
+                api_key=self.api_key,
+            )
+            self._sandboxes[session_id] = sandbox
+            return True
+        except Exception:
+            return False
+
+    def get_session_status(self, session_id: str) -> str:
+        from e2b import Sandbox
+
+        try:
+            # @@@ Sandbox.list() returns a paginator, not a list
+            paginator = Sandbox.list(api_key=self.api_key)
+            items = paginator.next_items()
+            for s in items:
+                if s.sandbox_id == session_id:
+                    return s.state.value
+            return "deleted"
+        except Exception:
+            return "unknown"
+
+    def execute(
+        self,
+        session_id: str,
+        command: str,
+        timeout_ms: int = 30000,
+        cwd: str | None = None,
+    ) -> ExecuteResult:
+        sandbox = self._get_sandbox(session_id)
+        try:
+            result = sandbox.commands.run(
+                command,
+                cwd=cwd or self.default_cwd,
+                timeout=timeout_ms / 1000,
+            )
+            output = result.stdout or ""
+            if result.stderr:
+                output += f"\n{result.stderr}" if output else result.stderr
+
+            return ExecuteResult(
+                output=output,
+                exit_code=result.exit_code,
+            )
+        except Exception as e:
+            return ExecuteResult(output="", error=str(e))
+
+    def read_file(self, session_id: str, path: str) -> str:
+        sandbox = self._get_sandbox(session_id)
+        return sandbox.files.read(path)
+
+    def write_file(self, session_id: str, path: str, content: str) -> str:
+        sandbox = self._get_sandbox(session_id)
+        sandbox.files.write(path, content)
+        return f"Written: {path}"
+
+    def list_dir(self, session_id: str, path: str) -> list[dict]:
+        sandbox = self._get_sandbox(session_id)
+        try:
+            entries = sandbox.files.list(path)
+            return [
+                {
+                    "name": entry.name,
+                    "type": "directory" if entry.type and entry.type.value == "dir" else "file",
+                    "size": getattr(entry, "size", 0) or 0,
+                }
+                for entry in entries
+            ]
+        except Exception:
+            return []
+
+    def upload(self, session_id: str, local_path: str, remote_path: str) -> str:
+        sandbox = self._get_sandbox(session_id)
+        with open(local_path, "rb") as f:
+            sandbox.files.write(remote_path, f.read())
+        return f"Uploaded: {local_path} -> {remote_path}"
+
+    def download(self, session_id: str, remote_path: str, local_path: str) -> str:
+        sandbox = self._get_sandbox(session_id)
+        content = sandbox.files.read(remote_path, format="bytes")
+        with open(local_path, "wb") as f:
+            f.write(content)
+        return f"Downloaded: {remote_path} -> {local_path}"
+
+    def get_metrics(self, session_id: str) -> Metrics | None:
+        return None
+
+    def _get_sandbox(self, session_id: str):
+        """Get sandbox object, reconnecting if not cached."""
+        if session_id not in self._sandboxes:
+            from e2b import Sandbox
+
+            sandbox = Sandbox.connect(
+                session_id,
+                timeout=self.timeout,
+                api_key=self.api_key,
+            )
+            self._sandboxes[session_id] = sandbox
+        return self._sandboxes[session_id]

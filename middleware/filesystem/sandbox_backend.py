@@ -56,7 +56,7 @@ class SandboxFileBackend(FileSystemBackend):
             return FileWriteResult(success=False, error=str(e))
 
     def file_exists(self, path: str) -> bool:
-        """Check existence by attempting to read or list parent.
+        """Check existence by attempting to read.
 
         Sandbox providers don't have a dedicated exists() method,
         so we try reading the file and catch errors.
@@ -66,12 +66,7 @@ class SandboxFileBackend(FileSystemBackend):
             self._provider.read_file(session_id, path)
             return True
         except Exception:
-            # Could be a directory — try list_dir
-            try:
-                self._provider.list_dir(session_id, path)
-                return True
-            except Exception:
-                return False
+            return False
 
     def file_mtime(self, path: str) -> float | None:
         # Sandbox has no local mtime — staleness detection gracefully degrades
