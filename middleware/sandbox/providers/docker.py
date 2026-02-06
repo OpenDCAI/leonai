@@ -307,4 +307,6 @@ class DockerProvider(SandboxProvider):
         except ValueError:
             num_f = 0.0
         unit = unit.strip().lower()
+        if unit.endswith("ib"):
+            unit = unit.replace("ib", "b")
         return num_f, unit
