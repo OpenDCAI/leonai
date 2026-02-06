@@ -83,29 +83,32 @@ class SandboxManager:
         existing = self._get_from_db(thread_id)
 
         if existing:
-            session_id = existing["session_id"]
-            status = self.provider.get_session_status(session_id)
+            if existing["provider"] != self.provider.name:
+                self._delete_from_db(thread_id)
+            else:
+                session_id = existing["session_id"]
+                status = self.provider.get_session_status(session_id)
 
-            if status == "running":
-                self._update_last_active(thread_id)
-                return SessionInfo(
-                    session_id=session_id,
-                    provider=existing["provider"],
-                    status="running",
-                )
-
-            elif status == "paused":
-                # Resume paused session
-                if self.provider.resume_session(session_id):
-                    self._update_status(thread_id, "running")
+                if status == "running":
+                    self._update_last_active(thread_id)
                     return SessionInfo(
                         session_id=session_id,
                         provider=existing["provider"],
                         status="running",
                     )
 
-            # Session is gone or in bad state, clean up DB entry
-            self._delete_from_db(thread_id)
+                elif status == "paused":
+                    # Resume paused session
+                    if self.provider.resume_session(session_id):
+                        self._update_status(thread_id, "running")
+                        return SessionInfo(
+                            session_id=session_id,
+                            provider=existing["provider"],
+                            status="running",
+                        )
+
+                # Session is gone or in bad state, clean up DB entry
+                self._delete_from_db(thread_id)
 
         # Create new session
         context_id = self.default_context_id
@@ -126,6 +129,8 @@ class SandboxManager:
         """
         existing = self._get_from_db(thread_id)
         if not existing:
+            return None
+        if existing["provider"] != self.provider.name:
             return None
 
         status = self.provider.get_session_status(existing["session_id"])
@@ -152,6 +157,8 @@ class SandboxManager:
         existing = self._get_from_db(thread_id)
         if not existing:
             return False
+        if existing["provider"] != self.provider.name:
+            return False
 
         if self.provider.pause_session(existing["session_id"]):
             self._update_status(thread_id, "paused")
@@ -170,6 +177,8 @@ class SandboxManager:
         """
         existing = self._get_from_db(thread_id)
         if not existing:
+            return False
+        if existing["provider"] != self.provider.name:
             return False
 
         if self.provider.resume_session(existing["session_id"]):
@@ -191,6 +200,8 @@ class SandboxManager:
         existing = self._get_from_db(thread_id)
         if not existing:
             return False
+        if existing["provider"] != self.provider.name:
+            return False
 
         if self.provider.destroy_session(existing["session_id"], sync=sync):
             self._delete_from_db(thread_id)
@@ -208,12 +219,22 @@ class SandboxManager:
         """
         count = 0
         for row in self._get_all_from_db():
+            if row["provider"] != self.provider.name:
+                continue
+            status = self.provider.get_session_status(row["session_id"])
+            if status in ("deleted", "unknown"):
+                self._delete_from_db(row["thread_id"])
+                continue
             if row["status"] == "running":
                 try:
                     if self.provider.pause_session(row["session_id"]):
                         self._update_status(row["thread_id"], "paused")
                         count += 1
                 except Exception as e:
+                    message = str(e)
+                    if "Session not found" in message:
+                        self._delete_from_db(row["thread_id"])
+                        continue
                     print(f"[SandboxManager] Failed to pause {row['session_id']}: {e}")
         return count
 
@@ -226,7 +247,10 @@ class SandboxManager:
         """
         sessions = []
         for row in self._get_all_from_db():
-            status = self.provider.get_session_status(row["session_id"])
+            if row["provider"] != self.provider.name:
+                status = "unknown"
+            else:
+                status = self.provider.get_session_status(row["session_id"])
             sessions.append({
                 "thread_id": row["thread_id"],
                 "session_id": row["session_id"],
@@ -247,6 +271,8 @@ class SandboxManager:
         """
         count = 0
         for row in self._get_all_from_db():
+            if row["provider"] != self.provider.name:
+                continue
             status = self.provider.get_session_status(row["session_id"])
             if status in ("deleted", "unknown"):
                 self._delete_from_db(row["thread_id"])

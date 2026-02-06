@@ -1,43 +1,27 @@
 """
 Sandbox Session Manager TUI.
 
-Lists all AgentBay sessions with actions: create, delete, pause, resume, metrics.
+Lists all sandbox sessions with actions: create, delete, pause, resume, metrics.
 Launch with: leonai sandbox
 """
 
 import os
-import sys
+import sqlite3
+from pathlib import Path
 
-# Suppress AgentBay SDK logs (imports must come after stderr redirect)
-_original_stderr = sys.stderr
-sys.stderr = open(os.devnull, "w")
+from textual import work
+from textual.app import App, ComposeResult
+from textual.binding import Binding
+from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.widgets import Button, DataTable, Footer, Header, Static
 
-import agentbay._common.logger as sdk_logger  # noqa: E402
-from agentbay import AgentBay  # noqa: E402
-
-
-class _NoOpLogger:
-    def __getattr__(self, name):
-        return lambda *args, **kwargs: self
-
-    def opt(self, *args, **kwargs):
-        return self
-
-
-sdk_logger.log = _NoOpLogger()
-
-# Restore stderr for Textual
-sys.stderr = _original_stderr
-
-from textual import work  # noqa: E402
-from textual.app import App, ComposeResult  # noqa: E402
-from textual.binding import Binding  # noqa: E402
-from textual.containers import Horizontal, Vertical, VerticalScroll  # noqa: E402
-from textual.widgets import Button, DataTable, Footer, Header, Static  # noqa: E402
+from middleware.sandbox import SandboxManager
+from middleware.sandbox.providers.agentbay import AgentBayProvider
+from middleware.sandbox.providers.docker import DockerProvider
 
 
 class SandboxManagerApp(App):
-    """TUI for managing AgentBay sandbox sessions."""
+    """TUI for managing sandbox sessions."""
 
     CSS = """
     #main { height: 1fr; }
@@ -61,9 +45,14 @@ class SandboxManagerApp(App):
         Binding("q", "quit", "Quit"),
     ]
 
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str | None):
         super().__init__()
-        self.agent_bay = AgentBay(api_key=api_key)
+        self._providers = self._init_providers(api_key)
+        self._managers = {
+            name: SandboxManager(provider=provider)
+            for name, provider in self._providers.items()
+        }
+        self._db_path = Path.home() / ".leon" / "leon.db"
         self.sessions: list[dict] = []
         self._pause_resume_support_by_session: dict[str, bool] = {}
 
@@ -86,12 +75,25 @@ class SandboxManagerApp(App):
 
     def on_mount(self) -> None:
         table = self.query_one("#table", DataTable)
-        table.add_columns("Session ID", "Status", "Thread")
+        table.add_columns("Session ID", "Status", "Provider", "Thread")
         table.cursor_type = "row"
         self.do_refresh()
 
     def set_status(self, msg: str) -> None:
         self.query_one("#status", Static).update(msg)
+
+    def _init_providers(self, api_key: str | None) -> dict[str, object]:
+        providers: dict[str, object] = {}
+        if api_key:
+            try:
+                providers["agentbay"] = AgentBayProvider(api_key=api_key)
+            except Exception as e:
+                self.set_status(f"AgentBay init failed: {e}")
+        try:
+            providers["docker"] = DockerProvider(image="ubuntu:22.04")
+        except Exception as e:
+            self.set_status(f"Docker init failed: {e}")
+        return providers
 
     def action_refresh(self) -> None:
         self.do_refresh()
@@ -99,21 +101,7 @@ class SandboxManagerApp(App):
     @work(exclusive=True, thread=True)
     def do_refresh(self) -> None:
         self.call_from_thread(self.set_status, "Loading sessions...")
-        sessions = []
-
-        for status in ["RUNNING", "PAUSED", "PAUSING", "RESUMING"]:
-            try:
-                result = self.agent_bay.list(status=status, limit=50)
-                for item in result.session_ids:
-                    sessions.append({
-                        "id": item["sessionId"],
-                        "status": item["sessionStatus"],
-                        "thread": "",  # Could map from leon.db if needed
-                    })
-            except Exception as e:
-                self.call_from_thread(self.set_status, f"Error: {e}")
-                return
-
+        sessions = self._load_sessions_from_db()
         self.call_from_thread(self._update_table, sessions)
 
     def _update_table(self, sessions: list[dict]) -> None:
@@ -123,7 +111,7 @@ class SandboxManagerApp(App):
         active_ids = set()
         for s in sessions:
             active_ids.add(s["id"])
-            table.add_row(s["id"], s["status"], s["thread"])
+            table.add_row(s["id"], s["status"], s["provider"], s["thread"])
         if self._pause_resume_support_by_session:
             self._pause_resume_support_by_session = {
                 sid: supported
@@ -134,6 +122,27 @@ class SandboxManagerApp(App):
         sid = self._get_selected_session(notify=False)
         if sid:
             self._apply_pause_resume_state(sid)
+
+    def _load_sessions_from_db(self) -> list[dict]:
+        sessions: list[dict] = []
+        if not self._db_path.exists():
+            return sessions
+        with sqlite3.connect(self._db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute("SELECT * FROM sandbox_sessions").fetchall()
+            for row in rows:
+                provider_name = row["provider"]
+                provider = self._providers.get(provider_name)
+                status = "unknown"
+                if provider:
+                    status = provider.get_session_status(row["session_id"])
+                sessions.append({
+                    "id": row["session_id"],
+                    "status": status,
+                    "provider": provider_name,
+                    "thread": row["thread_id"],
+                })
+        return sessions
 
     def _get_selected_session(self, notify: bool = True) -> str | None:
         table = self.query_one("#table", DataTable)
@@ -155,13 +164,17 @@ class SandboxManagerApp(App):
     def do_delete(self, sid: str) -> None:
         self.call_from_thread(self.set_status, f"Deleting {sid[:16]}...")
         try:
-            result = self.agent_bay.get(sid)
-            if result.success:
-                result.session.delete()
+            provider_name = self._get_provider_for_session(sid)
+            if not provider_name:
+                self.call_from_thread(self.set_status, "Session not found")
+                return
+            manager = self._managers[provider_name]
+            thread_id = self._get_thread_for_session(sid)
+            if thread_id and manager.destroy_session(thread_id):
                 self.call_from_thread(self.set_status, f"Deleted {sid[:16]}")
                 self.do_refresh()
             else:
-                self.call_from_thread(self.set_status, "Session not found")
+                self.call_from_thread(self.set_status, "Delete failed")
         except Exception as e:
             self.call_from_thread(self.set_status, f"Delete failed: {e}")
 
@@ -170,11 +183,19 @@ class SandboxManagerApp(App):
 
     @work(exclusive=True, thread=True)
     def do_create(self) -> None:
-        self.call_from_thread(self.set_status, "Creating new session...")
+        provider_name = self._default_provider_for_create()
+        if not provider_name:
+            self.call_from_thread(self.set_status, "No providers available")
+            return
+        self.call_from_thread(self.set_status, f"Creating new {provider_name} session...")
         try:
-            result = self.agent_bay.create()
-            sid = result.session.session_id
-            self.call_from_thread(self.set_status, f"Created: {sid[:16]}")
+            manager = self._managers.get(provider_name)
+            if not manager:
+                self.call_from_thread(self.set_status, f"Provider not available: {provider_name}")
+                return
+            thread_id = f"sandbox-{os.urandom(4).hex()}"
+            info = manager.get_or_create_session(thread_id)
+            self.call_from_thread(self.set_status, f"Created: {info.session_id[:16]}")
             self.do_refresh()
         except Exception as e:
             self.call_from_thread(self.set_status, f"Create failed: {e}")
@@ -183,21 +204,18 @@ class SandboxManagerApp(App):
     def do_pause(self, sid: str) -> None:
         self.call_from_thread(self.set_status, f"Pausing {sid[:16]}...")
         try:
-            result = self.agent_bay.get(sid)
-            if result.success:
-                pause_result = self.agent_bay.beta_pause(result.session)
-                if pause_result.success:
-                    self._pause_resume_support_by_session[sid] = True
-                    self.call_from_thread(self.set_status, f"Paused {sid[:16]}")
-                elif self._is_pause_resume_not_supported(pause_result):
-                    self._pause_resume_support_by_session[sid] = False
-                    self.call_from_thread(self._apply_pause_resume_state, sid)
-                    self.call_from_thread(self.set_status, "Pause/resume not available (account tier)")
-                else:
-                    self.call_from_thread(self.set_status, f"Pause failed: {pause_result.error_message}")
-                self.do_refresh()
-            else:
+            provider_name = self._get_provider_for_session(sid)
+            if not provider_name:
                 self.call_from_thread(self.set_status, "Session not found")
+                return
+            manager = self._managers[provider_name]
+            thread_id = self._get_thread_for_session(sid)
+            if thread_id and manager.pause_session(thread_id):
+                self._pause_resume_support_by_session[sid] = True
+                self.call_from_thread(self.set_status, f"Paused {sid[:16]}")
+            else:
+                self.call_from_thread(self.set_status, "Failed to pause")
+            self.do_refresh()
         except Exception as e:
             if self._is_pause_resume_not_supported(e):
                 self._pause_resume_support_by_session[sid] = False
@@ -210,21 +228,18 @@ class SandboxManagerApp(App):
     def do_resume(self, sid: str) -> None:
         self.call_from_thread(self.set_status, f"Resuming {sid[:16]}...")
         try:
-            result = self.agent_bay.get(sid)
-            if result.success:
-                resume_result = self.agent_bay.beta_resume(result.session)
-                if resume_result.success:
-                    self._pause_resume_support_by_session[sid] = True
-                    self.call_from_thread(self.set_status, f"Resumed {sid[:16]}")
-                elif self._is_pause_resume_not_supported(resume_result):
-                    self._pause_resume_support_by_session[sid] = False
-                    self.call_from_thread(self._apply_pause_resume_state, sid)
-                    self.call_from_thread(self.set_status, "Pause/resume not available (account tier)")
-                else:
-                    self.call_from_thread(self.set_status, f"Resume failed: {resume_result.error_message}")
-                self.do_refresh()
-            else:
+            provider_name = self._get_provider_for_session(sid)
+            if not provider_name:
                 self.call_from_thread(self.set_status, "Session not found")
+                return
+            manager = self._managers[provider_name]
+            thread_id = self._get_thread_for_session(sid)
+            if thread_id and manager.resume_session(thread_id):
+                self._pause_resume_support_by_session[sid] = True
+                self.call_from_thread(self.set_status, f"Resumed {sid[:16]}")
+            else:
+                self.call_from_thread(self.set_status, "Failed to resume")
+            self.do_refresh()
         except Exception as e:
             if self._is_pause_resume_not_supported(e):
                 self._pause_resume_support_by_session[sid] = False
@@ -242,29 +257,29 @@ class SandboxManagerApp(App):
     def do_get_metrics(self, sid: str) -> None:
         self.call_from_thread(self.set_status, f"Getting metrics for {sid[:16]}...")
         try:
-            result = self.agent_bay.get(sid)
-            if not result.success:
+            provider_name = self._get_provider_for_session(sid)
+            if not provider_name:
                 self.call_from_thread(self._update_detail, "Session not found")
                 return
-
-            session = result.session
-            metrics = session.get_metrics()
-
-            if metrics.success and metrics.metrics:
-                m = metrics.metrics
-                url = getattr(session, 'resource_url', '')
+            provider = self._providers.get(provider_name)
+            if not provider:
+                self.call_from_thread(self._update_detail, "Provider unavailable")
+                return
+            metrics = provider.get_metrics(sid)
+            url = provider.get_web_url(sid) if provider_name == "agentbay" else None
+            if metrics:
                 detail = (
                     f"Session: {sid}\n"
-                    f"CPU: {m.cpu_used_pct:.1f}% ({m.cpu_count} cores)\n"
-                    f"Memory: {m.mem_used / 1024 / 1024:.0f}MB / {m.mem_total / 1024 / 1024:.0f}MB\n"
-                    f"Disk: {m.disk_used / 1024 / 1024 / 1024:.1f}GB / {m.disk_total / 1024 / 1024 / 1024:.1f}GB\n"
-                    f"Network: RX {m.rx_rate_kbyte_per_s:.1f} KB/s | TX {m.tx_rate_kbyte_per_s:.1f} KB/s\n"
+                    f"CPU: {metrics.cpu_percent:.1f}%\n"
+                    f"Memory: {metrics.memory_used_mb:.0f}MB / {metrics.memory_total_mb:.0f}MB\n"
+                    f"Disk: {metrics.disk_used_gb:.1f}GB / {metrics.disk_total_gb:.1f}GB\n"
+                    f"Network: RX {metrics.network_rx_kbps:.1f} KB/s | TX {metrics.network_tx_kbps:.1f} KB/s\n"
                     f"\nWeb URL: {url[:60]}..." if url else ""
                 )
                 self.call_from_thread(self._update_detail, detail)
                 self.call_from_thread(self.set_status, "Metrics loaded")
             else:
-                self.call_from_thread(self._update_detail, f"Failed: {metrics.error_message}")
+                self.call_from_thread(self._update_detail, "Metrics unavailable")
                 self.call_from_thread(self.set_status, "Failed to get metrics")
         except Exception as e:
             self.call_from_thread(self._update_detail, f"Error: {e}")
@@ -279,17 +294,21 @@ class SandboxManagerApp(App):
     def do_open_url(self, sid: str) -> None:
         self.call_from_thread(self.set_status, f"Getting URL for {sid[:16]}...")
         try:
-            result = self.agent_bay.get(sid)
-            if result.success:
-                url = getattr(result.session, 'resource_url', None)
-                if url:
-                    import webbrowser
-                    webbrowser.open(url)
-                    self.call_from_thread(self.set_status, "Opened in browser")
-                else:
-                    self.call_from_thread(self.set_status, "No URL available")
+            provider_name = self._get_provider_for_session(sid)
+            if provider_name != "agentbay":
+                self.call_from_thread(self.set_status, "No URL available")
+                return
+            provider = self._providers.get(provider_name)
+            if not provider:
+                self.call_from_thread(self.set_status, "Provider unavailable")
+                return
+            url = provider.get_web_url(sid)
+            if url:
+                import webbrowser
+                webbrowser.open(url)
+                self.call_from_thread(self.set_status, "Opened in browser")
             else:
-                self.call_from_thread(self.set_status, "Session not found")
+                self.call_from_thread(self.set_status, "No URL available")
         except Exception as e:
             self.call_from_thread(self.set_status, f"Error: {e}")
 
@@ -308,7 +327,6 @@ class SandboxManagerApp(App):
         return "BenefitLevel.NotSupport" in message
 
     def _mute_pause_resume(self) -> None:
-        """Visually mute pause/resume buttons when not supported."""
         pause_btn = self.query_one("#btn-pause", Button)
         resume_btn = self.query_one("#btn-resume", Button)
         pause_btn.add_class("muted")
@@ -369,3 +387,22 @@ class SandboxManagerApp(App):
         sid = self._get_selected_session(notify=False)
         if sid:
             self._apply_pause_resume_state(sid)
+
+    def _get_provider_for_session(self, session_id: str) -> str | None:
+        for s in self.sessions:
+            if s["id"] == session_id:
+                return s["provider"]
+        return None
+
+    def _get_thread_for_session(self, session_id: str) -> str | None:
+        for s in self.sessions:
+            if s["id"] == session_id:
+                return s["thread"]
+        return None
+
+    def _default_provider_for_create(self) -> str | None:
+        if "agentbay" in self._managers:
+            return "agentbay"
+        if "docker" in self._managers:
+            return "docker"
+        return None
