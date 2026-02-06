@@ -172,7 +172,38 @@ class DockerProvider(SandboxProvider):
         return f"Downloaded: {remote_path} -> {local_path}"
 
     def get_metrics(self, session_id: str) -> Metrics | None:
-        return None
+        container_id = self._get_container_id(session_id, allow_missing=True)
+        if not container_id:
+            return None
+        result = self._run(
+            [
+                "docker",
+                "stats",
+                "--no-stream",
+                "--format",
+                "{{.CPUPerc}}\t{{.MemUsage}}\t{{.NetIO}}\t{{.BlockIO}}",
+                container_id,
+            ],
+            check=False,
+        )
+        if result.returncode != 0:
+            return None
+        parts = result.stdout.strip().split("\t")
+        if len(parts) != 4:
+            return None
+        cpu_percent = self._parse_percent(parts[0])
+        mem_used, mem_total = self._parse_mem_usage(parts[1])
+        net_rx, net_tx = self._parse_io(parts[2])
+        disk_used, disk_total = self._parse_io(parts[3])
+        return Metrics(
+            cpu_percent=cpu_percent,
+            memory_used_mb=mem_used,
+            memory_total_mb=mem_total,
+            disk_used_gb=disk_used / 1024,
+            disk_total_gb=disk_total / 1024,
+            network_rx_kbps=net_rx,
+            network_tx_kbps=net_tx,
+        )
 
     def _get_container_id(self, session_id: str, allow_missing: bool = False) -> str | None:
         container_id = self._sessions.get(session_id)
@@ -208,3 +239,72 @@ class DockerProvider(SandboxProvider):
         if check and result.returncode != 0:
             raise RuntimeError(result.stderr.strip() or "Docker command failed")
         return result
+
+    def _parse_percent(self, value: str) -> float:
+        value = value.strip().replace("%", "")
+        try:
+            return float(value)
+        except ValueError:
+            return 0.0
+
+    def _parse_mem_usage(self, value: str) -> tuple[float, float]:
+        # "12.3MiB / 1.934GiB"
+        parts = [p.strip() for p in value.split("/")]
+        if len(parts) != 2:
+            return 0.0, 0.0
+        return self._parse_size_mb(parts[0]), self._parse_size_mb(parts[1])
+
+    def _parse_io(self, value: str) -> tuple[float, float]:
+        # "1.2kB / 3.4MB"
+        parts = [p.strip() for p in value.split("/")]
+        if len(parts) != 2:
+            return 0.0, 0.0
+        rx_kb = self._parse_size_kb(parts[0])
+        tx_kb = self._parse_size_kb(parts[1])
+        return rx_kb, tx_kb
+
+    def _parse_size_mb(self, value: str) -> float:
+        num, unit = self._split_size(value)
+        if unit == "b":
+            return num / 1024 / 1024
+        if unit == "kb":
+            return num / 1024
+        if unit == "mb":
+            return num
+        if unit == "gb":
+            return num * 1024
+        if unit == "tb":
+            return num * 1024 * 1024
+        return 0.0
+
+    def _parse_size_kb(self, value: str) -> float:
+        num, unit = self._split_size(value)
+        if unit == "b":
+            return num / 1024
+        if unit == "kb":
+            return num
+        if unit == "mb":
+            return num * 1024
+        if unit == "gb":
+            return num * 1024 * 1024
+        if unit == "tb":
+            return num * 1024 * 1024 * 1024
+        return 0.0
+
+    def _split_size(self, value: str) -> tuple[float, str]:
+        value = value.strip()
+        if not value:
+            return 0.0, ""
+        num = ""
+        unit = ""
+        for ch in value:
+            if ch.isdigit() or ch == ".":
+                num += ch
+            else:
+                unit += ch
+        try:
+            num_f = float(num) if num else 0.0
+        except ValueError:
+            num_f = 0.0
+        unit = unit.strip().lower()
+        return num_f, unit
