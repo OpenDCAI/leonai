@@ -57,10 +57,6 @@ class SandboxMiddleware(AgentMiddleware):
     TOOL_LIST_DIR = "list_dir"
     TOOL_EXECUTE = "run_command"
 
-    # Sandbox-specific tools for local ↔ sandbox transfer
-    TOOL_UPLOAD = "sandbox_upload"
-    TOOL_DOWNLOAD = "sandbox_download"
-
     def __init__(
         self,
         manager: SandboxManager,
@@ -83,8 +79,6 @@ class SandboxMiddleware(AgentMiddleware):
             self.TOOL_EDIT_FILE: True,
             self.TOOL_LIST_DIR: True,
             self.TOOL_EXECUTE: True,
-            self.TOOL_UPLOAD: True,
-            self.TOOL_DOWNLOAD: True,
         }
         # Track read files for edit validation (no-read-no-write rule)
         self._read_files: set[str] = set()
@@ -177,44 +171,6 @@ class SandboxMiddleware(AgentMiddleware):
         if result.error:
             return f"Error: {result.error}"
         return result.output or "(no output)"
-
-    def _upload_impl(self, local_path: str, remote_path: str) -> str:
-        # Validate local path is within workspace
-        local = Path(local_path)
-        if not local.is_absolute():
-            local = self.workspace_root / local_path
-
-        if not local.exists():
-            return f"Error: Local file not found: {local}"
-
-        try:
-            local.relative_to(self.workspace_root)
-        except ValueError:
-            return f"Error: Path outside workspace: {local}"
-
-        session_id = self._get_session_id()
-        try:
-            return self.manager.provider.upload(session_id, str(local), remote_path)
-        except Exception as e:
-            return f"Error: {e}"
-
-    def _download_impl(self, remote_path: str, local_path: str) -> str:
-        local = Path(local_path)
-        if not local.is_absolute():
-            local = self.workspace_root / local_path
-
-        try:
-            local.relative_to(self.workspace_root)
-        except ValueError:
-            return f"Error: Path outside workspace: {local}"
-
-        local.parent.mkdir(parents=True, exist_ok=True)
-
-        session_id = self._get_session_id()
-        try:
-            return self.manager.provider.download(session_id, remote_path, str(local))
-        except Exception as e:
-            return f"Error: {e}"
 
     # ==================== Tool Schemas ====================
 
@@ -331,52 +287,6 @@ class SandboxMiddleware(AgentMiddleware):
                 },
             })
 
-        if self.enabled_tools.get(self.TOOL_UPLOAD):
-            schemas.append({
-                "type": "function",
-                "function": {
-                    "name": self.TOOL_UPLOAD,
-                    "description": "Upload local file to sandbox.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "local_path": {
-                                "type": "string",
-                                "description": "Local file path (relative to workspace or absolute)",
-                            },
-                            "remote_path": {
-                                "type": "string",
-                                "description": "Destination path in sandbox",
-                            },
-                        },
-                        "required": ["local_path", "remote_path"],
-                    },
-                },
-            })
-
-        if self.enabled_tools.get(self.TOOL_DOWNLOAD):
-            schemas.append({
-                "type": "function",
-                "function": {
-                    "name": self.TOOL_DOWNLOAD,
-                    "description": "Download file from sandbox to local.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "remote_path": {
-                                "type": "string",
-                                "description": "Path in sandbox",
-                            },
-                            "local_path": {
-                                "type": "string",
-                                "description": "Local destination path",
-                            },
-                        },
-                        "required": ["remote_path", "local_path"],
-                    },
-                },
-            })
-
         return schemas
 
     # ==================== Middleware Hooks ====================
@@ -442,20 +352,6 @@ class SandboxMiddleware(AgentMiddleware):
             )
             return ToolMessage(content=result, tool_call_id=tool_call_id)
 
-        elif tool_name == self.TOOL_UPLOAD:
-            result = self._upload_impl(
-                local_path=args.get("local_path", ""),
-                remote_path=args.get("remote_path", ""),
-            )
-            return ToolMessage(content=result, tool_call_id=tool_call_id)
-
-        elif tool_name == self.TOOL_DOWNLOAD:
-            result = self._download_impl(
-                remote_path=args.get("remote_path", ""),
-                local_path=args.get("local_path", ""),
-            )
-            return ToolMessage(content=result, tool_call_id=tool_call_id)
-
         # Not our tool, pass through
         return handler(request)
 
@@ -507,22 +403,6 @@ class SandboxMiddleware(AgentMiddleware):
                 self._execute_impl,
                 command=args.get("command", ""),
                 timeout_ms=args.get("timeout_ms", 30000),
-            )
-            return ToolMessage(content=result, tool_call_id=tool_call_id)
-
-        elif tool_name == self.TOOL_UPLOAD:
-            result = await asyncio.to_thread(
-                self._upload_impl,
-                local_path=args.get("local_path", ""),
-                remote_path=args.get("remote_path", ""),
-            )
-            return ToolMessage(content=result, tool_call_id=tool_call_id)
-
-        elif tool_name == self.TOOL_DOWNLOAD:
-            result = await asyncio.to_thread(
-                self._download_impl,
-                remote_path=args.get("remote_path", ""),
-                local_path=args.get("local_path", ""),
             )
             return ToolMessage(content=result, tool_call_id=tool_call_id)
 
