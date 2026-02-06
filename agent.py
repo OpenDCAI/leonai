@@ -84,6 +84,9 @@ class LeonAgent:
         exa_api_key: str | None = None,
         firecrawl_api_key: str | None = None,
         jina_api_key: str | None = None,
+        sandbox_context_path: str | None = None,
+        sandbox_provider: str | None = None,
+        sandbox_docker_image: str | None = None,
         verbose: bool = False,
     ):
         """
@@ -103,6 +106,9 @@ class LeonAgent:
             exa_api_key: Exa API key（Web 搜索）
             firecrawl_api_key: Firecrawl API key（Web 搜索）
             jina_api_key: Jina API key（URL 内容获取）
+            sandbox_context_path: Sandbox context mount path（覆盖 profile）
+            sandbox_provider: Sandbox provider（覆盖 profile）
+            sandbox_docker_image: Docker image（覆盖 profile）
             verbose: 是否输出详细日志（默认 True）
         """
         self.verbose = verbose
@@ -140,6 +146,12 @@ class LeonAgent:
             profile.agent.enable_audit_log = enable_audit_log
         if enable_web_tools is not None:
             profile.tools.web.enabled = enable_web_tools
+        if sandbox_context_path is not None:
+            profile.sandbox.agentbay.context_path = sandbox_context_path
+        if sandbox_provider is not None:
+            profile.sandbox.provider = sandbox_provider
+        if sandbox_docker_image is not None:
+            profile.sandbox.docker.image = sandbox_docker_image
 
         self.profile = profile
         self.model_name = profile.agent.model
@@ -170,6 +182,7 @@ class LeonAgent:
         self.enable_web_tools = profile.tool.web.enabled
         self.queue_mode = profile.agent.queue_mode
         self._session_pool: dict[str, Any] = {}
+        self.db_path = Path.home() / ".leon" / "leon.db"
 
         # 初始化模型
         base_url = os.getenv("OPENAI_BASE_URL")
@@ -241,6 +254,22 @@ class LeonAgent:
 
     def close(self):
         """Clean up resources"""
+        # Pause sandbox sessions on exit
+        if hasattr(self, '_sandbox_manager') and self._sandbox_manager:
+            try:
+                on_exit = self.profile.sandbox.on_exit
+                if on_exit == "pause":
+                    count = self._sandbox_manager.pause_all_sessions()
+                    if count > 0:
+                        print(f"[LeonAgent] Paused {count} sandbox session(s)")
+                elif on_exit == "destroy":
+                    for session in self._sandbox_manager.list_sessions():
+                        self._sandbox_manager.destroy_session(session["thread_id"])
+                    print("[LeonAgent] Destroyed all sandbox sessions")
+            except Exception as e:
+                print(f"[LeonAgent] Sandbox cleanup error: {e}")
+
+        # Close SQLite connection
         import asyncio
         import os
         import signal
@@ -325,6 +354,15 @@ tool:
     def _build_middleware_stack(self) -> list:
         """构建 middleware 栈"""
         middleware = []
+        sandbox_enabled = self.profile.sandbox.enabled
+        if sandbox_enabled and self.profile.sandbox.provider == "agentbay":
+            api_key = (
+                self.profile.sandbox.agentbay.api_key
+                or os.getenv("AGENTBAY_API_KEY")
+            )
+            if not api_key:
+                print("[LeonAgent] Warning: Sandbox enabled but AGENTBAY_API_KEY not set")
+                sandbox_enabled = False
 
         # 0. Steering (highest priority - checks for steer messages before model calls)
         middleware.append(SteeringMiddleware())
@@ -333,7 +371,8 @@ tool:
         middleware.append(PromptCachingMiddleware(ttl="5m", min_messages_to_cache=0))
 
         # 2. FileSystem
-        if self.profile.tool.filesystem.enabled:
+        # @@@ Skip if sandbox is enabled (sandbox always replaces local tools)
+        if self.profile.tool.filesystem.enabled and not sandbox_enabled:
             file_hooks = []
             if self.enable_audit_log:
                 file_hooks.append(FileAccessLoggerHook(workspace_root=self.workspace_root, log_file="file_access.log"))
@@ -392,7 +431,8 @@ tool:
             ))
 
         # 5. Command
-        if self.profile.tool.command.enabled:
+        # @@@ Skip if sandbox is enabled (sandbox always replaces local tools)
+        if self.profile.tool.command.enabled and not sandbox_enabled:
             command_hooks = []
             if self.block_dangerous_commands:
                 command_hooks.append(DangerousCommandsHook(
@@ -436,6 +476,53 @@ tool:
             verbose=self.verbose,
         )
         middleware.append(self._task_middleware)
+
+        # 9. Sandbox (isolated execution environment)
+        # @@@ Sandbox replaces local tools when enabled - must be last to override
+        self._sandbox_manager = None
+        if sandbox_enabled:
+            from middleware.sandbox import SandboxManager, SandboxMiddleware
+            from middleware.sandbox.providers.agentbay import AgentBayProvider
+
+            # Initialize provider based on config
+            if self.profile.sandbox.provider == "agentbay":
+                provider = AgentBayProvider(
+                    api_key=api_key,
+                    region_id=self.profile.sandbox.agentbay.region_id,
+                    default_context_path=self.profile.sandbox.agentbay.context_path,
+                    image_id=self.profile.sandbox.agentbay.image_id,
+                )
+            elif self.profile.sandbox.provider == "docker":
+                from middleware.sandbox.providers.docker import DockerProvider
+
+                provider = DockerProvider(
+                    image=self.profile.sandbox.docker.image,
+                    mount_path=self.profile.sandbox.docker.mount_path,
+                )
+            else:
+                provider = None
+
+            if provider:
+                self._sandbox_manager = SandboxManager(
+                    provider=provider,
+                    db_path=self.db_path,
+                    default_context_id=self.profile.sandbox.context_id,
+                )
+                sandbox_tools = {
+                    'read_file': self.profile.sandbox.tools.read_file,
+                    'write_file': self.profile.sandbox.tools.write_file,
+                    'edit_file': self.profile.sandbox.tools.edit_file,
+                    'list_dir': self.profile.sandbox.tools.list_dir,
+                    'run_command': self.profile.sandbox.tools.run_command,
+                    'sandbox_upload': self.profile.sandbox.tools.sandbox_upload,
+                    'sandbox_download': self.profile.sandbox.tools.sandbox_download,
+                }
+                middleware.append(SandboxMiddleware(
+                    manager=self._sandbox_manager,
+                    workspace_root=self.workspace_root,
+                    enabled_tools=sandbox_tools,
+                ))
+                print(f"[LeonAgent] Sandbox enabled: {self.profile.sandbox.provider}")
 
         return middleware
 
@@ -512,7 +599,43 @@ tool:
         os_name = platform.system()
         shell_name = os.environ.get('SHELL', '/bin/bash').split('/')[-1]
 
-        prompt = f"""You are a highly capable AI assistant with access to file and system tools.
+        # @@@ Different prompt for sandbox vs local mode
+        if self.profile.sandbox.enabled:
+            provider = self.profile.sandbox.provider
+            if provider == "docker":
+                env_label = "Local Docker sandbox (Ubuntu)"
+                mode_label = "Sandbox (isolated local container)"
+                working_dir = self.profile.sandbox.docker.mount_path
+                location_rule = "All file and command operations run in a local Docker container, NOT on the user's host filesystem."
+            else:
+                env_label = "Remote Linux sandbox (Ubuntu)"
+                mode_label = "Sandbox (isolated cloud environment)"
+                working_dir = self.profile.sandbox.agentbay.context_path
+                location_rule = "All file and command operations run in a remote sandbox, NOT on the user's local machine."
+
+            prompt = f"""You are a highly capable AI assistant with access to a sandbox environment.
+
+**Context:**
+- Environment: {env_label}
+- Working Directory: {working_dir}
+- Mode: {mode_label}
+
+**Important Rules:**
+
+1. **Sandbox Environment**: {location_rule} The sandbox is an isolated Linux environment.
+
+2. **Absolute Paths**: All file paths must be absolute paths.
+   - ✅ Correct: `{working_dir}/project/test.py` or `/tmp/output.txt`
+   - ❌ Wrong: `test.py` or `./test.py`
+
+3. **Available Tools**: You have tools for file operations (read_file, write_file, edit_file, list_dir), command execution (run_command), and file transfer (sandbox_upload, sandbox_download).
+
+4. **File Transfer**: Use sandbox_upload to copy files from user's local machine to sandbox, and sandbox_download to copy files from sandbox to local.
+
+5. **Security**: The sandbox is isolated. You can install packages, run any commands, and modify files freely within the sandbox.
+"""
+        else:
+            prompt = f"""You are a highly capable AI assistant with access to file and system tools.
 
 **Context:**
 - Workspace: `{self.workspace_root}`
@@ -532,7 +655,10 @@ tool:
 4. **Security**: Dangerous commands are blocked. All operations are logged.
 
 5. **Tool Priority**: Tools starting with `mcp__` are external MCP integrations. When a built-in tool and an MCP tool have the same functionality, use the built-in tool.
+"""
 
+        # Common sections for both modes
+        prompt += """
 **Task Tool (Sub-agent Orchestration):**
 
 Use the Task tool to launch specialized sub-agents for complex tasks:
@@ -622,6 +748,9 @@ def create_leon_agent(
     model_name: str = "claude-sonnet-4-5-20250929",
     api_key: str | None = None,
     workspace_root: str | Path | None = None,
+    sandbox_context_path: str | None = None,
+    sandbox_provider: str | None = None,
+    sandbox_docker_image: str | None = None,
     **kwargs,
 ) -> LeonAgent:
     """
@@ -651,7 +780,13 @@ def create_leon_agent(
         )
     """
     return LeonAgent(
-        model_name=model_name, api_key=api_key, workspace_root=workspace_root, **kwargs
+        model_name=model_name,
+        api_key=api_key,
+        workspace_root=workspace_root,
+        sandbox_context_path=sandbox_context_path,
+        sandbox_provider=sandbox_provider,
+        sandbox_docker_image=sandbox_docker_image,
+        **kwargs,
     )
 
 

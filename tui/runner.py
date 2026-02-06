@@ -350,6 +350,9 @@ def cmd_run(args, unknown_args: list[str]) -> None:
             model_name=model_name,
             profile=args.profile,
             workspace_root=workspace,
+            sandbox_context_path=args.sandbox_context_path,
+            sandbox_provider=args.sandbox_provider,
+            sandbox_docker_image=args.sandbox_image,
             verbose=debug_mode,  # Only show middleware logs in debug mode
         )
     except Exception as e:
