@@ -173,16 +173,20 @@ mcp:
 
 ### Middleware 架构
 
-6 层中间件栈，统一处理工具注入、校验、拦截：
+10 层中间件栈，统一处理工具注入、校验、拦截：
 
 ```
 ┌─────────────────────────────────────┐
-│ 1. PromptCachingMiddleware (缓存)   │
-│ 2. FileSystemMiddleware (文件)      │
-│ 3. SearchMiddleware (搜索)          │
-│ 4. WebMiddleware (Web)              │
-│ 5. CommandMiddleware (命令)         │
-│ 6. SkillsMiddleware (技能)          │
+│ 1. SteeringMiddleware (队列注入)    │
+│ 2. PromptCachingMiddleware (缓存)   │
+│ 3. FileSystemMiddleware (文件)      │
+│ 4. SearchMiddleware (搜索)          │
+│ 5. WebMiddleware (Web)              │
+│ 6. CommandMiddleware (命令)         │
+│ 7. SkillsMiddleware (技能)          │
+│ 8. TodoMiddleware (任务追踪)        │
+│ 9. TaskMiddleware (子Agent)         │
+│10. MonitorMiddleware (监控)         │
 └─────────────────────────────────────┘
 ```
 
@@ -246,6 +250,26 @@ agent:
 - **Linux**: BashExecutor
 - **Windows**: PowerShellExecutor
 
+### Sandbox 沙箱系统
+
+在隔离环境中运行 Agent 操作，支持三种 Provider：
+
+```bash
+leonai --sandbox docker     # 本地 Docker 容器
+leonai --sandbox e2b        # E2B 云沙箱
+leonai --sandbox agentbay   # 阿里云 AgentBay
+
+leonai sandbox ls            # 查看所有会话
+leonai sandbox pause <id>    # 暂停会话
+leonai sandbox resume <id>   # 恢复会话
+```
+
+**特性**：
+- 会话自动暂停/恢复，跨重启保持状态（文件、安装的包等）
+- 恢复 Thread 时自动检测沙箱 Provider（无需重复传 `--sandbox`）
+- SQLite 持久化会话映射
+- 详见 [docs/SANDBOX.md](docs/SANDBOX.md)
+
 ## 路线
 
 **已完成**：
@@ -253,6 +277,7 @@ agent:
 - [x] TUI Resume：恢复 thread（仅 messages/thread）
 - [x] MCP 集成：可配置加载、工具白名单
 - [x] Skills 系统：渐进式能力披露
+- [x] Sandbox 沙箱：Docker / E2B / AgentBay，会话管理，自动恢复
 
 **进行中**：
 - [ ] Hook 系统：工具调用前后的拦截与扩展

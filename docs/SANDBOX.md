@@ -25,6 +25,7 @@ leonai sandbox pause <id>   # Pause session
 leonai sandbox resume <id>  # Resume session
 leonai sandbox rm <id>      # Delete session
 leonai sandbox metrics <id> # Show resource metrics
+leonai sandbox destroy-all-sessions  # Destroy everything
 ```
 
 ## Configuration
@@ -143,8 +144,11 @@ leonai config
 The sandbox name is resolved in order:
 
 1. CLI flag: `leonai --sandbox docker`
-2. Environment variable: `LEON_SANDBOX=docker`
-3. Default: `local` (no sandbox, runs on host)
+2. Auto-detection: when resuming a thread (`--thread` or `-c`), the system looks up the provider from SQLite
+3. Environment variable: `LEON_SANDBOX=docker`
+4. Default: `local` (no sandbox, runs on host)
+
+Auto-detection means you don't need to pass `--sandbox` again when resuming a thread that previously used a sandbox. If the sandbox config file is missing or the session was destroyed, it falls back to local mode silently.
 
 ## Session Lifecycle
 
@@ -195,6 +199,9 @@ leonai sandbox rm iolzc
 
 # Show CPU, memory, disk, network metrics
 leonai sandbox metrics iolzc
+
+# Destroy all sessions (requires confirmation)
+leonai sandbox destroy-all-sessions
 ```
 
 Session IDs can be abbreviated — any unique prefix works.
@@ -279,7 +286,11 @@ LeonAgent
 
 Middleware owns **policy** (hooks, validation, path rules). The backend owns **I/O mechanism** (where operations actually execute). Swapping the backend changes where operations happen without touching middleware logic.
 
+Both `FileSystemBackend` and `BaseExecutor` ABCs have an `is_remote` property (default `False`). Sandbox backends set `is_remote = True`, which middleware uses to skip local-only logic (e.g. `Path.resolve()`, `mkdir`, hooks).
+
 For local mode, `sandbox.fs()` and `sandbox.shell()` return `None`, so middleware falls back to `LocalBackend` (host filesystem) and OS-detected shell (zsh/bash/powershell).
+
+Provider command results use `ProviderExecResult` (sandbox/provider.py), which `SandboxExecutor` translates to the middleware's `ExecuteResult` (middleware/command/base.py).
 
 ### File Layout
 
@@ -292,8 +303,8 @@ sandbox/
 ├── agentbay.py          # AgentBaySandbox
 ├── docker.py            # DockerSandbox
 ├── e2b.py               # E2BSandbox
-├── manager.py           # SandboxManager (SQLite session tracking)
-├── provider.py          # SandboxProvider ABC, dataclasses
+├── manager.py           # SandboxManager (persistent SQLite connection)
+├── provider.py          # SandboxProvider ABC, ProviderExecResult, Metrics
 ├── thread_context.py    # ContextVar for thread_id tracking
 └── providers/
     ├── agentbay.py      # AgentBayProvider (Alibaba SDK)
@@ -302,12 +313,12 @@ sandbox/
 
 middleware/
 ├── filesystem/
-│   ├── backend.py           # FileSystemBackend ABC
+│   ├── backend.py           # FileSystemBackend ABC (is_remote property)
 │   ├── local_backend.py     # LocalBackend (host fs)
-│   └── sandbox_backend.py   # SandboxFileBackend (delegates to provider)
+│   └── sandbox_backend.py   # SandboxFileBackend (is_remote=True)
 └── command/
-    ├── base.py              # BaseExecutor ABC
-    └── sandbox_executor.py  # SandboxExecutor (delegates to provider)
+    ├── base.py              # BaseExecutor ABC (is_remote property)
+    └── sandbox_executor.py  # SandboxExecutor (is_remote=True)
 ```
 
 ### Two-Layer Abstraction
@@ -328,7 +339,11 @@ abc123         | docker   | d7f8e9...  | null       | running | 2025-01-15 | 202
 def456         | e2b      | sbx_a1b2.. | null       | paused  | 2025-01-14 | 2025-01-15
 ```
 
+`SandboxManager` uses a single persistent SQLite connection with `threading.Lock` for thread safety (needed because `leonai sandbox ls` and `destroy-all-sessions` use `ThreadPoolExecutor` for parallel operations).
+
 Session IDs are cached in memory per thread to avoid SQLite lookups on every tool call.
+
+The standalone `lookup_sandbox_for_thread()` function enables sandbox auto-detection when resuming threads — it does a pure SQLite lookup without initializing any provider.
 
 ## Headless Testing
 
