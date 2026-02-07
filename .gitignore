@@ -7,6 +7,8 @@ wheels/
 *.egg-info
 *.egg
 .eggs/
+.pytest_cache/
+.ruff_cache/
 AGENTS.md
 CLAUDE.md
 
@@ -30,6 +32,10 @@ node_modules/
 # Environment
 .env
 
+# Shared sync folders (Syncthing)
+teams/
+.claude/
+
 docs/assets/
 
 /survey
@@ -44,6 +50,10 @@ docs/assets/
 /*_QUICK_REFERENCE.md
 /*_ANALYSIS.md
 /*_QUICK_LOOKUP.txt
+/*_INVENTORY.md
+/*_FEATURES.md
+/*_ROADMAP.md
+/*_FINAL_REPORT.txt
 /MODEL_PRICING_*.md
 /LANGCHAIN_TOKEN_USAGE_*.md
 /opencode_*.md
