@@ -72,12 +72,12 @@ class AgentBayProvider(SandboxProvider):
 
     def pause_session(self, session_id: str) -> bool:
         session = self._get_session(session_id)
-        result = self.client.beta_pause(session)
+        result = self.client.pause(session)
         return result.success
 
     def resume_session(self, session_id: str) -> bool:
         session = self._get_session(session_id)
-        result = self.client.beta_resume(session)
+        result = self.client.resume(session)
         if result.success:
             get_result = self.client.get(session_id)
             if get_result.success:
