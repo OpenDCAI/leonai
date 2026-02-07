@@ -80,6 +80,7 @@ packages = [
     "middleware.web.fetchers",
     "middleware.web.searchers",
     "sandbox",
+    "sandbox.interfaces",
     "sandbox.providers",
     "tui",
     "tui.widgets",

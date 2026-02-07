@@ -1,25 +1,15 @@
-"""DockerSandbox — local Docker container sandbox.
-
-Same pattern as AgentBaySandbox but uses DockerProvider.
-"""
+"""DockerSandbox — local Docker container sandbox."""
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
 
-from sandbox.base import Sandbox
 from sandbox.config import SandboxConfig
-from sandbox.manager import SandboxManager
 from sandbox.providers.docker import DockerProvider
-from sandbox.thread_context import get_current_thread_id
-
-if TYPE_CHECKING:
-    from middleware.command.base import BaseExecutor
-    from middleware.filesystem.backend import FileSystemBackend
+from sandbox.remote import RemoteSandbox
 
 
-class DockerSandbox(Sandbox):
+class DockerSandbox(RemoteSandbox):
     """Local Docker container sandbox."""
 
     def __init__(
@@ -32,38 +22,13 @@ class DockerSandbox(Sandbox):
             image=dc.image,
             mount_path=dc.mount_path,
         )
-
-        self._manager = SandboxManager(
+        super().__init__(
             provider=provider,
+            config=config,
+            default_cwd=dc.mount_path,
             db_path=db_path,
             default_context_id=config.context_id,
         )
-        self._config = config
-        self._on_exit = config.on_exit
-
-        # @@@ Cache session_id per thread to avoid hitting SQLite on every tool call
-        _session_cache: dict[str, str] = {}
-
-        def _get_session_id() -> str:
-            thread_id = get_current_thread_id()
-            if not thread_id:
-                raise RuntimeError("No thread_id set. Call set_current_thread_id first.")
-            if thread_id not in _session_cache:
-                info = self._manager.get_or_create_session(thread_id)
-                _session_cache[thread_id] = info.session_id
-            return _session_cache[thread_id]
-
-        from middleware.command.sandbox_executor import SandboxExecutor
-        from middleware.filesystem.sandbox_backend import SandboxFileBackend
-
-        self._fs = SandboxFileBackend(self._manager, _get_session_id)
-        self._shell = SandboxExecutor(
-            self._manager,
-            _get_session_id,
-            default_cwd=dc.mount_path,
-        )
-        self._get_session_id = _get_session_id
-
         print(f"[DockerSandbox] Initialized (image={dc.image})")
 
     @property
@@ -77,32 +42,3 @@ class DockerSandbox(Sandbox):
     @property
     def env_label(self) -> str:
         return "Local Docker sandbox (Ubuntu)"
-
-    def fs(self) -> FileSystemBackend:
-        return self._fs
-
-    def shell(self) -> BaseExecutor:
-        return self._shell
-
-    @property
-    def manager(self) -> SandboxManager:
-        return self._manager
-
-    def close(self) -> None:
-        try:
-            if self._on_exit == "pause":
-                count = self._manager.pause_all_sessions()
-                if count > 0:
-                    print(f"[DockerSandbox] Paused {count} session(s)")
-            elif self._on_exit == "destroy":
-                for session in self._manager.list_sessions():
-                    self._manager.destroy_session(session["thread_id"])
-                print("[DockerSandbox] Destroyed all sessions")
-        except Exception as e:
-            print(f"[DockerSandbox] Cleanup error: {e}")
-
-    def ensure_session(self, thread_id: str) -> None:
-        from sandbox.thread_context import set_current_thread_id
-
-        set_current_thread_id(thread_id)
-        self._get_session_id()

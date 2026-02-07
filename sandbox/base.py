@@ -11,8 +11,8 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from middleware.command.base import BaseExecutor
-    from middleware.filesystem.backend import FileSystemBackend
+    from sandbox.interfaces.executor import BaseExecutor
+    from sandbox.interfaces.filesystem import FileSystemBackend
 
 
 class Sandbox(ABC):
