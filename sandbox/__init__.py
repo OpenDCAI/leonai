@@ -63,4 +63,25 @@ __all__ = [
     "resolve_sandbox_name",
     "set_current_thread_id",
     "get_current_thread_id",
+    # New exports from refactoring
+    "SandboxExecutor",
+    "SandboxFileBackend",
+    "RemoteSandbox",
 ]
+
+
+def __getattr__(name: str):
+    """Lazy imports for new exports to avoid circular imports."""
+    if name == "SandboxExecutor":
+        from sandbox.executor import SandboxExecutor
+
+        return SandboxExecutor
+    if name == "SandboxFileBackend":
+        from sandbox.file_backend import SandboxFileBackend
+
+        return SandboxFileBackend
+    if name == "RemoteSandbox":
+        from sandbox.remote import RemoteSandbox
+
+        return RemoteSandbox
+    raise AttributeError(f"module 'sandbox' has no attribute {name!r}")
