@@ -37,12 +37,14 @@ class RemoteSandbox(Sandbox):
         db_path: Path | None = None,
         default_context_id: str | None = None,
     ) -> None:
+        self._config = config
+        self._default_cwd = default_cwd
         self._manager = SandboxManager(
             provider=provider,
             db_path=db_path,
             default_context_id=default_context_id,
+            on_session_ready=self._run_init_commands if config.init_commands else None,
         )
-        self._config = config
         self._on_exit = config.on_exit
 
         # Cache session_id per thread to avoid hitting SQLite on every tool call
@@ -64,6 +66,16 @@ class RemoteSandbox(Sandbox):
             _get_session_id,
             default_cwd=default_cwd,
         )
+
+    def _run_init_commands(self, session_id: str, reason: str) -> None:
+        for i, cmd in enumerate(self._config.init_commands, 1):
+            result = self._manager.provider.execute(session_id, cmd, cwd=self._default_cwd)
+            if result.error or result.exit_code != 0:
+                raise RuntimeError(
+                    f"Init command #{i} failed ({reason}): {cmd}\n"
+                    f"exit={result.exit_code} error={result.error or ''}\n"
+                    f"output={result.output or ''}"
+                )
 
     def fs(self) -> FileSystemBackend:
         return self._fs

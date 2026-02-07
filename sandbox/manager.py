@@ -7,6 +7,7 @@ Handles lazy creation, auto-pause, and resume lifecycle.
 
 import sqlite3
 import threading
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
@@ -56,12 +57,18 @@ class SandboxManager:
         provider: SandboxProvider,
         db_path: Path | None = None,
         default_context_id: str | None = None,
+        on_session_ready: Callable[[str, str], None] | None = None,
     ):
         self.provider = provider
         self.db_path = db_path or DEFAULT_DB_PATH
         self.default_context_id = default_context_id
+        self._on_session_ready = on_session_ready
         self._lock = threading.Lock()
         self._conn = self._init_db()
+
+    def _fire_session_ready(self, session_id: str, reason: str) -> None:
+        if self._on_session_ready:
+            self._on_session_ready(session_id, reason)
 
     def _init_db(self) -> sqlite3.Connection:
         """Create sandbox_sessions table if not exists. Returns persistent connection."""
@@ -112,6 +119,7 @@ class SandboxManager:
                 elif status == "paused":
                     if self.provider.resume_session(session_id):
                         self._update_status(thread_id, "running")
+                        self._fire_session_ready(session_id, "resume")
                         return SessionInfo(
                             session_id=session_id,
                             provider=existing["provider"],
@@ -123,6 +131,7 @@ class SandboxManager:
         context_id = self.default_context_id
         info = self.provider.create_session(context_id=context_id)
         self._save_to_db(thread_id, info, context_id)
+        self._fire_session_ready(info.session_id, "create")
 
         return info
 
@@ -168,6 +177,7 @@ class SandboxManager:
 
         if self.provider.resume_session(existing["session_id"]):
             self._update_status(thread_id, "running")
+            self._fire_session_ready(existing["session_id"], "resume")
             return True
         return False
 
