@@ -144,7 +144,6 @@ class SandboxManager:
         context_id = self._build_context_id(thread_id)
         info = self.provider.create_session(context_id=context_id)
         self._save_to_db(thread_id, info, context_id)
-<<<<<<< HEAD
         # @@@ E2B: restore workspace files into new VM
         if self.provider.name == "e2b" and hasattr(self.provider, "restore_workspace"):
             snapshot = self._load_e2b_snapshot(thread_id)
@@ -153,9 +152,7 @@ class SandboxManager:
                     self.provider.restore_workspace(info.session_id, snapshot)
                 except Exception as e:
                     print(f"[SandboxManager] E2B restore failed: {e}")
-=======
         self._fire_session_ready(info.session_id, "create")
->>>>>>> sandbox/workspace-init
 
         return info
 
