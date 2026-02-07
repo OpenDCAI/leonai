@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 class AgentBayConfig(BaseModel):
     api_key: str | None = None
     region_id: str = "ap-southeast-1"
-    context_path: str = "/root"
+    context_path: str = "/home/wuying"
     image_id: str | None = None
 
 
