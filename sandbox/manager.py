@@ -63,6 +63,11 @@ class SandboxManager:
         self._lock = threading.Lock()
         self._conn = self._init_db()
 
+    def _build_context_id(self, thread_id: str) -> str | None:
+        if self.provider.name in ("agentbay", "docker"):
+            return f"leon-{thread_id}"
+        return None
+
     def _init_db(self) -> sqlite3.Connection:
         """Create sandbox_sessions table if not exists. Returns persistent connection."""
         if isinstance(self.db_path, Path):
@@ -120,7 +125,7 @@ class SandboxManager:
 
                 self._delete_from_db(thread_id)
 
-        context_id = self.default_context_id
+        context_id = self._build_context_id(thread_id)
         info = self.provider.create_session(context_id=context_id)
         self._save_to_db(thread_id, info, context_id)
 

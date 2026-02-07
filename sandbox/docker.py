@@ -27,7 +27,6 @@ class DockerSandbox(RemoteSandbox):
             config=config,
             default_cwd=dc.mount_path,
             db_path=db_path,
-            default_context_id=config.context_id,
         )
         print(f"[DockerSandbox] Initialized (image={dc.image})")
 

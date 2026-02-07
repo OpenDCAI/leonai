@@ -35,12 +35,10 @@ class RemoteSandbox(Sandbox):
         config: SandboxConfig,
         default_cwd: str,
         db_path: Path | None = None,
-        default_context_id: str | None = None,
     ) -> None:
         self._manager = SandboxManager(
             provider=provider,
             db_path=db_path,
-            default_context_id=default_context_id,
         )
         self._config = config
         self._on_exit = config.on_exit
