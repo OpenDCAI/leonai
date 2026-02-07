@@ -251,8 +251,8 @@ class FileSystemMiddleware(AgentMiddleware):
                 file_type=None,  # type: ignore[arg-type]
                 content=content,
                 total_lines=len(lines),
-                lines_read=len(selected),
                 start_line=start + 1,
+                end_line=start + len(selected),
                 total_size=raw.size or len(raw.content),
             )
         except Exception as e:

@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 class AgentBayConfig(BaseModel):
     api_key: str | None = None
     region_id: str = "ap-southeast-1"
-    context_path: str = "/root"
+    context_path: str = "/home/wuying"
     image_id: str | None = None
 
 
@@ -39,11 +39,11 @@ class SandboxConfig(BaseModel):
     """
 
     provider: str = "local"  # "local" | "agentbay" | "docker" | "e2b"
-    context_id: str | None = None
     agentbay: AgentBayConfig = Field(default_factory=AgentBayConfig)
     docker: DockerConfig = Field(default_factory=DockerConfig)
     e2b: E2BConfig = Field(default_factory=E2BConfig)
     on_exit: str = "pause"  # "pause" | "destroy"
+    init_commands: list[str] = Field(default_factory=list)
 
     @classmethod
     def load(cls, name: str) -> SandboxConfig:
@@ -69,8 +69,8 @@ class SandboxConfig(BaseModel):
         path = Path.home() / ".leon" / "sandboxes" / f"{name}.json"
         path.parent.mkdir(parents=True, exist_ok=True)
         data = {"provider": self.provider, "on_exit": self.on_exit}
-        if self.context_id:
-            data["context_id"] = self.context_id
+        if self.init_commands:
+            data["init_commands"] = self.init_commands
         # Only include the active provider's config
         if self.provider in ("agentbay", "docker", "e2b"):
             data[self.provider] = getattr(self, self.provider).model_dump()

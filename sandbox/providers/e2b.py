@@ -26,6 +26,7 @@ class E2BProvider(SandboxProvider):
     """E2B cloud sandbox provider."""
 
     name = "e2b"
+    WORKSPACE_ROOT = "/home/user/workspace"
 
     def __init__(
         self,
@@ -171,6 +172,37 @@ class E2BProvider(SandboxProvider):
 
     def get_metrics(self, session_id: str) -> Metrics | None:
         return None
+
+    def snapshot_workspace(self, session_id: str) -> list[dict]:
+        """Download all files from /home/user/workspace."""
+        sandbox = self._get_sandbox(session_id)
+        stack = [self.WORKSPACE_ROOT]
+        files = []
+        while stack:
+            d = stack.pop()
+            try:
+                entries = sandbox.files.list(d)
+            except Exception:
+                continue
+            for entry in entries:
+                p = entry.path if hasattr(entry, "path") else f"{d}/{entry.name}"
+                if entry.type and entry.type.value == "dir":
+                    stack.append(p)
+                    continue
+                try:
+                    data = sandbox.files.read(p, format="bytes")
+                    rel = p.removeprefix(self.WORKSPACE_ROOT + "/")
+                    files.append({"file_path": rel, "content": bytes(data)})
+                except Exception:
+                    continue
+        return files
+
+    def restore_workspace(self, session_id: str, files: list[dict]) -> None:
+        """Upload files back into /home/user/workspace."""
+        sandbox = self._get_sandbox(session_id)
+        for f in files:
+            abs_path = f"{self.WORKSPACE_ROOT}/{f['file_path']}"
+            sandbox.files.write(abs_path, f["content"])
 
     def _get_sandbox(self, session_id: str):
         """Get sandbox object, reconnecting if not cached."""
