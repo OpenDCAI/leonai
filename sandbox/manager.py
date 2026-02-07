@@ -80,6 +80,14 @@ class SandboxManager:
                 last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS e2b_workspace_files (
+                thread_id TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                content BLOB NOT NULL,
+                PRIMARY KEY (thread_id, file_path)
+            )
+        """)
         conn.commit()
         return conn
 
@@ -123,6 +131,14 @@ class SandboxManager:
         context_id = self.default_context_id
         info = self.provider.create_session(context_id=context_id)
         self._save_to_db(thread_id, info, context_id)
+        # @@@ E2B: restore workspace files into new VM
+        if self.provider.name == "e2b" and hasattr(self.provider, "restore_workspace"):
+            snapshot = self._load_e2b_snapshot(thread_id)
+            if snapshot:
+                try:
+                    self.provider.restore_workspace(info.session_id, snapshot)
+                except Exception as e:
+                    print(f"[SandboxManager] E2B restore failed: {e}")
 
         return info
 
@@ -178,6 +194,14 @@ class SandboxManager:
             return False
         if existing["provider"] != self.provider.name:
             return False
+
+        # @@@ E2B: snapshot workspace files before destroying VM
+        if self.provider.name == "e2b" and hasattr(self.provider, "snapshot_workspace"):
+            try:
+                files = self.provider.snapshot_workspace(existing["session_id"])
+                self._save_e2b_snapshot(thread_id, files)
+            except Exception as e:
+                print(f"[SandboxManager] E2B snapshot failed: {e}")
 
         if self.provider.destroy_session(existing["session_id"], sync=sync):
             self._delete_from_db(thread_id)
@@ -336,3 +360,25 @@ class SandboxManager:
                 (thread_id,),
             )
             self._conn.commit()
+
+    def _save_e2b_snapshot(self, thread_id: str, files: list[dict]):
+        with self._lock:
+            self._conn.execute(
+                "DELETE FROM e2b_workspace_files WHERE thread_id = ?",
+                (thread_id,),
+            )
+            for f in files:
+                self._conn.execute(
+                    "INSERT INTO e2b_workspace_files (thread_id, file_path, content) VALUES (?, ?, ?)",
+                    (thread_id, f["file_path"], f["content"]),
+                )
+            self._conn.commit()
+
+    def _load_e2b_snapshot(self, thread_id: str) -> list[dict]:
+        with self._lock:
+            self._conn.row_factory = sqlite3.Row
+            rows = self._conn.execute(
+                "SELECT file_path, content FROM e2b_workspace_files WHERE thread_id = ?",
+                (thread_id,),
+            ).fetchall()
+            return [{"file_path": row["file_path"], "content": row["content"]} for row in rows]
