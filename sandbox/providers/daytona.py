@@ -36,40 +36,37 @@ class DaytonaProvider(SandboxProvider):
         target: str = "local",
         default_cwd: str = "/workspace",
     ):
+        import os
         from daytona_sdk import Daytona
 
         self.api_key = api_key
         self.api_url = api_url
         self.target = target
         self.default_cwd = default_cwd
-        self.client = Daytona(api_key=api_key, server_url=api_url)
+
+        os.environ["DAYTONA_API_KEY"] = api_key
+        os.environ["DAYTONA_API_URL"] = api_url
+        self.client = Daytona()
         self._workspaces: dict[str, Any] = {}
 
     def create_session(self, context_id: str | None = None) -> SessionInfo:
-        from daytona_sdk.models import CreateWorkspaceDTO
+        from daytona_sdk import CreateSandboxFromSnapshotParams
 
-        workspace_name = context_id or f"leon-{os.urandom(6).hex()}"
-
-        create_dto = CreateWorkspaceDTO(
-            name=workspace_name,
-            target=self.target,
-        )
-
-        workspace = self.client.workspace.create_workspace(create_dto)
-        workspace_id = workspace.id
-        self._workspaces[workspace_id] = workspace
-
-        self.client.workspace.start_workspace(workspace_id)
+        params = CreateSandboxFromSnapshotParams()
+        sandbox = self.client.create(params)
+        sandbox_id = sandbox.id
+        self._workspaces[sandbox_id] = sandbox
 
         return SessionInfo(
-            session_id=workspace_id,
+            session_id=sandbox_id,
             provider=self.name,
             status="running",
         )
 
     def destroy_session(self, session_id: str, sync: bool = True) -> bool:
         try:
-            self.client.workspace.remove_workspace(session_id)
+            workspace = self._get_workspace(session_id)
+            workspace.delete()
             self._workspaces.pop(session_id, None)
             return True
         except Exception:
@@ -77,25 +74,30 @@ class DaytonaProvider(SandboxProvider):
 
     def pause_session(self, session_id: str) -> bool:
         try:
-            self.client.workspace.stop_workspace(session_id)
+            workspace = self._get_workspace(session_id)
+            workspace.stop()
             return True
         except Exception:
             return False
 
     def resume_session(self, session_id: str) -> bool:
         try:
-            self.client.workspace.start_workspace(session_id)
+            workspace = self._get_workspace(session_id)
+            workspace.start()
             return True
         except Exception:
             return False
 
     def get_session_status(self, session_id: str) -> str:
         try:
-            workspace = self.client.workspace.get_workspace(session_id)
-            if workspace.info and workspace.info.projects:
-                state = workspace.info.projects[0].state
-                if state and hasattr(state, 'uptime'):
-                    return "running" if state.uptime else "paused"
+            workspace = self._get_workspace(session_id)
+            info = workspace.info()
+            if info and hasattr(info, 'workspace_instance'):
+                state = info.workspace_instance.state
+                if state == 'WORKSPACE_INSTANCE_STATE_STARTED':
+                    return "running"
+                elif state == 'WORKSPACE_INSTANCE_STATE_STOPPED':
+                    return "paused"
             return "unknown"
         except Exception as e:
             if "not found" in str(e).lower():
@@ -104,13 +106,16 @@ class DaytonaProvider(SandboxProvider):
 
     def get_all_session_statuses(self) -> dict[str, str]:
         try:
-            workspaces = self.client.workspace.list_workspaces()
+            workspaces = self.client.list()
             result = {}
             for ws in workspaces:
-                if ws.info and ws.info.projects:
-                    state = ws.info.projects[0].state
-                    if state and hasattr(state, 'uptime'):
-                        result[ws.id] = "running" if state.uptime else "paused"
+                info = ws.info()
+                if info and hasattr(info, 'workspace_instance'):
+                    state = info.workspace_instance.state
+                    if state == 'WORKSPACE_INSTANCE_STATE_STARTED':
+                        result[ws.id] = "running"
+                    elif state == 'WORKSPACE_INSTANCE_STATE_STOPPED':
+                        result[ws.id] = "paused"
                     else:
                         result[ws.id] = "unknown"
             return result
@@ -125,69 +130,35 @@ class DaytonaProvider(SandboxProvider):
         cwd: str | None = None,
     ) -> ProviderExecResult:
         workspace = self._get_workspace(session_id)
-        if not workspace.info or not workspace.info.projects:
-            return ProviderExecResult(output="", error="Workspace not ready")
-
-        project = workspace.info.projects[0]
         try:
-            result = self.client.workspace.execute_command(
-                workspace_id=session_id,
-                project_name=project.name,
-                command=command,
-            )
-
+            result = workspace.process.exec(command, cwd=cwd or self.default_cwd)
             return ProviderExecResult(
-                output=result or "",
-                exit_code=0,
+                output=result.result or "",
+                exit_code=result.exit_code or 0,
             )
         except Exception as e:
             return ProviderExecResult(output="", error=str(e))
 
     def read_file(self, session_id: str, path: str) -> str:
         workspace = self._get_workspace(session_id)
-        if not workspace.info or not workspace.info.projects:
-            raise OSError("Workspace not ready")
-
-        project = workspace.info.projects[0]
         try:
-            content = self.client.workspace.get_file_content(
-                workspace_id=session_id,
-                project_name=project.name,
-                path=path,
-            )
+            content = workspace.fs.download_file(path)
             return content or ""
         except Exception as e:
             raise OSError(str(e))
 
     def write_file(self, session_id: str, path: str, content: str) -> str:
         workspace = self._get_workspace(session_id)
-        if not workspace.info or not workspace.info.projects:
-            raise OSError("Workspace not ready")
-
-        project = workspace.info.projects[0]
         try:
-            self.client.workspace.set_file_content(
-                workspace_id=session_id,
-                project_name=project.name,
-                path=path,
-                content=content,
-            )
+            workspace.fs.upload_file(content.encode(), path)
             return f"Written: {path}"
         except Exception as e:
             raise OSError(str(e))
 
     def list_dir(self, session_id: str, path: str) -> list[dict]:
         workspace = self._get_workspace(session_id)
-        if not workspace.info or not workspace.info.projects:
-            return []
-
-        project = workspace.info.projects[0]
         try:
-            entries = self.client.workspace.list_files(
-                workspace_id=session_id,
-                project_name=project.name,
-                path=path,
-            )
+            entries = workspace.fs.list_files(path)
             items = []
             for entry in entries or []:
                 items.append(
@@ -206,6 +177,6 @@ class DaytonaProvider(SandboxProvider):
 
     def _get_workspace(self, session_id: str):
         if session_id not in self._workspaces:
-            workspace = self.client.workspace.get_workspace(session_id)
+            workspace = self.client.find_one(session_id)
             self._workspaces[session_id] = workspace
         return self._workspaces[session_id]
