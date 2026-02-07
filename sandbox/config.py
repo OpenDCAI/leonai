@@ -43,6 +43,7 @@ class SandboxConfig(BaseModel):
     docker: DockerConfig = Field(default_factory=DockerConfig)
     e2b: E2BConfig = Field(default_factory=E2BConfig)
     on_exit: str = "pause"  # "pause" | "destroy"
+    init_commands: list[str] = Field(default_factory=list)
 
     @classmethod
     def load(cls, name: str) -> SandboxConfig:
@@ -68,6 +69,8 @@ class SandboxConfig(BaseModel):
         path = Path.home() / ".leon" / "sandboxes" / f"{name}.json"
         path.parent.mkdir(parents=True, exist_ok=True)
         data = {"provider": self.provider, "on_exit": self.on_exit}
+        if self.init_commands:
+            data["init_commands"] = self.init_commands
         # Only include the active provider's config
         if self.provider in ("agentbay", "docker", "e2b"):
             data[self.provider] = getattr(self, self.provider).model_dump()
