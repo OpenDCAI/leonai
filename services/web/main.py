@@ -35,7 +35,8 @@ async def lifespan(app: FastAPI):
     config_manager = ConfigManager()
     config_manager.load_to_env()
 
-    agent = create_leon_agent(workspace_root=Path.cwd(), verbose=True)
+    # @@@ agent-init-thread - LeonAgent.__init__ uses loop.run_until_complete() which conflicts with uvicorn's loop.
+    agent = await asyncio.to_thread(create_leon_agent, workspace_root=Path.cwd(), verbose=True)
     app.state.agent = agent
     app.state.thread_locks: dict[str, asyncio.Lock] = {}
     app.state.thread_locks_guard = asyncio.Lock()
@@ -50,7 +51,7 @@ app = FastAPI(title="Leon Web Backend", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:5174", "http://127.0.0.1:5174"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -261,3 +262,9 @@ async def run_thread(thread_id: str, payload: RunRequest) -> EventSourceResponse
                     agent.runtime.transition(AgentState.IDLE)
 
     return EventSourceResponse(event_stream())
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run("main:app", host="0.0.0.0", port=8001, reload=True)
