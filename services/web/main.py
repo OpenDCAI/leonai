@@ -11,7 +11,7 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any, AsyncGenerator
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
@@ -27,6 +27,7 @@ from tui.config import ConfigManager
 
 DB_PATH = Path.home() / ".leon" / "leon.db"
 SANDBOXES_DIR = Path.home() / ".leon" / "sandboxes"
+LOCAL_WORKSPACE_ROOT = Path.cwd().resolve()
 
 
 # --- Request models ---
@@ -330,6 +331,22 @@ async def _get_remote_agent(thread_id: str) -> Any:
     return agent
 
 
+def _resolve_local_workspace_path(raw_path: str | None) -> Path:
+    base = LOCAL_WORKSPACE_ROOT
+    if not raw_path:
+        return base
+    requested = Path(raw_path).expanduser()
+    if requested.is_absolute():
+        target = requested.resolve()
+    else:
+        target = (base / requested).resolve()
+    try:
+        target.relative_to(base)
+    except ValueError as exc:
+        raise HTTPException(400, f"Path outside workspace: {target}") from exc
+    return target
+
+
 # --- Sandbox endpoints ---
 
 @app.get("/api/sandbox/types")
@@ -493,6 +510,79 @@ async def get_thread_lease_status(thread_id: str) -> dict[str, Any]:
         "created_at": created_at,
         "updated_at": updated_at,
     }
+
+
+@app.get("/api/threads/{thread_id}/workspace/list")
+async def list_workspace_path(thread_id: str, path: str | None = Query(default=None)) -> dict[str, Any]:
+    sandbox_type = _resolve_thread_sandbox(app, thread_id)
+    if sandbox_type == "local":
+        from middleware.filesystem.local_backend import LocalBackend
+
+        backend = LocalBackend()
+        target = _resolve_local_workspace_path(path)
+        result = backend.list_dir(str(target))
+        if result.error:
+            raise HTTPException(400, result.error)
+        return {
+            "thread_id": thread_id,
+            "path": str(target),
+            "entries": [
+                {"name": e.name, "is_dir": e.is_dir, "size": e.size, "children_count": e.children_count}
+                for e in result.entries
+            ],
+        }
+
+    agent = await _get_remote_agent(thread_id)
+
+    def _list_remote() -> dict[str, Any]:
+        set_current_thread_id(thread_id)
+        capability = agent._sandbox.manager.get_sandbox(thread_id)
+        target = path or capability._session.terminal.get_state().cwd
+        result = capability.fs.list_dir(target)
+        if result.error:
+            raise RuntimeError(result.error)
+        return {
+            "path": target,
+            "entries": [
+                {"name": e.name, "is_dir": e.is_dir, "size": e.size, "children_count": e.children_count}
+                for e in result.entries
+            ],
+        }
+
+    try:
+        payload = await asyncio.to_thread(_list_remote)
+    except RuntimeError as e:
+        raise HTTPException(400, str(e)) from e
+    return {"thread_id": thread_id, **payload}
+
+
+@app.get("/api/threads/{thread_id}/workspace/read")
+async def read_workspace_file(thread_id: str, path: str = Query(...)) -> dict[str, Any]:
+    sandbox_type = _resolve_thread_sandbox(app, thread_id)
+    if sandbox_type == "local":
+        from middleware.filesystem.local_backend import LocalBackend
+
+        backend = LocalBackend()
+        target = _resolve_local_workspace_path(path)
+        try:
+            data = backend.read_file(str(target))
+        except Exception as e:
+            raise HTTPException(400, str(e)) from e
+        return {"thread_id": thread_id, "path": str(target), "content": data.content, "size": data.size}
+
+    agent = await _get_remote_agent(thread_id)
+
+    def _read_remote() -> dict[str, Any]:
+        set_current_thread_id(thread_id)
+        capability = agent._sandbox.manager.get_sandbox(thread_id)
+        data = capability.fs.read_file(path)
+        return {"path": path, "content": data.content, "size": data.size}
+
+    try:
+        payload = await asyncio.to_thread(_read_remote)
+    except Exception as e:
+        raise HTTPException(400, str(e)) from e
+    return {"thread_id": thread_id, **payload}
 
 
 # --- Thread endpoints ---

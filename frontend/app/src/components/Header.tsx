@@ -1,90 +1,75 @@
-import { useState } from 'react';
-import {
-  PanelLeft,
-  ChevronDown,
-  Sparkles,
-  Share2,
-  User,
-  MoreHorizontal,
-  Copy
-} from 'lucide-react';
+import { Copy, PanelLeft, Pause, Play, Server, Share2 } from "lucide-react";
+import type { SandboxInfo } from "../api";
 
 interface HeaderProps {
+  activeThreadId: string | null;
+  sandboxInfo: SandboxInfo | null;
   onToggleSidebar: () => void;
   onToggleComputer: () => void;
+  onOpenSandboxSessions: () => void;
+  onPauseSandbox: () => void;
+  onResumeSandbox: () => void;
   computerOpen: boolean;
 }
 
-export default function Header({ 
-  onToggleSidebar, 
-  onToggleComputer, 
-  computerOpen
+export default function Header({
+  activeThreadId,
+  sandboxInfo,
+  onToggleSidebar,
+  onToggleComputer,
+  onOpenSandboxSessions,
+  onPauseSandbox,
+  onResumeSandbox,
+  computerOpen,
 }: HeaderProps) {
-  const [showDropdown, setShowDropdown] = useState(false);
+  const hasRemote = sandboxInfo && sandboxInfo.type !== "local";
 
   return (
     <header className="h-12 bg-[#1a1a1a] border-b border-[#333] flex items-center justify-between px-4 flex-shrink-0">
-      {/* Left Side */}
       <div className="flex items-center gap-2">
-        <button 
-          onClick={onToggleSidebar}
-          className="w-8 h-8 rounded-lg hover:bg-[#2a2a2a] flex items-center justify-center transition-colors"
-        >
+        <button onClick={onToggleSidebar} className="w-8 h-8 rounded-lg hover:bg-[#2a2a2a] flex items-center justify-center transition-colors">
           <PanelLeft className="w-4 h-4 text-gray-400" />
         </button>
-        
-        <div className="relative">
-          <button 
-            onClick={() => setShowDropdown(!showDropdown)}
-            className="flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-[#2a2a2a] transition-colors"
-          >
-            <span className="text-white text-sm font-medium">Leon 1.6 Lite</span>
-            <ChevronDown className="w-4 h-4 text-gray-400" />
-          </button>
-          
-          {showDropdown && (
-            <div className="absolute top-full left-0 mt-1 w-48 bg-[#242424] border border-[#333] rounded-lg shadow-xl z-50 animate-fade-in">
-              <div className="p-1">
-                <button className="w-full flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-[#2a2a2a] text-white text-sm">
-                  <Sparkles className="w-4 h-4" />
-                  <span>Leon 1.6 Lite</span>
-                </button>
-                <button className="w-full flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-[#2a2a2a] text-gray-400 text-sm">
-                  <Sparkles className="w-4 h-4" />
-                  <span>Leon Pro</span>
-                </button>
-              </div>
-            </div>
-          )}
+        <div className="px-2 py-1 rounded-lg bg-[#242424] border border-[#333]">
+          <div className="text-[11px] text-gray-500">Thread</div>
+          <div className="text-sm text-gray-200 font-mono">{activeThreadId ? `${activeThreadId.slice(0, 14)}...` : "none"}</div>
         </div>
+        <div className="px-2 py-1 rounded-lg bg-[#242424] border border-[#333]">
+          <div className="text-[11px] text-gray-500">Sandbox</div>
+          <div className="text-sm text-gray-200">{sandboxInfo?.type ?? "local"}</div>
+        </div>
+        {hasRemote && (
+          <span className={`px-2 py-1 rounded text-xs ${sandboxInfo?.status === "running" ? "bg-green-900/40 text-green-400" : "bg-yellow-900/40 text-yellow-400"}`}>
+            {sandboxInfo?.status ?? "unknown"}
+          </span>
+        )}
       </div>
 
-      {/* Right Side */}
-      <div className="flex items-center gap-1">
-        <button className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium transition-colors">
-          <Sparkles className="w-4 h-4" />
-          <span>开始免费试用</span>
+      <div className="flex items-center gap-2">
+        {hasRemote && sandboxInfo?.status === "running" && (
+          <button className="px-3 py-1.5 rounded-lg bg-[#2a2a2a] hover:bg-[#373737] text-gray-200 text-xs flex items-center gap-2" onClick={onPauseSandbox}>
+            <Pause className="w-3.5 h-3.5" />
+            Pause
+          </button>
+        )}
+        {hasRemote && sandboxInfo?.status === "paused" && (
+          <button className="px-3 py-1.5 rounded-lg bg-[#2a2a2a] hover:bg-[#373737] text-gray-200 text-xs flex items-center gap-2" onClick={onResumeSandbox}>
+            <Play className="w-3.5 h-3.5" />
+            Resume
+          </button>
+        )}
+        <button className="px-3 py-1.5 rounded-lg bg-[#2a2a2a] hover:bg-[#373737] text-gray-200 text-xs flex items-center gap-2" onClick={onOpenSandboxSessions}>
+          <Server className="w-3.5 h-3.5" />
+          Sessions
         </button>
-        
         <button className="w-8 h-8 rounded-lg hover:bg-[#2a2a2a] flex items-center justify-center transition-colors">
           <Share2 className="w-4 h-4 text-gray-400" />
         </button>
-        
-        <button 
+        <button
           onClick={onToggleComputer}
-          className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${
-            computerOpen ? 'bg-blue-600 text-white' : 'hover:bg-[#2a2a2a] text-gray-400'
-          }`}
+          className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${computerOpen ? "bg-blue-600 text-white" : "hover:bg-[#2a2a2a] text-gray-400"}`}
         >
           <Copy className="w-4 h-4" />
-        </button>
-        
-        <button className="w-8 h-8 rounded-lg hover:bg-[#2a2a2a] flex items-center justify-center transition-colors">
-          <User className="w-4 h-4 text-gray-400" />
-        </button>
-        
-        <button className="w-8 h-8 rounded-lg hover:bg-[#2a2a2a] flex items-center justify-center transition-colors">
-          <MoreHorizontal className="w-4 h-4 text-gray-400" />
         </button>
       </div>
     </header>
