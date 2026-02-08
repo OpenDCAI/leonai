@@ -20,10 +20,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from sandbox.db import DEFAULT_DB_PATH
+
 if TYPE_CHECKING:
     from sandbox.provider import SandboxProvider
 
-DEFAULT_DB_PATH = Path.home() / ".leon" / "sandbox.db"
 REQUIRED_LEASE_COLUMNS = {
     "lease_id",
     "provider_name",
@@ -177,11 +178,14 @@ class SQLiteLease(SandboxLease):
                         self._persist_instance()
                     return self._current_instance
                 elif status == "paused":
-                    # Try to resume
-                    if provider.resume_session(self._current_instance.instance_id):
-                        self._current_instance.status = "running"
+                    if self._current_instance.status != "paused":
+                        self._current_instance.status = "paused"
                         self._persist_instance()
-                        return self._current_instance
+                    raise RuntimeError(
+                        f"Sandbox lease {self.lease_id} is paused. Resume before executing commands."
+                    )
+            except RuntimeError:
+                raise
             except Exception:
                 # Instance is dead, need to create new one
                 pass
@@ -196,11 +200,15 @@ class SQLiteLease(SandboxLease):
                     if status == "running":
                         self._current_instance = candidate
                         return self._current_instance
-                    if status == "paused" and provider.resume_session(candidate.instance_id):
-                        candidate.status = "running"
+                    if status == "paused":
+                        candidate.status = "paused"
                         self._current_instance = candidate
                         self._persist_instance()
-                        return self._current_instance
+                        raise RuntimeError(
+                            f"Sandbox lease {self.lease_id} is paused. Resume before executing commands."
+                        )
+                except RuntimeError:
+                    raise
                 except Exception:
                     pass
 

@@ -212,8 +212,8 @@ class TestFullArchitectureFlow:
         sessions = sandbox_manager.list_sessions()
         assert len(sessions) > 0
 
-    def test_remote_fs_operation_converges_paused_lease(self, remote_sandbox_manager, mock_remote_provider):
-        """File operations must converge lease state through ensure_active_instance."""
+    def test_remote_fs_operation_fails_on_paused_lease(self, remote_sandbox_manager, mock_remote_provider):
+        """Paused lease must fail fast until explicit resume."""
         thread_id = "test-thread-remote-fs-1"
         capability = remote_sandbox_manager.get_sandbox(thread_id)
 
@@ -222,10 +222,11 @@ class TestFullArchitectureFlow:
         lease.pause_instance(mock_remote_provider)
         assert lease.get_instance() is not None
         assert lease.get_instance().status == "paused"
+        mock_remote_provider.get_session_status.return_value = "paused"
 
-        # fs path should call ensure_active_instance and converge paused -> running.
-        capability.fs.write_file("/home/user/test.txt", "ok")
-        assert lease.get_instance().status == "running"
+        with pytest.raises(RuntimeError, match="is paused"):
+            capability.fs.write_file("/home/user/test.txt", "ok")
+        assert lease.get_instance().status == "paused"
 
 
 class TestSessionLifecycle:

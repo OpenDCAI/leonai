@@ -207,8 +207,8 @@ class TestSQLiteLease:
         assert reloaded.get_instance() is not None
         assert reloaded.get_instance().status == "running"
 
-    def test_ensure_active_instance_resumes_paused(self, store, mock_provider):
-        """Test ensure_active_instance resumes paused instance."""
+    def test_ensure_active_instance_raises_when_paused(self, store, mock_provider):
+        """Paused instance must be resumed explicitly, not auto-resumed."""
         lease = store.create("lease-1", "test-provider")
 
         # Create initial instance
@@ -221,13 +221,9 @@ class TestSQLiteLease:
 
         # Mock provider to report instance is paused
         mock_provider.get_session_status.return_value = "paused"
-        mock_provider.resume_session.return_value = True
-
-        # Call again - should resume
-        instance = lease.ensure_active_instance(mock_provider)
-
-        assert instance.status == "running"
-        mock_provider.resume_session.assert_called_once_with("inst-123")
+        with pytest.raises(RuntimeError, match="is paused"):
+            lease.ensure_active_instance(mock_provider)
+        mock_provider.resume_session.assert_not_called()
 
     def test_ensure_active_instance_recreates_dead(self, store, mock_provider):
         """Test ensure_active_instance recreates dead instance."""

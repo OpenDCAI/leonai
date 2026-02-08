@@ -18,10 +18,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from sandbox.db import DEFAULT_DB_PATH
+
 if TYPE_CHECKING:
     from sandbox.lease import SandboxLease
-
-DEFAULT_DB_PATH = Path.home() / ".leon" / "sandbox.db"
 
 
 def _connect(db_path: Path) -> sqlite3.Connection:

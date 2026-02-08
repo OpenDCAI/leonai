@@ -16,9 +16,9 @@ import os
 
 from sandbox.capability import SandboxCapability
 from sandbox.chat_session import ChatSessionManager, ChatSessionPolicy
+from sandbox.db import DEFAULT_DB_PATH
 from sandbox.lease import LeaseStore
 from sandbox.provider import SandboxProvider
-from sandbox.sqlite_store import DEFAULT_DB_PATH
 from sandbox.terminal import TerminalStore
 
 
@@ -33,38 +33,22 @@ def lookup_sandbox_for_thread(thread_id: str, db_path: Path | None = None) -> st
     target_db = db_path or DEFAULT_DB_PATH
     if not target_db.exists():
         return None
-    try:
-        with sqlite3.connect(str(target_db), timeout=5) as conn:
-            # Prefer durable mapping: terminal -> lease survives chat-session closure.
-            row = conn.execute(
-                """
-                SELECT sl.provider_name
-                FROM abstract_terminals at
-                JOIN sandbox_leases sl ON at.lease_id = sl.lease_id
-                WHERE at.thread_id = ?
-                LIMIT 1
-                """,
-                (thread_id,),
-            ).fetchone()
-            if row:
-                return row[0]
-            # Fallback for transitional rows.
-            row = conn.execute(
-                """
-                SELECT sl.provider_name
-                FROM chat_sessions cs
-                JOIN abstract_terminals at ON cs.terminal_id = at.terminal_id
-                JOIN sandbox_leases sl ON at.lease_id = sl.lease_id
-                WHERE cs.thread_id = ? AND cs.status IN ('active', 'idle')
-                ORDER BY cs.started_at DESC
-                LIMIT 1
-                """,
-                (thread_id,),
-            ).fetchone()
-            if row:
-                return row[0]
+    with sqlite3.connect(str(target_db), timeout=5) as conn:
+        existing = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+        if "abstract_terminals" not in existing or "sandbox_leases" not in existing:
             return None
-    except Exception:
+        row = conn.execute(
+            """
+            SELECT sl.provider_name
+            FROM abstract_terminals at
+            JOIN sandbox_leases sl ON at.lease_id = sl.lease_id
+            WHERE at.thread_id = ?
+            LIMIT 1
+            """,
+            (thread_id,),
+        ).fetchone()
+        if row:
+            return row[0]
         return None
 
 
@@ -219,25 +203,41 @@ class SandboxManager:
     def pause_session(self, thread_id: str) -> bool:
         """Pause session for thread."""
         session = self.session_manager.get(thread_id)
-        if not session:
+        if session:
+            self.session_manager.delete(session.session_id, reason="paused")
+
+        terminal = self.terminal_store.get(thread_id)
+        if not terminal:
+            return False
+        lease = self.lease_store.get(terminal.lease_id)
+        if not lease:
             return False
 
-        from sandbox.runtime import RemoteWrappedRuntime
-        if isinstance(session.runtime, RemoteWrappedRuntime):
-            return session.lease.pause_instance(session.runtime.provider)
-        self.session_manager.delete(session.session_id, reason="paused")
-        return True
+        if self.provider.name == "local":
+            return True
+        return lease.pause_instance(self.provider)
+
+    def _get_thread_lease(self, thread_id: str):
+        terminal = self.terminal_store.get(thread_id)
+        if not terminal:
+            return None
+        return self.lease_store.get(terminal.lease_id)
+
+    def _ensure_chat_session(self, thread_id: str) -> None:
+        if self.session_manager.get(thread_id):
+            return
+        self.get_sandbox(thread_id)
 
     def resume_session(self, thread_id: str) -> bool:
         """Resume session for thread."""
-        session = self.session_manager.get(thread_id)
-        if not session:
-            self.get_sandbox(thread_id)
-            return True
-
-        from sandbox.runtime import RemoteWrappedRuntime
-        if isinstance(session.runtime, RemoteWrappedRuntime):
-            return session.lease.resume_instance(session.runtime.provider)
+        lease = self._get_thread_lease(thread_id)
+        if not lease:
+            return False
+        if self.provider.name != "local":
+            resumed = lease.resume_instance(self.provider)
+            if not resumed:
+                return False
+        self._ensure_chat_session(thread_id)
         return True
 
     def pause_all_sessions(self) -> int:
@@ -254,12 +254,17 @@ class SandboxManager:
     def destroy_session(self, thread_id: str, session_id: str | None = None) -> bool:
         """Destroy session and clean up resources."""
         session = self.session_manager.get(thread_id)
-        if not session:
+        if session:
+            self.session_manager.delete(session.session_id)
+
+        terminal = self.terminal_store.get(thread_id)
+        if not terminal:
             return False
-        from sandbox.runtime import RemoteWrappedRuntime
-        if isinstance(session.runtime, RemoteWrappedRuntime):
-            session.lease.destroy_instance(session.runtime.provider)
-        self.session_manager.delete(session.session_id)
+        lease = self.lease_store.get(terminal.lease_id)
+        if not lease:
+            return False
+        if self.provider.name != "local":
+            lease.destroy_instance(self.provider)
         return True
 
     def list_sessions(self) -> list[dict]:

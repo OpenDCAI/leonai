@@ -16,13 +16,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from sandbox.db import DEFAULT_DB_PATH
+
 if TYPE_CHECKING:
     from sandbox.lease import SandboxLease
     from sandbox.provider import SandboxProvider
     from sandbox.runtime import PhysicalTerminalRuntime
     from sandbox.terminal import AbstractTerminal
-
-DEFAULT_DB_PATH = Path.home() / ".leon" / "sandbox.db"
 
 REQUIRED_CHAT_SESSION_COLUMNS = {
     "chat_session_id",

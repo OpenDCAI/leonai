@@ -20,8 +20,8 @@ from agent import create_leon_agent
 from middleware.monitor import AgentState
 from middleware.queue import QueueMode, get_queue_manager
 from sandbox.config import SandboxConfig
+from sandbox.db import DEFAULT_DB_PATH as SANDBOX_DB_PATH
 from sandbox.manager import SandboxManager, lookup_sandbox_for_thread
-from sandbox.sqlite_store import DEFAULT_DB_PATH as SANDBOX_DB_PATH
 from sandbox.thread_context import set_current_thread_id
 from tui.config import ConfigManager
 
@@ -458,10 +458,7 @@ async def get_thread_terminal_status(thread_id: str) -> dict[str, Any]:
 
     def _get_terminal():
         mgr = agent._sandbox.manager
-        session = mgr.session_manager.get(thread_id)
-        if not session:
-            return None
-        return session.terminal
+        return mgr.terminal_store.get(thread_id)
 
     terminal = await asyncio.to_thread(_get_terminal)
     if not terminal:
@@ -488,11 +485,14 @@ async def get_thread_lease_status(thread_id: str) -> dict[str, Any]:
 
     def _get_lease():
         mgr = agent._sandbox.manager
-        session = mgr.session_manager.get(thread_id)
-        if not session:
+        terminal = mgr.terminal_store.get(thread_id)
+        if not terminal:
             return None
-        session.lease.refresh_instance_status(mgr.provider)
-        return session.lease
+        lease = mgr.lease_store.get(terminal.lease_id)
+        if not lease:
+            return None
+        lease.refresh_instance_status(mgr.provider)
+        return lease
 
     lease = await asyncio.to_thread(_get_lease)
     if not lease:
@@ -625,14 +625,19 @@ async def get_thread_messages(thread_id: str) -> dict[str, Any]:
         try:
             mgr = agent._sandbox.manager
             session = mgr.session_manager.get(thread_id)
+            terminal = mgr.terminal_store.get(thread_id)
+            if terminal:
+                lease = mgr.lease_store.get(terminal.lease_id)
+                if lease:
+                    lease.refresh_instance_status(mgr.provider)
+                    instance = lease.get_instance()
+                    sandbox_info["status"] = instance.status if instance else "detached"
+                sandbox_info["terminal_id"] = terminal.terminal_id
             if session:
-                session.lease.refresh_instance_status(mgr.provider)
-                instance = session.lease.get_instance()
-                sandbox_info["status"] = instance.status if instance else "detached"
                 sandbox_info["session_id"] = session.session_id
-                sandbox_info["terminal_id"] = session.terminal.terminal_id
-        except Exception:
-            pass
+        except Exception as exc:
+            sandbox_info["status"] = "error"
+            sandbox_info["error"] = str(exc)
 
     return {
         "thread_id": thread_id,
