@@ -1,11 +1,14 @@
-import type { ThreadSummary } from "../api";
+import { useState } from "react";
+import type { SandboxType, ThreadSummary } from "../api";
 
 interface ThreadListProps {
   threads: ThreadSummary[];
   activeThreadId: string | null;
+  sandboxTypes: SandboxType[];
   onSelect: (threadId: string) => void;
-  onCreate: () => void;
+  onCreate: (sandboxType: string) => void;
   onDelete: (threadId: string) => void;
+  onShowSandboxPanel: () => void;
 }
 
 function labelForThread(thread: ThreadSummary): string {
@@ -13,19 +16,44 @@ function labelForThread(thread: ThreadSummary): string {
   if (firstMessage) {
     return firstMessage.slice(0, 30);
   }
-  return thread.thread_id.slice(0, 30);
+  return thread.thread_id.slice(0, 16);
 }
 
-export function ThreadList({ threads, activeThreadId, onSelect, onCreate, onDelete }: ThreadListProps) {
+export function ThreadList({
+  threads, activeThreadId, sandboxTypes, onSelect, onCreate, onDelete, onShowSandboxPanel,
+}: ThreadListProps) {
+  const [showPicker, setShowPicker] = useState(false);
+
+  function handleCreate(type: string) {
+    setShowPicker(false);
+    void onCreate(type);
+  }
+
   return (
     <aside className="thread-list">
-      <button className="new-chat-btn" onClick={onCreate}>
-        + New Chat
-      </button>
+      <div className="thread-list-header">
+        <button className="new-chat-btn" onClick={() => setShowPicker((v) => !v)}>
+          + New Chat
+        </button>
+        <button className="sandbox-panel-btn" onClick={onShowSandboxPanel} title="Sandbox Sessions">
+          &#9881;
+        </button>
+      </div>
+
+      {showPicker && (
+        <div className="sandbox-picker">
+          {sandboxTypes.filter((t) => t.available).map((t) => (
+            <button key={t.name} className="sandbox-pick-btn" onClick={() => handleCreate(t.name)}>
+              {t.name}
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className="thread-items">
         {threads.map((thread) => {
           const active = thread.thread_id === activeThreadId;
+          const sbx = thread.sandbox;
           return (
             <div
               key={thread.thread_id}
@@ -34,22 +62,22 @@ export function ThreadList({ threads, activeThreadId, onSelect, onCreate, onDele
               role="button"
               tabIndex={0}
               onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  onSelect(thread.thread_id);
-                }
+                if (e.key === "Enter" || e.key === " ") onSelect(thread.thread_id);
               }}
             >
-              <span className="thread-label">{labelForThread(thread)}</span>
+              <div className="thread-item-content">
+                <span className="thread-label">{labelForThread(thread)}</span>
+                {sbx && sbx !== "local" && (
+                  <span className={`sandbox-badge ${sbx}`}>{sbx}</span>
+                )}
+              </div>
               <button
                 className="thread-delete"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onDelete(thread.thread_id);
-                }}
+                onClick={(e) => { e.stopPropagation(); onDelete(thread.thread_id); }}
                 aria-label={`Delete ${thread.thread_id}`}
                 title="Delete"
               >
-                ×
+                &times;
               </button>
             </div>
           );

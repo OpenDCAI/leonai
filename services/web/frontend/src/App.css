@@ -106,6 +106,9 @@ body,
   border-bottom: 1px solid #e5e7eb;
   padding: 14px 18px;
   background: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 
 .chat-header h1 {
@@ -330,4 +333,216 @@ body,
   .message-bubble {
     max-width: 92%;
   }
+}
+
+/* --- Sandbox UI --- */
+
+.thread-list-header {
+  display: flex;
+  gap: 8px;
+}
+
+.thread-list-header .new-chat-btn {
+  flex: 1;
+}
+
+.sandbox-panel-btn {
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: #242443;
+  color: #f9fafb;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.sandbox-panel-btn:hover {
+  background: #2d2d52;
+}
+
+.sandbox-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 8px;
+  background: #242443;
+  border-radius: 8px;
+}
+
+.sandbox-pick-btn {
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: #1a1a2e;
+  color: #e5e7eb;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.sandbox-pick-btn:hover {
+  background: #2d2d52;
+  border-color: #3b82f6;
+}
+
+.thread-item-content {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+
+.sandbox-badge {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 600;
+  text-transform: uppercase;
+  white-space: nowrap;
+  background: #374151;
+  color: #d1d5db;
+}
+
+.sandbox-badge.docker { background: #1d4ed8; color: #dbeafe; }
+.sandbox-badge.e2b { background: #7c3aed; color: #ede9fe; }
+.sandbox-badge.agentbay { background: #059669; color: #d1fae5; }
+.sandbox-badge.daytona { background: #d97706; color: #fef3c7; }
+
+.sandbox-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sandbox-status {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 6px;
+}
+
+.sandbox-status.running { background: #d1fae5; color: #065f46; }
+.sandbox-status.paused { background: #fef3c7; color: #92400e; }
+.sandbox-status.unknown { background: #f3f4f6; color: #6b7280; }
+
+.sandbox-btn {
+  border: 1px solid #d1d5db;
+  background: #ffffff;
+  color: #374151;
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.sandbox-btn:hover { background: #f3f4f6; }
+
+/* Sandbox Panel Overlay */
+
+.sandbox-panel-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.sandbox-panel {
+  background: #ffffff;
+  border-radius: 12px;
+  padding: 20px;
+  width: min(900px, 90vw);
+  max-height: 80vh;
+  overflow-y: auto;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.15);
+}
+
+.sandbox-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.sandbox-panel-header h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.sandbox-panel-header .close-btn {
+  font-size: 18px;
+  margin-left: 8px;
+}
+
+.sandbox-loading, .sandbox-empty {
+  color: #6b7280;
+  text-align: center;
+  padding: 20px;
+}
+
+.sandbox-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.sandbox-table th {
+  text-align: left;
+  padding: 8px;
+  border-bottom: 2px solid #e5e7eb;
+  color: #6b7280;
+  font-weight: 600;
+}
+
+.sandbox-table td {
+  padding: 8px;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.sandbox-table .mono {
+  font-family: "SFMono-Regular", Menlo, monospace;
+  font-size: 12px;
+}
+
+.sandbox-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.sandbox-actions button {
+  border: 1px solid #d1d5db;
+  background: #ffffff;
+  border-radius: 4px;
+  padding: 3px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.sandbox-actions button:hover { background: #f3f4f6; }
+.sandbox-actions button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.metrics-card {
+  margin-top: 12px;
+  padding: 12px;
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+}
+
+.metrics-card h4 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: #374151;
+}
+
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px;
+  font-size: 12px;
+  color: #6b7280;
+  font-family: "SFMono-Regular", Menlo, monospace;
 }

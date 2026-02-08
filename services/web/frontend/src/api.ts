@@ -11,6 +11,38 @@ export interface ThreadSummary {
   thread_id: string;
   messages?: ChatMessage[];
   title?: string;
+  sandbox?: string;
+}
+
+export interface SandboxType {
+  name: string;
+  available: boolean;
+  reason?: string;
+}
+
+export interface SandboxSession {
+  session_id: string;
+  thread_id: string;
+  provider: string;
+  status: string;
+  created_at?: string;
+  last_active?: string;
+}
+
+export interface SandboxInfo {
+  type: string;
+  status: string | null;
+  session_id: string | null;
+}
+
+export interface SandboxMetrics {
+  cpu_percent: number;
+  memory_used_mb: number;
+  memory_total_mb: number;
+  disk_used_gb: number;
+  disk_total_gb: number;
+  network_rx_kbps: number;
+  network_tx_kbps: number;
 }
 
 export type ChatMessageRole = "user" | "assistant" | "tool_call" | "tool_result";
@@ -79,8 +111,11 @@ export async function listThreads(): Promise<ThreadSummary[]> {
   return toArrayThreads(payload);
 }
 
-export async function createThread(): Promise<ThreadSummary> {
-  return request<ThreadSummary>("/api/threads", { method: "POST" });
+export async function createThread(sandbox: string = "local"): Promise<ThreadSummary> {
+  return request<ThreadSummary>("/api/threads", {
+    method: "POST",
+    body: JSON.stringify({ sandbox }),
+  });
 }
 
 export async function getThread(id: string): Promise<ThreadSummary> {
@@ -137,4 +172,32 @@ export async function startRun(
     }
     parser.feed(decoder.decode(value, { stream: true }));
   }
+}
+
+// --- Sandbox API ---
+
+export async function listSandboxTypes(): Promise<SandboxType[]> {
+  const res = await request<{ types: SandboxType[] }>("/api/sandbox/types");
+  return res.types;
+}
+
+export async function listSandboxSessions(): Promise<SandboxSession[]> {
+  const res = await request<{ sessions: SandboxSession[] }>("/api/sandbox/sessions");
+  return res.sessions;
+}
+
+export async function pauseSession(sessionId: string): Promise<void> {
+  await request(`/api/sandbox/sessions/${encodeURIComponent(sessionId)}/pause`, { method: "POST" });
+}
+
+export async function resumeSession(sessionId: string): Promise<void> {
+  await request(`/api/sandbox/sessions/${encodeURIComponent(sessionId)}/resume`, { method: "POST" });
+}
+
+export async function destroySession(sessionId: string): Promise<void> {
+  await request(`/api/sandbox/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" });
+}
+
+export async function getSessionMetrics(sessionId: string): Promise<{ metrics: SandboxMetrics | null; web_url: string | null }> {
+  return request(`/api/sandbox/sessions/${encodeURIComponent(sessionId)}/metrics`);
 }
