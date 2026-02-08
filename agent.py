@@ -171,6 +171,7 @@ class LeonAgent:
         self.queue_mode = profile.agent.queue_mode
         self._session_pool: dict[str, Any] = {}
         self.db_path = Path.home() / ".leon" / "leon.db"
+        self.sandbox_db_path = Path.home() / ".leon" / "sandbox.db"
 
         # Initialize sandbox (infrastructure layer — before middleware stack)
         from sandbox import Sandbox as SandboxBase
@@ -184,7 +185,7 @@ class LeonAgent:
             self._sandbox = create_sandbox(
                 sandbox_config,
                 workspace_root=str(self.workspace_root),
-                db_path=self.db_path,
+                db_path=self.sandbox_db_path,
             )
         else:
             raise TypeError(f"sandbox must be Sandbox, str, or None, got {type(sandbox)}")
@@ -661,6 +662,7 @@ tool:
         conn = await aiosqlite.connect(str(db_path))
         # @@@ WAL mode allows concurrent reads/writes from sandbox manager
         await conn.execute("PRAGMA journal_mode=WAL")
+        await conn.execute("PRAGMA busy_timeout=30000")
         self.checkpointer = AsyncSqliteSaver(conn)
         await self.checkpointer.setup()
         return conn

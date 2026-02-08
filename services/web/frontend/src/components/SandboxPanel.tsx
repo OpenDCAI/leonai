@@ -24,7 +24,13 @@ export function SandboxPanel({ onClose }: SandboxPanelProps) {
     }
   }
 
-  useEffect(() => { void refresh(); }, []);
+  useEffect(() => {
+    void refresh();
+    const timer = window.setInterval(() => {
+      void refresh();
+    }, 3000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   async function handlePause(s: SandboxSession) {
     setBusy(s.session_id);

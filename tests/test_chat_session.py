@@ -60,17 +60,17 @@ class TestChatSessionPolicy:
     def test_default_policy(self):
         """Test default policy values."""
         policy = ChatSessionPolicy()
-        assert policy.idle_timeout_seconds == 3600
-        assert policy.max_duration_seconds == 86400
+        assert policy.idle_ttl_sec == 3600
+        assert policy.max_duration_sec == 86400
 
     def test_custom_policy(self):
         """Test custom policy values."""
         policy = ChatSessionPolicy(
-            idle_timeout_seconds=1800,
-            max_duration_seconds=43200,
+            idle_ttl_sec=1800,
+            max_duration_sec=43200,
         )
-        assert policy.idle_timeout_seconds == 1800
-        assert policy.max_duration_seconds == 43200
+        assert policy.idle_ttl_sec == 1800
+        assert policy.max_duration_sec == 43200
 
 
 class TestChatSession:
@@ -82,7 +82,7 @@ class TestChatSession:
         lease = lease_store.create("lease-1", "local")
         runtime = MagicMock()
 
-        policy = ChatSessionPolicy(idle_timeout_seconds=1, max_duration_seconds=3600)
+        policy = ChatSessionPolicy(idle_ttl_sec=1, max_duration_sec=3600)
         now = datetime.now()
 
         session = ChatSession(
@@ -92,8 +92,8 @@ class TestChatSession:
             lease=lease,
             runtime=runtime,
             policy=policy,
-            created_at=now,
-            last_activity_at=now - timedelta(seconds=2),  # 2 seconds ago
+            started_at=now,
+            last_active_at=now - timedelta(seconds=2),  # 2 seconds ago
         )
 
         assert session.is_expired()
@@ -104,7 +104,7 @@ class TestChatSession:
         lease = lease_store.create("lease-1", "local")
         runtime = MagicMock()
 
-        policy = ChatSessionPolicy(idle_timeout_seconds=3600, max_duration_seconds=1)
+        policy = ChatSessionPolicy(idle_ttl_sec=3600, max_duration_sec=1)
         now = datetime.now()
 
         session = ChatSession(
@@ -114,8 +114,8 @@ class TestChatSession:
             lease=lease,
             runtime=runtime,
             policy=policy,
-            created_at=now - timedelta(seconds=2),  # Created 2 seconds ago
-            last_activity_at=now,
+            started_at=now - timedelta(seconds=2),  # Created 2 seconds ago
+            last_active_at=now,
         )
 
         assert session.is_expired()
@@ -126,7 +126,7 @@ class TestChatSession:
         lease = lease_store.create("lease-1", "local")
         runtime = MagicMock()
 
-        policy = ChatSessionPolicy(idle_timeout_seconds=3600, max_duration_seconds=86400)
+        policy = ChatSessionPolicy(idle_ttl_sec=3600, max_duration_sec=86400)
         now = datetime.now()
 
         session = ChatSession(
@@ -136,14 +136,15 @@ class TestChatSession:
             lease=lease,
             runtime=runtime,
             policy=policy,
-            created_at=now,
-            last_activity_at=now,
+            started_at=now,
+            last_active_at=now,
         )
 
         assert not session.is_expired()
 
-    def test_touch_updates_activity(self, terminal_store, lease_store):
-        """Test touch updates last_activity_at."""
+    def test_touch_updates_activity(self, terminal_store, lease_store, temp_db, mock_provider):
+        """Test touch updates last_active_at."""
+        ChatSessionManager(provider=mock_provider, db_path=temp_db)
         terminal = terminal_store.create("term-1", "thread-1", "lease-1")
         lease = lease_store.create("lease-1", "local")
         runtime = MagicMock()
@@ -159,18 +160,20 @@ class TestChatSession:
             lease=lease,
             runtime=runtime,
             policy=policy,
-            created_at=now,
-            last_activity_at=old_time,
+            started_at=now,
+            last_active_at=old_time,
+            db_path=temp_db,
         )
 
         session.touch()
 
-        # last_activity_at should be updated
-        assert session.last_activity_at > old_time
+        # last_active_at should be updated
+        assert session.last_active_at > old_time
 
     @pytest.mark.asyncio
-    async def test_close_calls_runtime_close(self, terminal_store, lease_store):
+    async def test_close_calls_runtime_close(self, terminal_store, lease_store, temp_db, mock_provider):
         """Test close calls runtime.close()."""
+        ChatSessionManager(provider=mock_provider, db_path=temp_db)
         terminal = terminal_store.create("term-1", "thread-1", "lease-1")
         lease = lease_store.create("lease-1", "local")
         runtime = MagicMock()
@@ -187,8 +190,9 @@ class TestChatSession:
             lease=lease,
             runtime=runtime,
             policy=policy,
-            created_at=now,
-            last_activity_at=now,
+            started_at=now,
+            last_active_at=now,
+            db_path=temp_db,
         )
 
         await session.close()
@@ -258,7 +262,7 @@ class TestChatSessionManager:
         lease = lease_store.create("lease-1", "local")
 
         # Create session with very short timeout
-        policy = ChatSessionPolicy(idle_timeout_seconds=0, max_duration_seconds=86400)
+        policy = ChatSessionPolicy(idle_ttl_sec=0, max_duration_sec=86400)
         session_manager.create(
             session_id="sess-1",
             thread_id="thread-1",
@@ -285,14 +289,14 @@ class TestChatSessionManager:
             lease=lease,
         )
 
-        old_activity = session.last_activity_at
+        old_activity = session.last_active_at
         time.sleep(0.01)
 
         session_manager.touch("sess-1")
 
         # Retrieve again and verify updated
         session2 = session_manager.get("thread-1")
-        assert session2.last_activity_at > old_activity
+        assert session2.last_active_at > old_activity
 
     def test_delete_session(self, session_manager, terminal_store, lease_store):
         """Test deleting a session."""
@@ -340,11 +344,11 @@ class TestChatSessionManager:
         lease = lease_store.create("lease-1", "local")
 
         # Create one expired session
-        policy_expired = ChatSessionPolicy(idle_timeout_seconds=0, max_duration_seconds=86400)
+        policy_expired = ChatSessionPolicy(idle_ttl_sec=0, max_duration_sec=86400)
         session_manager.create("sess-1", "thread-1", terminal1, lease, policy=policy_expired)
 
         # Create one active session
-        policy_active = ChatSessionPolicy(idle_timeout_seconds=3600, max_duration_seconds=86400)
+        policy_active = ChatSessionPolicy(idle_ttl_sec=3600, max_duration_sec=86400)
         session_manager.create("sess-2", "thread-2", terminal2, lease, policy=policy_active)
 
         time.sleep(0.1)  # Wait for expiry
@@ -385,8 +389,8 @@ class TestChatSessionIntegration:
         terminal = terminal_store.create("term-1", "thread-1", "lease-1")
         lease = lease_store.create("lease-1", "local")
 
-        policy = ChatSessionPolicy(idle_timeout_seconds=1800, max_duration_seconds=43200)
+        policy = ChatSessionPolicy(idle_ttl_sec=1800, max_duration_sec=43200)
         session = session_manager.create("sess-1", "thread-1", terminal, lease, policy=policy)
 
-        assert session.policy.idle_timeout_seconds == 1800
-        assert session.policy.max_duration_seconds == 43200
+        assert session.policy.idle_ttl_sec == 1800
+        assert session.policy.max_duration_sec == 43200

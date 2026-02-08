@@ -21,7 +21,13 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from sandbox.lease import SandboxLease
 
-DEFAULT_DB_PATH = Path.home() / ".leon" / "leon.db"
+DEFAULT_DB_PATH = Path.home() / ".leon" / "sandbox.db"
+
+
+def _connect(db_path: Path) -> sqlite3.Connection:
+    conn = sqlite3.connect(str(db_path), timeout=30)
+    conn.execute("PRAGMA busy_timeout=30000")
+    return conn
 
 
 @dataclass
@@ -122,7 +128,7 @@ class SQLiteTerminal(AbstractTerminal):
 
     def _persist_state(self) -> None:
         """Persist state to SQLite."""
-        with sqlite3.connect(str(self.db_path), timeout=10) as conn:
+        with _connect(self.db_path) as conn:
             conn.execute(
                 """
                 UPDATE abstract_terminals
@@ -152,7 +158,7 @@ class TerminalStore:
 
     def _ensure_tables(self) -> None:
         """Ensure abstract_terminals table exists."""
-        with sqlite3.connect(str(self.db_path), timeout=10) as conn:
+        with _connect(self.db_path) as conn:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute(
                 """
@@ -172,7 +178,7 @@ class TerminalStore:
 
     def get(self, thread_id: str) -> AbstractTerminal | None:
         """Get terminal by thread_id."""
-        with sqlite3.connect(str(self.db_path), timeout=10) as conn:
+        with _connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             row = conn.execute(
                 """
@@ -202,7 +208,7 @@ class TerminalStore:
 
     def get_by_id(self, terminal_id: str) -> AbstractTerminal | None:
         """Get terminal by terminal_id."""
-        with sqlite3.connect(str(self.db_path), timeout=10) as conn:
+        with _connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             row = conn.execute(
                 """
@@ -241,7 +247,7 @@ class TerminalStore:
         state = TerminalState(cwd=initial_cwd, env_delta={}, state_version=0)
         now = datetime.now().isoformat()
 
-        with sqlite3.connect(str(self.db_path), timeout=10) as conn:
+        with _connect(self.db_path) as conn:
             conn.execute(
                 """
                 INSERT INTO abstract_terminals (terminal_id, thread_id, lease_id, cwd, env_delta_json, state_version, created_at, updated_at)
@@ -270,7 +276,7 @@ class TerminalStore:
 
     def delete(self, terminal_id: str) -> None:
         """Delete terminal."""
-        with sqlite3.connect(str(self.db_path), timeout=10) as conn:
+        with _connect(self.db_path) as conn:
             conn.execute(
                 "DELETE FROM abstract_terminals WHERE terminal_id = ?",
                 (terminal_id,),
@@ -279,7 +285,7 @@ class TerminalStore:
 
     def list_all(self) -> list[dict]:
         """List all terminals."""
-        with sqlite3.connect(str(self.db_path), timeout=10) as conn:
+        with _connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 """

@@ -180,7 +180,11 @@ class CommandMiddleware(AgentMiddleware[CommandState]):
         if not allowed:
             return error_msg
 
-        work_dir = cwd or str(self.workspace_root)
+        # @@@remote-cwd-default - Remote terminals own cwd state; avoid forcing workspace_root on every command.
+        if self._executor.is_remote:
+            work_dir = cwd
+        else:
+            work_dir = cwd or str(self.workspace_root)
 
         if blocking:
             timeout_secs = float(timeout) if timeout else self.default_timeout

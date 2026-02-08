@@ -12,13 +12,13 @@ Architecture:
 from collections.abc import Callable
 from pathlib import Path
 import uuid
+import os
 
 from sandbox.capability import SandboxCapability
 from sandbox.chat_session import ChatSessionManager, ChatSessionPolicy
 from sandbox.lease import LeaseStore
 from sandbox.provider import SandboxProvider
-from sandbox.session_store import SessionStore
-from sandbox.sqlite_store import DEFAULT_DB_PATH, SQLiteSessionStore
+from sandbox.sqlite_store import DEFAULT_DB_PATH
 from sandbox.terminal import TerminalStore
 
 
@@ -41,19 +41,15 @@ def lookup_sandbox_for_thread(thread_id: str) -> str | None:
                 FROM chat_sessions cs
                 JOIN abstract_terminals at ON cs.terminal_id = at.terminal_id
                 JOIN sandbox_leases sl ON at.lease_id = sl.lease_id
-                WHERE cs.thread_id = ?
+                WHERE cs.thread_id = ? AND cs.status IN ('active', 'idle')
+                ORDER BY cs.started_at DESC
+                LIMIT 1
                 """,
                 (thread_id,),
             ).fetchone()
             if row:
                 return row[0]
-
-            # Fallback to legacy
-            row = conn.execute(
-                "SELECT provider FROM sandbox_sessions WHERE thread_id = ?",
-                (thread_id,),
-            ).fetchone()
-            return row[0] if row else None
+            return None
     except Exception:
         return None
 
@@ -66,7 +62,6 @@ class SandboxManager:
     - Orchestrate thread_id → ChatSession → Runtime → Terminal → Lease
     - Provide SandboxCapability to agents
     - Handle session lifecycle (create, resume, cleanup)
-    - Maintain backward compatibility with legacy API
 
     New Flow:
     1. get_sandbox(thread_id) → SandboxCapability
@@ -79,13 +74,11 @@ class SandboxManager:
     def __init__(
         self,
         provider: SandboxProvider,
-        store: SessionStore | None = None,
         db_path: Path | None = None,
         default_context_id: str | None = None,
         on_session_ready: Callable[[str, str], None] | None = None,
     ):
         self.provider = provider
-        self.store = store or SQLiteSessionStore(db_path)
         self.default_context_id = default_context_id
         self._on_session_ready = on_session_ready
 
@@ -104,12 +97,30 @@ class SandboxManager:
             return f"leon-{thread_id}"
         return None
 
+    def _default_terminal_cwd(self) -> str:
+        """Resolve provider-appropriate initial cwd for terminal state."""
+        if self.provider.name == "local":
+            return os.path.expanduser("~")
+        if hasattr(self.provider, "default_cwd"):
+            value = getattr(self.provider, "default_cwd")
+            if isinstance(value, str) and value:
+                return value
+        if hasattr(self.provider, "default_context_path"):
+            value = getattr(self.provider, "default_context_path")
+            if isinstance(value, str) and value:
+                return value
+        if hasattr(self.provider, "mount_path"):
+            value = getattr(self.provider, "mount_path")
+            if isinstance(value, str) and value:
+                return value
+        return "/home/user"
+
     def _fire_session_ready(self, session_id: str, reason: str) -> None:
         if self._on_session_ready:
             self._on_session_ready(session_id, reason)
 
     def close(self):
-        self.store.close()
+        return None
 
     def get_sandbox(self, thread_id: str) -> SandboxCapability:
         """Get sandbox capability for thread (NEW ARCHITECTURE).
@@ -139,9 +150,7 @@ class SandboxManager:
             lease_id = f"lease-{uuid.uuid4().hex[:12]}"
 
             lease = self.lease_store.create(lease_id, self.provider.name)
-            # Use a safe default cwd that exists
-            import os
-            initial_cwd = os.path.expanduser("~")
+            initial_cwd = self._default_terminal_cwd()
 
             terminal = self.terminal_store.create(
                 terminal_id=terminal_id,
@@ -172,10 +181,8 @@ class SandboxManager:
 
         return SandboxCapability(session)
 
-    # Legacy API compatibility methods below
-
     def get_or_create_session(self, thread_id: str):
-        """Legacy API - returns SessionInfo for backward compatibility."""
+        """Return provider SessionInfo for current thread lease instance."""
         from sandbox.provider import SessionInfo
 
         capability = self.get_sandbox(thread_id)
@@ -228,15 +235,40 @@ class SandboxManager:
 
         return count
 
-    def destroy_session(self, thread_id: str, session_id: str | None = None) -> None:
+    def destroy_session(self, thread_id: str, session_id: str | None = None) -> bool:
         """Destroy session and clean up resources."""
         session = self.session_manager.get(thread_id)
-        if session:
-            from sandbox.runtime import RemoteWrappedRuntime
-            if isinstance(session.runtime, RemoteWrappedRuntime):
-                session.lease.destroy_instance(session.runtime.provider)
-            self.session_manager.delete(session.session_id)
+        if not session:
+            return False
+        from sandbox.runtime import RemoteWrappedRuntime
+        if isinstance(session.runtime, RemoteWrappedRuntime):
+            session.lease.destroy_instance(session.runtime.provider)
+        self.session_manager.delete(session.session_id)
+        return True
 
     def list_sessions(self) -> list[dict]:
         """List all sessions."""
-        return self.session_manager.list_all()
+        rows = self.session_manager.list_all()
+        sessions: list[dict] = []
+        for row in rows:
+            if row.get("status") not in {"active", "idle"}:
+                continue
+            lease = self.lease_store.get(row["lease_id"])
+            if not lease or lease.provider_name != self.provider.name:
+                continue
+            instance = lease.get_instance()
+            if instance:
+                status = lease.refresh_instance_status(self.provider)
+            else:
+                status = "detached"
+            sessions.append(
+                {
+                    "session_id": row["session_id"],
+                    "thread_id": row["thread_id"],
+                    "provider": self.provider.name,
+                    "status": status,
+                    "created_at": row.get("started_at"),
+                    "last_active": row.get("last_active_at"),
+                }
+            )
+        return sessions

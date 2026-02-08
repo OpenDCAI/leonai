@@ -12,7 +12,7 @@ from pathlib import Path
 from sandbox.provider import SessionInfo
 from sandbox.session_store import SessionStore
 
-DEFAULT_DB_PATH = Path.home() / ".leon" / "leon.db"
+DEFAULT_DB_PATH = Path.home() / ".leon" / "sandbox.db"
 
 
 class SQLiteSessionStore(SessionStore):
@@ -71,6 +71,17 @@ class SQLiteSessionStore(SessionStore):
                 file_path TEXT NOT NULL,
                 content BLOB NOT NULL,
                 PRIMARY KEY (thread_id, file_path)
+            )
+        """)
+
+        # Durable workspace binding (final architecture)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS workspace_storages (
+                storage_id TEXT PRIMARY KEY,
+                thread_id TEXT UNIQUE NOT NULL,
+                storage_type TEXT NOT NULL,
+                storage_config TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
 

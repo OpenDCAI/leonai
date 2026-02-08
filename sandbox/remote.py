@@ -78,10 +78,33 @@ class RemoteSandbox(Sandbox):
                 )
 
     def fs(self) -> FileSystemBackend:
-        return self._get_capability().fs
+        # Return a lazy wrapper that defers capability lookup until actual use
+        # This allows agent initialization before thread_id is set
+        class LazyFSBackend:
+            def __init__(self, remote_sandbox):
+                self._remote = remote_sandbox
+                # Set is_remote immediately so middleware can check it
+                self.is_remote = True
+
+            def __getattr__(self, name):
+                # Defer to actual backend when methods are called
+                return getattr(self._remote._get_capability().fs, name)
+
+        return LazyFSBackend(self)  # type: ignore
 
     def shell(self) -> BaseExecutor:
-        return self._get_capability().command
+        # Return a lazy wrapper that defers capability lookup until actual use
+        class LazyExecutor:
+            def __init__(self, remote_sandbox):
+                self._remote = remote_sandbox
+                # @@@lazy-remote-flag - CommandMiddleware probes is_remote during init; keep this side-effect free.
+                self.is_remote = True
+
+            def __getattr__(self, name):
+                # Defer to actual backend when methods are called
+                return getattr(self._remote._get_capability().command, name)
+
+        return LazyExecutor(self)  # type: ignore
 
     @property
     def manager(self) -> SandboxManager:

@@ -74,7 +74,7 @@ export function SessionStatusPanel({ threadId, sandboxType }: SessionStatusPanel
                   <span className={`status-badge ${session.status}`}>{session.status}</span>
 
                   <span className="label">Created:</span>
-                  <span>{new Date(session.created_at).toLocaleString()}</span>
+                  <span>{new Date(session.started_at).toLocaleString()}</span>
 
                   <span className="label">Last Active:</span>
                   <span>{new Date(session.last_active_at).toLocaleString()}</span>

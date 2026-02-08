@@ -12,6 +12,7 @@ Architecture:
 from __future__ import annotations
 
 import asyncio
+import shlex
 import uuid
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
@@ -51,6 +52,7 @@ class PhysicalTerminalRuntime(ABC):
         self.terminal = terminal
         self.lease = lease
         self._hydrated = False
+        self.runtime_id = f"runtime-{uuid.uuid4().hex[:12]}"
 
     @abstractmethod
     async def execute(self, command: str, timeout: float | None = None) -> ExecuteResult:
@@ -110,7 +112,7 @@ class LocalPersistentShellRuntime(PhysicalTerminalRuntime):
             # Hydrate env_delta
             if state.env_delta:
                 for key, value in state.env_delta.items():
-                    self._session.stdin.write(f"export {key}='{value}'\n".encode())
+                    self._session.stdin.write(f"export {key}={shlex.quote(value)}\n".encode())
                 await self._session.stdin.drain()
 
             self._hydrated = True
@@ -158,17 +160,23 @@ class LocalPersistentShellRuntime(PhysicalTerminalRuntime):
                     timeout=timeout,
                 )
 
-                # Update cwd after command (read from shell)
+                # Capture state snapshot after each command so new ChatSession can hydrate from DB.
                 pwd_stdout, _, _ = await self._send_command(proc, "pwd")
-                new_cwd = pwd_stdout.strip()
+                env_stdout, _, _ = await self._send_command(proc, "env")
+                new_cwd = pwd_stdout.strip() or self.terminal.get_state().cwd
+                env_map: dict[str, str] = {}
+                for line in env_stdout.splitlines():
+                    if "=" not in line:
+                        continue
+                    key, value = line.split("=", 1)
+                    env_map[key] = value
 
                 if new_cwd:
                     from sandbox.terminal import TerminalState
 
-                    state = self.terminal.get_state()
                     new_state = TerminalState(
                         cwd=new_cwd,
-                        env_delta=state.env_delta,
+                        env_delta=env_map,
                     )
                     self.update_terminal_state(new_state)
 
@@ -222,62 +230,66 @@ class RemoteWrappedRuntime(PhysicalTerminalRuntime):
         """Execute command via provider."""
         # Ensure instance is active
         instance = self.lease.ensure_active_instance(self.provider)
-
-        # Hydrate state on first execution
-        if not self._hydrated:
-            state = self.terminal.get_state()
-            # Send cd command to set cwd
-            if state.cwd != "/root":
-                self.provider.execute(
-                    instance.instance_id,
-                    f"cd '{state.cwd}'",
-                    timeout_ms=5000,
-                )
-            # Send export commands for env_delta
-            for key, value in state.env_delta.items():
-                self.provider.execute(
-                    instance.instance_id,
-                    f"export {key}='{value}'",
-                    timeout_ms=5000,
-                )
-            self._hydrated = True
-
-        # Execute command with cwd
         state = self.terminal.get_state()
         timeout_ms = int(timeout * 1000) if timeout else 30000
-
+        start_marker = f"__LEON_STATE_START_{uuid.uuid4().hex[:8]}__"
+        end_marker = f"__LEON_STATE_END_{uuid.uuid4().hex[:8]}__"
+        exports = "\n".join(
+            f"export {key}={shlex.quote(value)}"
+            for key, value in state.env_delta.items()
+        )
+        wrapped = "\n".join(
+            part
+            for part in [
+                f"cd {shlex.quote(state.cwd)} || exit 1",
+                exports,
+                command,
+                "__leon_exit_code=$?",
+                f"echo {shlex.quote(start_marker)}",
+                "pwd",
+                "env",
+                f"echo {shlex.quote(end_marker)}",
+                "exit $__leon_exit_code",
+            ]
+            if part
+        )
         result = self.provider.execute(
             instance.instance_id,
-            command,
+            wrapped,
             timeout_ms=timeout_ms,
             cwd=state.cwd,
         )
+        raw_output = result.output or ""
 
-        # Update cwd after command (only if command might have changed it)
-        if "cd " in command or command.startswith("cd"):
-            pwd_result = self.provider.execute(
-                instance.instance_id,
-                "pwd",
-                timeout_ms=5000,
-                cwd=state.cwd,
-            )
+        try:
+            pre_state, tail = raw_output.split(start_marker, 1)
+            state_blob, post_state = tail.split(end_marker, 1)
+            state_lines = [line for line in state_blob.strip().splitlines() if line.strip()]
+            new_cwd = state.cwd
+            env_map = state.env_delta
+            if state_lines:
+                parsed_cwd = state_lines[0].strip()
+                if parsed_cwd:
+                    new_cwd = parsed_cwd
+                parsed_env: dict[str, str] = {}
+                for line in state_lines[1:]:
+                    if "=" not in line:
+                        continue
+                    key, value = line.split("=", 1)
+                    parsed_env[key] = value
+                if parsed_env:
+                    env_map = parsed_env
+            from sandbox.terminal import TerminalState
 
-            output = getattr(pwd_result, 'output', None) or getattr(pwd_result, 'stdout', '')
-            if output:
-                new_cwd = output.strip()
-                if new_cwd and new_cwd != state.cwd:
-                    from sandbox.terminal import TerminalState
-
-                    new_state = TerminalState(
-                        cwd=new_cwd,
-                        env_delta=state.env_delta,
-                    )
-                    self.update_terminal_state(new_state)
+            self.update_terminal_state(TerminalState(cwd=new_cwd, env_delta=env_map))
+            raw_output = (pre_state + post_state).strip()
+        except ValueError:
+            pass
 
         return ExecuteResult(
             exit_code=result.exit_code,
-            stdout=result.stdout or "",
-            stderr=result.stderr or "",
+            stdout=raw_output,
+            stderr=result.error or "",
         )
 
     async def close(self) -> None:

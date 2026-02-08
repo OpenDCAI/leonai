@@ -1,13 +1,13 @@
 """Unit tests for PhysicalTerminalRuntime."""
 
-import asyncio
+import re
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, AsyncMock
 
 import pytest
 
-from sandbox.interfaces.executor import ExecuteResult as ProviderExecuteResult
+from sandbox.provider import ProviderExecResult
 from sandbox.lease import LeaseStore, SandboxInstance
 from sandbox.runtime import (
     LocalPersistentShellRuntime,
@@ -163,10 +163,10 @@ class TestRemoteWrappedRuntime:
         lease.ensure_active_instance = MagicMock(return_value=instance)
 
         # Mock provider execute
-        mock_provider.execute.return_value = ProviderExecuteResult(
+        mock_provider.execute.return_value = ProviderExecResult(
             exit_code=0,
-            stdout="hello world",
-            stderr="",
+            output="hello world",
+            error=None,
         )
 
         runtime = RemoteWrappedRuntime(terminal, lease, mock_provider)
@@ -193,10 +193,10 @@ class TestRemoteWrappedRuntime:
         lease.ensure_active_instance = MagicMock(return_value=instance)
 
         # Mock provider execute
-        mock_provider.execute.return_value = ProviderExecuteResult(
+        mock_provider.execute.return_value = ProviderExecResult(
             exit_code=0,
-            stdout="",
-            stderr="",
+            output="",
+            error=None,
         )
 
         runtime = RemoteWrappedRuntime(terminal, lease, mock_provider)
@@ -205,7 +205,7 @@ class TestRemoteWrappedRuntime:
 
         # Should have called cd to hydrate cwd
         calls = [str(call) for call in mock_provider.execute.call_args_list]
-        assert any("cd '/home/user'" in str(call) for call in calls)
+        assert any("cd /home/user" in str(call) for call in calls)
 
     @pytest.mark.asyncio
     async def test_execute_updates_cwd(self, terminal_store, lease_store, mock_provider):
@@ -224,9 +224,18 @@ class TestRemoteWrappedRuntime:
 
         # Mock provider execute
         def mock_execute(instance_id, command, **kwargs):
-            if command == "pwd":
-                return ProviderExecuteResult(exit_code=0, stdout="/home/user\n", stderr="")
-            return ProviderExecuteResult(exit_code=0, stdout="", stderr="")
+            start_match = re.search(r"__LEON_STATE_START_[a-f0-9]{8}__", command)
+            end_match = re.search(r"__LEON_STATE_END_[a-f0-9]{8}__", command)
+            if start_match and end_match:
+                output = (
+                    "command output\n"
+                    f"{start_match.group(0)}\n"
+                    "/home/user\n"
+                    "TEST_FLAG=1\n"
+                    f"{end_match.group(0)}\n"
+                )
+                return ProviderExecResult(exit_code=0, output=output, error=None)
+            return ProviderExecResult(exit_code=0, output="", error=None)
 
         mock_provider.execute.side_effect = mock_execute
 

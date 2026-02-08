@@ -13,6 +13,7 @@ import pytest
 from sandbox.chat_session import ChatSessionManager
 from sandbox.lease import LeaseStore
 from sandbox.manager import SandboxManager
+from sandbox.provider import SessionInfo
 from sandbox.terminal import TerminalStore
 
 
@@ -53,9 +54,34 @@ def mock_provider():
 
 
 @pytest.fixture
+def mock_remote_provider():
+    """Create mock remote provider that supports lease lifecycle + fs ops."""
+    provider = MagicMock()
+    provider.name = "e2b"
+    provider.create_session.return_value = SessionInfo(
+        session_id="inst-remote-1",
+        provider="e2b",
+        status="running",
+    )
+    provider.get_session_status.return_value = "running"
+    provider.pause_session.return_value = True
+    provider.resume_session.return_value = True
+    provider.write_file.return_value = "ok"
+    provider.read_file.return_value = "content"
+    provider.list_dir.return_value = []
+    return provider
+
+
+@pytest.fixture
 def sandbox_manager(temp_db, mock_provider):
     """Create SandboxManager with temp database."""
     return SandboxManager(provider=mock_provider, db_path=temp_db)
+
+
+@pytest.fixture
+def remote_sandbox_manager(temp_db, mock_remote_provider):
+    """Create SandboxManager with remote provider."""
+    return SandboxManager(provider=mock_remote_provider, db_path=temp_db)
 
 
 class TestFullArchitectureFlow:
@@ -165,7 +191,7 @@ class TestFullArchitectureFlow:
         thread_id = "test-thread-7"
 
         capability = sandbox_manager.get_sandbox(thread_id)
-        old_activity = capability._session.last_activity_at
+        old_activity = capability._session.last_active_at
 
         import time
         time.sleep(0.01)
@@ -173,20 +199,33 @@ class TestFullArchitectureFlow:
         capability.touch()
 
         # Activity should be updated
-        assert capability._session.last_activity_at > old_activity
+        assert capability._session.last_active_at > old_activity
 
-    def test_legacy_api_compatibility(self, sandbox_manager):
-        """Test that legacy API methods still work."""
+    def test_session_info_api(self, sandbox_manager):
+        """Test that manager can expose current provider session info."""
         thread_id = "test-thread-8"
 
-        # Legacy get_or_create_session
         session_info = sandbox_manager.get_or_create_session(thread_id)
         assert session_info is not None
         assert session_info.provider == "local"
 
-        # Legacy list_sessions
         sessions = sandbox_manager.list_sessions()
         assert len(sessions) > 0
+
+    def test_remote_fs_operation_converges_paused_lease(self, remote_sandbox_manager, mock_remote_provider):
+        """File operations must converge lease state through ensure_active_instance."""
+        thread_id = "test-thread-remote-fs-1"
+        capability = remote_sandbox_manager.get_sandbox(thread_id)
+
+        lease = capability._session.lease
+        lease.ensure_active_instance(mock_remote_provider)
+        lease.pause_instance(mock_remote_provider)
+        assert lease.get_instance() is not None
+        assert lease.get_instance().status == "paused"
+
+        # fs path should call ensure_active_instance and converge paused -> running.
+        capability.fs.write_file("/home/user/test.txt", "ok")
+        assert lease.get_instance().status == "running"
 
 
 class TestSessionLifecycle:
@@ -307,7 +346,7 @@ class TestErrorHandling:
 
         # Delete terminal from DB (but not session)
         terminal_store = TerminalStore(db_path=temp_db)
-        terminal_store.delete(thread_id)
+        terminal_store.delete(terminal_id)
 
         # Delete session to force full recreation
         sandbox_manager.session_manager.delete(capability._session.session_id)
@@ -339,7 +378,7 @@ class TestErrorHandling:
         # Delete session AND terminal to force full recreation
         sandbox_manager.session_manager.delete(capability._session.session_id)
         terminal_store = TerminalStore(db_path=temp_db)
-        terminal_store.delete(thread_id)
+        terminal_store.delete(capability._session.terminal.terminal_id)
 
         # Get sandbox again - creates new terminal + lease
         capability2 = sandbox_manager.get_sandbox(thread_id)

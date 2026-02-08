@@ -1,19 +1,17 @@
-"""ChatSession - Policy/lifecycle window for PhysicalTerminalRuntime.
-
-This module implements the session abstraction that owns the ephemeral
-runtime process and enforces lifecycle policies (idle timeout, max duration).
+"""ChatSession - lifecycle/policy envelope for PhysicalTerminalRuntime.
 
 Architecture:
-    Thread (durable) → ChatSession (policy window) → PhysicalTerminalRuntime (ephemeral)
-                     → AbstractTerminal (reference)
-                     → SandboxLease (reference)
+    Thread (durable) -> ChatSession (policy window) -> PhysicalTerminalRuntime (ephemeral)
+                     -> AbstractTerminal (reference)
+                     -> SandboxLease (reference)
 """
 
 from __future__ import annotations
 
+import asyncio
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -23,34 +21,41 @@ if TYPE_CHECKING:
     from sandbox.runtime import PhysicalTerminalRuntime
     from sandbox.terminal import AbstractTerminal
 
-DEFAULT_DB_PATH = Path.home() / ".leon" / "leon.db"
+DEFAULT_DB_PATH = Path.home() / ".leon" / "sandbox.db"
+
+REQUIRED_CHAT_SESSION_COLUMNS = {
+    "chat_session_id",
+    "thread_id",
+    "terminal_id",
+    "lease_id",
+    "runtime_id",
+    "status",
+    "idle_ttl_sec",
+    "max_duration_sec",
+    "budget_json",
+    "started_at",
+    "last_active_at",
+    "ended_at",
+    "close_reason",
+}
+
+
+def _connect(db_path: Path) -> sqlite3.Connection:
+    conn = sqlite3.connect(str(db_path), timeout=30)
+    conn.execute("PRAGMA busy_timeout=30000")
+    return conn
 
 
 @dataclass
 class ChatSessionPolicy:
     """Policy configuration for ChatSession lifecycle."""
 
-    idle_timeout_seconds: int = 3600  # 1 hour
-    max_duration_seconds: int = 86400  # 24 hours
+    idle_ttl_sec: int = 3600
+    max_duration_sec: int = 86400
 
 
 class ChatSession:
-    """Policy/lifecycle window for PhysicalTerminalRuntime.
-
-    Owns the ephemeral runtime process and enforces lifecycle policies.
-    When the session expires, the runtime is closed but terminal state persists.
-
-    Responsibilities:
-    - Own PhysicalTerminalRuntime lifecycle
-    - Enforce idle timeout and max duration policies
-    - Track session activity (last_activity_at)
-    - Provide runtime to callers
-
-    Does NOT:
-    - Own terminal state (that's AbstractTerminal)
-    - Own compute resources (that's SandboxLease)
-    - Persist beyond policy window
-    """
+    """Policy/lifecycle window for PhysicalTerminalRuntime."""
 
     def __init__(
         self,
@@ -60,8 +65,15 @@ class ChatSession:
         lease: SandboxLease,
         runtime: PhysicalTerminalRuntime,
         policy: ChatSessionPolicy,
-        created_at: datetime,
-        last_activity_at: datetime,
+        started_at: datetime,
+        last_active_at: datetime,
+        db_path: Path = DEFAULT_DB_PATH,
+        *,
+        runtime_id: str | None = None,
+        status: str = "active",
+        budget_json: str | None = None,
+        ended_at: datetime | None = None,
+        close_reason: str | None = None,
     ):
         self.session_id = session_id
         self.thread_id = thread_id
@@ -69,39 +81,60 @@ class ChatSession:
         self.lease = lease
         self.runtime = runtime
         self.policy = policy
-        self.created_at = created_at
-        self.last_activity_at = last_activity_at
+        self.started_at = started_at
+        self.last_active_at = last_active_at
+        self.runtime_id = runtime_id
+        self.status = status
+        self.budget_json = budget_json
+        self.ended_at = ended_at
+        self.close_reason = close_reason
+        self._db_path = db_path
 
     def is_expired(self) -> bool:
-        """Check if session has expired based on policy."""
         now = datetime.now()
-
-        # Check idle timeout
-        idle_duration = now - self.last_activity_at
-        if idle_duration.total_seconds() > self.policy.idle_timeout_seconds:
-            return True
-
-        # Check max duration
-        total_duration = now - self.created_at
-        if total_duration.total_seconds() > self.policy.max_duration_seconds:
-            return True
-
-        return False
+        idle_seconds = (now - self.last_active_at).total_seconds()
+        total_seconds = (now - self.started_at).total_seconds()
+        return idle_seconds > self.policy.idle_ttl_sec or total_seconds > self.policy.max_duration_sec
 
     def touch(self) -> None:
-        """Update last_activity_at to current time."""
-        self.last_activity_at = datetime.now()
+        now = datetime.now()
+        self.last_active_at = now
+        self.status = "active"
+        with _connect(self._db_path) as conn:
+            conn.execute(
+                """
+                UPDATE chat_sessions
+                SET last_active_at = ?, status = ?
+                WHERE chat_session_id = ?
+                """,
+                (now.isoformat(), self.status, self.session_id),
+            )
+            conn.commit()
 
-    async def close(self) -> None:
-        """Close the runtime process."""
+    async def close(self, reason: str = "closed") -> None:
         await self.runtime.close()
+        self.status = "closed"
+        self.ended_at = datetime.now()
+        self.close_reason = reason
+        with _connect(self._db_path) as conn:
+            conn.execute(
+                """
+                UPDATE chat_sessions
+                SET status = ?, ended_at = ?, close_reason = ?
+                WHERE chat_session_id = ?
+                """,
+                (
+                    self.status,
+                    self.ended_at.isoformat(),
+                    self.close_reason,
+                    self.session_id,
+                ),
+            )
+            conn.commit()
 
 
 class ChatSessionManager:
-    """Manager for ChatSession lifecycle.
-
-    Handles creation, retrieval, and cleanup of chat sessions.
-    """
+    """Manager for ChatSession lifecycle."""
 
     def __init__(
         self,
@@ -112,92 +145,130 @@ class ChatSessionManager:
         self.provider = provider
         self.db_path = db_path
         self.default_policy = default_policy or ChatSessionPolicy()
+        self._live_sessions: dict[str, ChatSession] = {}
         self._ensure_tables()
 
+    def _close_runtime(self, session: ChatSession, reason: str) -> None:
+        try:
+            asyncio.run(session.close(reason=reason))
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            try:
+                loop.run_until_complete(session.close(reason=reason))
+            finally:
+                loop.close()
+
     def _ensure_tables(self) -> None:
-        """Ensure chat_sessions table exists."""
-        with sqlite3.connect(str(self.db_path), timeout=10) as conn:
+        with _connect(self.db_path) as conn:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS chat_sessions (
-                    session_id TEXT PRIMARY KEY,
-                    thread_id TEXT UNIQUE NOT NULL,
+                    chat_session_id TEXT PRIMARY KEY,
+                    thread_id TEXT NOT NULL,
                     terminal_id TEXT NOT NULL,
                     lease_id TEXT NOT NULL,
-                    idle_timeout_seconds INTEGER NOT NULL,
-                    max_duration_seconds INTEGER NOT NULL,
-                    created_at TIMESTAMP NOT NULL,
-                    last_activity_at TIMESTAMP NOT NULL,
+                    runtime_id TEXT,
+                    status TEXT NOT NULL DEFAULT 'active',
+                    idle_ttl_sec INTEGER NOT NULL,
+                    max_duration_sec INTEGER NOT NULL,
+                    budget_json TEXT,
+                    started_at TIMESTAMP NOT NULL,
+                    last_active_at TIMESTAMP NOT NULL,
+                    ended_at TIMESTAMP,
+                    close_reason TEXT,
                     FOREIGN KEY (terminal_id) REFERENCES abstract_terminals(terminal_id),
                     FOREIGN KEY (lease_id) REFERENCES sandbox_leases(lease_id)
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_chat_sessions_thread_status
+                ON chat_sessions(thread_id, status, started_at DESC)
+                """
+            )
+            conn.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_chat_sessions_active_thread
+                ON chat_sessions(thread_id)
+                WHERE status IN ('active', 'idle')
+                """
+            )
             conn.commit()
+            cols = {row[1] for row in conn.execute("PRAGMA table_info(chat_sessions)").fetchall()}
+        missing = REQUIRED_CHAT_SESSION_COLUMNS - cols
+        if missing:
+            raise RuntimeError(
+                f"chat_sessions schema mismatch: missing {sorted(missing)}. "
+                "Purge ~/.leon/sandbox.db and retry."
+            )
+
+    def _build_runtime(self, terminal: AbstractTerminal, lease: SandboxLease) -> PhysicalTerminalRuntime:
+        from sandbox.runtime import LocalPersistentShellRuntime, RemoteWrappedRuntime
+
+        if self.provider.name == "local":
+            return LocalPersistentShellRuntime(terminal, lease)
+        return RemoteWrappedRuntime(terminal, lease, self.provider)
 
     def get(self, thread_id: str) -> ChatSession | None:
-        """Get active session for thread, or None if expired/missing."""
-        with sqlite3.connect(str(self.db_path), timeout=10) as conn:
+        live = self._live_sessions.get(thread_id)
+        if live:
+            if live.is_expired():
+                self.delete(live.session_id, reason="expired")
+                return None
+            return live
+
+        with _connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             row = conn.execute(
                 """
-                SELECT session_id, thread_id, terminal_id, lease_id,
-                       idle_timeout_seconds, max_duration_seconds,
-                       created_at, last_activity_at
+                SELECT chat_session_id AS session_id, thread_id, terminal_id, lease_id,
+                       runtime_id, status, idle_ttl_sec, max_duration_sec,
+                       budget_json, started_at, last_active_at, ended_at, close_reason
                 FROM chat_sessions
-                WHERE thread_id = ?
+                WHERE thread_id = ? AND status IN ('active', 'idle')
+                ORDER BY started_at DESC
+                LIMIT 1
                 """,
                 (thread_id,),
             ).fetchone()
 
-            if not row:
-                return None
+        if not row:
+            return None
 
-            # Load terminal and lease
-            from sandbox.lease import LeaseStore
-            from sandbox.terminal import TerminalStore
+        from sandbox.lease import LeaseStore
+        from sandbox.terminal import TerminalStore
 
-            terminal_store = TerminalStore(db_path=self.db_path)
-            lease_store = LeaseStore(db_path=self.db_path)
+        terminal = TerminalStore(db_path=self.db_path).get_by_id(row["terminal_id"])
+        lease = LeaseStore(db_path=self.db_path).get(row["lease_id"])
+        if not terminal or not lease:
+            return None
 
-            terminal = terminal_store.get_by_id(row["terminal_id"])
-            lease = lease_store.get(row["lease_id"])
-
-            if not terminal or not lease:
-                return None
-
-            # Create runtime
-            from sandbox.runtime import LocalPersistentShellRuntime, RemoteWrappedRuntime
-
-            if self.provider.name == "local":
-                runtime = LocalPersistentShellRuntime(terminal, lease)
-            else:
-                runtime = RemoteWrappedRuntime(terminal, lease, self.provider)
-
-            policy = ChatSessionPolicy(
-                idle_timeout_seconds=row["idle_timeout_seconds"],
-                max_duration_seconds=row["max_duration_seconds"],
-            )
-
-            session = ChatSession(
-                session_id=row["session_id"],
-                thread_id=row["thread_id"],
-                terminal=terminal,
-                lease=lease,
-                runtime=runtime,
-                policy=policy,
-                created_at=datetime.fromisoformat(row["created_at"]),
-                last_activity_at=datetime.fromisoformat(row["last_activity_at"]),
-            )
-
-            # Check if expired
-            if session.is_expired():
-                # Clean up expired session
-                self.delete(session.session_id)
-                return None
-
-            return session
+        session = ChatSession(
+            session_id=row["session_id"],
+            thread_id=row["thread_id"],
+            terminal=terminal,
+            lease=lease,
+            runtime=self._build_runtime(terminal, lease),
+            policy=ChatSessionPolicy(
+                idle_ttl_sec=row["idle_ttl_sec"],
+                max_duration_sec=row["max_duration_sec"],
+            ),
+            started_at=datetime.fromisoformat(row["started_at"]),
+            last_active_at=datetime.fromisoformat(row["last_active_at"]),
+            db_path=self.db_path,
+            runtime_id=row["runtime_id"],
+            status=row["status"],
+            budget_json=row["budget_json"],
+            ended_at=datetime.fromisoformat(row["ended_at"]) if row["ended_at"] else None,
+            close_reason=row["close_reason"],
+        )
+        if session.is_expired():
+            self.delete(session.session_id, reason="expired")
+            return None
+        self._live_sessions[thread_id] = session
+        return session
 
     def create(
         self,
@@ -207,127 +278,163 @@ class ChatSessionManager:
         lease: SandboxLease,
         policy: ChatSessionPolicy | None = None,
     ) -> ChatSession:
-        """Create new chat session."""
         policy = policy or self.default_policy
         now = datetime.now()
 
-        # Create runtime
-        from sandbox.runtime import LocalPersistentShellRuntime, RemoteWrappedRuntime
+        existing = self._live_sessions.get(thread_id)
+        if existing and existing.session_id != session_id:
+            self._close_runtime(existing, reason="superseded")
+            self._live_sessions.pop(thread_id, None)
 
-        if self.provider.name == "local":
-            runtime = LocalPersistentShellRuntime(terminal, lease)
-        else:
-            runtime = RemoteWrappedRuntime(terminal, lease, self.provider)
+        runtime = self._build_runtime(terminal, lease)
+        runtime_id = getattr(runtime, "runtime_id", None)
 
-        # Persist to DB
-        with sqlite3.connect(str(self.db_path), timeout=10) as conn:
+        with _connect(self.db_path) as conn:
+            conn.execute(
+                """
+                UPDATE chat_sessions
+                SET status = 'closed', ended_at = ?, close_reason = 'superseded'
+                WHERE thread_id = ? AND status IN ('active', 'idle')
+                """,
+                (now.isoformat(), thread_id),
+            )
             conn.execute(
                 """
                 INSERT INTO chat_sessions (
-                    session_id, thread_id, terminal_id, lease_id,
-                    idle_timeout_seconds, max_duration_seconds,
-                    created_at, last_activity_at
+                    chat_session_id, thread_id, terminal_id, lease_id,
+                    runtime_id, status, idle_ttl_sec, max_duration_sec,
+                    budget_json, started_at, last_active_at, ended_at, close_reason
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     session_id,
                     thread_id,
                     terminal.terminal_id,
                     lease.lease_id,
-                    policy.idle_timeout_seconds,
-                    policy.max_duration_seconds,
+                    runtime_id,
+                    "active",
+                    policy.idle_ttl_sec,
+                    policy.max_duration_sec,
+                    None,
                     now.isoformat(),
                     now.isoformat(),
+                    None,
+                    None,
                 ),
             )
             conn.commit()
 
-        return ChatSession(
+        session = ChatSession(
             session_id=session_id,
             thread_id=thread_id,
             terminal=terminal,
             lease=lease,
             runtime=runtime,
             policy=policy,
-            created_at=now,
-            last_activity_at=now,
+            started_at=now,
+            last_active_at=now,
+            db_path=self.db_path,
+            runtime_id=runtime_id,
+            status="active",
         )
+        self._live_sessions[thread_id] = session
+        return session
 
     def touch(self, session_id: str) -> None:
-        """Update last_activity_at for session."""
-        with sqlite3.connect(str(self.db_path), timeout=10) as conn:
+        now = datetime.now().isoformat()
+        with _connect(self.db_path) as conn:
             conn.execute(
                 """
                 UPDATE chat_sessions
-                SET last_activity_at = ?
-                WHERE session_id = ?
+                SET last_active_at = ?, status = 'active'
+                WHERE chat_session_id = ?
                 """,
-                (datetime.now().isoformat(), session_id),
+                (now, session_id),
             )
             conn.commit()
+        for session in self._live_sessions.values():
+            if session.session_id == session_id:
+                session.last_active_at = datetime.fromisoformat(now)
+                session.status = "active"
+                break
 
-    def delete(self, session_id: str) -> None:
-        """Delete session from DB."""
-        with sqlite3.connect(str(self.db_path), timeout=10) as conn:
+    def delete(self, session_id: str, *, reason: str = "closed") -> None:
+        session_to_close = None
+        for thread_id, session in list(self._live_sessions.items()):
+            if session.session_id == session_id:
+                session_to_close = session
+                del self._live_sessions[thread_id]
+                break
+
+        if session_to_close:
+            self._close_runtime(session_to_close, reason=reason)
+            return
+
+        with _connect(self.db_path) as conn:
             conn.execute(
-                "DELETE FROM chat_sessions WHERE session_id = ?",
-                (session_id,),
+                """
+                UPDATE chat_sessions
+                SET status = 'closed', ended_at = ?, close_reason = ?
+                WHERE chat_session_id = ? AND status IN ('active', 'idle')
+                """,
+                (datetime.now().isoformat(), reason, session_id),
             )
             conn.commit()
 
-    def list_all(self) -> list[dict]:
-        """List all sessions."""
-        with sqlite3.connect(str(self.db_path), timeout=10) as conn:
+    def list_active(self) -> list[dict]:
+        with _connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 """
-                SELECT session_id, thread_id, terminal_id, lease_id,
-                       created_at, last_activity_at
+                SELECT chat_session_id AS session_id, thread_id, terminal_id, lease_id,
+                       runtime_id, status, budget_json, started_at, last_active_at,
+                       ended_at, close_reason
                 FROM chat_sessions
-                ORDER BY created_at DESC
+                WHERE status IN ('active', 'idle')
+                ORDER BY started_at DESC
                 """
             ).fetchall()
+            return [dict(row) for row in rows]
 
+    def list_all(self) -> list[dict]:
+        with _connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """
+                SELECT chat_session_id AS session_id, thread_id, terminal_id, lease_id,
+                       runtime_id, status, budget_json, started_at, last_active_at,
+                       ended_at, close_reason
+                FROM chat_sessions
+                ORDER BY started_at DESC
+                """
+            ).fetchall()
             return [dict(row) for row in rows]
 
     def cleanup_expired(self) -> int:
-        """Clean up expired sessions. Returns count of cleaned sessions."""
-        sessions = self.list_all()
         count = 0
-
-        for session_data in sessions:
-            # Check expiry directly from DB data
-            created_at = datetime.fromisoformat(session_data["created_at"])
-            last_activity_at = datetime.fromisoformat(session_data["last_activity_at"])
-
-            # Get policy from DB
-            with sqlite3.connect(str(self.db_path), timeout=10) as conn:
+        for session in self.list_active():
+            started_at = datetime.fromisoformat(session["started_at"])
+            last_active_at = datetime.fromisoformat(session["last_active_at"])
+            idle_ttl_sec = self.default_policy.idle_ttl_sec
+            max_duration_sec = self.default_policy.max_duration_sec
+            with _connect(self.db_path) as conn:
                 conn.row_factory = sqlite3.Row
                 row = conn.execute(
-                    "SELECT idle_timeout_seconds, max_duration_seconds FROM chat_sessions WHERE session_id = ?",
-                    (session_data["session_id"],),
+                    """
+                    SELECT idle_ttl_sec, max_duration_sec
+                    FROM chat_sessions
+                    WHERE chat_session_id = ?
+                    """,
+                    (session["session_id"],),
                 ).fetchone()
-
-                if not row:
-                    continue
-
-                policy = ChatSessionPolicy(
-                    idle_timeout_seconds=row["idle_timeout_seconds"],
-                    max_duration_seconds=row["max_duration_seconds"],
-                )
-
+            if row:
+                idle_ttl_sec = row["idle_ttl_sec"]
+                max_duration_sec = row["max_duration_sec"]
             now = datetime.now()
-            idle_duration = now - last_activity_at
-            total_duration = now - created_at
-
-            is_expired = (
-                idle_duration.total_seconds() > policy.idle_timeout_seconds
-                or total_duration.total_seconds() > policy.max_duration_seconds
-            )
-
-            if is_expired:
-                self.delete(session_data["session_id"])
+            idle_elapsed = (now - last_active_at).total_seconds()
+            total_elapsed = (now - started_at).total_seconds()
+            if idle_elapsed > idle_ttl_sec or total_elapsed > max_duration_sec:
+                self.delete(session["session_id"], reason="expired")
                 count += 1
-
         return count

@@ -119,13 +119,24 @@ export default function App() {
   async function handlePauseSandbox() {
     if (!activeThreadId) return;
     await pauseThreadSandbox(activeThreadId);
-    setActiveSandbox((prev) => prev ? { ...prev, status: "paused" } : null);
+    const thread = await getThread(activeThreadId);
+    const sbx = (thread as unknown as { sandbox?: SandboxInfo }).sandbox;
+    setActiveSandbox(sbx ?? null);
   }
 
   async function handleResumeSandbox() {
     if (!activeThreadId) return;
     await resumeThreadSandbox(activeThreadId);
-    setActiveSandbox((prev) => prev ? { ...prev, status: "running" } : null);
+    const thread = await getThread(activeThreadId);
+    const sbx = (thread as unknown as { sandbox?: SandboxInfo }).sandbox;
+    setActiveSandbox(sbx ?? null);
+  }
+
+  async function refreshActiveSandbox() {
+    if (!activeThreadId) return;
+    const thread = await getThread(activeThreadId);
+    const sbx = (thread as unknown as { sandbox?: SandboxInfo }).sandbox;
+    setActiveSandbox(sbx ?? null);
   }
 
   const title = useMemo(() => {
@@ -172,6 +183,7 @@ export default function App() {
           isStreaming={isStreaming}
           setMessages={setMessages}
           setIsStreaming={setIsStreaming}
+          onRunFinished={() => refreshActiveSandbox()}
         />
 
         {activeThreadId && activeSandbox && activeSandbox.type !== "local" && (

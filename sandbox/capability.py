@@ -7,6 +7,7 @@ while maintaining the same interface as before.
 
 from __future__ import annotations
 
+import shlex
 from typing import TYPE_CHECKING
 
 from sandbox.interfaces.executor import BaseExecutor
@@ -58,7 +59,14 @@ class _CommandWrapper(BaseExecutor):
     async def execute(self, command: str, cwd: str | None = None, timeout: float | None = None, env: dict[str, str] | None = None):
         """Execute command via runtime."""
         self._session.touch()
-        return await self._session.runtime.execute(command, timeout)
+        # @@@command-context - CommandMiddleware passes Cwd/env; preserve that context for remote runtimes.
+        wrapped = command
+        if env:
+            exports = "\n".join(f"export {k}={shlex.quote(v)}" for k, v in env.items())
+            wrapped = f"{exports}\n{wrapped}"
+        if cwd:
+            wrapped = f"cd {shlex.quote(cwd)}\n{wrapped}"
+        return await self._session.runtime.execute(wrapped, timeout)
 
     async def execute_async(self, command: str, cwd: str | None = None, env: dict[str, str] | None = None):
         """Not implemented for capability wrapper."""
@@ -95,13 +103,13 @@ class _FileSystemWrapper(FileSystemBackend):
 
     def _get_instance_id(self) -> str:
         """Get active instance ID."""
-        instance = self._session.lease.get_instance()
-        if not instance:
-            # Ensure instance exists
-            from sandbox.runtime import RemoteWrappedRuntime
-            if isinstance(self._session.runtime, RemoteWrappedRuntime):
-                instance = self._session.lease.ensure_active_instance(self._session.runtime.provider)
-            else:
+        # @@@lease-convergence - File operations can also wake paused instances; always converge through lease.
+        from sandbox.runtime import RemoteWrappedRuntime
+        if isinstance(self._session.runtime, RemoteWrappedRuntime):
+            instance = self._session.lease.ensure_active_instance(self._session.runtime.provider)
+        else:
+            instance = self._session.lease.get_instance()
+            if not instance:
                 raise RuntimeError("No active instance")
         return instance.instance_id
 

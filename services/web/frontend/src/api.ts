@@ -210,7 +210,7 @@ export interface SessionStatus {
   session_id: string;
   terminal_id: string;
   status: string;
-  created_at: string;
+  started_at: string;
   last_active_at: string;
   expires_at: string | null;
 }

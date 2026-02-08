@@ -7,6 +7,7 @@ import sqlite3
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
+from datetime import timedelta
 from pathlib import Path
 from typing import Any, AsyncGenerator
 
@@ -20,6 +21,7 @@ from middleware.monitor import AgentState
 from middleware.queue import QueueMode, get_queue_manager
 from sandbox.config import SandboxConfig
 from sandbox.manager import SandboxManager, lookup_sandbox_for_thread
+from sandbox.sqlite_store import DEFAULT_DB_PATH as SANDBOX_DB_PATH
 from sandbox.thread_context import set_current_thread_id
 from tui.config import ConfigManager
 
@@ -69,8 +71,10 @@ def _create_agent_sync(sandbox_name: str) -> Any:
     )
 
 
-async def _get_or_create_agent(app_obj: FastAPI, sandbox_type: str) -> Any:
+async def _get_or_create_agent(app_obj: FastAPI, sandbox_type: str, thread_id: str | None = None) -> Any:
     """Lazy agent pool — one agent per sandbox type, created on demand."""
+    if thread_id:
+        set_current_thread_id(thread_id)
     pool = app_obj.state.agent_pool
     if sandbox_type in pool:
         return pool[sandbox_type]
@@ -146,14 +150,22 @@ def _load_all_sessions(managers: dict) -> list[dict]:
     sessions: list[dict] = []
     if not managers:
         return sessions
+    from concurrent.futures import as_completed
+
     with ThreadPoolExecutor(max_workers=len(managers)) as pool:
-        for rows in pool.map(lambda m: m.list_sessions(), managers.values()):
+        futures = {
+            pool.submit(manager.list_sessions): (provider_name, manager)
+            for provider_name, manager in managers.items()
+        }
+        for future in as_completed(futures):
+            provider_name, _manager = futures[future]
+            rows = future.result()
             for row in rows:
                 sessions.append({
                     "session_id": row["session_id"],
                     "thread_id": row["thread_id"],
-                    "provider": row["provider"],
-                    "status": row["status"],
+                    "provider": row.get("provider", provider_name),
+                    "status": row.get("status", "running"),
                     "created_at": row.get("created_at"),
                     "last_active": row.get("last_active"),
                 })
@@ -238,26 +250,84 @@ def _serialize_message(msg: Any) -> dict[str, Any]:
 
 
 def _list_threads_from_db() -> list[dict[str, str]]:
-    if not DB_PATH.exists():
-        return []
-    with sqlite3.connect(str(DB_PATH)) as conn:
-        conn.row_factory = sqlite3.Row
-        rows = conn.execute(
-            "SELECT DISTINCT thread_id FROM checkpoints WHERE thread_id IS NOT NULL ORDER BY thread_id"
-        ).fetchall()
-    return [{"thread_id": row["thread_id"]} for row in rows if row["thread_id"]]
+    thread_ids: set[str] = set()
+
+    if DB_PATH.exists():
+        with sqlite3.connect(str(DB_PATH)) as conn:
+            conn.row_factory = sqlite3.Row
+            existing = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+            if "checkpoints" in existing:
+                rows = conn.execute(
+                    "SELECT DISTINCT thread_id FROM checkpoints WHERE thread_id IS NOT NULL"
+                ).fetchall()
+                thread_ids.update(row["thread_id"] for row in rows if row["thread_id"])
+
+    if SANDBOX_DB_PATH.exists():
+        with sqlite3.connect(str(SANDBOX_DB_PATH)) as conn:
+            conn.row_factory = sqlite3.Row
+            existing = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+            if "chat_sessions" in existing:
+                rows = conn.execute(
+                    "SELECT DISTINCT thread_id FROM chat_sessions WHERE thread_id IS NOT NULL"
+                ).fetchall()
+                thread_ids.update(row["thread_id"] for row in rows if row["thread_id"])
+
+    return [{"thread_id": thread_id} for thread_id in sorted(thread_ids)]
 
 
 def _delete_thread_in_db(thread_id: str) -> None:
-    if not DB_PATH.exists():
-        return
-    tables = ["checkpoints", "checkpoint_writes", "checkpoint_blobs", "writes", "file_operations"]
-    with sqlite3.connect(str(DB_PATH)) as conn:
-        existing = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
-        for t in tables:
-            if t in existing:
-                conn.execute(f"DELETE FROM {t} WHERE thread_id = ?", (thread_id,))
-        conn.commit()
+    for db_path in (DB_PATH, SANDBOX_DB_PATH):
+        if not db_path.exists():
+            continue
+        with sqlite3.connect(str(db_path)) as conn:
+            existing = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+            for table in existing:
+                cols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+                if "thread_id" in cols:
+                    conn.execute(f"DELETE FROM {table} WHERE thread_id = ?", (thread_id,))
+            conn.commit()
+
+
+def _get_terminal_timestamps(terminal_id: str) -> tuple[str | None, str | None]:
+    if not SANDBOX_DB_PATH.exists():
+        return None, None
+    with sqlite3.connect(str(SANDBOX_DB_PATH)) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT created_at, updated_at FROM abstract_terminals WHERE terminal_id = ?",
+            (terminal_id,),
+        ).fetchone()
+        if not row:
+            return None, None
+        return row["created_at"], row["updated_at"]
+
+
+def _get_lease_timestamps(lease_id: str) -> tuple[str | None, str | None]:
+    if not SANDBOX_DB_PATH.exists():
+        return None, None
+    with sqlite3.connect(str(SANDBOX_DB_PATH)) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT created_at, updated_at FROM sandbox_leases WHERE lease_id = ?",
+            (lease_id,),
+        ).fetchone()
+        if not row:
+            return None, None
+        return row["created_at"], row["updated_at"]
+
+
+async def _get_remote_agent(thread_id: str) -> Any:
+    sandbox_type = _resolve_thread_sandbox(app, thread_id)
+    if sandbox_type == "local":
+        raise HTTPException(400, "Local threads have no remote sandbox")
+    set_current_thread_id(thread_id)
+    try:
+        agent = await _get_or_create_agent(app, sandbox_type, thread_id=thread_id)
+    except Exception as e:
+        raise HTTPException(503, f"Sandbox agent init failed for {sandbox_type}: {e}") from e
+    if not hasattr(agent, "_sandbox") or agent._sandbox.name == "local":
+        raise HTTPException(400, "Agent has no remote sandbox")
+    return agent
 
 
 # --- Sandbox endpoints ---
@@ -307,37 +377,28 @@ async def get_session_metrics(session_id: str) -> dict[str, Any]:
 # @@@ Thread-level sandbox control — routes through the agent's own sandbox so cache stays consistent
 @app.post("/api/threads/{thread_id}/sandbox/pause")
 async def pause_thread_sandbox(thread_id: str) -> dict[str, Any]:
-    sandbox_type = _resolve_thread_sandbox(app, thread_id)
-    if sandbox_type == "local":
-        raise HTTPException(400, "Local threads have no sandbox to pause")
-    agent = await _get_or_create_agent(app, sandbox_type)
-    if not hasattr(agent, "_sandbox") or agent._sandbox.name == "local":
-        raise HTTPException(400, "Agent has no remote sandbox")
+    agent = await _get_remote_agent(thread_id)
     ok = await asyncio.to_thread(agent._sandbox.pause_thread, thread_id)
+    if not ok:
+        raise HTTPException(409, f"Failed to pause sandbox for thread {thread_id}")
     return {"ok": ok, "thread_id": thread_id}
 
 
 @app.post("/api/threads/{thread_id}/sandbox/resume")
 async def resume_thread_sandbox(thread_id: str) -> dict[str, Any]:
-    sandbox_type = _resolve_thread_sandbox(app, thread_id)
-    if sandbox_type == "local":
-        raise HTTPException(400, "Local threads have no sandbox to resume")
-    agent = await _get_or_create_agent(app, sandbox_type)
-    if not hasattr(agent, "_sandbox") or agent._sandbox.name == "local":
-        raise HTTPException(400, "Agent has no remote sandbox")
+    agent = await _get_remote_agent(thread_id)
     ok = await asyncio.to_thread(agent._sandbox.resume_thread, thread_id)
+    if not ok:
+        raise HTTPException(409, f"Failed to resume sandbox for thread {thread_id}")
     return {"ok": ok, "thread_id": thread_id}
 
 
 @app.delete("/api/threads/{thread_id}/sandbox")
 async def destroy_thread_sandbox(thread_id: str) -> dict[str, Any]:
-    sandbox_type = _resolve_thread_sandbox(app, thread_id)
-    if sandbox_type == "local":
-        raise HTTPException(400, "Local threads have no sandbox to destroy")
-    agent = await _get_or_create_agent(app, sandbox_type)
-    if not hasattr(agent, "_sandbox") or agent._sandbox.name == "local":
-        raise HTTPException(400, "Agent has no remote sandbox")
+    agent = await _get_remote_agent(thread_id)
     ok = await asyncio.to_thread(agent._sandbox.manager.destroy_session, thread_id)
+    if not ok:
+        raise HTTPException(404, f"No sandbox session found for thread {thread_id}")
     agent._sandbox._capability_cache.pop(thread_id, None)
     return {"ok": ok, "thread_id": thread_id}
 
@@ -347,102 +408,90 @@ async def destroy_thread_sandbox(thread_id: str) -> dict[str, Any]:
 @app.get("/api/threads/{thread_id}/session")
 async def get_thread_session_status(thread_id: str) -> dict[str, Any]:
     """Get ChatSession status for a thread."""
-    sandbox_type = _resolve_thread_sandbox(app, thread_id)
-    if sandbox_type == "local":
-        raise HTTPException(400, "Local threads have no session tracking")
-    agent = await _get_or_create_agent(app, sandbox_type)
-    if not hasattr(agent, "_sandbox") or agent._sandbox.name == "local":
-        raise HTTPException(400, "Agent has no remote sandbox")
+    agent = await _get_remote_agent(thread_id)
 
     def _get_session():
         mgr = agent._sandbox.manager
-        return mgr.session_manager.get_session(thread_id)
+        return mgr.session_manager.get(thread_id)
 
     session = await asyncio.to_thread(_get_session)
     if not session:
         raise HTTPException(404, f"No session found for thread {thread_id}")
+    expires_by_idle = session.last_active_at + timedelta(seconds=session.policy.idle_ttl_sec)
+    expires_by_duration = session.started_at + timedelta(seconds=session.policy.max_duration_sec)
+    expires_at = min(expires_by_idle, expires_by_duration)
 
     return {
         "thread_id": thread_id,
         "session_id": session.session_id,
-        "terminal_id": session.terminal_id,
+        "terminal_id": session.terminal.terminal_id,
         "status": session.status,
-        "created_at": session.created_at.isoformat(),
+        "started_at": session.started_at.isoformat(),
         "last_active_at": session.last_active_at.isoformat(),
-        "expires_at": session.expires_at.isoformat() if session.expires_at else None,
+        "expires_at": expires_at.isoformat(),
     }
 
 
 @app.get("/api/threads/{thread_id}/terminal")
 async def get_thread_terminal_status(thread_id: str) -> dict[str, Any]:
     """Get AbstractTerminal state for a thread."""
-    sandbox_type = _resolve_thread_sandbox(app, thread_id)
-    if sandbox_type == "local":
-        raise HTTPException(400, "Local threads have no terminal tracking")
-    agent = await _get_or_create_agent(app, sandbox_type)
-    if not hasattr(agent, "_sandbox") or agent._sandbox.name == "local":
-        raise HTTPException(400, "Agent has no remote sandbox")
+    agent = await _get_remote_agent(thread_id)
 
     def _get_terminal():
         mgr = agent._sandbox.manager
-        session = mgr.session_manager.get_session(thread_id)
+        session = mgr.session_manager.get(thread_id)
         if not session:
             return None
-        return mgr.terminal_store.get(session.terminal_id)
+        return session.terminal
 
     terminal = await asyncio.to_thread(_get_terminal)
     if not terminal:
         raise HTTPException(404, f"No terminal found for thread {thread_id}")
 
     state = terminal.get_state()
+    created_at, updated_at = await asyncio.to_thread(_get_terminal_timestamps, terminal.terminal_id)
     return {
         "thread_id": thread_id,
         "terminal_id": terminal.terminal_id,
         "lease_id": terminal.lease_id,
         "cwd": state.cwd,
         "env_delta": state.env_delta,
-        "version": state.version,
-        "created_at": terminal.created_at.isoformat(),
-        "updated_at": terminal.updated_at.isoformat(),
+        "version": state.state_version,
+        "created_at": created_at,
+        "updated_at": updated_at,
     }
 
 
 @app.get("/api/threads/{thread_id}/lease")
 async def get_thread_lease_status(thread_id: str) -> dict[str, Any]:
     """Get SandboxLease status for a thread."""
-    sandbox_type = _resolve_thread_sandbox(app, thread_id)
-    if sandbox_type == "local":
-        raise HTTPException(400, "Local threads have no lease tracking")
-    agent = await _get_or_create_agent(app, sandbox_type)
-    if not hasattr(agent, "_sandbox") or agent._sandbox.name == "local":
-        raise HTTPException(400, "Agent has no remote sandbox")
+    agent = await _get_remote_agent(thread_id)
 
     def _get_lease():
         mgr = agent._sandbox.manager
-        session = mgr.session_manager.get_session(thread_id)
+        session = mgr.session_manager.get(thread_id)
         if not session:
             return None
-        terminal = mgr.terminal_store.get(session.terminal_id)
-        if not terminal:
-            return None
-        return mgr.lease_store.get(terminal.lease_id)
+        session.lease.refresh_instance_status(mgr.provider)
+        return session.lease
 
     lease = await asyncio.to_thread(_get_lease)
     if not lease:
         raise HTTPException(404, f"No lease found for thread {thread_id}")
 
     instance = lease.get_instance()
+    created_at, updated_at = await asyncio.to_thread(_get_lease_timestamps, lease.lease_id)
     return {
         "thread_id": thread_id,
         "lease_id": lease.lease_id,
         "provider_name": lease.provider_name,
         "instance": {
             "instance_id": instance.instance_id if instance else None,
-            "state": instance.state.value if instance else None,
-            "started_at": instance.started_at.isoformat() if instance and instance.started_at else None,
+            "state": instance.status if instance else None,
+            "started_at": instance.created_at.isoformat() if instance and instance.created_at else None,
         } if instance else None,
-        "created_at": lease.created_at.isoformat(),
-        "updated_at": lease.updated_at.isoformat(),
+        "created_at": created_at,
+        "updated_at": updated_at,
     }
 
 
@@ -468,9 +517,10 @@ async def list_threads() -> dict[str, Any]:
 @app.get("/api/threads/{thread_id}")
 async def get_thread_messages(thread_id: str) -> dict[str, Any]:
     sandbox_type = _resolve_thread_sandbox(app, thread_id)
-    agent = await _get_or_create_agent(app, sandbox_type)
+    agent = await _get_or_create_agent(app, sandbox_type, thread_id=thread_id)
     lock = await _get_thread_lock(app, thread_id)
     async with lock:
+        set_current_thread_id(thread_id)  # Set thread_id before accessing agent state
         config = {"configurable": {"thread_id": thread_id}}
         state = await agent.agent.aget_state(config)
 
@@ -482,11 +532,13 @@ async def get_thread_messages(thread_id: str) -> dict[str, Any]:
     if sandbox_type != "local" and hasattr(agent, "_sandbox"):
         try:
             mgr = agent._sandbox.manager
-            session = mgr.session_manager.get_session(thread_id)
+            session = mgr.session_manager.get(thread_id)
             if session:
-                sandbox_info["status"] = session.status
+                session.lease.refresh_instance_status(mgr.provider)
+                instance = session.lease.get_instance()
+                sandbox_info["status"] = instance.status if instance else "detached"
                 sandbox_info["session_id"] = session.session_id
-                sandbox_info["terminal_id"] = session.terminal_id
+                sandbox_info["terminal_id"] = session.terminal.terminal_id
         except Exception:
             pass
 
@@ -525,20 +577,22 @@ async def run_thread(thread_id: str, payload: RunRequest) -> EventSourceResponse
     sandbox_type = _resolve_thread_sandbox(app, thread_id)
 
     async def event_stream() -> AsyncGenerator[dict[str, str], None]:
-        agent = await _get_or_create_agent(app, sandbox_type)
-        lock = await _get_thread_lock(app, thread_id)
-        async with lock:
-            config = {"configurable": {"thread_id": thread_id}}
+        agent = None
+        try:
             set_current_thread_id(thread_id)
+            agent = await _get_or_create_agent(app, sandbox_type, thread_id=thread_id)
+            lock = await _get_thread_lock(app, thread_id)
+            async with lock:
+                config = {"configurable": {"thread_id": thread_id}}
+                set_current_thread_id(thread_id)
 
-            # @@@ Streaming parser mirrors TUI runner chunk semantics so web and CLI stay consistent.
-            if hasattr(agent, "_sandbox") and agent._sandbox.name != "local":
-                agent._sandbox.ensure_session(thread_id)
+                # @@@ Streaming parser mirrors TUI runner chunk semantics so web and CLI stay consistent.
+                if hasattr(agent, "_sandbox") and agent._sandbox.name != "local":
+                    agent._sandbox.ensure_session(thread_id)
 
-            if hasattr(agent, "runtime"):
-                agent.runtime.transition(AgentState.ACTIVE)
+                if hasattr(agent, "runtime"):
+                    agent.runtime.transition(AgentState.ACTIVE)
 
-            try:
                 async for chunk in agent.agent.astream(
                     {"messages": [{"role": "user", "content": payload.message}]},
                     config=config,
@@ -585,12 +639,12 @@ async def run_thread(thread_id: str, payload: RunRequest) -> EventSourceResponse
                                     }, ensure_ascii=False),
                                 }
 
-                yield {"event": "done", "data": json.dumps({"thread_id": thread_id})}
-            except Exception as e:
-                yield {"event": "error", "data": json.dumps({"error": str(e)}, ensure_ascii=False)}
-            finally:
-                if hasattr(agent, "runtime") and agent.runtime.current_state == AgentState.ACTIVE:
-                    agent.runtime.transition(AgentState.IDLE)
+            yield {"event": "done", "data": json.dumps({"thread_id": thread_id})}
+        except Exception as e:
+            yield {"event": "error", "data": json.dumps({"error": str(e)}, ensure_ascii=False)}
+        finally:
+            if agent and hasattr(agent, "runtime") and agent.runtime.current_state == AgentState.ACTIVE:
+                agent.runtime.transition(AgentState.IDLE)
 
     return EventSourceResponse(event_stream())
 

@@ -9,13 +9,21 @@ interface ChatViewProps {
   isStreaming: boolean;
   setMessages: (updater: (prev: ChatMessage[]) => ChatMessage[]) => void;
   setIsStreaming: (value: boolean) => void;
+  onRunFinished?: () => void | Promise<void>;
 }
 
 function generateId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-export function ChatView({ threadId, messages, isStreaming, setMessages, setIsStreaming }: ChatViewProps) {
+export function ChatView({
+  threadId,
+  messages,
+  isStreaming,
+  setMessages,
+  setIsStreaming,
+  onRunFinished,
+}: ChatViewProps) {
   const [input, setInput] = useState("");
   const scrollerRef = useRef<HTMLDivElement>(null);
 
@@ -130,6 +138,9 @@ export function ChatView({ threadId, messages, isStreaming, setMessages, setIsSt
       ]);
     } finally {
       setIsStreaming(false);
+      if (onRunFinished) {
+        await onRunFinished();
+      }
     }
   }
 

@@ -183,6 +183,30 @@ class TestSQLiteLease:
         assert instance2.instance_id == instance1.instance_id
         assert mock_provider.create_session.call_count == 1  # Only called once
 
+    def test_ensure_active_instance_converges_stale_paused_state(self, store, mock_provider):
+        """If DB says paused but provider says running, lease status must converge to running."""
+        lease = store.create("lease-1", "test-provider")
+
+        mock_provider.create_session.return_value = SessionInfo(
+            session_id="inst-123",
+            provider="test-provider",
+            status="running",
+        )
+        lease.ensure_active_instance(mock_provider)
+
+        mock_provider.pause_session.return_value = True
+        lease.pause_instance(mock_provider)
+        assert lease.get_instance().status == "paused"
+
+        mock_provider.get_session_status.return_value = "running"
+        instance = lease.ensure_active_instance(mock_provider)
+        assert instance.status == "running"
+
+        reloaded = store.get("lease-1")
+        assert reloaded is not None
+        assert reloaded.get_instance() is not None
+        assert reloaded.get_instance().status == "running"
+
     def test_ensure_active_instance_resumes_paused(self, store, mock_provider):
         """Test ensure_active_instance resumes paused instance."""
         lease = store.create("lease-1", "test-provider")
