@@ -35,7 +35,7 @@ class DaytonaConfig(BaseModel):
     api_key: str | None = None
     api_url: str = "https://app.daytona.io/api"
     target: str = "local"
-    cwd: str = "/workspace"
+    cwd: str = "/home/daytona"
 
 
 class SandboxConfig(BaseModel):

@@ -27,16 +27,14 @@ class DaytonaProvider(SandboxProvider):
     """Daytona cloud sandbox provider."""
 
     name = "daytona"
-    WORKSPACE_ROOT = "/workspace"
 
     def __init__(
         self,
         api_key: str,
         api_url: str = "https://app.daytona.io/api",
         target: str = "local",
-        default_cwd: str = "/workspace",
+        default_cwd: str = "/home/daytona",
     ):
-        import os
         from daytona_sdk import Daytona
 
         self.api_key = api_key
@@ -47,80 +45,64 @@ class DaytonaProvider(SandboxProvider):
         os.environ["DAYTONA_API_KEY"] = api_key
         os.environ["DAYTONA_API_URL"] = api_url
         self.client = Daytona()
-        self._workspaces: dict[str, Any] = {}
+        self._sandboxes: dict[str, Any] = {}
+
+    # ==================== Session Lifecycle ====================
 
     def create_session(self, context_id: str | None = None) -> SessionInfo:
         from daytona_sdk import CreateSandboxFromSnapshotParams
 
-        params = CreateSandboxFromSnapshotParams()
-        sandbox = self.client.create(params)
-        sandbox_id = sandbox.id
-        self._workspaces[sandbox_id] = sandbox
+        params = CreateSandboxFromSnapshotParams(auto_stop_interval=0)
+        sb = self.client.create(params)
+        self._sandboxes[sb.id] = sb
 
         return SessionInfo(
-            session_id=sandbox_id,
+            session_id=sb.id,
             provider=self.name,
             status="running",
         )
 
     def destroy_session(self, session_id: str, sync: bool = True) -> bool:
         try:
-            workspace = self._get_workspace(session_id)
-            workspace.delete()
-            self._workspaces.pop(session_id, None)
+            sb = self._get_sandbox(session_id)
+            sb.delete()
+            self._sandboxes.pop(session_id, None)
             return True
         except Exception:
             return False
 
     def pause_session(self, session_id: str) -> bool:
         try:
-            workspace = self._get_workspace(session_id)
-            workspace.stop()
+            sb = self._get_sandbox(session_id)
+            sb.stop()
             return True
         except Exception:
             return False
 
     def resume_session(self, session_id: str) -> bool:
         try:
-            workspace = self._get_workspace(session_id)
-            workspace.start()
+            sb = self._get_sandbox(session_id)
+            sb.start()
             return True
         except Exception:
             return False
 
     def get_session_status(self, session_id: str) -> str:
+        # @@@ state is enum SandboxState — use .value to get string
         try:
-            workspace = self._get_workspace(session_id)
-            info = workspace.info()
-            if info and hasattr(info, 'workspace_instance'):
-                state = info.workspace_instance.state
-                if state == 'WORKSPACE_INSTANCE_STATE_STARTED':
-                    return "running"
-                elif state == 'WORKSPACE_INSTANCE_STATE_STOPPED':
-                    return "paused"
+            sb = self._get_sandbox(session_id)
+            state = sb.state.value  # "started", "stopped", etc.
+            if state == "started":
+                return "running"
+            elif state == "stopped":
+                return "paused"
             return "unknown"
         except Exception as e:
             if "not found" in str(e).lower():
                 return "deleted"
             return "unknown"
 
-    def get_all_session_statuses(self) -> dict[str, str]:
-        try:
-            workspaces = self.client.list()
-            result = {}
-            for ws in workspaces:
-                info = ws.info()
-                if info and hasattr(info, 'workspace_instance'):
-                    state = info.workspace_instance.state
-                    if state == 'WORKSPACE_INSTANCE_STATE_STARTED':
-                        result[ws.id] = "running"
-                    elif state == 'WORKSPACE_INSTANCE_STATE_STOPPED':
-                        result[ws.id] = "paused"
-                    else:
-                        result[ws.id] = "unknown"
-            return result
-        except Exception:
-            return {}
+    # ==================== Execution ====================
 
     def execute(
         self,
@@ -129,9 +111,9 @@ class DaytonaProvider(SandboxProvider):
         timeout_ms: int = 30000,
         cwd: str | None = None,
     ) -> ProviderExecResult:
-        workspace = self._get_workspace(session_id)
+        sb = self._get_sandbox(session_id)
         try:
-            result = workspace.process.exec(command, cwd=cwd or self.default_cwd)
+            result = sb.process.exec(command, cwd=cwd or self.default_cwd)
             return ProviderExecResult(
                 output=result.result or "",
                 exit_code=result.exit_code or 0,
@@ -139,44 +121,44 @@ class DaytonaProvider(SandboxProvider):
         except Exception as e:
             return ProviderExecResult(output="", error=str(e))
 
+    # ==================== Filesystem ====================
+
     def read_file(self, session_id: str, path: str) -> str:
-        workspace = self._get_workspace(session_id)
-        try:
-            content = workspace.fs.download_file(path)
-            return content or ""
-        except Exception as e:
-            raise OSError(str(e))
+        sb = self._get_sandbox(session_id)
+        # @@@ download_file returns bytes, not str
+        content = sb.fs.download_file(path)
+        if isinstance(content, bytes):
+            return content.decode("utf-8")
+        return content or ""
 
     def write_file(self, session_id: str, path: str, content: str) -> str:
-        workspace = self._get_workspace(session_id)
-        try:
-            workspace.fs.upload_file(content.encode(), path)
-            return f"Written: {path}"
-        except Exception as e:
-            raise OSError(str(e))
+        sb = self._get_sandbox(session_id)
+        sb.fs.upload_file(content.encode("utf-8"), path)
+        return f"Written: {path}"
 
     def list_dir(self, session_id: str, path: str) -> list[dict]:
-        workspace = self._get_workspace(session_id)
+        sb = self._get_sandbox(session_id)
         try:
-            entries = workspace.fs.list_files(path)
-            items = []
-            for entry in entries or []:
-                items.append(
-                    {
-                        "name": entry.name,
-                        "type": "directory" if entry.is_dir else "file",
-                        "size": entry.size or 0,
-                    }
-                )
-            return items
+            entries = sb.fs.list_files(path)
+            return [
+                {
+                    "name": e.name,
+                    "type": "directory" if e.is_dir else "file",
+                    "size": e.size or 0,
+                }
+                for e in (entries or [])
+            ]
         except Exception:
             return []
+
+    # ==================== Inspection ====================
 
     def get_metrics(self, session_id: str) -> Metrics | None:
         return None
 
-    def _get_workspace(self, session_id: str):
-        if session_id not in self._workspaces:
-            workspace = self.client.find_one(session_id)
-            self._workspaces[session_id] = workspace
-        return self._workspaces[session_id]
+    # ==================== Internal ====================
+
+    def _get_sandbox(self, session_id: str):
+        if session_id not in self._sandboxes:
+            self._sandboxes[session_id] = self.client.find_one(session_id)
+        return self._sandboxes[session_id]
