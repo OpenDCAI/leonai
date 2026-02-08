@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LEON Terminal Persistence Options (Local + Remote)</title>
+  <style>
+    :root {
+      --bg: #0b1220;
+      --panel: #0f172a;
+      --text: #e5e7eb;
+      --muted: #94a3b8;
+      --line: #1e293b;
+      --accent: #22d3ee;
+      --good: #10b981;
+      --warn: #f59e0b;
+      --hard: #ef4444;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "SF Mono", Menlo, Consolas, monospace;
+      background: radial-gradient(circle at top left, #0f1d38, var(--bg));
+      color: var(--text);
+      line-height: 1.55;
+    }
+    .wrap { max-width: 1100px; margin: 0 auto; padding: 28px 20px 50px; }
+    h1, h2, h3 { margin: 0 0 10px; line-height: 1.25; }
+    h1 { font-size: 28px; color: var(--accent); }
+    h2 { font-size: 20px; margin-top: 26px; }
+    h3 { font-size: 16px; margin-top: 18px; color: #cbd5e1; }
+    p { margin: 8px 0 12px; }
+    .meta { color: var(--muted); font-size: 13px; margin-bottom: 16px; }
+    .card {
+      background: color-mix(in srgb, var(--panel) 90%, black);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 14px 16px;
+      margin: 10px 0;
+    }
+    table { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 14px; }
+    th, td { border: 1px solid #243248; padding: 9px 10px; text-align: left; vertical-align: top; }
+    th { background: #0c172b; color: #bae6fd; }
+    code {
+      background: #0a1222;
+      border: 1px solid #23314d;
+      border-radius: 6px;
+      padding: 1px 6px;
+      color: #bae6fd;
+    }
+    ul, ol { margin: 8px 0 12px 22px; }
+    li { margin: 4px 0; }
+    .good { color: var(--good); }
+    .warn { color: var(--warn); }
+    .hard { color: var(--hard); }
+    .footer {
+      margin-top: 28px;
+      color: var(--muted);
+      font-size: 12px;
+      border-top: 1px dashed #334155;
+      padding-top: 12px;
+    }
+    a { color: #67e8f9; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>LEON Persistent Terminal Options</h1>
+    <p class="meta">Date: 2026-02-08 | Scope: local + remote terminal persistence under Thread -> Terminal -> Lease -> Instance</p>
+
+    <div class="card">
+      <p>
+        This page focuses only on <strong>terminal persistence strategy</strong>. Control-plane model is assumed:
+        <code>thread -> terminal_session -> sandbox_lease -> sandbox_instance</code>.
+      </p>
+      <p>
+        Target behavior: threads keep their own shell identity; multiple threads can share one machine instance via lease.
+      </p>
+    </div>
+
+    <h2>1. Strategy Matrix (Now vs Future, Easy vs Hard)</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Area</th>
+          <th>Now / Easy</th>
+          <th>Now / Hard</th>
+          <th>Future / Easy</th>
+          <th>Future / Hard</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Local</td>
+          <td>
+            Per-thread persistent shell process<br />
+            <code>PersistentLocalShellExecutor(thread_id)</code>
+          </td>
+          <td>
+            Full PTY semantics + resize/signals + robust stream framing
+          </td>
+          <td>
+            Optional shell pooling policy (idle recycle, LRU)
+          </td>
+          <td>
+            True terminal multiplexing service with attach/detach and replay
+          </td>
+        </tr>
+        <tr>
+          <td>Remote</td>
+          <td>
+            Wrapped stateless execute (hydrate cwd/env + run + persist state file)
+          </td>
+          <td>
+            Cross-shell portability and env-delta correctness under all providers
+          </td>
+          <td>
+            Provider capability registry (stateless vs partial-pty vs full-pty)
+          </td>
+          <td>
+            True remote PTY session backend (<code>RemotePTYExecutor</code>) with reconnect
+          </td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>2. Local Persistent Terminal</h2>
+    <div class="card">
+      <h3>Now (recommended)</h3>
+      <ul>
+        <li>One shell process per <code>thread_id</code>.</li>
+        <li>Command channel over stdin/stdout marker protocol.</li>
+        <li>Thread-level lock to serialize commands in same terminal.</li>
+        <li>Lifecycle: create on demand, idle timeout recycle.</li>
+      </ul>
+      <p class="good">
+        Easy to implement and directly solves env/cwd continuity for local mode.
+      </p>
+    </div>
+    <div class="card">
+      <h3>Future</h3>
+      <ul>
+        <li>PTY-native path for better interactive tools and signal handling.</li>
+        <li>Attach/detach support (debugging, live terminal view, replay).</li>
+      </ul>
+      <p class="hard">Hard part: robust PTY stream protocol and session resumption semantics.</p>
+    </div>
+
+    <h2>3. Remote Persistent Terminal</h2>
+    <div class="card">
+      <h3>Now (recommended baseline)</h3>
+      <ul>
+        <li>Use existing provider <code>execute(instance, command)</code> as-is.</li>
+        <li>Before command: hydrate terminal snapshot (<code>cwd</code>, <code>env_delta</code>).</li>
+        <li>After command: persist latest snapshot back to terminal record.</li>
+        <li>On instance loss: lease rebind; terminal replays snapshot on new instance.</li>
+      </ul>
+      <p class="good">No provider API break; fastest path to consistent semantics across Docker/E2B/Daytona/AgentBay.</p>
+    </div>
+    <div class="card">
+      <h3>Future</h3>
+      <ul>
+        <li>Add <code>RemotePTYExecutor</code> when provider has true PTY channel.</li>
+        <li>Capability-based dispatch:
+          <code>stateless_wrapped</code> / <code>pty_native</code>.
+        </li>
+      </ul>
+      <p class="hard">Hard part: reconnect-safe PTY transport and terminal stream durability.</p>
+    </div>
+
+    <h2>4. Recommended Rollout</h2>
+    <div class="card">
+      <ol>
+        <li>Ship control-plane model (terminal + lease + instance) first.</li>
+        <li>Implement local persistent shell per thread.</li>
+        <li>Implement remote wrapped executor baseline.</li>
+        <li>Unify observability and failure handling (missing binding, lease recover, instance replace).</li>
+        <li>Only then evaluate PTY-native remote path.</li>
+      </ol>
+      <p class="warn">Subagent inheritance changes stay in future scope until main path is stable.</p>
+    </div>
+
+    <h2>5. Decision</h2>
+    <div class="card">
+      <p>
+        <strong>Now:</strong> Local persistent shell + Remote wrapped stateless execution.<br />
+        <strong>Future:</strong> Subagent inheritance redesign + PTY-native local/remote execution.
+      </p>
+    </div>
+
+    <p class="footer">
+      Related doc: <a href="./2026-02-08_terminal-lease-architecture.html">Terminal Lease Architecture</a><br />
+      Final doc: <a href="./2026-02-08_final-terminal-session-architecture.html">Final Design (ChatSession + AbstractTerminal + Lease)</a><br />
+      File: <code>docs/2026-02-08_terminal-persistence-options.html</code>
+    </p>
+  </div>
+</body>
+</html>

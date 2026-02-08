@@ -1,0 +1,406 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LEON Final Design: ChatSession + Abstract Terminal + Lease</title>
+  <style>
+    :root {
+      --bg: #0b1220;
+      --panel: #111827;
+      --line: #243248;
+      --text: #e5e7eb;
+      --muted: #94a3b8;
+      --accent: #22d3ee;
+      --ok: #10b981;
+      --warn: #f59e0b;
+      --bad: #ef4444;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "SF Mono", Menlo, Consolas, monospace;
+      background: radial-gradient(circle at 80% 0%, #14233f, var(--bg));
+      color: var(--text);
+      line-height: 1.55;
+    }
+    .wrap { max-width: 1160px; margin: 0 auto; padding: 28px 20px 52px; }
+    h1, h2, h3 { margin: 0 0 10px; line-height: 1.25; }
+    h1 { font-size: 29px; color: var(--accent); }
+    h2 { font-size: 21px; margin-top: 28px; }
+    h3 { font-size: 16px; margin-top: 18px; color: #cbd5e1; }
+    p { margin: 8px 0 12px; }
+    .meta { color: var(--muted); font-size: 13px; margin-bottom: 14px; }
+    .card {
+      background: color-mix(in srgb, var(--panel) 90%, black);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 14px 16px;
+      margin: 10px 0;
+    }
+    .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+    table { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 14px; }
+    th, td { border: 1px solid var(--line); padding: 8px 10px; text-align: left; vertical-align: top; }
+    th { background: #0c172b; color: #bae6fd; }
+    code {
+      background: #0a1222;
+      border: 1px solid #22314a;
+      border-radius: 6px;
+      padding: 1px 6px;
+      color: #bae6fd;
+    }
+    pre {
+      margin: 10px 0;
+      padding: 12px;
+      border-radius: 10px;
+      border: 1px solid #22314a;
+      background: #0a1222;
+      overflow: auto;
+    }
+    ul, ol { margin: 8px 0 12px 22px; }
+    li { margin: 4px 0; }
+    .ok { color: var(--ok); }
+    .warn { color: var(--warn); }
+    .bad { color: var(--bad); }
+    a { color: #67e8f9; }
+    .footer {
+      margin-top: 30px;
+      color: var(--muted);
+      font-size: 12px;
+      border-top: 1px dashed #334155;
+      padding-top: 12px;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Final Architecture: ChatSession Envelope + Abstract Terminal + Shared Sandbox Lease</h1>
+    <p class="meta">Date: 2026-02-08 | Status: Final draft for implementation</p>
+
+    <div class="card">
+      <h3>Theorem (locked)</h3>
+      <p>
+        <strong>ChatSession must fully contain the lifecycle of the physical terminal runtime.</strong>
+        A physical sandbox instance may outlive one ChatSession and be reused by other terminals/sessions.
+      </p>
+      <p>
+        To make this practical, terminal is split into two layers:
+        <code>AbstractTerminal</code> (durable logical identity/state) and
+        <code>PhysicalTerminalRuntime</code> (ephemeral shell/pty process).
+      </p>
+    </div>
+
+    <h2>1. Why This Final Design</h2>
+    <div class="grid">
+      <div class="card">
+        <h3>What we need</h3>
+        <ul>
+          <li>Thread history/memory must remain durable.</li>
+          <li>Terminal state must feel continuous for each thread.</li>
+          <li>Multiple agents can share the same machine.</li>
+          <li>Resources must be reclaimable automatically.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>What failed before</h3>
+        <ul>
+          <li><code>thread -> session_id</code> conflated terminal and machine.</li>
+          <li>No policy envelope for terminal lifecycle (cost and idle control weak).</li>
+          <li>Sandbox death/recovery path could fan out into per-thread instance recreation.</li>
+        </ul>
+      </div>
+    </div>
+
+    <h2>2. Final Domain Model</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Entity</th>
+          <th>Durability</th>
+          <th>Owns what</th>
+          <th>Must not own</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>Thread</code></td>
+          <td>Durable</td>
+          <td>Conversation identity, full history, memory linkage, workspace linkage</td>
+          <td>Physical runtime process lifecycle</td>
+        </tr>
+        <tr>
+          <td><code>ChatSession</code></td>
+          <td>Durable record, bounded window</td>
+          <td>PhysicalTerminalRuntime lifecycle and policy envelope</td>
+          <td>Full history source-of-truth</td>
+        </tr>
+        <tr>
+          <td><code>AbstractTerminal</code></td>
+          <td>Durable</td>
+          <td>Terminal identity + snapshot state (<code>cwd</code>, <code>env_delta</code>)</td>
+          <td>Long-lived process guarantee</td>
+        </tr>
+        <tr>
+          <td><code>PhysicalTerminalRuntime</code></td>
+          <td>Ephemeral</td>
+          <td>Actual shell/pty process lifecycle inside one session window</td>
+          <td>Durable business data</td>
+        </tr>
+        <tr>
+          <td><code>SandboxLease</code></td>
+          <td>Durable</td>
+          <td>Stable shared compute handle</td>
+          <td>Terminal process state</td>
+        </tr>
+        <tr>
+          <td><code>SandboxInstance</code></td>
+          <td>Ephemeral</td>
+          <td>Physical VM/container/session</td>
+          <td>Thread/session source-of-truth</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="card">
+      <h3>Canonical relation</h3>
+      <pre>Thread (durable)
+  -> AbstractTerminal (durable state identity)
+      -> SandboxLease (durable shared handle)
+          -> SandboxInstance (ephemeral compute)
+
+Thread (durable)
+  -> ChatSession (policy/lifecycle window)
+      -> PhysicalTerminalRuntime (ephemeral process, fully contained by ChatSession)
+      -> AbstractTerminal (reference)
+      -> SandboxLease (reference)</pre>
+    </div>
+
+    <h2>3. Ownership and Invariants</h2>
+    <div class="card">
+      <ol>
+        <li>One <code>AbstractTerminal</code> belongs to one <code>Thread</code> (default model).</li>
+        <li>One active <code>ChatSession</code> controls at most one active <code>PhysicalTerminalRuntime</code>.</li>
+        <li><code>PhysicalTerminalRuntime</code> cannot outlive its <code>ChatSession</code>.</li>
+        <li><code>SandboxLease</code> has at most one active <code>SandboxInstance</code> at a time.</li>
+        <li>Many terminals can point to the same lease; they never share <code>cwd/env_delta</code>.</li>
+        <li>Workspace/artifacts are durable source-of-truth; terminal snapshot is convenience continuity.</li>
+      </ol>
+    </div>
+
+    <h2>4. ChatSession as Lifecycle/Policy Envelope</h2>
+    <div class="card">
+      <h3>What ChatSession controls</h3>
+      <ul>
+        <li>Terminal runtime start/stop/recreate.</li>
+        <li>Idle TTL and max duration.</li>
+        <li>Budget limits (wallclock/cpu/token).</li>
+        <li>Recovery behavior on runtime or instance failure.</li>
+      </ul>
+      <h3>What ChatSession does not control</h3>
+      <ul>
+        <li>Full chat history storage.</li>
+        <li>Long-term memory storage.</li>
+        <li>Workspace artifact storage backend.</li>
+      </ul>
+    </div>
+
+    <h2>5. Storage Mapping (the missing piece)</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Storage type</th>
+          <th>Keyed by</th>
+          <th>Stores</th>
+          <th>Durability</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>History store</td>
+          <td><code>thread_id</code></td>
+          <td>messages/checkpoints/memory pointers</td>
+          <td>Durable</td>
+        </tr>
+        <tr>
+          <td>Terminal state store</td>
+          <td><code>abstract_terminal_id</code></td>
+          <td><code>cwd</code>, <code>env_delta</code>, <code>state_version</code></td>
+          <td>Durable</td>
+        </tr>
+        <tr>
+          <td>Session store</td>
+          <td><code>chat_session_id</code></td>
+          <td>policy, lifecycle, runtime refs, close reason</td>
+          <td>Durable record</td>
+        </tr>
+        <tr>
+          <td>Workspace storage</td>
+          <td><code>workspace_id</code></td>
+          <td>files/artifacts/source tree</td>
+          <td>Durable</td>
+        </tr>
+        <tr>
+          <td>Runtime registry</td>
+          <td><code>instance_id/runtime_id</code></td>
+          <td>ephemeral process/container health</td>
+          <td>Ephemeral + heartbeat</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>6. Execution Flows</h2>
+    <div class="card">
+      <h3>6.1 First command in a thread</h3>
+      <ol>
+        <li>Resolve/create <code>AbstractTerminal(thread_id)</code>.</li>
+        <li>Open <code>ChatSession</code> (or reuse active one by policy).</li>
+        <li>Attach runtime to session (local shell or remote wrapped runtime).</li>
+        <li>Resolve lease -> ensure active instance.</li>
+        <li>Hydrate terminal snapshot, run command, persist snapshot.</li>
+      </ol>
+    </div>
+
+    <div class="card">
+      <h3>6.2 Idle reclaim</h3>
+      <ol>
+        <li><code>ChatSession</code> hits <code>idle_ttl</code>.</li>
+        <li>Terminate physical terminal runtime.</li>
+        <li>Mark session <code>closed</code> with reason <code>idle_timeout</code>.</li>
+        <li>Keep AbstractTerminal + snapshot for future resume.</li>
+      </ol>
+    </div>
+
+    <div class="card">
+      <h3>6.3 Sandbox instance death</h3>
+      <ol>
+        <li>Current lease instance marked dead.</li>
+        <li>Lease enters <code>recovering</code>; one winner creates replacement instance.</li>
+        <li>Update lease pointer; sessions/terminals converge to same new instance.</li>
+        <li>Session runtime resumes with terminal snapshot hydrate.</li>
+      </ol>
+    </div>
+
+    <h2>7. Local and Remote Implementation Plan</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Track</th>
+          <th>Now</th>
+          <th>Future</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Local</td>
+          <td>Per-thread persistent shell runtime under ChatSession envelope</td>
+          <td>PTY-native runtime with signal/resize/attach replay</td>
+        </tr>
+        <tr>
+          <td>Remote</td>
+          <td>Stateless execute + hydrate/persist wrapper under ChatSession envelope</td>
+          <td>Provider-native <code>RemotePTYExecutor</code> where capability exists</td>
+        </tr>
+        <tr>
+          <td>Subagent</td>
+          <td>Out of scope until main path stable</td>
+          <td>Session inheritance policy and dedicated terminal options</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>8. Minimal Schema (final form)</h2>
+    <div class="card">
+      <pre>threads(thread_id PK, workspace_id, ...)
+
+abstract_terminals(
+  terminal_id PK,
+  thread_id UNIQUE NOT NULL,
+  lease_id NOT NULL,
+  cwd,
+  env_delta_json,
+  state_version,
+  updated_at
+)
+
+chat_sessions(
+  chat_session_id PK,
+  thread_id NOT NULL,
+  terminal_id NOT NULL,
+  lease_id NOT NULL,
+  runtime_id,
+  status,                -- active|idle|closed|failed
+  idle_ttl_sec,
+  max_duration_sec,
+  budget_json,
+  started_at,
+  last_active_at,
+  ended_at,
+  close_reason
+)
+
+sandbox_leases(
+  lease_id PK,
+  provider,
+  active_instance_id,
+  status,
+  updated_at
+)
+
+sandbox_instances(
+  instance_id PK,
+  lease_id NOT NULL,
+  provider_session_id,
+  status,
+  created_at,
+  last_seen_at
+)</pre>
+    </div>
+
+    <h2>9. API Compatibility</h2>
+    <div class="card">
+      <p>
+        Keep agent-facing API stable:
+      </p>
+      <ul>
+        <li><code>sandbox.fs</code></li>
+        <li><code>sandbox.command</code></li>
+      </ul>
+      <p>
+        Internal resolver becomes:
+        <code>thread -> abstract_terminal -> chat_session(runtime) -> lease -> instance</code>.
+      </p>
+      <p class="ok">No major prompt/tool schema break needed.</p>
+    </div>
+
+    <h2>10. Complexity Control (why this is still minimal)</h2>
+    <div class="card">
+      <ul>
+        <li>One new concept for policy boundary: <code>ChatSession</code>.</li>
+        <li>One split for terminal clarity: <code>Abstract</code> vs <code>Physical</code>.</li>
+        <li>Reuse existing lease/instance shape from prior docs.</li>
+        <li>No forced PTY rewrite in now-phase.</li>
+      </ul>
+      <p class="warn">
+        Complexity is accepted only where it buys controllable resource lifecycle and deterministic recovery.
+      </p>
+    </div>
+
+    <h2>11. Final Decision</h2>
+    <div class="card">
+      <p>
+        Adopt <strong>ChatSession envelope</strong> now. Enforce theorem:
+        physical terminal runtime lifecycle is fully owned by ChatSession.
+        Sandbox instance remains shareable and may outlive sessions.
+        AbstractTerminal keeps continuity without forcing process permanence.
+      </p>
+    </div>
+
+    <p class="footer">
+      Related:
+      <a href="./2026-02-08_terminal-lease-architecture.html">Terminal Lease Architecture</a>,
+      <a href="./2026-02-08_terminal-persistence-options.html">Terminal Persistence Options</a><br />
+      File: <code>docs/2026-02-08_final-terminal-session-architecture.html</code>
+    </p>
+  </div>
+</body>
+</html>

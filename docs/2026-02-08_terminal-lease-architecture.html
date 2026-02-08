@@ -1,0 +1,440 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LEON Re-Architecture: Terminal + SandboxLease</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --panel: #111827;
+      --muted: #94a3b8;
+      --text: #e5e7eb;
+      --accent: #22d3ee;
+      --ok: #10b981;
+      --warn: #f59e0b;
+      --bad: #ef4444;
+      --line: #1f2937;
+      --code: #0b1220;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "SF Mono", "Menlo", "Consolas", monospace;
+      line-height: 1.55;
+      background: radial-gradient(circle at top right, #0b1328, var(--bg));
+      color: var(--text);
+    }
+    .wrap {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 28px 20px 48px;
+    }
+    h1, h2, h3 { line-height: 1.25; margin: 0 0 10px; }
+    h1 { font-size: 28px; color: var(--accent); }
+    h2 { font-size: 20px; margin-top: 28px; }
+    h3 { font-size: 16px; margin-top: 20px; color: #cbd5e1; }
+    p { margin: 8px 0 12px; color: #d1d5db; }
+    .meta { color: var(--muted); font-size: 13px; margin-bottom: 18px; }
+    .card {
+      background: color-mix(in srgb, var(--panel) 88%, black);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 14px 16px;
+      margin: 10px 0;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 12px;
+    }
+    code {
+      background: var(--code);
+      border: 1px solid #1e293b;
+      border-radius: 6px;
+      padding: 1px 6px;
+      color: #bae6fd;
+    }
+    pre {
+      margin: 10px 0;
+      padding: 12px;
+      border-radius: 10px;
+      border: 1px solid #23314d;
+      background: #0a1222;
+      overflow: auto;
+    }
+    ul, ol { margin: 6px 0 12px 22px; }
+    li { margin: 5px 0; }
+    .ok { color: var(--ok); }
+    .warn { color: var(--warn); }
+    .bad { color: var(--bad); }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 10px 0;
+      font-size: 14px;
+    }
+    th, td {
+      border: 1px solid #243248;
+      padding: 8px 10px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th { color: #bae6fd; background: #0c172b; }
+    .pill {
+      display: inline-block;
+      border: 1px solid #334155;
+      border-radius: 999px;
+      padding: 2px 8px;
+      margin-right: 8px;
+      color: #cbd5e1;
+      font-size: 12px;
+    }
+    .footer {
+      margin-top: 30px;
+      color: var(--muted);
+      font-size: 12px;
+      border-top: 1px dashed #334155;
+      padding-top: 14px;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>LEON Architecture Re-Design: Shared Compute, Dedicated Terminal</h1>
+    <p class="meta">Date: 2026-02-08 | Scope: sandbox runtime, command/filesystem execution, web + TUI compatibility</p>
+
+    <div class="card">
+      <span class="pill">Problem</span>
+      <span class="pill">Design</span>
+      <span class="pill">Migration</span>
+      <p>
+        Current runtime still has legacy coupling: <code>thread_id -&gt; session_id</code>. We need a model where
+        multiple agents can share one sandbox machine, while each thread keeps its own terminal state (cwd/env).
+      </p>
+      <p>
+        Proposed model introduces a stable logical pointer: <code>SandboxLease</code>, and keeps agent-facing surface unchanged:
+        <code>sandbox.fs</code> and <code>sandbox.command</code>.
+      </p>
+    </div>
+
+    <h2>1. Goals and Non-Goals</h2>
+    <div class="grid">
+      <div class="card">
+        <h3>Goals</h3>
+        <ul>
+          <li>Allow N terminals to share one sandbox instance.</li>
+          <li>Keep 1 terminal per thread (thread owns shell continuity).</li>
+          <li>Treat sandbox instance as ephemeral; thread history/artifacts remain durable.</li>
+          <li>Keep tool contract stable for agent (<code>fs</code>/<code>command</code>).</li>
+          <li>Support local + remote providers with the same control-plane semantics.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Non-Goals</h3>
+        <ul>
+          <li>Do not guarantee process-level shell continuity across sandbox destruction.</li>
+          <li>Do not expose raw PTY/shell process API to agents.</li>
+          <li>Do not redesign LangGraph message checkpoint model in this phase.</li>
+        </ul>
+      </div>
+    </div>
+
+    <h2>2. Naming and Core Concepts</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Entity</th>
+          <th>Durability</th>
+          <th>Cardinality</th>
+          <th>Meaning</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>Thread</code></td>
+          <td>Durable</td>
+          <td>1</td>
+          <td>Conversation identity + memory/checkpoints/workspace mapping.</td>
+        </tr>
+        <tr>
+          <td><code>TerminalSession</code></td>
+          <td>Logical durable record</td>
+          <td>1 per thread</td>
+          <td>Thread's shell identity (cwd/env snapshot, terminal type, attachment info).</td>
+        </tr>
+        <tr>
+          <td><code>SandboxLease</code></td>
+          <td>Durable</td>
+          <td>N terminals -&gt; 1 lease</td>
+          <td>Stable logical handle; points to one active sandbox instance at a time.</td>
+        </tr>
+        <tr>
+          <td><code>SandboxInstance</code></td>
+          <td>Ephemeral</td>
+          <td>0..1 active per lease</td>
+          <td>Actual provider machine/container/session that runs commands.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="card">
+      <h3>Canonical relation</h3>
+      <pre>Thread (durable)
+  -> TerminalSession (1:1, durable record)
+       -> SandboxLease (N:1, stable logical pointer)
+            -> SandboxInstance (ephemeral physical runtime)</pre>
+      <p>
+        This avoids split-brain on recovery: all terminals attached to the same lease converge to the same
+        replacement instance.
+      </p>
+    </div>
+
+    <h2>3. What Stays Stable for Agents</h2>
+    <div class="card">
+      <p>
+        Agent-facing interface remains capability-based:
+      </p>
+      <ul>
+        <li><code>sandbox.fs()</code> -&gt; filesystem backend</li>
+        <li><code>sandbox.command()</code> -&gt; command executor</li>
+      </ul>
+      <p>
+        Semantics change internally: <code>command</code> resolves terminal + lease + active instance before execute.
+      </p>
+      <p class="ok">Result: minimal upstream churn in prompts/tool schemas/middleware wiring.</p>
+    </div>
+
+    <h2>4. Data Model (SQLite / Service DB)</h2>
+    <div class="card">
+      <pre>-- Logical stable pointer
+CREATE TABLE sandbox_leases (
+  lease_id TEXT PRIMARY KEY,
+  provider TEXT NOT NULL,
+  workspace_key TEXT,
+  status TEXT NOT NULL DEFAULT 'active',      -- active|recovering|expired
+  active_instance_id TEXT,                    -- nullable pointer
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Physical ephemeral runtime
+CREATE TABLE sandbox_instances (
+  instance_id TEXT PRIMARY KEY,
+  lease_id TEXT NOT NULL,
+  provider_session_id TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'running',     -- running|paused|stopped|dead
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  last_seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (lease_id) REFERENCES sandbox_leases(lease_id)
+);
+
+-- Thread-owned terminal identity
+CREATE TABLE terminal_sessions (
+  thread_id TEXT PRIMARY KEY,
+  terminal_id TEXT NOT NULL UNIQUE,
+  lease_id TEXT NOT NULL,
+  terminal_type TEXT NOT NULL,                -- local_persistent|remote_wrapped|remote_pty
+  status TEXT NOT NULL DEFAULT 'active',      -- active|detached|dead
+  cwd TEXT,
+  env_delta_json TEXT,
+  state_version INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (lease_id) REFERENCES sandbox_leases(lease_id)
+);</pre>
+      <p class="warn">Invariant: one lease has at most one <code>active_instance_id</code> at any instant.</p>
+    </div>
+
+    <h2>5. Runtime Flows</h2>
+    <h3>5.1 Command execution</h3>
+    <div class="card">
+      <ol>
+        <li>Resolve terminal by <code>thread_id</code>; fail loudly if missing.</li>
+        <li>Resolve lease from terminal.</li>
+        <li>Ensure active instance for lease (atomic lock/CAS path).</li>
+        <li>Build wrapped command with terminal state hydrate/persist.</li>
+        <li>Execute via provider against active instance.</li>
+        <li>Persist terminal state snapshot (<code>cwd</code>, <code>env_delta_json</code>, <code>state_version</code>).</li>
+      </ol>
+      <pre>result = terminal_executor.execute(thread_id, cmd)
+  binding = terminal_manager.resolve(thread_id)
+  instance = lease_manager.ensure_active_instance(binding.lease_id)
+  wrapped = state_codec.wrap(cmd, cwd=binding.cwd, env_delta=binding.env_delta)
+  out = provider.execute(instance.provider_session_id, wrapped)
+  terminal_manager.persist_state(thread_id, state_codec.extract(out))</pre>
+    </div>
+
+    <h3>5.2 Instance death and reconnection</h3>
+    <div class="card">
+      <ol>
+        <li>Health check or execution failure marks current instance dead.</li>
+        <li>Lease status turns <code>recovering</code>.</li>
+        <li>One caller acquires lease lock and creates replacement instance.</li>
+        <li>Update <code>active_instance_id</code>; release lock.</li>
+        <li>All terminals under lease reuse the same new instance automatically.</li>
+      </ol>
+      <p class="ok">This guarantees shared-machine convergence after recovery.</p>
+    </div>
+
+    <h3>5.3 Filesystem behavior</h3>
+    <div class="card">
+      <p>
+        <code>sandbox.fs</code> follows the same terminal->lease->instance resolution chain, so all terminals on a lease
+        see the same machine filesystem view (subject to workspace mount strategy).
+      </p>
+    </div>
+
+    <h2>6. Local vs Remote Implementation</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Mode</th>
+          <th>Executor</th>
+          <th>State continuity</th>
+          <th>Failure mode</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Local</td>
+          <td><code>PersistentLocalShellExecutor</code></td>
+          <td>Process continuity (stdin/stdout marker protocol)</td>
+          <td>Shell crash -&gt; recreate process + keep terminal record</td>
+        </tr>
+        <tr>
+          <td>Remote (stateless API)</td>
+          <td><code>RemoteWrappedExecutor</code></td>
+          <td>State file hydrate/persist per command</td>
+          <td>Instance death -&gt; lease-driven rebind</td>
+        </tr>
+        <tr>
+          <td>Remote (PTY capable, future)</td>
+          <td><code>RemotePTYExecutor</code></td>
+          <td>Real PTY continuity</td>
+          <td>PTY loss -&gt; terminal reattach/recreate policy</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>7. Compatibility with Current LEON Code</h2>
+    <div class="card">
+      <h3>Current coupling points to replace</h3>
+      <ul>
+        <li><code>RemoteSandbox._session_cache[thread_id] = session_id</code> -&gt; terminal binding cache.</li>
+        <li><code>SandboxExecutor(get_session_id)</code> -&gt; <code>TerminalExecutor(get_terminal_binding)</code>.</li>
+        <li>Web/TUI <code>ensure_session(thread_id)</code> -&gt; <code>ensure_terminal(thread_id)</code>.</li>
+        <li>Remote sqlite-service <code>sandbox_sessions</code> API -&gt; lease/instance/terminal API.</li>
+      </ul>
+      <h3>Known correctness gap to schedule in a later wave</h3>
+      <p class="bad">
+        Sub-agent middleware rebuild currently drops sandbox executor/backend inheritance on some paths.
+        Keep this in future scope; first complete core terminal/lease migration on main agent path.
+      </p>
+    </div>
+
+    <h2>8. Migration Plan (Minimal-Risk)</h2>
+    <div class="card">
+      <ol>
+        <li>Add new tables and store methods; keep legacy methods for compatibility.</li>
+        <li>Introduce <code>TerminalManager</code> and <code>LeaseManager</code> behind feature flag.</li>
+        <li>Swap command path to terminal-resolved executor; keep old session path as fallback during rollout.</li>
+        <li>Swap filesystem path to terminal-resolved backend.</li>
+        <li>Update web/TUI endpoints to report <code>terminal_id</code>, <code>lease_id</code>, <code>instance_id</code>.</li>
+        <li>Upgrade sqlite-service schema/API for remote mode.</li>
+        <li>Delete legacy <code>thread_id -&gt; session_id</code> code after soak.</li>
+      </ol>
+      <p class="warn">Rollout strategy: local first, then single remote provider, then all providers.</p>
+    </div>
+
+    <h2>9. Operational Rules</h2>
+    <div class="card">
+      <ul>
+        <li>Fail loudly on missing terminal/lease/instance metadata.</li>
+        <li>Do not silently create per-thread standalone instances when lease should be shared.</li>
+        <li>Use distributed lock/CAS semantics around lease instance replacement.</li>
+        <li>Workspace/artifacts are durable source-of-truth; terminal state is convenience continuity.</li>
+      </ul>
+    </div>
+
+    <h2>10. Executive Summary</h2>
+    <div class="card">
+      <p>
+        Keep the external contract as <code>sandbox.fs</code> + <code>sandbox.command</code>. Internally, move from
+        <code>thread -&gt; session</code> to <code>thread -&gt; terminal -&gt; lease -&gt; instance</code>.
+        This gives shared compute, dedicated terminal state, and deterministic reconnection after sandbox loss.
+      </p>
+    </div>
+
+    <h2>11. Action Table: Now vs Future</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>What to do now</th>
+          <th>What to do in the future</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>
+            Implement <code>SandboxLease</code> + <code>TerminalSession</code> + <code>SandboxInstance</code> tables and
+            keep legacy compatibility adapters.
+          </td>
+          <td>
+            Add lease-level placement policies (cost-aware, region-aware, warm-pool aware).
+          </td>
+        </tr>
+        <tr>
+          <td>
+            Replace <code>thread -&gt; session_id</code> lookup path with
+            <code>thread -&gt; terminal -&gt; lease -&gt; active_instance</code> resolver.
+          </td>
+          <td>
+            Introduce distributed control-plane (Redis/Postgres lock) for multi-worker lease ownership.
+          </td>
+        </tr>
+        <tr>
+          <td>
+            Keep agent-facing interface unchanged: <code>sandbox.fs</code> and <code>sandbox.command</code>.
+          </td>
+          <td>
+            Optional API expansion for explicit lease operations (<code>attach</code>, <code>detach</code>, <code>handoff</code>).
+          </td>
+        </tr>
+        <tr>
+          <td>
+            Complete core terminal/lease migration for main agent path (web + TUI + providers).
+          </td>
+          <td>
+            Fix sub-agent middleware inheritance so sub-agents use the same sandbox backend/executor semantics as parent.
+            Then add sub-agent execution policies: inherit parent terminal, or create dedicated terminal under same lease.
+          </td>
+        </tr>
+        <tr>
+          <td>
+            Ship <code>RemoteWrappedExecutor</code> and terminal state snapshot codec for stateless providers.
+          </td>
+          <td>
+            Add true <code>RemotePTYExecutor</code> path for providers with PTY/session-stream support.
+          </td>
+        </tr>
+        <tr>
+          <td>
+            Migrate web/TUI status surface to show <code>terminal_id</code>, <code>lease_id</code>, <code>instance_id</code>.
+          </td>
+          <td>
+            Build lease/terminal observability dashboards and auto-remediation workflows.
+          </td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p class="footer">
+      File: <code>docs/2026-02-08_terminal-lease-architecture.html</code><br />
+      Related: <a href="./2026-02-08_terminal-persistence-options.html">Terminal Persistence Options (Now/Future)</a><br />
+      Final: <a href="./2026-02-08_final-terminal-session-architecture.html">Final Design (ChatSession + AbstractTerminal + Lease)</a><br />
+      Designed for LEON current codebase state as of 2026-02-08.
+    </p>
+  </div>
+</body>
+</html>
