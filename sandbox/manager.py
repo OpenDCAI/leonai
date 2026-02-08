@@ -202,32 +202,36 @@ class SandboxManager:
             return True
         return False
 
-    def destroy_session(self, thread_id: str, sync: bool = True) -> bool:
-        """Destroy session for thread."""
-        if not thread_id:
-            return False
-        existing = self._get_from_db(thread_id)
-        if not existing:
-            return False
-        if existing["provider"] != self.provider.name:
+    def destroy_session(self, thread_id: str = "", session_id: str = "", sync: bool = True) -> bool:
+        """Destroy session by thread_id or session_id.
+
+        Callers pass whichever identifier they have. If thread_id is given,
+        looks up session_id from DB and cleans up the DB entry. If only
+        session_id is given (orphan), calls the provider directly.
+        """
+        if thread_id:
+            existing = self._get_from_db(thread_id)
+            if not existing or existing["provider"] != self.provider.name:
+                return False
+            session_id = existing["session_id"]
+
+            # @@@ E2B: snapshot workspace files before destroying VM
+            if self.provider.name == "e2b" and hasattr(self.provider, "snapshot_workspace"):
+                try:
+                    files = self.provider.snapshot_workspace(session_id)
+                    self._save_e2b_snapshot(thread_id, files)
+                except Exception as e:
+                    print(f"[SandboxManager] E2B snapshot failed: {e}")
+
+            if self.provider.destroy_session(session_id, sync=sync):
+                self._delete_from_db(thread_id)
+                return True
             return False
 
-        # @@@ E2B: snapshot workspace files before destroying VM
-        if self.provider.name == "e2b" and hasattr(self.provider, "snapshot_workspace"):
-            try:
-                files = self.provider.snapshot_workspace(existing["session_id"])
-                self._save_e2b_snapshot(thread_id, files)
-            except Exception as e:
-                print(f"[SandboxManager] E2B snapshot failed: {e}")
+        if session_id:
+            return self.provider.destroy_session(session_id, sync=sync)
 
-        if self.provider.destroy_session(existing["session_id"], sync=sync):
-            self._delete_from_db(thread_id)
-            return True
         return False
-
-    def destroy_session_by_id(self, session_id: str, sync: bool = True) -> bool:
-        """Destroy session by session_id directly (for orphans not in DB)."""
-        return self.provider.destroy_session(session_id, sync=sync)
 
     def pause_all_sessions(self) -> int:
         """Pause all running sessions. Called on LEON exit."""

@@ -392,12 +392,7 @@ def cmd_sandbox(args):
         if not manager:
             console.print("[red]Provider unavailable[/red]")
             return
-        # Orphan sessions (no thread) — destroy by session_id directly
-        if target["thread"]:
-            ok = manager.destroy_session(target["thread"])
-        else:
-            ok = manager.destroy_session_by_id(target["id"])
-        if ok:
+        if manager.destroy_session(thread_id=target["thread"], session_id=target["id"]):
             console.print(f"[green]Deleted:[/green] {target['id']}")
         else:
             console.print("[red]Delete failed[/red]")
@@ -487,10 +482,7 @@ def cmd_sandbox(args):
         def _destroy(s):
             mgr = managers.get(s["provider"])
             if mgr:
-                if s["thread"]:
-                    mgr.destroy_session(s["thread"])
-                else:
-                    mgr.destroy_session_by_id(s["id"])
+                mgr.destroy_session(thread_id=s["thread"], session_id=s["id"])
             return s["id"]
 
         with ThreadPoolExecutor(max_workers=min(len(sessions), 8)) as pool:
