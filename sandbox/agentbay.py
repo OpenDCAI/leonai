@@ -34,7 +34,6 @@ class AgentBaySandbox(RemoteSandbox):
             config=config,
             default_cwd=ab.context_path,
             db_path=db_path,
-            default_context_id=config.context_id,
         )
         print(f"[AgentBaySandbox] Initialized (region={ab.region_id})")
 

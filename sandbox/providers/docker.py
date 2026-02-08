@@ -45,7 +45,7 @@ class DockerProvider(SandboxProvider):
         ]
 
         if context_id:
-            volume = f"leon-context-{context_id}"
+            volume = context_id
             cmd.extend(["-v", f"{volume}:{self.mount_path}"])
 
         cmd.extend(["-w", self.mount_path, self.image, "sleep", "infinity"])

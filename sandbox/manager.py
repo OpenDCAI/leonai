@@ -7,6 +7,7 @@ Handles lazy creation, auto-pause, and resume lifecycle.
 
 import sqlite3
 import threading
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
@@ -18,7 +19,7 @@ DEFAULT_DB_PATH = Path.home() / ".leon" / "leon.db"
 def lookup_sandbox_for_thread(thread_id: str) -> str | None:
     """Check if a thread has a sandbox session in the DB.
 
-    Returns provider name ('e2b', 'docker', 'agentbay') or None.
+    Returns provider name ('agentbay', 'e2b', 'docker', 'daytona') or None.
     Pure SQLite lookup — no provider initialization needed.
     """
     if not DEFAULT_DB_PATH.exists():
@@ -56,12 +57,23 @@ class SandboxManager:
         provider: SandboxProvider,
         db_path: Path | None = None,
         default_context_id: str | None = None,
+        on_session_ready: Callable[[str, str], None] | None = None,
     ):
         self.provider = provider
         self.db_path = db_path or DEFAULT_DB_PATH
         self.default_context_id = default_context_id
+        self._on_session_ready = on_session_ready
         self._lock = threading.Lock()
         self._conn = self._init_db()
+
+    def _build_context_id(self, thread_id: str) -> str | None:
+        if self.provider.name in ("agentbay", "docker"):
+            return f"leon-{thread_id}"
+        return None
+
+    def _fire_session_ready(self, session_id: str, reason: str) -> None:
+        if self._on_session_ready:
+            self._on_session_ready(session_id, reason)
 
     def _init_db(self) -> sqlite3.Connection:
         """Create sandbox_sessions table if not exists. Returns persistent connection."""
@@ -78,6 +90,14 @@ class SandboxManager:
                 status TEXT DEFAULT 'running',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS e2b_workspace_files (
+                thread_id TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                content BLOB NOT NULL,
+                PRIMARY KEY (thread_id, file_path)
             )
         """)
         conn.commit()
@@ -112,6 +132,7 @@ class SandboxManager:
                 elif status == "paused":
                     if self.provider.resume_session(session_id):
                         self._update_status(thread_id, "running")
+                        self._fire_session_ready(session_id, "resume")
                         return SessionInfo(
                             session_id=session_id,
                             provider=existing["provider"],
@@ -120,9 +141,18 @@ class SandboxManager:
 
                 self._delete_from_db(thread_id)
 
-        context_id = self.default_context_id
+        context_id = self._build_context_id(thread_id)
         info = self.provider.create_session(context_id=context_id)
         self._save_to_db(thread_id, info, context_id)
+        # @@@ E2B: restore workspace files into new VM
+        if self.provider.name == "e2b" and hasattr(self.provider, "restore_workspace"):
+            snapshot = self._load_e2b_snapshot(thread_id)
+            if snapshot:
+                try:
+                    self.provider.restore_workspace(info.session_id, snapshot)
+                except Exception as e:
+                    print(f"[SandboxManager] E2B restore failed: {e}")
+        self._fire_session_ready(info.session_id, "create")
 
         return info
 
@@ -168,20 +198,39 @@ class SandboxManager:
 
         if self.provider.resume_session(existing["session_id"]):
             self._update_status(thread_id, "running")
+            self._fire_session_ready(existing["session_id"], "resume")
             return True
         return False
 
-    def destroy_session(self, thread_id: str, sync: bool = True) -> bool:
-        """Destroy session for thread."""
-        existing = self._get_from_db(thread_id)
-        if not existing:
-            return False
-        if existing["provider"] != self.provider.name:
+    def destroy_session(self, thread_id: str = "", session_id: str = "", sync: bool = True) -> bool:
+        """Destroy session by thread_id or session_id.
+
+        Callers pass whichever identifier they have. If thread_id is given,
+        looks up session_id from DB and cleans up the DB entry. If only
+        session_id is given (orphan), calls the provider directly.
+        """
+        if thread_id:
+            existing = self._get_from_db(thread_id)
+            if not existing or existing["provider"] != self.provider.name:
+                return False
+            session_id = existing["session_id"]
+
+            # @@@ E2B: snapshot workspace files before destroying VM
+            if self.provider.name == "e2b" and hasattr(self.provider, "snapshot_workspace"):
+                try:
+                    files = self.provider.snapshot_workspace(session_id)
+                    self._save_e2b_snapshot(thread_id, files)
+                except Exception as e:
+                    print(f"[SandboxManager] E2B snapshot failed: {e}")
+
+            if self.provider.destroy_session(session_id, sync=sync):
+                self._delete_from_db(thread_id)
+                return True
             return False
 
-        if self.provider.destroy_session(existing["session_id"], sync=sync):
-            self._delete_from_db(thread_id)
-            return True
+        if session_id:
+            return self.provider.destroy_session(session_id, sync=sync)
+
         return False
 
     def pause_all_sessions(self) -> int:
@@ -208,13 +257,54 @@ class SandboxManager:
         return count
 
     def list_sessions(self) -> list[dict]:
-        """List all tracked sessions with current status."""
-        rows = [row for row in self._get_all_from_db() if row["provider"] == self.provider.name]
-        if not rows:
-            return []
+        """List all tracked sessions with current status.
 
-        # @@@ Use batch status if provider supports it (1 API call vs N)
-        if hasattr(self.provider, "get_all_session_statuses"):
+        If the provider supports list_provider_sessions(), also discovers
+        orphaned sessions not in the local DB (e.g. Daytona containers
+        created outside LEON).
+        """
+        rows = [row for row in self._get_all_from_db() if row["provider"] == self.provider.name]
+
+        # @@@ Providers with list_provider_sessions() can discover orphans
+        if hasattr(self.provider, "list_provider_sessions"):
+            api_sessions = self.provider.list_provider_sessions()
+            api_map = {s.session_id: s.status for s in api_sessions}
+
+            sessions = []
+            # Update DB-tracked sessions with live status
+            for row in rows:
+                status = api_map.pop(row["session_id"], "deleted")
+                if status == "deleted":
+                    self._delete_from_db(row["thread_id"])
+                    continue
+                sessions.append(
+                    {
+                        "thread_id": row["thread_id"],
+                        "session_id": row["session_id"],
+                        "provider": row["provider"],
+                        "status": status,
+                        "context_id": row["context_id"],
+                        "created_at": row["created_at"],
+                        "last_active": row["last_active"],
+                    }
+                )
+            # Append orphaned sessions (on API but not in DB)
+            for sid, status in api_map.items():
+                sessions.append(
+                    {
+                        "thread_id": "",
+                        "session_id": sid,
+                        "provider": self.provider.name,
+                        "status": status,
+                        "context_id": None,
+                        "created_at": None,
+                        "last_active": None,
+                    }
+                )
+            return sessions
+
+        # Batch status via get_all_session_statuses (1 API call vs N)
+        if rows and hasattr(self.provider, "get_all_session_statuses"):
             status_map = self.provider.get_all_session_statuses()
             sessions = []
             for row in rows:
@@ -234,6 +324,9 @@ class SandboxManager:
                     }
                 )
             return sessions
+
+        if not rows:
+            return []
 
         # Fallback: parallel per-session status checks
         from concurrent.futures import ThreadPoolExecutor
@@ -336,3 +429,25 @@ class SandboxManager:
                 (thread_id,),
             )
             self._conn.commit()
+
+    def _save_e2b_snapshot(self, thread_id: str, files: list[dict]):
+        with self._lock:
+            self._conn.execute(
+                "DELETE FROM e2b_workspace_files WHERE thread_id = ?",
+                (thread_id,),
+            )
+            for f in files:
+                self._conn.execute(
+                    "INSERT INTO e2b_workspace_files (thread_id, file_path, content) VALUES (?, ?, ?)",
+                    (thread_id, f["file_path"], f["content"]),
+                )
+            self._conn.commit()
+
+    def _load_e2b_snapshot(self, thread_id: str) -> list[dict]:
+        with self._lock:
+            self._conn.row_factory = sqlite3.Row
+            rows = self._conn.execute(
+                "SELECT file_path, content FROM e2b_workspace_files WHERE thread_id = ?",
+                (thread_id,),
+            ).fetchall()
+            return [{"file_path": row["file_path"], "content": row["content"]} for row in rows]

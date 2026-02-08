@@ -53,6 +53,11 @@ def create_sandbox(
 
         return E2BSandbox(config=config, db_path=db_path)
 
+    if provider == "daytona":
+        from sandbox.daytona import DaytonaSandbox
+
+        return DaytonaSandbox(config=config, db_path=db_path)
+
     raise ValueError(f"Unknown sandbox provider: {provider}")
 
 

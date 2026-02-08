@@ -268,6 +268,17 @@ def _init_sandbox_providers() -> tuple[dict, dict]:
                         default_cwd=config.e2b.cwd,
                         timeout=config.e2b.timeout,
                     )
+            elif config.provider == "daytona":
+                from sandbox.providers.daytona import DaytonaProvider
+
+                key = config.daytona.api_key or os.getenv("DAYTONA_API_KEY")
+                if key:
+                    providers["daytona"] = DaytonaProvider(
+                        api_key=key,
+                        api_url=config.daytona.api_url,
+                        target=config.daytona.target,
+                        default_cwd=config.daytona.cwd,
+                    )
         except Exception as e:
             print(f"[sandbox] Failed to load {name}: {e}")
 
@@ -351,7 +362,7 @@ def cmd_sandbox(args):
         provider_name = args.extra_args[0] if args.extra_args else None
         if not provider_name:
             # Pick first available
-            for name in ("agentbay", "e2b", "docker"):
+            for name in ("agentbay", "e2b", "docker", "daytona"):
                 if name in managers:
                     provider_name = name
                     break
@@ -378,7 +389,10 @@ def cmd_sandbox(args):
             console.print(f"[red]Session not found: {args.extra_args[0]}[/red]")
             return
         manager = managers.get(target["provider"])
-        if manager and manager.destroy_session(target["thread"]):
+        if not manager:
+            console.print("[red]Provider unavailable[/red]")
+            return
+        if manager.destroy_session(thread_id=target["thread"], session_id=target["id"]):
             console.print(f"[green]Deleted:[/green] {target['id']}")
         else:
             console.print("[red]Delete failed[/red]")
@@ -468,7 +482,7 @@ def cmd_sandbox(args):
         def _destroy(s):
             mgr = managers.get(s["provider"])
             if mgr:
-                mgr.destroy_session(s["thread"])
+                mgr.destroy_session(thread_id=s["thread"], session_id=s["id"])
             return s["id"]
 
         with ThreadPoolExecutor(max_workers=min(len(sessions), 8)) as pool:
@@ -526,7 +540,7 @@ def main():
         print("Sandbox 管理:")
         print("  leonai sandbox            打开 sandbox 会话管理器 (TUI)")
         print("  leonai sandbox ls         列出所有 sandbox 会话")
-        print("  leonai sandbox new [provider]  创建新会话 (agentbay/e2b/docker)")
+        print("  leonai sandbox new [provider]  创建新会话 (agentbay/e2b/docker/daytona)")
         print("  leonai sandbox pause <id>      暂停会话")
         print("  leonai sandbox resume <id>     恢复会话")
         print("  leonai sandbox rm <id>         删除会话")

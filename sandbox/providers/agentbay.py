@@ -31,7 +31,7 @@ class AgentBayProvider(SandboxProvider):
         self,
         api_key: str,
         region_id: str = "ap-southeast-1",
-        default_context_path: str = "/root",
+        default_context_path: str = "/home/wuying",
         image_id: str | None = None,
     ):
         from agentbay import AgentBay
@@ -48,7 +48,12 @@ class AgentBayProvider(SandboxProvider):
         if self.image_id:
             params.image_id = self.image_id
         if context_id:
-            params.context_syncs = [ContextSync(context_id=context_id, path=self.default_context_path)]
+            # @@@ context_id is a human-readable name, not a SdkCtx-* ID.
+            # Must call context.get(create=True) to resolve/create the real ID.
+            ctx_result = self.client.context.get(context_id, create=True)
+            if not ctx_result.success:
+                raise RuntimeError(f"Failed to get/create context '{context_id}': {ctx_result.error_message}")
+            params.context_syncs = [ContextSync.new(ctx_result.context.id, self.default_context_path)]
 
         result = self.client.create(params)
         if not result.success:
@@ -72,12 +77,12 @@ class AgentBayProvider(SandboxProvider):
 
     def pause_session(self, session_id: str) -> bool:
         session = self._get_session(session_id)
-        result = self.client.beta_pause(session)
+        result = self.client.pause(session)
         return result.success
 
     def resume_session(self, session_id: str) -> bool:
         session = self._get_session(session_id)
-        result = self.client.beta_resume(session)
+        result = self.client.resume(session)
         if result.success:
             get_result = self.client.get(session_id)
             if get_result.success:
