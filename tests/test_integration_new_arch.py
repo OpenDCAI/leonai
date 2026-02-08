@@ -254,7 +254,7 @@ class TestSessionLifecycle:
         # Cleanup expired
         count = session_manager.cleanup_expired()
 
-        # Session should still exist (default policy is 1 hour)
+        # Session should still exist (default policy is 10 minutes)
         assert count == 0
 
     def test_pause_and_resume_session(self, sandbox_manager):
@@ -263,12 +263,19 @@ class TestSessionLifecycle:
 
         # Create session
         capability = sandbox_manager.get_sandbox(thread_id)
+        session_id = capability._session.session_id
 
-        # Pause (will be no-op for local provider)
-        result = sandbox_manager.pause_session(thread_id)
+        assert sandbox_manager.pause_session(thread_id)
+        paused = sandbox_manager.session_manager.get(thread_id)
+        assert paused is not None
+        assert paused.session_id == session_id
+        assert paused.status == "paused"
 
-        # Resume (will be no-op for local provider)
-        result = sandbox_manager.resume_session(thread_id)
+        assert sandbox_manager.resume_session(thread_id)
+        resumed = sandbox_manager.session_manager.get(thread_id)
+        assert resumed is not None
+        assert resumed.session_id == session_id
+        assert resumed.status == "active"
 
     def test_destroy_session(self, sandbox_manager):
         """Test destroying a session."""

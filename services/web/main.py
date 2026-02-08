@@ -7,7 +7,7 @@ import sqlite3
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, AsyncGenerator
 
@@ -170,6 +170,25 @@ def _load_all_sessions(managers: dict) -> list[dict]:
                     "created_at": row.get("created_at"),
                     "last_active": row.get("last_active"),
                 })
+
+    # @@@stable-session-order - Keep deterministic ordering across refreshes/providers.
+    def _to_ts(value: Any) -> float:
+        if not value or not isinstance(value, str):
+            return 0.0
+        try:
+            return datetime.fromisoformat(value).timestamp()
+        except Exception:
+            return 0.0
+
+    sessions.sort(
+        key=lambda row: (
+            -_to_ts(row.get("created_at")),
+            -_to_ts(row.get("last_active")),
+            str(row.get("provider") or ""),
+            str(row.get("thread_id") or ""),
+            str(row.get("session_id") or ""),
+        )
+    )
     return sessions
 
 
@@ -686,7 +705,15 @@ async def run_thread(thread_id: str, payload: RunRequest) -> EventSourceResponse
                 # @@@ Streaming parser mirrors TUI runner chunk semantics so web and CLI stay consistent.
                 # Prime session before tool calls so lazy capability wrappers never race thread context propagation.
                 if hasattr(agent, "_sandbox"):
-                    agent._sandbox.ensure_session(thread_id)
+                    def _prime_sandbox() -> None:
+                        mgr = agent._sandbox.manager
+                        session = mgr.session_manager.get(thread_id)
+                        if session and session.status == "paused":
+                            if not agent._sandbox.resume_thread(thread_id):
+                                raise RuntimeError(f"Failed to auto-resume paused sandbox for thread {thread_id}")
+                        agent._sandbox.ensure_session(thread_id)
+
+                    await asyncio.to_thread(_prime_sandbox)
 
                 if hasattr(agent, "runtime"):
                     agent.runtime.transition(AgentState.ACTIVE)

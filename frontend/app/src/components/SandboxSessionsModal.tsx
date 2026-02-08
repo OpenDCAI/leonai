@@ -15,19 +15,29 @@ interface SandboxSessionsModalProps {
 export default function SandboxSessionsModal({ isOpen, onClose }: SandboxSessionsModalProps) {
   const [sessions, setSessions] = useState<SandboxSession[]>([]);
   const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [hasLoaded, setHasLoaded] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  async function refresh() {
-    setLoading(true);
-    setError(null);
+  async function refresh(opts?: { silent?: boolean }) {
+    const silent = opts?.silent ?? false;
+    const showInitialLoading = !hasLoaded && !silent;
+    if (showInitialLoading) {
+      setLoading(true);
+    } else {
+      setRefreshing(true);
+    }
     try {
       const rows = await listSandboxSessions();
       setSessions(rows);
+      setHasLoaded(true);
+      setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }
 
@@ -35,7 +45,7 @@ export default function SandboxSessionsModal({ isOpen, onClose }: SandboxSession
     if (!isOpen) return;
     void refresh();
     const timer = window.setInterval(() => {
-      void refresh();
+      void refresh({ silent: true });
     }, 2500);
     return () => window.clearInterval(timer);
   }, [isOpen]);
@@ -56,7 +66,10 @@ export default function SandboxSessionsModal({ isOpen, onClose }: SandboxSession
     <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/60 backdrop-blur-sm">
       <div className="w-[860px] max-w-[95vw] max-h-[85vh] rounded-xl border border-[#333] bg-[#1f1f1f] shadow-2xl overflow-hidden">
         <div className="h-12 px-4 border-b border-[#333] flex items-center justify-between">
-          <h3 className="text-white text-sm font-semibold">Sandbox Sessions</h3>
+          <div className="flex items-center gap-2">
+            <h3 className="text-white text-sm font-semibold">Sandbox Sessions</h3>
+            {refreshing && <span className="text-xs text-gray-500">Refreshing…</span>}
+          </div>
           <div className="flex items-center gap-2">
             <button className="px-3 py-1 text-xs rounded bg-[#2d2d2d] hover:bg-[#3a3a3a] text-gray-200" onClick={() => void refresh()}>
               Refresh
@@ -67,10 +80,11 @@ export default function SandboxSessionsModal({ isOpen, onClose }: SandboxSession
           </div>
         </div>
         <div className="p-4 overflow-auto max-h-[calc(85vh-48px)]">
-          {loading && <p className="text-sm text-gray-400">Loading...</p>}
-          {error && <p className="text-sm text-red-400">{error}</p>}
-          {!loading && !error && sessions.length === 0 && <p className="text-sm text-gray-400">No active sessions.</p>}
-          {!loading && !error && sessions.length > 0 && (
+          {loading && sessions.length === 0 && <p className="text-sm text-gray-400">Loading...</p>}
+          {error && sessions.length === 0 && <p className="text-sm text-red-400">{error}</p>}
+          {error && sessions.length > 0 && <p className="text-xs text-red-400 mb-2">Refresh failed: {error}</p>}
+          {!loading && sessions.length === 0 && !error && <p className="text-sm text-gray-400">No active sessions.</p>}
+          {sessions.length > 0 && (
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-gray-400 border-b border-[#333]">

@@ -51,7 +51,7 @@ def _connect(db_path: Path) -> sqlite3.Connection:
 class ChatSessionPolicy:
     """Policy configuration for ChatSession lifecycle."""
 
-    idle_ttl_sec: int = 3600
+    idle_ttl_sec: int = 600
     max_duration_sec: int = 86400
 
 
@@ -100,7 +100,8 @@ class ChatSession:
     def touch(self) -> None:
         now = datetime.now()
         self.last_active_at = now
-        self.status = "active"
+        if self.status != "paused":
+            self.status = "active"
         with _connect(self._db_path) as conn:
             conn.execute(
                 """
@@ -203,11 +204,12 @@ class ChatSessionManager:
                 ON chat_sessions(thread_id, status, started_at DESC)
                 """
             )
+            conn.execute("DROP INDEX IF EXISTS uq_chat_sessions_active_thread")
             conn.execute(
                 """
-                CREATE UNIQUE INDEX IF NOT EXISTS uq_chat_sessions_active_thread
+                CREATE UNIQUE INDEX uq_chat_sessions_active_thread
                 ON chat_sessions(thread_id)
-                WHERE status IN ('active', 'idle')
+                WHERE status IN ('active', 'idle', 'paused')
                 """
             )
             conn.commit()
@@ -242,7 +244,7 @@ class ChatSessionManager:
                        runtime_id, status, idle_ttl_sec, max_duration_sec,
                        budget_json, started_at, last_active_at, ended_at, close_reason
                 FROM chat_sessions
-                WHERE thread_id = ? AND status IN ('active', 'idle')
+                WHERE thread_id = ? AND status IN ('active', 'idle', 'paused')
                 ORDER BY started_at DESC
                 LIMIT 1
                 """,
@@ -309,7 +311,7 @@ class ChatSessionManager:
                 """
                 UPDATE chat_sessions
                 SET status = 'closed', ended_at = ?, close_reason = 'superseded'
-                WHERE thread_id = ? AND status IN ('active', 'idle')
+                WHERE thread_id = ? AND status IN ('active', 'idle', 'paused')
                 """,
                 (now.isoformat(), thread_id),
             )
@@ -362,7 +364,8 @@ class ChatSessionManager:
             conn.execute(
                 """
                 UPDATE chat_sessions
-                SET last_active_at = ?, status = 'active'
+                SET last_active_at = ?,
+                    status = CASE WHEN status = 'paused' THEN 'paused' ELSE 'active' END
                 WHERE chat_session_id = ?
                 """,
                 (now, session_id),
@@ -371,7 +374,42 @@ class ChatSessionManager:
         for session in self._live_sessions.values():
             if session.session_id == session_id:
                 session.last_active_at = datetime.fromisoformat(now)
+                if session.status != "paused":
+                    session.status = "active"
+                break
+
+    def pause(self, session_id: str) -> None:
+        with _connect(self.db_path) as conn:
+            conn.execute(
+                """
+                UPDATE chat_sessions
+                SET status = 'paused', close_reason = 'paused'
+                WHERE chat_session_id = ? AND status IN ('active', 'idle')
+                """,
+                (session_id,),
+            )
+            conn.commit()
+        for session in self._live_sessions.values():
+            if session.session_id == session_id:
+                session.status = "paused"
+                session.close_reason = "paused"
+                break
+
+    def resume(self, session_id: str) -> None:
+        with _connect(self.db_path) as conn:
+            conn.execute(
+                """
+                UPDATE chat_sessions
+                SET status = 'active', close_reason = NULL
+                WHERE chat_session_id = ? AND status = 'paused'
+                """,
+                (session_id,),
+            )
+            conn.commit()
+        for session in self._live_sessions.values():
+            if session.session_id == session_id:
                 session.status = "active"
+                session.close_reason = None
                 break
 
     def delete(self, session_id: str, *, reason: str = "closed") -> None:
@@ -391,7 +429,7 @@ class ChatSessionManager:
                 """
                 UPDATE chat_sessions
                 SET status = 'closed', ended_at = ?, close_reason = ?
-                WHERE chat_session_id = ? AND status IN ('active', 'idle')
+                WHERE chat_session_id = ? AND status IN ('active', 'idle', 'paused')
                 """,
                 (datetime.now().isoformat(), reason, session_id),
             )
@@ -406,7 +444,7 @@ class ChatSessionManager:
                        runtime_id, status, budget_json, started_at, last_active_at,
                        ended_at, close_reason
                 FROM chat_sessions
-                WHERE status IN ('active', 'idle')
+                WHERE status IN ('active', 'idle', 'paused')
                 ORDER BY started_at DESC
                 """
             ).fetchall()

@@ -177,7 +177,22 @@ export async function listSandboxTypes(): Promise<SandboxType[]> {
 
 export async function listSandboxSessions(): Promise<SandboxSession[]> {
   const payload = await request<{ sessions: SandboxSession[] }>("/api/sandbox/sessions");
-  return payload.sessions;
+  const toTs = (value?: string): number => {
+    if (!value) return 0;
+    const ts = Date.parse(value);
+    return Number.isFinite(ts) ? ts : 0;
+  };
+  return [...payload.sessions].sort((a, b) => {
+    const createdDiff = toTs(b.created_at) - toTs(a.created_at);
+    if (createdDiff !== 0) return createdDiff;
+    const activeDiff = toTs(b.last_active) - toTs(a.last_active);
+    if (activeDiff !== 0) return activeDiff;
+    const providerDiff = a.provider.localeCompare(b.provider);
+    if (providerDiff !== 0) return providerDiff;
+    const threadDiff = a.thread_id.localeCompare(b.thread_id);
+    if (threadDiff !== 0) return threadDiff;
+    return a.session_id.localeCompare(b.session_id);
+  });
 }
 
 export async function pauseThreadSandbox(threadId: string): Promise<void> {

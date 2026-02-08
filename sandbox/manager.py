@@ -203,8 +203,8 @@ class SandboxManager:
     def pause_session(self, thread_id: str) -> bool:
         """Pause session for thread."""
         session = self.session_manager.get(thread_id)
-        if session:
-            self.session_manager.delete(session.session_id, reason="paused")
+        if session and session.status != "paused":
+            self.session_manager.pause(session.session_id)
 
         terminal = self.terminal_store.get(thread_id)
         if not terminal:
@@ -237,7 +237,11 @@ class SandboxManager:
             resumed = lease.resume_instance(self.provider)
             if not resumed:
                 return False
-        self._ensure_chat_session(thread_id)
+        session = self.session_manager.get(thread_id)
+        if session:
+            self.session_manager.resume(session.session_id)
+        else:
+            self._ensure_chat_session(thread_id)
         return True
 
     def pause_all_sessions(self) -> int:
@@ -272,7 +276,7 @@ class SandboxManager:
         rows = self.session_manager.list_all()
         sessions: list[dict] = []
         for row in rows:
-            if row.get("status") not in {"active", "idle"}:
+            if row.get("status") not in {"active", "idle", "paused"}:
                 continue
             lease = self.lease_store.get(row["lease_id"])
             if not lease or lease.provider_name != self.provider.name:
