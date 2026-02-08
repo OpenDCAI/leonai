@@ -60,7 +60,9 @@ def _available_sandbox_types() -> list[dict[str, Any]]:
 
 def _create_agent_sync(sandbox_name: str) -> Any:
     """Create a LeonAgent with the given sandbox. Runs in a thread."""
+    # @@@ model_name=None lets the profile.yaml value take effect instead of the factory default
     return create_leon_agent(
+        model_name=None,
         workspace_root=Path.cwd(),
         sandbox=sandbox_name if sandbox_name != "local" else None,
         verbose=True,
@@ -268,44 +270,10 @@ async def list_sandbox_types() -> dict[str, Any]:
 
 @app.get("/api/sandbox/sessions")
 async def list_sandbox_sessions() -> dict[str, Any]:
+    # Read-only: standalone managers are fine for listing
     _, managers = await asyncio.to_thread(_init_providers_and_managers)
     sessions = await asyncio.to_thread(_load_all_sessions, managers)
     return {"sessions": sessions}
-
-
-@app.post("/api/sandbox/sessions/{session_id}/pause")
-async def pause_session(session_id: str) -> dict[str, Any]:
-    _, managers = await asyncio.to_thread(_init_providers_and_managers)
-    sessions = await asyncio.to_thread(_load_all_sessions, managers)
-    session, manager = _find_session_and_manager(sessions, managers, session_id)
-    if not session or not manager:
-        raise HTTPException(404, f"Session not found: {session_id}")
-    ok = await asyncio.to_thread(manager.pause_session, session["thread_id"])
-    return {"ok": ok, "session_id": session["session_id"]}
-
-
-@app.post("/api/sandbox/sessions/{session_id}/resume")
-async def resume_session(session_id: str) -> dict[str, Any]:
-    _, managers = await asyncio.to_thread(_init_providers_and_managers)
-    sessions = await asyncio.to_thread(_load_all_sessions, managers)
-    session, manager = _find_session_and_manager(sessions, managers, session_id)
-    if not session or not manager:
-        raise HTTPException(404, f"Session not found: {session_id}")
-    ok = await asyncio.to_thread(manager.resume_session, session["thread_id"])
-    return {"ok": ok, "session_id": session["session_id"]}
-
-
-@app.delete("/api/sandbox/sessions/{session_id}")
-async def destroy_session(session_id: str) -> dict[str, Any]:
-    _, managers = await asyncio.to_thread(_init_providers_and_managers)
-    sessions = await asyncio.to_thread(_load_all_sessions, managers)
-    session, manager = _find_session_and_manager(sessions, managers, session_id)
-    if not session or not manager:
-        raise HTTPException(404, f"Session not found: {session_id}")
-    ok = await asyncio.to_thread(
-        manager.destroy_session, session["thread_id"], session["session_id"],
-    )
-    return {"ok": ok, "session_id": session["session_id"]}
 
 
 @app.get("/api/sandbox/sessions/{session_id}/metrics")
@@ -334,6 +302,47 @@ async def get_session_metrics(session_id: str) -> dict[str, Any]:
             "network_tx_kbps": metrics.network_tx_kbps,
         }
     return result
+
+
+# @@@ Thread-level sandbox control — routes through the agent's own sandbox so cache stays consistent
+@app.post("/api/threads/{thread_id}/sandbox/pause")
+async def pause_thread_sandbox(thread_id: str) -> dict[str, Any]:
+    sandbox_type = _resolve_thread_sandbox(app, thread_id)
+    if sandbox_type == "local":
+        raise HTTPException(400, "Local threads have no sandbox to pause")
+    agent = await _get_or_create_agent(app, sandbox_type)
+    if not hasattr(agent, "_sandbox") or agent._sandbox.name == "local":
+        raise HTTPException(400, "Agent has no remote sandbox")
+    ok = await asyncio.to_thread(agent._sandbox.pause_thread, thread_id)
+    return {"ok": ok, "thread_id": thread_id}
+
+
+@app.post("/api/threads/{thread_id}/sandbox/resume")
+async def resume_thread_sandbox(thread_id: str) -> dict[str, Any]:
+    sandbox_type = _resolve_thread_sandbox(app, thread_id)
+    if sandbox_type == "local":
+        raise HTTPException(400, "Local threads have no sandbox to resume")
+    agent = await _get_or_create_agent(app, sandbox_type)
+    if not hasattr(agent, "_sandbox") or agent._sandbox.name == "local":
+        raise HTTPException(400, "Agent has no remote sandbox")
+    ok = await asyncio.to_thread(agent._sandbox.resume_thread, thread_id)
+    return {"ok": ok, "thread_id": thread_id}
+
+
+@app.delete("/api/threads/{thread_id}/sandbox")
+async def destroy_thread_sandbox(thread_id: str) -> dict[str, Any]:
+    sandbox_type = _resolve_thread_sandbox(app, thread_id)
+    if sandbox_type == "local":
+        raise HTTPException(400, "Local threads have no sandbox to destroy")
+    agent = await _get_or_create_agent(app, sandbox_type)
+    if not hasattr(agent, "_sandbox") or agent._sandbox.name == "local":
+        raise HTTPException(400, "Agent has no remote sandbox")
+    # Get session_id from DB before destroying
+    session = agent._sandbox.manager.store.get(thread_id) if hasattr(agent._sandbox.manager, "store") else None
+    session_id = session.get("session_id", "") if session else ""
+    ok = await asyncio.to_thread(agent._sandbox.manager.destroy_session, thread_id, session_id)
+    agent._sandbox._session_cache.pop(thread_id, None)
+    return {"ok": ok, "thread_id": thread_id}
 
 
 # --- Thread endpoints ---

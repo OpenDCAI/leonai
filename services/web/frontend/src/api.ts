@@ -186,16 +186,17 @@ export async function listSandboxSessions(): Promise<SandboxSession[]> {
   return res.sessions;
 }
 
-export async function pauseSession(sessionId: string): Promise<void> {
-  await request(`/api/sandbox/sessions/${encodeURIComponent(sessionId)}/pause`, { method: "POST" });
+// Thread-level sandbox control (routes through agent's sandbox, keeps cache consistent)
+export async function pauseThreadSandbox(threadId: string): Promise<void> {
+  await request(`/api/threads/${encodeURIComponent(threadId)}/sandbox/pause`, { method: "POST" });
 }
 
-export async function resumeSession(sessionId: string): Promise<void> {
-  await request(`/api/sandbox/sessions/${encodeURIComponent(sessionId)}/resume`, { method: "POST" });
+export async function resumeThreadSandbox(threadId: string): Promise<void> {
+  await request(`/api/threads/${encodeURIComponent(threadId)}/sandbox/resume`, { method: "POST" });
 }
 
-export async function destroySession(sessionId: string): Promise<void> {
-  await request(`/api/sandbox/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" });
+export async function destroyThreadSandbox(threadId: string): Promise<void> {
+  await request(`/api/threads/${encodeURIComponent(threadId)}/sandbox`, { method: "DELETE" });
 }
 
 export async function getSessionMetrics(sessionId: string): Promise<{ metrics: SandboxMetrics | null; web_url: string | null }> {

@@ -1,4 +1,4 @@
-"""Zsh executor implementation for macOS."""
+"""Zsh executor implementation for macOS with persistent session."""
 
 from __future__ import annotations
 
@@ -12,10 +12,60 @@ _RUNNING_COMMANDS: dict[str, AsyncCommand] = {}
 
 
 class ZshExecutor(BaseExecutor):
-    """Executor for zsh shell (macOS default)."""
+    """Executor for zsh shell (macOS default) with persistent session."""
 
     shell_name = "zsh"
-    shell_command = ("/bin/zsh", "-c")
+    shell_command = ("/bin/zsh",)
+
+    def __init__(self, default_cwd: str | None = None):
+        super().__init__(default_cwd)
+        self._session: asyncio.subprocess.Process | None = None
+        self._session_lock = asyncio.Lock()
+        self._current_cwd = default_cwd or os.getcwd()
+
+    async def _ensure_session(self, env: dict[str, str]) -> asyncio.subprocess.Process:
+        """Ensure persistent shell session exists."""
+        if self._session is None or self._session.returncode is not None:
+            self._session = await asyncio.create_subprocess_exec(
+                *self.shell_command,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=env,
+                cwd=self._current_cwd,
+            )
+            # Disable PS1 prompt
+            self._session.stdin.write(b"export PS1=''\n")
+            await self._session.stdin.drain()
+        return self._session
+
+    async def _send_command(self, proc: asyncio.subprocess.Process, command: str) -> tuple[str, str, int]:
+        """Send command to persistent session and read output."""
+        marker = f"__END_{uuid.uuid4().hex[:8]}__"
+        full_cmd = f"{command}\necho {marker} $?\n"
+
+        proc.stdin.write(full_cmd.encode())
+        await proc.stdin.drain()
+
+        stdout_lines = []
+        exit_code = 0
+
+        while True:
+            line = await proc.stdout.readline()
+            if not line:
+                break
+            line_str = line.decode("utf-8", errors="replace")
+            if marker in line_str:
+                parts = line_str.split()
+                if len(parts) >= 2:
+                    try:
+                        exit_code = int(parts[1])
+                    except ValueError:
+                        pass
+                break
+            stdout_lines.append(line_str)
+
+        return "".join(stdout_lines), "", exit_code
 
     async def execute(
         self,
@@ -30,56 +80,38 @@ class ZshExecutor(BaseExecutor):
         if env:
             merged_env.update(env)
 
-        try:
-            proc = await asyncio.create_subprocess_shell(
-                command,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=work_dir,
-                env=merged_env,
-                shell=True,
-                executable=self.shell_command[0],
-            )
-
+        async with self._session_lock:
             try:
-                stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                    proc.communicate(),
+                proc = await self._ensure_session(merged_env)
+
+                # Change directory if needed
+                if work_dir != self._current_cwd:
+                    await self._send_command(proc, f"cd '{work_dir}'")
+                    self._current_cwd = work_dir
+
+                stdout, stderr, exit_code = await asyncio.wait_for(
+                    self._send_command(proc, command),
                     timeout=timeout,
                 )
                 return ExecuteResult(
-                    exit_code=proc.returncode or 0,
-                    stdout=stdout_bytes.decode("utf-8", errors="replace"),
-                    stderr=stderr_bytes.decode("utf-8", errors="replace"),
+                    exit_code=exit_code,
+                    stdout=stdout,
+                    stderr=stderr,
                     timed_out=False,
                 )
             except TimeoutError:
-                proc.kill()
-                await proc.wait()
                 return ExecuteResult(
                     exit_code=-1,
                     stdout="",
                     stderr=f"Command timed out after {timeout}s",
                     timed_out=True,
                 )
-
-        except FileNotFoundError:
-            return ExecuteResult(
-                exit_code=127,
-                stdout="",
-                stderr=f"Shell not found: {self.shell_command[0]}",
-            )
-        except PermissionError:
-            return ExecuteResult(
-                exit_code=126,
-                stdout="",
-                stderr=f"Permission denied: {command}",
-            )
-        except OSError as e:
-            return ExecuteResult(
-                exit_code=1,
-                stdout="",
-                stderr=f"OS error: {e}",
-            )
+            except Exception as e:
+                return ExecuteResult(
+                    exit_code=1,
+                    stdout="",
+                    stderr=f"Error: {e}",
+                )
 
     async def execute_async(
         self,

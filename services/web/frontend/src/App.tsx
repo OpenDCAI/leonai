@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   createThread, deleteThread, getThread, listThreads, listSandboxTypes,
-  pauseSession, resumeSession,
+  pauseThreadSandbox, resumeThreadSandbox,
   type ChatMessage, type ThreadSummary, type SandboxType, type SandboxInfo,
 } from "./api";
 import { ChatView } from "./components/ChatView";
@@ -116,14 +116,14 @@ export default function App() {
   }
 
   async function handlePauseSandbox() {
-    if (!activeSandbox?.session_id) return;
-    await pauseSession(activeSandbox.session_id);
+    if (!activeThreadId) return;
+    await pauseThreadSandbox(activeThreadId);
     setActiveSandbox((prev) => prev ? { ...prev, status: "paused" } : null);
   }
 
   async function handleResumeSandbox() {
-    if (!activeSandbox?.session_id) return;
-    await resumeSession(activeSandbox.session_id);
+    if (!activeThreadId) return;
+    await resumeThreadSandbox(activeThreadId);
     setActiveSandbox((prev) => prev ? { ...prev, status: "running" } : null);
   }
 

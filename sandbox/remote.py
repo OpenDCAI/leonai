@@ -46,16 +46,16 @@ class RemoteSandbox(Sandbox):
         self._on_exit = config.on_exit
 
         # Cache session_id per thread to avoid hitting SQLite on every tool call
-        _session_cache: dict[str, str] = {}
+        self._session_cache: dict[str, str] = {}
 
         def _get_session_id() -> str:
             thread_id = get_current_thread_id()
             if not thread_id:
                 raise RuntimeError("No thread_id set. Call set_current_thread_id first.")
-            if thread_id not in _session_cache:
+            if thread_id not in self._session_cache:
                 info = self._manager.get_or_create_session(thread_id)
-                _session_cache[thread_id] = info.session_id
-            return _session_cache[thread_id]
+                self._session_cache[thread_id] = info.session_id
+            return self._session_cache[thread_id]
 
         self._get_session_id = _get_session_id
         self._fs = SandboxFileBackend(self._manager, _get_session_id)
@@ -104,4 +104,16 @@ class RemoteSandbox(Sandbox):
 
     def ensure_session(self, thread_id: str) -> None:
         set_current_thread_id(thread_id)
+        # @@@ Clear cache so get_or_create_session re-checks DB status and auto-resumes if paused
+        self._session_cache.pop(thread_id, None)
         self._get_session_id()
+
+    def pause_thread(self, thread_id: str) -> bool:
+        """Pause the sandbox session for a thread."""
+        self._session_cache.pop(thread_id, None)
+        return self._manager.pause_session(thread_id)
+
+    def resume_thread(self, thread_id: str) -> bool:
+        """Resume the sandbox session for a thread."""
+        self._session_cache.pop(thread_id, None)
+        return self._manager.resume_session(thread_id)

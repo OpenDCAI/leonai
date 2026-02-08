@@ -78,8 +78,37 @@ class SandboxManager:
 
     def get_or_create_session(self, thread_id: str) -> SessionInfo:
         """Get existing session for thread, or create new one."""
-        existing = self.store.get(thread_id)
+        # Check if terminal exists
+        if hasattr(self.store, 'get_terminal'):
+            terminal = self.store.get_terminal(thread_id)
+            if terminal and terminal['sandbox_id']:
+                sandbox = self.store.get_sandbox(terminal['sandbox_id'])
+                if sandbox and sandbox['provider'] == self.provider.name:
+                    status = self.provider.get_session_status(terminal['sandbox_id'])
 
+                    if status == "running":
+                        self.store.touch(thread_id)
+                        return SessionInfo(
+                            session_id=terminal['sandbox_id'],
+                            provider=sandbox['provider'],
+                            status="running",
+                        )
+
+                    elif status == "paused":
+                        if self.provider.resume_session(terminal['sandbox_id']):
+                            self.store.update_sandbox_status(terminal['sandbox_id'], "running")
+                            self._fire_session_ready(terminal['sandbox_id'], "resume")
+                            return SessionInfo(
+                                session_id=terminal['sandbox_id'],
+                                provider=sandbox['provider'],
+                                status="running",
+                            )
+
+                    # Sandbox dead, detach terminal
+                    self.store.detach_terminal(thread_id)
+
+        # Legacy fallback
+        existing = self.store.get(thread_id)
         if existing:
             if existing["provider"] != self.provider.name:
                 self.store.delete(thread_id)
@@ -107,10 +136,19 @@ class SandboxManager:
 
                 self.store.delete(thread_id)
 
+        # Create new sandbox + terminal
         context_id = self._build_context_id(thread_id)
         info = self.provider.create_session(context_id=context_id)
-        self.store.save(thread_id, info, context_id)
-        # @@@ E2B legacy: restore workspace files into new VM
+
+        # Save to new schema if available
+        if hasattr(self.store, 'save_sandbox'):
+            self.store.save_sandbox(info.session_id, info.provider, info.status)
+            self.store.save_terminal(thread_id, info.session_id, 'remote_stateful')
+        else:
+            # Legacy fallback
+            self.store.save(thread_id, info, context_id)
+
+        # E2B legacy: restore workspace files into new VM
         if self.provider.name == "e2b" and hasattr(self.provider, "restore_workspace"):
             if hasattr(self.store, "load_e2b_snapshot"):
                 snapshot = self.store.load_e2b_snapshot(thread_id)

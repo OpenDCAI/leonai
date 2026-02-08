@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import {
-  destroySession, listSandboxSessions, pauseSession, resumeSession,
+  destroyThreadSandbox, listSandboxSessions, pauseThreadSandbox, resumeThreadSandbox,
   getSessionMetrics, type SandboxSession, type SandboxMetrics,
 } from "../api";
 
@@ -26,26 +26,26 @@ export function SandboxPanel({ onClose }: SandboxPanelProps) {
 
   useEffect(() => { void refresh(); }, []);
 
-  async function handlePause(sid: string) {
-    setBusy(sid);
+  async function handlePause(s: SandboxSession) {
+    setBusy(s.session_id);
     try {
-      await pauseSession(sid);
+      await pauseThreadSandbox(s.thread_id);
       await refresh();
     } finally { setBusy(null); }
   }
 
-  async function handleResume(sid: string) {
-    setBusy(sid);
+  async function handleResume(s: SandboxSession) {
+    setBusy(s.session_id);
     try {
-      await resumeSession(sid);
+      await resumeThreadSandbox(s.thread_id);
       await refresh();
     } finally { setBusy(null); }
   }
 
-  async function handleDestroy(sid: string) {
-    setBusy(sid);
+  async function handleDestroy(s: SandboxSession) {
+    setBusy(s.session_id);
     try {
-      await destroySession(sid);
+      await destroyThreadSandbox(s.thread_id);
       await refresh();
     } finally { setBusy(null); }
   }
@@ -99,16 +99,16 @@ export function SandboxPanel({ onClose }: SandboxPanelProps) {
                   <td className="mono">{s.thread_id.slice(0, 12)}</td>
                   <td className="sandbox-actions">
                     {s.status === "running" && (
-                      <button disabled={busy === s.session_id} onClick={() => void handlePause(s.session_id)}>
+                      <button disabled={busy === s.session_id} onClick={() => void handlePause(s)}>
                         Pause
                       </button>
                     )}
                     {s.status === "paused" && (
-                      <button disabled={busy === s.session_id} onClick={() => void handleResume(s.session_id)}>
+                      <button disabled={busy === s.session_id} onClick={() => void handleResume(s)}>
                         Resume
                       </button>
                     )}
-                    <button disabled={busy === s.session_id} onClick={() => void handleDestroy(s.session_id)}>
+                    <button disabled={busy === s.session_id} onClick={() => void handleDestroy(s)}>
                       Destroy
                     </button>
                     <button onClick={() => void handleMetrics(s.session_id)}>
