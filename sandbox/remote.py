@@ -94,7 +94,10 @@ class RemoteSandbox(Sandbox):
                     print(f"[{self.name}] Paused {count} session(s)")
             elif self._on_exit == "destroy":
                 for session in self._manager.list_sessions():
-                    self._manager.destroy_session(session["thread_id"])
+                    self._manager.destroy_session(
+                        thread_id=session["thread_id"],
+                        session_id=session["session_id"],
+                    )
                 print(f"[{self.name}] Destroyed all sessions")
         except Exception as e:
             print(f"[{self.name}] Cleanup error: {e}")

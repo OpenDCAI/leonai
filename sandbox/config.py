@@ -31,6 +31,13 @@ class E2BConfig(BaseModel):
     timeout: int = 300  # seconds
 
 
+class DaytonaConfig(BaseModel):
+    api_key: str | None = None
+    api_url: str = "https://app.daytona.io/api"
+    target: str = "local"
+    cwd: str = "/home/daytona"
+
+
 class SandboxConfig(BaseModel):
     """Execution environment configuration.
 
@@ -38,10 +45,11 @@ class SandboxConfig(BaseModel):
     "local" is the implicit default and needs no config file.
     """
 
-    provider: str = "local"  # "local" | "agentbay" | "docker" | "e2b"
+    provider: str = "local"  # "local" | "agentbay" | "docker" | "e2b" | "daytona"
     agentbay: AgentBayConfig = Field(default_factory=AgentBayConfig)
     docker: DockerConfig = Field(default_factory=DockerConfig)
     e2b: E2BConfig = Field(default_factory=E2BConfig)
+    daytona: DaytonaConfig = Field(default_factory=DaytonaConfig)
     on_exit: str = "pause"  # "pause" | "destroy"
     init_commands: list[str] = Field(default_factory=list)
 
@@ -72,7 +80,7 @@ class SandboxConfig(BaseModel):
         if self.init_commands:
             data["init_commands"] = self.init_commands
         # Only include the active provider's config
-        if self.provider in ("agentbay", "docker", "e2b"):
+        if self.provider in ("agentbay", "docker", "e2b", "daytona"):
             data[self.provider] = getattr(self, self.provider).model_dump()
         path.write_text(json.dumps(data, indent=2))
         return path
