@@ -55,6 +55,7 @@ class BaseExecutor(ABC):
     shell_name: str = "unknown"
     shell_command: tuple[str, ...] = ()
     is_remote: bool = False
+    runtime_owns_cwd: bool = False
 
     def __init__(self, default_cwd: str | None = None):
         self.default_cwd = default_cwd
