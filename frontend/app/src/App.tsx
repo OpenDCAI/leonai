@@ -204,7 +204,12 @@ export default function App() {
         <div className="flex-1 flex min-h-0">
           <div className={`flex flex-col transition-all duration-300 ${computerOpen ? "w-1/2" : "flex-1"}`}>
             <ChatArea messages={messages} isStreaming={isStreaming} />
-            <TaskProgress messages={messages} isStreaming={isStreaming} onOpenComputer={() => setComputerOpen(true)} />
+            <TaskProgress
+              isStreaming={isStreaming}
+              sandboxType={activeSandbox?.type ?? "local"}
+              sandboxStatus={activeSandbox?.status ?? (activeSandbox?.type === "local" ? "running" : null)}
+              onOpenComputer={() => setComputerOpen(true)}
+            />
             <InputBox
               disabled={isStreaming}
               placeholder={activeThreadId ? "发送消息给 Leon" : "先创建一个会话"}
