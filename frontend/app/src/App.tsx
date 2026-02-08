@@ -235,7 +235,16 @@ export default function App() {
         onSelectThread={(threadId) => setActiveThreadId(threadId)}
       />
 
-      <SandboxSessionsModal isOpen={sessionsOpen} onClose={() => setSessionsOpen(false)} />
+      <SandboxSessionsModal
+        isOpen={sessionsOpen}
+        onClose={() => setSessionsOpen(false)}
+        onSessionMutated={(threadId) => {
+          if (activeThreadId === threadId) {
+            void loadThread(threadId);
+          }
+          void refreshThreads();
+        }}
+      />
     </div>
   );
 }

@@ -10,9 +10,10 @@ import {
 interface SandboxSessionsModalProps {
   isOpen: boolean;
   onClose: () => void;
+  onSessionMutated?: (threadId: string) => void;
 }
 
-export default function SandboxSessionsModal({ isOpen, onClose }: SandboxSessionsModalProps) {
+export default function SandboxSessionsModal({ isOpen, onClose, onSessionMutated }: SandboxSessionsModalProps) {
   const [sessions, setSessions] = useState<SandboxSession[]>([]);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -52,10 +53,11 @@ export default function SandboxSessionsModal({ isOpen, onClose }: SandboxSession
 
   if (!isOpen) return null;
 
-  async function withBusy(sessionId: string, fn: () => Promise<void>) {
+  async function withBusy(sessionId: string, threadId: string, fn: () => Promise<void>) {
     setBusy(sessionId);
     try {
       await fn();
+      onSessionMutated?.(threadId);
       await refresh();
     } finally {
       setBusy(null);
@@ -110,7 +112,7 @@ export default function SandboxSessionsModal({ isOpen, onClose }: SandboxSession
                           <button
                             className="px-2 py-1 text-xs rounded bg-[#384e8a] hover:bg-[#4560aa] disabled:opacity-50"
                             disabled={busy === row.session_id}
-                            onClick={() => void withBusy(row.session_id, () => pauseThreadSandbox(row.thread_id))}
+                            onClick={() => void withBusy(row.session_id, row.thread_id, () => pauseThreadSandbox(row.thread_id))}
                           >
                             Pause
                           </button>
@@ -119,7 +121,7 @@ export default function SandboxSessionsModal({ isOpen, onClose }: SandboxSession
                           <button
                             className="px-2 py-1 text-xs rounded bg-[#2d6a4f] hover:bg-[#367d5c] disabled:opacity-50"
                             disabled={busy === row.session_id}
-                            onClick={() => void withBusy(row.session_id, () => resumeThreadSandbox(row.thread_id))}
+                            onClick={() => void withBusy(row.session_id, row.thread_id, () => resumeThreadSandbox(row.thread_id))}
                           >
                             Resume
                           </button>
@@ -127,7 +129,7 @@ export default function SandboxSessionsModal({ isOpen, onClose }: SandboxSession
                         <button
                           className="px-2 py-1 text-xs rounded bg-[#8a3838] hover:bg-[#aa4545] disabled:opacity-50"
                           disabled={busy === row.session_id}
-                          onClick={() => void withBusy(row.session_id, () => destroyThreadSandbox(row.thread_id))}
+                          onClick={() => void withBusy(row.session_id, row.thread_id, () => destroyThreadSandbox(row.thread_id))}
                         >
                           Destroy
                         </button>
