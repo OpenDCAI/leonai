@@ -546,3 +546,173 @@ body,
   color: #6b7280;
   font-family: "SFMono-Regular", Menlo, monospace;
 }
+
+/* Session Status Panel */
+
+.session-status-panel {
+  border-top: 1px solid #e5e7eb;
+  background: #f9fafb;
+}
+
+.session-status-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  cursor: pointer;
+  user-select: none;
+  background: #ffffff;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.session-status-header:hover {
+  background: #f9fafb;
+}
+
+.session-status-header h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #374151;
+}
+
+.expand-btn {
+  border: none;
+  background: transparent;
+  color: #6b7280;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 4px;
+}
+
+.session-status-content {
+  padding: 16px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.status-loading, .status-error {
+  text-align: center;
+  padding: 12px;
+  font-size: 13px;
+}
+
+.status-loading {
+  color: #6b7280;
+}
+
+.status-error {
+  color: #dc2626;
+  background: #fee2e2;
+  border-radius: 6px;
+}
+
+.status-section {
+  margin-bottom: 16px;
+  padding: 12px;
+  background: #ffffff;
+  border-radius: 8px;
+  border: 1px solid #e5e7eb;
+}
+
+.status-section h4 {
+  margin: 0 0 12px 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #111827;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.status-grid {
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  gap: 8px;
+  font-size: 13px;
+  align-items: center;
+}
+
+.status-grid .label {
+  color: #6b7280;
+  font-weight: 500;
+}
+
+.status-grid .mono {
+  font-family: "SF Mono", "Monaco", "Consolas", monospace;
+  font-size: 12px;
+  color: #374151;
+}
+
+.status-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.status-badge.active { background: #d1fae5; color: #065f46; }
+.status-badge.running { background: #d1fae5; color: #065f46; }
+.status-badge.paused { background: #fef3c7; color: #92400e; }
+.status-badge.expired { background: #fee2e2; color: #991b1b; }
+.status-badge.unknown { background: #f3f4f6; color: #6b7280; }
+
+.provider-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.provider-badge.docker { background: #1d4ed8; color: #dbeafe; }
+.provider-badge.e2b { background: #7c3aed; color: #ede9fe; }
+.provider-badge.agentbay { background: #059669; color: #d1fae5; }
+.provider-badge.daytona { background: #d97706; color: #fef3c7; }
+
+.env-delta {
+  margin-top: 12px;
+  padding: 8px;
+  background: #f3f4f6;
+  border-radius: 4px;
+}
+
+.env-delta strong {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.env-delta pre {
+  margin: 0;
+  font-family: "SF Mono", "Monaco", "Consolas", monospace;
+  font-size: 11px;
+  color: #374151;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.refresh-btn {
+  width: 100%;
+  margin-top: 12px;
+  padding: 8px;
+  border: 1px solid #d1d5db;
+  background: #ffffff;
+  color: #374151;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.refresh-btn:hover {
+  background: #f9fafb;
+}
+
+.refresh-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

@@ -1,11 +1,6 @@
 """RemoteSandbox — base class for all remote sandbox implementations.
 
-Extracts common logic shared by AgentBaySandbox, DockerSandbox, E2BSandbox:
-- Session cache + _get_session_id closure
-- SandboxFileBackend + SandboxExecutor creation
-- fs() / shell() / manager property
-- close() (pause/destroy)
-- ensure_session()
+Uses new architecture: Thread → ChatSession → Runtime → Terminal → Lease
 """
 
 from __future__ import annotations
@@ -13,9 +8,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from sandbox.base import Sandbox
+from sandbox.capability import SandboxCapability
 from sandbox.config import SandboxConfig
-from sandbox.executor import SandboxExecutor
-from sandbox.file_backend import SandboxFileBackend
 from sandbox.interfaces import BaseExecutor, FileSystemBackend
 from sandbox.manager import SandboxManager
 from sandbox.provider import SandboxProvider
@@ -23,10 +17,12 @@ from sandbox.thread_context import get_current_thread_id, set_current_thread_id
 
 
 class RemoteSandbox(Sandbox):
-    """Base class for remote sandboxes (AgentBay, Docker, E2B).
+    """Base class for remote sandboxes (AgentBay, Docker, E2B, Daytona).
 
-    Subclasses create a provider and call super().__init__().
-    They only need to implement: name, working_dir, env_label.
+    New architecture:
+    - Uses SandboxCapability wrapper
+    - Terminal state persists across sessions
+    - Lease manages shared compute resources
     """
 
     def __init__(
@@ -38,48 +34,54 @@ class RemoteSandbox(Sandbox):
     ) -> None:
         self._config = config
         self._default_cwd = default_cwd
+        self._provider = provider
         self._manager = SandboxManager(
             provider=provider,
             db_path=db_path,
-            on_session_ready=self._run_init_commands if config.init_commands else None,
         )
         self._on_exit = config.on_exit
 
-        # Cache session_id per thread to avoid hitting SQLite on every tool call
-        self._session_cache: dict[str, str] = {}
+        # Cache capability per thread
+        self._capability_cache: dict[str, SandboxCapability] = {}
+        self._init_commands_run: set[str] = set()
 
-        def _get_session_id() -> str:
-            thread_id = get_current_thread_id()
-            if not thread_id:
-                raise RuntimeError("No thread_id set. Call set_current_thread_id first.")
-            if thread_id not in self._session_cache:
-                info = self._manager.get_or_create_session(thread_id)
-                self._session_cache[thread_id] = info.session_id
-            return self._session_cache[thread_id]
+    def _get_capability(self) -> SandboxCapability:
+        """Get capability for current thread."""
+        thread_id = get_current_thread_id()
+        if not thread_id:
+            raise RuntimeError("No thread_id set. Call set_current_thread_id first.")
 
-        self._get_session_id = _get_session_id
-        self._fs = SandboxFileBackend(self._manager, _get_session_id)
-        self._shell = SandboxExecutor(
-            self._manager,
-            _get_session_id,
-            default_cwd=default_cwd,
-        )
+        if thread_id not in self._capability_cache:
+            capability = self._manager.get_sandbox(thread_id)
 
-    def _run_init_commands(self, session_id: str, reason: str) -> None:
+            # Run init commands on first access
+            if self._config.init_commands and thread_id not in self._init_commands_run:
+                self._run_init_commands(capability)
+                self._init_commands_run.add(thread_id)
+
+            self._capability_cache[thread_id] = capability
+
+        return self._capability_cache[thread_id]
+
+    def _run_init_commands(self, capability: SandboxCapability) -> None:
+        """Run init commands on new session."""
+        import asyncio
+
         for i, cmd in enumerate(self._config.init_commands, 1):
-            result = self._manager.provider.execute(session_id, cmd, cwd=self._default_cwd)
-            if result.error or result.exit_code != 0:
+            result = asyncio.run(capability.command.execute(cmd))
+            if result.exit_code != 0:
                 raise RuntimeError(
-                    f"Init command #{i} failed ({reason}): {cmd}\n"
-                    f"exit={result.exit_code} error={result.error or ''}\n"
-                    f"output={result.output or ''}"
+                    f"Init command #{i} failed: {cmd}\n"
+                    f"exit={result.exit_code}\n"
+                    f"stderr={result.stderr}\n"
+                    f"stdout={result.stdout}"
                 )
 
     def fs(self) -> FileSystemBackend:
-        return self._fs
+        return self._get_capability().fs
 
     def shell(self) -> BaseExecutor:
-        return self._shell
+        return self._get_capability().command
 
     @property
     def manager(self) -> SandboxManager:
@@ -96,24 +98,24 @@ class RemoteSandbox(Sandbox):
                 for session in self._manager.list_sessions():
                     self._manager.destroy_session(
                         thread_id=session["thread_id"],
-                        session_id=session["session_id"],
                     )
                 print(f"[{self.name}] Destroyed all sessions")
         except Exception as e:
             print(f"[{self.name}] Cleanup error: {e}")
 
     def ensure_session(self, thread_id: str) -> None:
+        """Ensure session exists for thread."""
         set_current_thread_id(thread_id)
-        # @@@ Clear cache so get_or_create_session re-checks DB status and auto-resumes if paused
-        self._session_cache.pop(thread_id, None)
-        self._get_session_id()
+        # Clear cache to force re-fetch
+        self._capability_cache.pop(thread_id, None)
+        self._get_capability()
 
     def pause_thread(self, thread_id: str) -> bool:
         """Pause the sandbox session for a thread."""
-        self._session_cache.pop(thread_id, None)
+        self._capability_cache.pop(thread_id, None)
         return self._manager.pause_session(thread_id)
 
     def resume_thread(self, thread_id: str) -> bool:
         """Resume the sandbox session for a thread."""
-        self._session_cache.pop(thread_id, None)
+        self._capability_cache.pop(thread_id, None)
         return self._manager.resume_session(thread_id)

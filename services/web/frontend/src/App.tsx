@@ -6,6 +6,7 @@ import {
 } from "./api";
 import { ChatView } from "./components/ChatView";
 import { SandboxPanel } from "./components/SandboxPanel";
+import { SessionStatusPanel } from "./components/SessionStatusPanel";
 import { ThreadList } from "./components/ThreadList";
 
 function mapBackendMessages(payload: unknown): ChatMessage[] {
@@ -172,6 +173,13 @@ export default function App() {
           setMessages={setMessages}
           setIsStreaming={setIsStreaming}
         />
+
+        {activeThreadId && activeSandbox && activeSandbox.type !== "local" && (
+          <SessionStatusPanel
+            threadId={activeThreadId}
+            sandboxType={activeSandbox.type}
+          />
+        )}
       </main>
 
       {showSandboxPanel && (

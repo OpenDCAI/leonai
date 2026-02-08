@@ -202,3 +202,51 @@ export async function destroyThreadSandbox(threadId: string): Promise<void> {
 export async function getSessionMetrics(sessionId: string): Promise<{ metrics: SandboxMetrics | null; web_url: string | null }> {
   return request(`/api/sandbox/sessions/${encodeURIComponent(sessionId)}/metrics`);
 }
+
+// --- New architecture endpoints ---
+
+export interface SessionStatus {
+  thread_id: string;
+  session_id: string;
+  terminal_id: string;
+  status: string;
+  created_at: string;
+  last_active_at: string;
+  expires_at: string | null;
+}
+
+export interface TerminalStatus {
+  thread_id: string;
+  terminal_id: string;
+  lease_id: string;
+  cwd: string;
+  env_delta: Record<string, string>;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LeaseStatus {
+  thread_id: string;
+  lease_id: string;
+  provider_name: string;
+  instance: {
+    instance_id: string | null;
+    state: string | null;
+    started_at: string | null;
+  } | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function getThreadSession(threadId: string): Promise<SessionStatus> {
+  return request(`/api/threads/${encodeURIComponent(threadId)}/session`);
+}
+
+export async function getThreadTerminal(threadId: string): Promise<TerminalStatus> {
+  return request(`/api/threads/${encodeURIComponent(threadId)}/terminal`);
+}
+
+export async function getThreadLease(threadId: string): Promise<LeaseStatus> {
+  return request(`/api/threads/${encodeURIComponent(threadId)}/lease`);
+}

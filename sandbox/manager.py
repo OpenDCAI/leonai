@@ -1,16 +1,25 @@
 """
 Sandbox session manager.
 
-Tracks thread_id <-> session_id mapping via SessionStore.
-Handles lazy creation, auto-pause, and resume lifecycle.
+Orchestrates: Thread → ChatSession → Runtime → Terminal → Lease → Instance
+
+Architecture:
+- Thread (durable) → ChatSession (policy window) → Runtime (ephemeral)
+- Runtime references Terminal (state) + Lease (compute)
+- Lease manages Instance (ephemeral VM/container)
 """
 
 from collections.abc import Callable
 from pathlib import Path
+import uuid
 
-from sandbox.provider import SandboxProvider, SessionInfo
+from sandbox.capability import SandboxCapability
+from sandbox.chat_session import ChatSessionManager, ChatSessionPolicy
+from sandbox.lease import LeaseStore
+from sandbox.provider import SandboxProvider
 from sandbox.session_store import SessionStore
 from sandbox.sqlite_store import DEFAULT_DB_PATH, SQLiteSessionStore
+from sandbox.terminal import TerminalStore
 
 
 def lookup_sandbox_for_thread(thread_id: str) -> str | None:
@@ -25,6 +34,21 @@ def lookup_sandbox_for_thread(thread_id: str) -> str | None:
         return None
     try:
         with sqlite3.connect(str(DEFAULT_DB_PATH), timeout=5) as conn:
+            # Check new architecture first
+            row = conn.execute(
+                """
+                SELECT sl.provider_name
+                FROM chat_sessions cs
+                JOIN abstract_terminals at ON cs.terminal_id = at.terminal_id
+                JOIN sandbox_leases sl ON at.lease_id = sl.lease_id
+                WHERE cs.thread_id = ?
+                """,
+                (thread_id,),
+            ).fetchone()
+            if row:
+                return row[0]
+
+            # Fallback to legacy
             row = conn.execute(
                 "SELECT provider FROM sandbox_sessions WHERE thread_id = ?",
                 (thread_id,),
@@ -36,19 +60,20 @@ def lookup_sandbox_for_thread(thread_id: str) -> str | None:
 
 class SandboxManager:
     """
-    Manages sandbox sessions across threads.
+    Manages sandbox sessions across threads - NEW ARCHITECTURE.
 
     Responsibilities:
-    - Track thread_id <-> session_id mapping (via SessionStore)
-    - Handle lazy creation and auto-pause lifecycle
-    - Delegate persistence to the injected store
+    - Orchestrate thread_id → ChatSession → Runtime → Terminal → Lease
+    - Provide SandboxCapability to agents
+    - Handle session lifecycle (create, resume, cleanup)
+    - Maintain backward compatibility with legacy API
 
-    Lifecycle:
-    1. First tool call -> lazy create session
-    2. Thread switch -> pause current session
-    3. Resume thread -> resume paused session
-    4. Exit LEON -> pause all sessions
-    5. TTL expiry -> auto-delete (handled by provider)
+    New Flow:
+    1. get_sandbox(thread_id) → SandboxCapability
+    2. Capability wraps ChatSession
+    3. ChatSession owns Runtime
+    4. Runtime references Terminal + Lease
+    5. Lease manages Instance
     """
 
     def __init__(
@@ -64,6 +89,16 @@ class SandboxManager:
         self.default_context_id = default_context_id
         self._on_session_ready = on_session_ready
 
+        # New architecture stores
+        self.db_path = db_path or DEFAULT_DB_PATH
+        self.terminal_store = TerminalStore(db_path=self.db_path)
+        self.lease_store = LeaseStore(db_path=self.db_path)
+        self.session_manager = ChatSessionManager(
+            provider=provider,
+            db_path=self.db_path,
+            default_policy=ChatSessionPolicy(),
+        )
+
     def _build_context_id(self, thread_id: str) -> str | None:
         if self.provider.name in ("agentbay", "docker"):
             return f"leon-{thread_id}"
@@ -76,293 +111,132 @@ class SandboxManager:
     def close(self):
         self.store.close()
 
-    def get_or_create_session(self, thread_id: str) -> SessionInfo:
-        """Get existing session for thread, or create new one."""
-        # Check if terminal exists
-        if hasattr(self.store, 'get_terminal'):
-            terminal = self.store.get_terminal(thread_id)
-            if terminal and terminal['sandbox_id']:
-                sandbox = self.store.get_sandbox(terminal['sandbox_id'])
-                if sandbox and sandbox['provider'] == self.provider.name:
-                    status = self.provider.get_session_status(terminal['sandbox_id'])
+    def get_sandbox(self, thread_id: str) -> SandboxCapability:
+        """Get sandbox capability for thread (NEW ARCHITECTURE).
 
-                    if status == "running":
-                        self.store.touch(thread_id)
-                        return SessionInfo(
-                            session_id=terminal['sandbox_id'],
-                            provider=sandbox['provider'],
-                            status="running",
-                        )
+        This is the main entry point for agents. Returns a capability object
+        that wraps the new architecture while maintaining the same interface.
 
-                    elif status == "paused":
-                        if self.provider.resume_session(terminal['sandbox_id']):
-                            self.store.update_sandbox_status(terminal['sandbox_id'], "running")
-                            self._fire_session_ready(terminal['sandbox_id'], "resume")
-                            return SessionInfo(
-                                session_id=terminal['sandbox_id'],
-                                provider=sandbox['provider'],
-                                status="running",
-                            )
+        Flow:
+        1. Check if ChatSession exists for thread
+        2. If not, create: Terminal → Lease → Runtime → ChatSession
+        3. Wrap in SandboxCapability
+        4. Return to agent
+        """
+        # Try to get existing session
+        session = self.session_manager.get(thread_id)
 
-                    # Sandbox dead, detach terminal
-                    self.store.detach_terminal(thread_id)
+        if session:
+            # Session exists and not expired
+            return SandboxCapability(session)
 
-        # Legacy fallback
-        existing = self.store.get(thread_id)
-        if existing:
-            if existing["provider"] != self.provider.name:
-                self.store.delete(thread_id)
-            else:
-                session_id = existing["session_id"]
-                status = self.provider.get_session_status(session_id)
+        # Create new session
+        # 1. Create or get terminal
+        terminal = self.terminal_store.get(thread_id)
+        if not terminal:
+            # Create new terminal + lease
+            terminal_id = f"term-{uuid.uuid4().hex[:12]}"
+            lease_id = f"lease-{uuid.uuid4().hex[:12]}"
 
-                if status == "running":
-                    self.store.touch(thread_id)
-                    return SessionInfo(
-                        session_id=session_id,
-                        provider=existing["provider"],
-                        status="running",
-                    )
+            lease = self.lease_store.create(lease_id, self.provider.name)
+            # Use a safe default cwd that exists
+            import os
+            initial_cwd = os.path.expanduser("~")
 
-                elif status == "paused":
-                    if self.provider.resume_session(session_id):
-                        self.store.update_status(thread_id, "running")
-                        self._fire_session_ready(session_id, "resume")
-                        return SessionInfo(
-                            session_id=session_id,
-                            provider=existing["provider"],
-                            status="running",
-                        )
-
-                self.store.delete(thread_id)
-
-        # Create new sandbox + terminal
-        context_id = self._build_context_id(thread_id)
-        info = self.provider.create_session(context_id=context_id)
-
-        # Save to new schema if available
-        if hasattr(self.store, 'save_sandbox'):
-            self.store.save_sandbox(info.session_id, info.provider, info.status)
-            self.store.save_terminal(thread_id, info.session_id, 'remote_stateful')
+            terminal = self.terminal_store.create(
+                terminal_id=terminal_id,
+                thread_id=thread_id,
+                lease_id=lease_id,
+                initial_cwd=initial_cwd,
+            )
         else:
-            # Legacy fallback
-            self.store.save(thread_id, info, context_id)
+            # Terminal exists, get its lease
+            lease = self.lease_store.get(terminal.lease_id)
+            if not lease:
+                # Lease missing, create new one
+                lease = self.lease_store.create(terminal.lease_id, self.provider.name)
 
-        # E2B legacy: restore workspace files into new VM
-        if self.provider.name == "e2b" and hasattr(self.provider, "restore_workspace"):
-            if hasattr(self.store, "load_e2b_snapshot"):
-                snapshot = self.store.load_e2b_snapshot(thread_id)
-                if snapshot:
-                    try:
-                        self.provider.restore_workspace(info.session_id, snapshot)
-                    except Exception as e:
-                        print(f"[SandboxManager] E2B restore failed: {e}")
-        self._fire_session_ready(info.session_id, "create")
-
-        return info
-
-    def get_session(self, thread_id: str) -> SessionInfo | None:
-        """Get session info without creating."""
-        existing = self.store.get(thread_id)
-        if not existing:
-            return None
-        if existing["provider"] != self.provider.name:
-            return None
-
-        status = self.provider.get_session_status(existing["session_id"])
-        return SessionInfo(
-            session_id=existing["session_id"],
-            provider=existing["provider"],
-            status=status,
+        # 2. Create ChatSession (which creates Runtime)
+        session_id = f"sess-{uuid.uuid4().hex[:12]}"
+        session = self.session_manager.create(
+            session_id=session_id,
+            thread_id=thread_id,
+            terminal=terminal,
+            lease=lease,
         )
 
-    def has_session(self, thread_id: str) -> bool:
-        """Check if thread has an active session."""
-        return self.store.get(thread_id) is not None
+        # 3. Fire session ready callback if configured
+        instance = lease.get_instance()
+        if instance:
+            self._fire_session_ready(instance.instance_id, "create")
+
+        return SandboxCapability(session)
+
+    # Legacy API compatibility methods below
+
+    def get_or_create_session(self, thread_id: str):
+        """Legacy API - returns SessionInfo for backward compatibility."""
+        from sandbox.provider import SessionInfo
+
+        capability = self.get_sandbox(thread_id)
+        instance = capability._session.lease.get_instance()
+
+        if not instance:
+            # Ensure instance exists
+            from sandbox.runtime import RemoteWrappedRuntime
+            if isinstance(capability._session.runtime, RemoteWrappedRuntime):
+                instance = capability._session.lease.ensure_active_instance(
+                    capability._session.runtime.provider
+                )
+
+        return SessionInfo(
+            session_id=instance.instance_id if instance else "local",
+            provider=self.provider.name,
+            status="running",
+        )
 
     def pause_session(self, thread_id: str) -> bool:
         """Pause session for thread."""
-        existing = self.store.get(thread_id)
-        if not existing:
-            return False
-        if existing["provider"] != self.provider.name:
+        session = self.session_manager.get(thread_id)
+        if not session:
             return False
 
-        if self.provider.pause_session(existing["session_id"]):
-            self.store.update_status(thread_id, "paused")
-            return True
+        from sandbox.runtime import RemoteWrappedRuntime
+        if isinstance(session.runtime, RemoteWrappedRuntime):
+            return session.lease.pause_instance(session.runtime.provider)
         return False
 
     def resume_session(self, thread_id: str) -> bool:
-        """Resume paused session for thread."""
-        existing = self.store.get(thread_id)
-        if not existing:
-            return False
-        if existing["provider"] != self.provider.name:
+        """Resume session for thread."""
+        session = self.session_manager.get(thread_id)
+        if not session:
             return False
 
-        if self.provider.resume_session(existing["session_id"]):
-            self.store.update_status(thread_id, "running")
-            self._fire_session_ready(existing["session_id"], "resume")
-            return True
-        return False
-
-    def destroy_session(self, thread_id: str = "", session_id: str = "", sync: bool = True) -> bool:
-        """Destroy session by thread_id or session_id."""
-        if thread_id:
-            existing = self.store.get(thread_id)
-            if not existing or existing["provider"] != self.provider.name:
-                return False
-            session_id = existing["session_id"]
-
-            # @@@ E2B legacy: snapshot workspace files before destroying VM
-            if self.provider.name == "e2b" and hasattr(self.provider, "snapshot_workspace"):
-                if hasattr(self.store, "save_e2b_snapshot"):
-                    try:
-                        files = self.provider.snapshot_workspace(session_id)
-                        self.store.save_e2b_snapshot(thread_id, files)
-                    except Exception as e:
-                        print(f"[SandboxManager] E2B snapshot failed: {e}")
-
-            if self.provider.destroy_session(session_id, sync=sync):
-                self.store.delete(thread_id)
-                return True
-            return False
-
-        if session_id:
-            return self.provider.destroy_session(session_id, sync=sync)
-
+        from sandbox.runtime import RemoteWrappedRuntime
+        if isinstance(session.runtime, RemoteWrappedRuntime):
+            return session.lease.resume_instance(session.runtime.provider)
         return False
 
     def pause_all_sessions(self) -> int:
-        """Pause all running sessions. Called on LEON exit."""
+        """Pause all active sessions."""
+        sessions = self.session_manager.list_all()
         count = 0
-        for row in self.store.get_all():
-            if row["provider"] != self.provider.name:
-                continue
-            status = self.provider.get_session_status(row["session_id"])
-            if status in ("deleted", "unknown"):
-                self.store.delete(row["thread_id"])
-                continue
-            if row["status"] == "running":
-                try:
-                    if self.provider.pause_session(row["session_id"]):
-                        self.store.update_status(row["thread_id"], "paused")
-                        count += 1
-                except Exception as e:
-                    message = str(e)
-                    if "Session not found" in message:
-                        self.store.delete(row["thread_id"])
-                        continue
-                    print(f"[SandboxManager] Failed to pause {row['session_id']}: {e}")
+
+        for session_data in sessions:
+            if self.pause_session(session_data["thread_id"]):
+                count += 1
+
         return count
+
+    def destroy_session(self, thread_id: str, session_id: str | None = None) -> None:
+        """Destroy session and clean up resources."""
+        session = self.session_manager.get(thread_id)
+        if session:
+            from sandbox.runtime import RemoteWrappedRuntime
+            if isinstance(session.runtime, RemoteWrappedRuntime):
+                session.lease.destroy_instance(session.runtime.provider)
+            self.session_manager.delete(session.session_id)
 
     def list_sessions(self) -> list[dict]:
-        """List all tracked sessions with current status.
-
-        If the provider supports list_provider_sessions(), also discovers
-        orphaned sessions not in the local DB.
-        """
-        rows = [row for row in self.store.get_all() if row["provider"] == self.provider.name]
-
-        # @@@ Providers with list_provider_sessions() can discover orphans
-        if hasattr(self.provider, "list_provider_sessions"):
-            api_sessions = self.provider.list_provider_sessions()
-            api_map = {s.session_id: s.status for s in api_sessions}
-
-            sessions = []
-            for row in rows:
-                status = api_map.pop(row["session_id"], "deleted")
-                if status == "deleted":
-                    self.store.delete(row["thread_id"])
-                    continue
-                sessions.append(
-                    {
-                        "thread_id": row["thread_id"],
-                        "session_id": row["session_id"],
-                        "provider": row["provider"],
-                        "status": status,
-                        "context_id": row["context_id"],
-                        "created_at": row["created_at"],
-                        "last_active": row["last_active"],
-                    }
-                )
-            for sid, status in api_map.items():
-                sessions.append(
-                    {
-                        "thread_id": "",
-                        "session_id": sid,
-                        "provider": self.provider.name,
-                        "status": status,
-                        "context_id": None,
-                        "created_at": None,
-                        "last_active": None,
-                    }
-                )
-            return sessions
-
-        # Batch status via get_all_session_statuses (1 API call vs N)
-        if rows and hasattr(self.provider, "get_all_session_statuses"):
-            status_map = self.provider.get_all_session_statuses()
-            sessions = []
-            for row in rows:
-                status = status_map.get(row["session_id"], "deleted")
-                if status == "deleted":
-                    self.store.delete(row["thread_id"])
-                    continue
-                sessions.append(
-                    {
-                        "thread_id": row["thread_id"],
-                        "session_id": row["session_id"],
-                        "provider": row["provider"],
-                        "status": status,
-                        "context_id": row["context_id"],
-                        "created_at": row["created_at"],
-                        "last_active": row["last_active"],
-                    }
-                )
-            return sessions
-
-        if not rows:
-            return []
-
-        # Fallback: parallel per-session status checks
-        from concurrent.futures import ThreadPoolExecutor
-
-        with ThreadPoolExecutor(max_workers=min(len(rows), 8)) as pool:
-            statuses = list(
-                pool.map(
-                    lambda r: self.provider.get_session_status(r["session_id"]),
-                    rows,
-                )
-            )
-
-        sessions = []
-        for row, status in zip(rows, statuses):
-            if status == "deleted":
-                self.store.delete(row["thread_id"])
-                continue
-            sessions.append(
-                {
-                    "thread_id": row["thread_id"],
-                    "session_id": row["session_id"],
-                    "provider": row["provider"],
-                    "status": status,
-                    "context_id": row["context_id"],
-                    "created_at": row["created_at"],
-                    "last_active": row["last_active"],
-                }
-            )
-        return sessions
-
-    def cleanup_stale_sessions(self) -> int:
-        """Remove DB entries for sessions that no longer exist."""
-        count = 0
-        for row in self.store.get_all():
-            if row["provider"] != self.provider.name:
-                continue
-            status = self.provider.get_session_status(row["session_id"])
-            if status in ("deleted", "unknown"):
-                self.store.delete(row["thread_id"])
-                count += 1
-        return count
+        """List all sessions."""
+        return self.session_manager.list_all()

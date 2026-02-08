@@ -337,12 +337,113 @@ async def destroy_thread_sandbox(thread_id: str) -> dict[str, Any]:
     agent = await _get_or_create_agent(app, sandbox_type)
     if not hasattr(agent, "_sandbox") or agent._sandbox.name == "local":
         raise HTTPException(400, "Agent has no remote sandbox")
-    # Get session_id from DB before destroying
-    session = agent._sandbox.manager.store.get(thread_id) if hasattr(agent._sandbox.manager, "store") else None
-    session_id = session.get("session_id", "") if session else ""
-    ok = await asyncio.to_thread(agent._sandbox.manager.destroy_session, thread_id, session_id)
-    agent._sandbox._session_cache.pop(thread_id, None)
+    ok = await asyncio.to_thread(agent._sandbox.manager.destroy_session, thread_id)
+    agent._sandbox._capability_cache.pop(thread_id, None)
     return {"ok": ok, "thread_id": thread_id}
+
+
+# --- New architecture endpoints: session/terminal/lease status ---
+
+@app.get("/api/threads/{thread_id}/session")
+async def get_thread_session_status(thread_id: str) -> dict[str, Any]:
+    """Get ChatSession status for a thread."""
+    sandbox_type = _resolve_thread_sandbox(app, thread_id)
+    if sandbox_type == "local":
+        raise HTTPException(400, "Local threads have no session tracking")
+    agent = await _get_or_create_agent(app, sandbox_type)
+    if not hasattr(agent, "_sandbox") or agent._sandbox.name == "local":
+        raise HTTPException(400, "Agent has no remote sandbox")
+
+    def _get_session():
+        mgr = agent._sandbox.manager
+        return mgr.session_manager.get_session(thread_id)
+
+    session = await asyncio.to_thread(_get_session)
+    if not session:
+        raise HTTPException(404, f"No session found for thread {thread_id}")
+
+    return {
+        "thread_id": thread_id,
+        "session_id": session.session_id,
+        "terminal_id": session.terminal_id,
+        "status": session.status,
+        "created_at": session.created_at.isoformat(),
+        "last_active_at": session.last_active_at.isoformat(),
+        "expires_at": session.expires_at.isoformat() if session.expires_at else None,
+    }
+
+
+@app.get("/api/threads/{thread_id}/terminal")
+async def get_thread_terminal_status(thread_id: str) -> dict[str, Any]:
+    """Get AbstractTerminal state for a thread."""
+    sandbox_type = _resolve_thread_sandbox(app, thread_id)
+    if sandbox_type == "local":
+        raise HTTPException(400, "Local threads have no terminal tracking")
+    agent = await _get_or_create_agent(app, sandbox_type)
+    if not hasattr(agent, "_sandbox") or agent._sandbox.name == "local":
+        raise HTTPException(400, "Agent has no remote sandbox")
+
+    def _get_terminal():
+        mgr = agent._sandbox.manager
+        session = mgr.session_manager.get_session(thread_id)
+        if not session:
+            return None
+        return mgr.terminal_store.get(session.terminal_id)
+
+    terminal = await asyncio.to_thread(_get_terminal)
+    if not terminal:
+        raise HTTPException(404, f"No terminal found for thread {thread_id}")
+
+    state = terminal.get_state()
+    return {
+        "thread_id": thread_id,
+        "terminal_id": terminal.terminal_id,
+        "lease_id": terminal.lease_id,
+        "cwd": state.cwd,
+        "env_delta": state.env_delta,
+        "version": state.version,
+        "created_at": terminal.created_at.isoformat(),
+        "updated_at": terminal.updated_at.isoformat(),
+    }
+
+
+@app.get("/api/threads/{thread_id}/lease")
+async def get_thread_lease_status(thread_id: str) -> dict[str, Any]:
+    """Get SandboxLease status for a thread."""
+    sandbox_type = _resolve_thread_sandbox(app, thread_id)
+    if sandbox_type == "local":
+        raise HTTPException(400, "Local threads have no lease tracking")
+    agent = await _get_or_create_agent(app, sandbox_type)
+    if not hasattr(agent, "_sandbox") or agent._sandbox.name == "local":
+        raise HTTPException(400, "Agent has no remote sandbox")
+
+    def _get_lease():
+        mgr = agent._sandbox.manager
+        session = mgr.session_manager.get_session(thread_id)
+        if not session:
+            return None
+        terminal = mgr.terminal_store.get(session.terminal_id)
+        if not terminal:
+            return None
+        return mgr.lease_store.get(terminal.lease_id)
+
+    lease = await asyncio.to_thread(_get_lease)
+    if not lease:
+        raise HTTPException(404, f"No lease found for thread {thread_id}")
+
+    instance = lease.get_instance()
+    return {
+        "thread_id": thread_id,
+        "lease_id": lease.lease_id,
+        "provider_name": lease.provider_name,
+        "instance": {
+            "instance_id": instance.instance_id if instance else None,
+            "state": instance.state.value if instance else None,
+            "started_at": instance.started_at.isoformat() if instance and instance.started_at else None,
+        } if instance else None,
+        "created_at": lease.created_at.isoformat(),
+        "updated_at": lease.updated_at.isoformat(),
+    }
 
 
 # --- Thread endpoints ---
@@ -376,15 +477,16 @@ async def get_thread_messages(thread_id: str) -> dict[str, Any]:
     values = getattr(state, "values", {}) if state else {}
     messages = values.get("messages", []) if isinstance(values, dict) else []
 
-    # Get sandbox session info
+    # Get sandbox session info (new architecture)
     sandbox_info: dict[str, Any] = {"type": sandbox_type, "status": None, "session_id": None}
     if sandbox_type != "local" and hasattr(agent, "_sandbox"):
         try:
             mgr = agent._sandbox.manager
-            session_data = mgr.store.get(thread_id) if hasattr(mgr, "store") else None
-            if session_data:
-                sandbox_info["status"] = session_data.get("status", "unknown")
-                sandbox_info["session_id"] = session_data.get("session_id")
+            session = mgr.session_manager.get_session(thread_id)
+            if session:
+                sandbox_info["status"] = session.status
+                sandbox_info["session_id"] = session.session_id
+                sandbox_info["terminal_id"] = session.terminal_id
         except Exception:
             pass
 

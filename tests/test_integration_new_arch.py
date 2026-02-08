@@ -12,7 +12,7 @@ import pytest
 
 from sandbox.chat_session import ChatSessionManager
 from sandbox.lease import LeaseStore
-from sandbox.manager_new import SandboxManager
+from sandbox.manager import SandboxManager
 from sandbox.terminal import TerminalStore
 
 
