@@ -99,6 +99,9 @@ class RemoteSandbox(Sandbox):
                 self._remote = remote_sandbox
                 # @@@lazy-remote-flag - CommandMiddleware probes is_remote during init; keep this side-effect free.
                 self.is_remote = True
+                # @@@lazy-shell-name - CommandMiddleware logs shell_name during init.
+                # Expose a static label so hasattr/getattr won't trigger capability lookup before thread_id is set.
+                self.shell_name = "remote"
 
             def __getattr__(self, name):
                 # Defer to actual backend when methods are called

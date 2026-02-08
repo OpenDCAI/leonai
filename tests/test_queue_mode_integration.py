@@ -1,10 +1,18 @@
 """Integration test for Queue Mode - tests steer behavior with real agent"""
 
 import asyncio
+import os
 import threading
 import time
 
+import pytest
+
 # Test requires running from project root with dependencies installed
+
+pytestmark = pytest.mark.skipif(
+    os.getenv("RUN_REAL_LLM_TESTS") != "1",
+    reason="requires real LLM endpoint and credentials",
+)
 
 
 def test_queue_mode_steer():
@@ -121,29 +129,8 @@ def test_queue_mode_steer():
     # Cleanup
     agent.close()
 
-    return {
-        "tool_calls": tool_calls_seen,
-        "tool_results": tool_results_seen,
-        "steer_injected": steer_injected,
-    }
+    assert len(tool_calls_seen) > 0, "Expected at least one tool call during queue-mode test"
 
 
 if __name__ == "__main__":
-    result = test_queue_mode_steer()
-
-    print("\n[TEST] Final verdict:")
-    if result["steer_injected"]:
-        print("  ✓ Steer message was injected")
-    else:
-        print("  ✗ Steer message was NOT injected")
-
-    if len(result["tool_calls"]) > 0:
-        print(f"  ✓ Tool calls executed: {result['tool_calls']}")
-    else:
-        print("  ✗ No tool calls detected")
-
-    skipped = any("Skipped" in r for r in result["tool_results"])
-    if skipped:
-        print("  ✓ Some tool calls were skipped (steer working)")
-    else:
-        print("  ? No tool calls were skipped (may be timing issue)")
+    test_queue_mode_steer()
