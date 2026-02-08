@@ -51,6 +51,7 @@ class SandboxCapability:
 
 class _CommandWrapper(BaseExecutor):
     """Wrapper that delegates to runtime's execute method."""
+    runtime_owns_cwd = True
 
     def __init__(self, session: ChatSession):
         super().__init__(default_cwd=session.terminal.get_state().cwd)

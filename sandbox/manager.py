@@ -22,7 +22,7 @@ from sandbox.sqlite_store import DEFAULT_DB_PATH
 from sandbox.terminal import TerminalStore
 
 
-def lookup_sandbox_for_thread(thread_id: str) -> str | None:
+def lookup_sandbox_for_thread(thread_id: str, db_path: Path | None = None) -> str | None:
     """Check if a thread has a sandbox session in the DB.
 
     Returns provider name ('agentbay', 'e2b', 'docker', 'daytona') or None.
@@ -30,11 +30,25 @@ def lookup_sandbox_for_thread(thread_id: str) -> str | None:
     """
     import sqlite3
 
-    if not DEFAULT_DB_PATH.exists():
+    target_db = db_path or DEFAULT_DB_PATH
+    if not target_db.exists():
         return None
     try:
-        with sqlite3.connect(str(DEFAULT_DB_PATH), timeout=5) as conn:
-            # Check new architecture first
+        with sqlite3.connect(str(target_db), timeout=5) as conn:
+            # Prefer durable mapping: terminal -> lease survives chat-session closure.
+            row = conn.execute(
+                """
+                SELECT sl.provider_name
+                FROM abstract_terminals at
+                JOIN sandbox_leases sl ON at.lease_id = sl.lease_id
+                WHERE at.thread_id = ?
+                LIMIT 1
+                """,
+                (thread_id,),
+            ).fetchone()
+            if row:
+                return row[0]
+            # Fallback for transitional rows.
             row = conn.execute(
                 """
                 SELECT sl.provider_name
@@ -211,18 +225,20 @@ class SandboxManager:
         from sandbox.runtime import RemoteWrappedRuntime
         if isinstance(session.runtime, RemoteWrappedRuntime):
             return session.lease.pause_instance(session.runtime.provider)
-        return False
+        self.session_manager.delete(session.session_id, reason="paused")
+        return True
 
     def resume_session(self, thread_id: str) -> bool:
         """Resume session for thread."""
         session = self.session_manager.get(thread_id)
         if not session:
-            return False
+            self.get_sandbox(thread_id)
+            return True
 
         from sandbox.runtime import RemoteWrappedRuntime
         if isinstance(session.runtime, RemoteWrappedRuntime):
             return session.lease.resume_instance(session.runtime.provider)
-        return False
+        return True
 
     def pause_all_sessions(self) -> int:
         """Pause all active sessions."""

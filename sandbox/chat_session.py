@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
+import threading
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -150,13 +151,27 @@ class ChatSessionManager:
 
     def _close_runtime(self, session: ChatSession, reason: str) -> None:
         try:
-            asyncio.run(session.close(reason=reason))
+            running_loop = asyncio.get_running_loop()
         except RuntimeError:
-            loop = asyncio.new_event_loop()
+            running_loop = None
+
+        if running_loop is None:
+            asyncio.run(session.close(reason=reason))
+            return
+
+        error: list[Exception] = []
+
+        def _runner():
             try:
-                loop.run_until_complete(session.close(reason=reason))
-            finally:
-                loop.close()
+                asyncio.run(session.close(reason=reason))
+            except Exception as exc:  # pragma: no cover - defensive relay
+                error.append(exc)
+
+        t = threading.Thread(target=_runner, daemon=True)
+        t.start()
+        t.join()
+        if error:
+            raise error[0]
 
     def _ensure_tables(self) -> None:
         with _connect(self.db_path) as conn:

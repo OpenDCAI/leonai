@@ -13,6 +13,7 @@ can create a new one. Multiple terminals can share the same lease.
 from __future__ import annotations
 
 import sqlite3
+import threading
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
@@ -142,6 +143,8 @@ class SandboxLease(ABC):
 
 class SQLiteLease(SandboxLease):
     """SQLite-backed lease implementation."""
+    _lock_guard = threading.Lock()
+    _lease_locks: dict[str, threading.Lock] = {}
 
     def __init__(
         self,
@@ -183,20 +186,46 @@ class SQLiteLease(SandboxLease):
                 # Instance is dead, need to create new one
                 pass
 
-        # Create new instance
-        self.status = "recovering"
-        self._persist_lease_metadata()
-        session_info = provider.create_session(context_id=f"leon-{self.lease_id}")
-        instance = SandboxInstance(
-            instance_id=session_info.session_id,
-            provider_name=self.provider_name,
-            status="running",
-            created_at=datetime.now(),
-        )
-        self._current_instance = instance
-        self.status = "active"
-        self._persist_instance()
-        return instance
+        with self._instance_lock():
+            # Re-check persisted pointer after acquiring lock (winner-takes-recovery).
+            refreshed = LeaseStore(db_path=self.db_path).get(self.lease_id)
+            if refreshed and refreshed.get_instance():
+                candidate = refreshed.get_instance()
+                try:
+                    status = provider.get_session_status(candidate.instance_id)
+                    if status == "running":
+                        self._current_instance = candidate
+                        return self._current_instance
+                    if status == "paused" and provider.resume_session(candidate.instance_id):
+                        candidate.status = "running"
+                        self._current_instance = candidate
+                        self._persist_instance()
+                        return self._current_instance
+                except Exception:
+                    pass
+
+            # Create new instance
+            self.status = "recovering"
+            self._persist_lease_metadata()
+            session_info = provider.create_session(context_id=f"leon-{self.lease_id}")
+            instance = SandboxInstance(
+                instance_id=session_info.session_id,
+                provider_name=self.provider_name,
+                status="running",
+                created_at=datetime.now(),
+            )
+            self._current_instance = instance
+            self.status = "active"
+            self._persist_instance()
+            return instance
+
+    def _instance_lock(self) -> threading.Lock:
+        with self._lock_guard:
+            lock = self._lease_locks.get(self.lease_id)
+            if lock is None:
+                lock = threading.Lock()
+                self._lease_locks[self.lease_id] = lock
+            return lock
 
     def destroy_instance(self, provider: SandboxProvider) -> None:
         """Destroy current instance."""

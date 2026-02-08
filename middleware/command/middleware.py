@@ -180,8 +180,8 @@ class CommandMiddleware(AgentMiddleware[CommandState]):
         if not allowed:
             return error_msg
 
-        # @@@remote-cwd-default - Remote terminals own cwd state; avoid forcing workspace_root on every command.
-        if self._executor.is_remote:
+        # @@@runtime-owned-cwd - Stateful runtimes (remote/local chat session shells) own cwd continuity.
+        if self._executor.runtime_owns_cwd:
             work_dir = cwd
         else:
             work_dir = cwd or str(self.workspace_root)

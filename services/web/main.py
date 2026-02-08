@@ -317,16 +317,18 @@ def _get_lease_timestamps(lease_id: str) -> tuple[str | None, str | None]:
         return row["created_at"], row["updated_at"]
 
 
-async def _get_remote_agent(thread_id: str) -> Any:
+async def _get_thread_agent(thread_id: str, *, require_remote: bool = False) -> Any:
     sandbox_type = _resolve_thread_sandbox(app, thread_id)
-    if sandbox_type == "local":
+    if require_remote and sandbox_type == "local":
         raise HTTPException(400, "Local threads have no remote sandbox")
-    set_current_thread_id(thread_id)
     try:
+        set_current_thread_id(thread_id)
         agent = await _get_or_create_agent(app, sandbox_type, thread_id=thread_id)
     except Exception as e:
         raise HTTPException(503, f"Sandbox agent init failed for {sandbox_type}: {e}") from e
-    if not hasattr(agent, "_sandbox") or agent._sandbox.name == "local":
+    if not hasattr(agent, "_sandbox"):
+        raise HTTPException(400, "Agent has no sandbox")
+    if require_remote and agent._sandbox.name == "local":
         raise HTTPException(400, "Agent has no remote sandbox")
     return agent
 
@@ -394,7 +396,7 @@ async def get_session_metrics(session_id: str) -> dict[str, Any]:
 # @@@ Thread-level sandbox control — routes through the agent's own sandbox so cache stays consistent
 @app.post("/api/threads/{thread_id}/sandbox/pause")
 async def pause_thread_sandbox(thread_id: str) -> dict[str, Any]:
-    agent = await _get_remote_agent(thread_id)
+    agent = await _get_thread_agent(thread_id)
     ok = await asyncio.to_thread(agent._sandbox.pause_thread, thread_id)
     if not ok:
         raise HTTPException(409, f"Failed to pause sandbox for thread {thread_id}")
@@ -403,7 +405,7 @@ async def pause_thread_sandbox(thread_id: str) -> dict[str, Any]:
 
 @app.post("/api/threads/{thread_id}/sandbox/resume")
 async def resume_thread_sandbox(thread_id: str) -> dict[str, Any]:
-    agent = await _get_remote_agent(thread_id)
+    agent = await _get_thread_agent(thread_id)
     ok = await asyncio.to_thread(agent._sandbox.resume_thread, thread_id)
     if not ok:
         raise HTTPException(409, f"Failed to resume sandbox for thread {thread_id}")
@@ -412,7 +414,7 @@ async def resume_thread_sandbox(thread_id: str) -> dict[str, Any]:
 
 @app.delete("/api/threads/{thread_id}/sandbox")
 async def destroy_thread_sandbox(thread_id: str) -> dict[str, Any]:
-    agent = await _get_remote_agent(thread_id)
+    agent = await _get_thread_agent(thread_id)
     ok = await asyncio.to_thread(agent._sandbox.manager.destroy_session, thread_id)
     if not ok:
         raise HTTPException(404, f"No sandbox session found for thread {thread_id}")
@@ -425,7 +427,7 @@ async def destroy_thread_sandbox(thread_id: str) -> dict[str, Any]:
 @app.get("/api/threads/{thread_id}/session")
 async def get_thread_session_status(thread_id: str) -> dict[str, Any]:
     """Get ChatSession status for a thread."""
-    agent = await _get_remote_agent(thread_id)
+    agent = await _get_thread_agent(thread_id)
 
     def _get_session():
         mgr = agent._sandbox.manager
@@ -452,7 +454,7 @@ async def get_thread_session_status(thread_id: str) -> dict[str, Any]:
 @app.get("/api/threads/{thread_id}/terminal")
 async def get_thread_terminal_status(thread_id: str) -> dict[str, Any]:
     """Get AbstractTerminal state for a thread."""
-    agent = await _get_remote_agent(thread_id)
+    agent = await _get_thread_agent(thread_id)
 
     def _get_terminal():
         mgr = agent._sandbox.manager
@@ -482,7 +484,7 @@ async def get_thread_terminal_status(thread_id: str) -> dict[str, Any]:
 @app.get("/api/threads/{thread_id}/lease")
 async def get_thread_lease_status(thread_id: str) -> dict[str, Any]:
     """Get SandboxLease status for a thread."""
-    agent = await _get_remote_agent(thread_id)
+    agent = await _get_thread_agent(thread_id)
 
     def _get_lease():
         mgr = agent._sandbox.manager
@@ -532,7 +534,7 @@ async def list_workspace_path(thread_id: str, path: str | None = Query(default=N
             ],
         }
 
-    agent = await _get_remote_agent(thread_id)
+    agent = await _get_thread_agent(thread_id, require_remote=True)
 
     def _list_remote() -> dict[str, Any]:
         set_current_thread_id(thread_id)
@@ -570,7 +572,7 @@ async def read_workspace_file(thread_id: str, path: str = Query(...)) -> dict[st
             raise HTTPException(400, str(e)) from e
         return {"thread_id": thread_id, "path": str(target), "content": data.content, "size": data.size}
 
-    agent = await _get_remote_agent(thread_id)
+    agent = await _get_thread_agent(thread_id, require_remote=True)
 
     def _read_remote() -> dict[str, Any]:
         set_current_thread_id(thread_id)
@@ -677,7 +679,8 @@ async def run_thread(thread_id: str, payload: RunRequest) -> EventSourceResponse
                 set_current_thread_id(thread_id)
 
                 # @@@ Streaming parser mirrors TUI runner chunk semantics so web and CLI stay consistent.
-                if hasattr(agent, "_sandbox") and agent._sandbox.name != "local":
+                # Prime session before tool calls so lazy capability wrappers never race thread context propagation.
+                if hasattr(agent, "_sandbox"):
                     agent._sandbox.ensure_session(thread_id)
 
                 if hasattr(agent, "runtime"):
