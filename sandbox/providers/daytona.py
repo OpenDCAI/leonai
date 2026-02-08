@@ -63,29 +63,20 @@ class DaytonaProvider(SandboxProvider):
         )
 
     def destroy_session(self, session_id: str, sync: bool = True) -> bool:
-        try:
-            sb = self._get_sandbox(session_id)
-            sb.delete()
-            self._sandboxes.pop(session_id, None)
-            return True
-        except Exception:
-            return False
+        sb = self._get_sandbox(session_id)
+        sb.delete()
+        self._sandboxes.pop(session_id, None)
+        return True
 
     def pause_session(self, session_id: str) -> bool:
-        try:
-            sb = self._get_sandbox(session_id)
-            sb.stop()
-            return True
-        except Exception:
-            return False
+        sb = self._get_sandbox(session_id)
+        sb.stop()
+        return True
 
     def resume_session(self, session_id: str) -> bool:
-        try:
-            sb = self._get_sandbox(session_id)
-            sb.start()
-            return True
-        except Exception:
-            return False
+        sb = self._get_sandbox(session_id)
+        sb.start()
+        return True
 
     def get_session_status(self, session_id: str) -> str:
         # @@@ state is enum SandboxState — use .value to get string
@@ -113,7 +104,7 @@ class DaytonaProvider(SandboxProvider):
     ) -> ProviderExecResult:
         sb = self._get_sandbox(session_id)
         try:
-            result = sb.process.exec(command, cwd=cwd or self.default_cwd)
+            result = sb.process.exec(command, cwd=cwd or self.default_cwd, timeout=timeout_ms // 1000)
             return ProviderExecResult(
                 output=result.result or "",
                 exit_code=result.exit_code or 0,
@@ -153,23 +144,6 @@ class DaytonaProvider(SandboxProvider):
 
     # ==================== Batch Status ====================
 
-    def get_all_session_statuses(self) -> dict[str, str]:
-        """Batch status check — one API call for all sessions."""
-        try:
-            result = self.client.list()
-            statuses = {}
-            for sb in result.items:
-                state = sb.state.value
-                if state == "started":
-                    statuses[sb.id] = "running"
-                elif state == "stopped":
-                    statuses[sb.id] = "paused"
-                else:
-                    statuses[sb.id] = "unknown"
-            return statuses
-        except Exception:
-            return {}
-
     def list_provider_sessions(self) -> list[SessionInfo]:
         """List all sandboxes from Daytona API (including orphans not in DB)."""
         try:
@@ -184,7 +158,6 @@ class DaytonaProvider(SandboxProvider):
                 else:
                     status = "unknown"
                 sessions.append(SessionInfo(session_id=sb.id, provider=self.name, status=status))
-                self._sandboxes[sb.id] = sb
             return sessions
         except Exception:
             return []

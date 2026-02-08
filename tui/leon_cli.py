@@ -362,7 +362,7 @@ def cmd_sandbox(args):
         provider_name = args.extra_args[0] if args.extra_args else None
         if not provider_name:
             # Pick first available
-            for name in ("agentbay", "e2b", "docker"):
+            for name in ("agentbay", "e2b", "docker", "daytona"):
                 if name in managers:
                     provider_name = name
                     break

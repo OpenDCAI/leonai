@@ -19,7 +19,7 @@ DEFAULT_DB_PATH = Path.home() / ".leon" / "leon.db"
 def lookup_sandbox_for_thread(thread_id: str) -> str | None:
     """Check if a thread has a sandbox session in the DB.
 
-    Returns provider name ('e2b', 'docker', 'agentbay') or None.
+    Returns provider name ('agentbay', 'e2b', 'docker', 'daytona') or None.
     Pure SQLite lookup — no provider initialization needed.
     """
     if not DEFAULT_DB_PATH.exists():
