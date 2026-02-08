@@ -1,0 +1,140 @@
+import { createParser, type EventSourceMessage } from "eventsource-parser";
+
+export type StreamEventType = "text" | "tool_call" | "tool_result" | "done" | "error";
+
+export interface StreamEvent {
+  type: StreamEventType;
+  data?: unknown;
+}
+
+export interface ThreadSummary {
+  thread_id: string;
+  messages?: ChatMessage[];
+  title?: string;
+}
+
+export type ChatMessageRole = "user" | "assistant" | "tool_call" | "tool_result";
+
+export interface ChatMessage {
+  id: string;
+  role: ChatMessageRole;
+  content: string;
+  name?: string;
+  args?: unknown;
+  toolCallId?: string;
+}
+
+async function request<T>(url: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(url, {
+    headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+    ...init,
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`API ${response.status}: ${body || response.statusText}`);
+  }
+
+  if (response.status === 204) {
+    return undefined as T;
+  }
+
+  return (await response.json()) as T;
+}
+
+function toArrayThreads(payload: unknown): ThreadSummary[] {
+  if (Array.isArray(payload)) {
+    return payload as ThreadSummary[];
+  }
+
+  if (payload && typeof payload === "object" && Array.isArray((payload as { threads?: unknown }).threads)) {
+    return (payload as { threads: ThreadSummary[] }).threads;
+  }
+
+  throw new Error("Unexpected /api/threads response shape");
+}
+
+function normalizeStreamType(rawType: string): StreamEventType {
+  if (rawType === "text" || rawType === "tool_call" || rawType === "tool_result" || rawType === "done" || rawType === "error") {
+    return rawType;
+  }
+
+  if (rawType === "message" || rawType === "token" || rawType === "delta") {
+    return "text";
+  }
+
+  throw new Error(`Unknown stream event type: ${rawType}`);
+}
+
+function safeParseJson(value: string): unknown {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+}
+
+export async function listThreads(): Promise<ThreadSummary[]> {
+  const payload = await request<unknown>("/api/threads");
+  return toArrayThreads(payload);
+}
+
+export async function createThread(): Promise<ThreadSummary> {
+  return request<ThreadSummary>("/api/threads", { method: "POST" });
+}
+
+export async function getThread(id: string): Promise<ThreadSummary> {
+  return request<ThreadSummary>(`/api/threads/${encodeURIComponent(id)}`);
+}
+
+export async function deleteThread(id: string): Promise<void> {
+  await request<void>(`/api/threads/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export async function steer(threadId: string, message: string): Promise<unknown> {
+  return request(`/api/threads/${encodeURIComponent(threadId)}/steer`, {
+    method: "POST",
+    body: JSON.stringify({ message }),
+  });
+}
+
+export async function startRun(
+  threadId: string,
+  message: string,
+  onEvent: (event: StreamEvent) => void,
+): Promise<void> {
+  const response = await fetch(`/api/threads/${encodeURIComponent(threadId)}/runs`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message }),
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`Run failed ${response.status}: ${body || response.statusText}`);
+  }
+
+  if (!response.body) {
+    throw new Error("Run response has no body stream");
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+
+  // @@@sse-parse - Streaming payload schema can vary by backend; parse raw SSE and normalize event names explicitly.
+  const parser = createParser({
+    onEvent(evt: EventSourceMessage) {
+      const type = normalizeStreamType(evt.event || "text");
+      const parsed = safeParseJson(evt.data);
+      onEvent({ type, data: parsed });
+    },
+  });
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+    parser.feed(decoder.decode(value, { stream: true }));
+  }
+}
