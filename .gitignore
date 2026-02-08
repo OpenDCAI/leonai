@@ -27,6 +27,11 @@ node_modules/
 *.log
  *.bak
 
+# Archives
+*.zip
+*.tar.gz
+*.tgz
+
 # Environment
 .env
 
