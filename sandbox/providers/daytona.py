@@ -151,6 +151,44 @@ class DaytonaProvider(SandboxProvider):
         except Exception:
             return []
 
+    # ==================== Batch Status ====================
+
+    def get_all_session_statuses(self) -> dict[str, str]:
+        """Batch status check — one API call for all sessions."""
+        try:
+            result = self.client.list()
+            statuses = {}
+            for sb in result.items:
+                state = sb.state.value
+                if state == "started":
+                    statuses[sb.id] = "running"
+                elif state == "stopped":
+                    statuses[sb.id] = "paused"
+                else:
+                    statuses[sb.id] = "unknown"
+            return statuses
+        except Exception:
+            return {}
+
+    def list_provider_sessions(self) -> list[SessionInfo]:
+        """List all sandboxes from Daytona API (including orphans not in DB)."""
+        try:
+            result = self.client.list()
+            sessions = []
+            for sb in result.items:
+                state = sb.state.value
+                if state == "started":
+                    status = "running"
+                elif state == "stopped":
+                    status = "paused"
+                else:
+                    status = "unknown"
+                sessions.append(SessionInfo(session_id=sb.id, provider=self.name, status=status))
+                self._sandboxes[sb.id] = sb
+            return sessions
+        except Exception:
+            return []
+
     # ==================== Inspection ====================
 
     def get_metrics(self, session_id: str) -> Metrics | None:

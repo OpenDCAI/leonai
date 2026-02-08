@@ -198,7 +198,11 @@ class SandboxManagerApp(App):
                 return
             manager = self._managers[provider_name]
             thread_id = self._get_thread_for_session(sid)
-            if thread_id and manager.destroy_session(thread_id):
+            if thread_id:
+                ok = manager.destroy_session(thread_id)
+            else:
+                ok = manager.destroy_session_by_id(sid)
+            if ok:
                 self.call_from_thread(self.set_status, f"Deleted {sid[:16]}")
                 self.do_refresh()
             else:

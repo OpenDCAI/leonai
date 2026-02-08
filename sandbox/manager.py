@@ -204,6 +204,8 @@ class SandboxManager:
 
     def destroy_session(self, thread_id: str, sync: bool = True) -> bool:
         """Destroy session for thread."""
+        if not thread_id:
+            return False
         existing = self._get_from_db(thread_id)
         if not existing:
             return False
@@ -222,6 +224,10 @@ class SandboxManager:
             self._delete_from_db(thread_id)
             return True
         return False
+
+    def destroy_session_by_id(self, session_id: str, sync: bool = True) -> bool:
+        """Destroy session by session_id directly (for orphans not in DB)."""
+        return self.provider.destroy_session(session_id, sync=sync)
 
     def pause_all_sessions(self) -> int:
         """Pause all running sessions. Called on LEON exit."""
@@ -247,13 +253,54 @@ class SandboxManager:
         return count
 
     def list_sessions(self) -> list[dict]:
-        """List all tracked sessions with current status."""
-        rows = [row for row in self._get_all_from_db() if row["provider"] == self.provider.name]
-        if not rows:
-            return []
+        """List all tracked sessions with current status.
 
-        # @@@ Use batch status if provider supports it (1 API call vs N)
-        if hasattr(self.provider, "get_all_session_statuses"):
+        If the provider supports list_provider_sessions(), also discovers
+        orphaned sessions not in the local DB (e.g. Daytona containers
+        created outside LEON).
+        """
+        rows = [row for row in self._get_all_from_db() if row["provider"] == self.provider.name]
+
+        # @@@ Providers with list_provider_sessions() can discover orphans
+        if hasattr(self.provider, "list_provider_sessions"):
+            api_sessions = self.provider.list_provider_sessions()
+            api_map = {s.session_id: s.status for s in api_sessions}
+
+            sessions = []
+            # Update DB-tracked sessions with live status
+            for row in rows:
+                status = api_map.pop(row["session_id"], "deleted")
+                if status == "deleted":
+                    self._delete_from_db(row["thread_id"])
+                    continue
+                sessions.append(
+                    {
+                        "thread_id": row["thread_id"],
+                        "session_id": row["session_id"],
+                        "provider": row["provider"],
+                        "status": status,
+                        "context_id": row["context_id"],
+                        "created_at": row["created_at"],
+                        "last_active": row["last_active"],
+                    }
+                )
+            # Append orphaned sessions (on API but not in DB)
+            for sid, status in api_map.items():
+                sessions.append(
+                    {
+                        "thread_id": "",
+                        "session_id": sid,
+                        "provider": self.provider.name,
+                        "status": status,
+                        "context_id": None,
+                        "created_at": None,
+                        "last_active": None,
+                    }
+                )
+            return sessions
+
+        # Batch status via get_all_session_statuses (1 API call vs N)
+        if rows and hasattr(self.provider, "get_all_session_statuses"):
             status_map = self.provider.get_all_session_statuses()
             sessions = []
             for row in rows:
@@ -273,6 +320,9 @@ class SandboxManager:
                     }
                 )
             return sessions
+
+        if not rows:
+            return []
 
         # Fallback: parallel per-session status checks
         from concurrent.futures import ThreadPoolExecutor
