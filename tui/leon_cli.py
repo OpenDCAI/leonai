@@ -268,6 +268,17 @@ def _init_sandbox_providers() -> tuple[dict, dict]:
                         default_cwd=config.e2b.cwd,
                         timeout=config.e2b.timeout,
                     )
+            elif config.provider == "daytona":
+                from sandbox.providers.daytona import DaytonaProvider
+
+                key = config.daytona.api_key or os.getenv("DAYTONA_API_KEY")
+                if key:
+                    providers["daytona"] = DaytonaProvider(
+                        api_key=key,
+                        api_url=config.daytona.api_url,
+                        target=config.daytona.target,
+                        default_cwd=config.daytona.cwd,
+                    )
         except Exception as e:
             print(f"[sandbox] Failed to load {name}: {e}")
 
@@ -526,7 +537,7 @@ def main():
         print("Sandbox 管理:")
         print("  leonai sandbox            打开 sandbox 会话管理器 (TUI)")
         print("  leonai sandbox ls         列出所有 sandbox 会话")
-        print("  leonai sandbox new [provider]  创建新会话 (agentbay/e2b/docker)")
+        print("  leonai sandbox new [provider]  创建新会话 (agentbay/e2b/docker/daytona)")
         print("  leonai sandbox pause <id>      暂停会话")
         print("  leonai sandbox resume <id>     恢复会话")
         print("  leonai sandbox rm <id>         删除会话")

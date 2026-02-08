@@ -116,6 +116,17 @@ class SandboxManagerApp(App):
                             default_cwd=config.e2b.cwd,
                             timeout=config.e2b.timeout,
                         )
+                elif config.provider == "daytona":
+                    from sandbox.providers.daytona import DaytonaProvider
+
+                    key = config.daytona.api_key or os.getenv("DAYTONA_API_KEY")
+                    if key:
+                        providers["daytona"] = DaytonaProvider(
+                            api_key=key,
+                            api_url=config.daytona.api_url,
+                            target=config.daytona.target,
+                            default_cwd=config.daytona.cwd,
+                        )
             except Exception as e:
                 print(f"[SandboxManager] Failed to load {name}: {e}")
 
@@ -420,7 +431,7 @@ class SandboxManagerApp(App):
         return None
 
     def _default_provider_for_create(self) -> str | None:
-        for name in ("agentbay", "e2b", "docker"):
+        for name in ("agentbay", "e2b", "docker", "daytona"):
             if name in self._managers:
                 return name
         return None
