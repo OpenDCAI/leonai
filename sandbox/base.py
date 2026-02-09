@@ -16,44 +16,26 @@ if TYPE_CHECKING:
 
 
 class Sandbox(ABC):
-    """Abstract sandbox — one instance per agent lifetime."""
+    @property
+    @abstractmethod
+    def name(self) -> str: ...
 
     @property
     @abstractmethod
-    def name(self) -> str:
-        """Identifier: 'local', 'agentbay', 'docker', ..."""
-        ...
+    def working_dir(self) -> str: ...
 
     @property
     @abstractmethod
-    def working_dir(self) -> str:
-        """Default working directory inside this sandbox."""
-        ...
-
-    @property
-    @abstractmethod
-    def env_label(self) -> str:
-        """Human-readable label for system prompt."""
-        ...
+    def env_label(self) -> str: ...
 
     @abstractmethod
-    def fs(self) -> FileSystemBackend | None:
-        """FileSystem backend, or None to use default (LocalBackend)."""
-        ...
+    def fs(self) -> FileSystemBackend | None: ...
 
     @abstractmethod
-    def shell(self) -> BaseExecutor | None:
-        """Shell executor, or None to use default (OS auto-detect)."""
-        ...
+    def shell(self) -> BaseExecutor | None: ...
 
     def close(self) -> None:
-        """Clean up on agent exit. Default: no-op."""
         pass
 
     def ensure_session(self, thread_id: str) -> None:
-        """Eagerly create/resume session for thread. Default: no-op.
-
-        Called before agent.invoke() to avoid lazy SQLite access
-        during async tool calls.
-        """
         pass

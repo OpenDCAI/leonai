@@ -40,7 +40,6 @@ def _parse_openrouter_model(model: dict[str, Any]) -> tuple[str, dict[str, Decim
     prompt_price = pricing.get("prompt", "0")
     completion_price = pricing.get("completion", "0")
 
-    # 跳过免费模型（无意义的定价数据）
     if prompt_price == "0" and completion_price == "0":
         return None
 
@@ -50,47 +49,14 @@ def _parse_openrouter_model(model: dict[str, Any]) -> tuple[str, dict[str, Decim
     except Exception:
         return None
 
-    cache_read_per_m = Decimal("0")
-    cache_write_per_m = Decimal("0")
-    if pricing.get("input_cache_read"):
-        try:
-            cache_read_per_m = Decimal(pricing["input_cache_read"]) * _PER_TOKEN_TO_PER_M
-        except Exception:
-            pass
-    if pricing.get("input_cache_write"):
-        try:
-            cache_write_per_m = Decimal(pricing["input_cache_write"]) * _PER_TOKEN_TO_PER_M
-        except Exception:
-            pass
+    cache_read_per_m = _parse_cache_price(pricing.get("input_cache_read"))
+    cache_write_per_m = _parse_cache_price(pricing.get("input_cache_write"))
 
-    # 兜底：OpenRouter 可能不返回缓存字段，但直连 API 时缓存有价格
-    # 根据 provider 推断默认缓存价格
     if not cache_read_per_m or not cache_write_per_m:
         provider = model_id.split("/", 1)[0] if "/" in model_id else ""
-        if provider == "anthropic":
-            # Anthropic: cache_read = 0.1x input, cache_write = 1.25x input
-            if not cache_read_per_m:
-                cache_read_per_m = input_per_m * Decimal("0.1")
-            if not cache_write_per_m:
-                cache_write_per_m = input_per_m * Decimal("1.25")
-        elif provider in ("openai", ""):
-            # OpenAI: cache_read = 0.5x input (50% discount), cache_write = input (same price)
-            if not cache_read_per_m:
-                cache_read_per_m = input_per_m * Decimal("0.5")
-            if not cache_write_per_m:
-                cache_write_per_m = input_per_m
-        elif provider == "deepseek":
-            # DeepSeek: cache_read = 0.1x input, cache_write = input
-            if not cache_read_per_m:
-                cache_read_per_m = input_per_m * Decimal("0.1")
-            if not cache_write_per_m:
-                cache_write_per_m = input_per_m
-        else:
-            # 通用兜底：cache_read = 0.5x input, cache_write = input
-            if not cache_read_per_m:
-                cache_read_per_m = input_per_m * Decimal("0.5")
-            if not cache_write_per_m:
-                cache_write_per_m = input_per_m
+        cache_read_per_m, cache_write_per_m = _infer_cache_prices(
+            provider, input_per_m, cache_read_per_m, cache_write_per_m
+        )
 
     costs = {
         "input": input_per_m,
@@ -99,9 +65,39 @@ def _parse_openrouter_model(model: dict[str, Any]) -> tuple[str, dict[str, Decim
         "cache_write": cache_write_per_m,
     }
 
-    # 提取 model-name（去掉 provider/ 前缀）
     short_name = model_id.split("/", 1)[-1] if "/" in model_id else model_id
     return short_name, costs
+
+
+def _parse_cache_price(price_str: str | None) -> Decimal:
+    """解析缓存价格字符串"""
+    if not price_str:
+        return Decimal("0")
+    try:
+        return Decimal(price_str) * _PER_TOKEN_TO_PER_M
+    except Exception:
+        return Decimal("0")
+
+
+def _infer_cache_prices(
+    provider: str, input_per_m: Decimal, cache_read: Decimal, cache_write: Decimal
+) -> tuple[Decimal, Decimal]:
+    """根据 provider 推断缓存价格"""
+    cache_rules = {
+        "anthropic": (Decimal("0.1"), Decimal("1.25")),
+        "openai": (Decimal("0.5"), Decimal("1.0")),
+        "": (Decimal("0.5"), Decimal("1.0")),
+        "deepseek": (Decimal("0.1"), Decimal("1.0")),
+    }
+
+    read_multiplier, write_multiplier = cache_rules.get(provider, (Decimal("0.5"), Decimal("1.0")))
+
+    if not cache_read:
+        cache_read = input_per_m * read_multiplier
+    if not cache_write:
+        cache_write = input_per_m * write_multiplier
+
+    return cache_read, cache_write
 
 
 def _load_cache() -> dict[str, dict[str, str]] | None:
@@ -153,14 +149,19 @@ def fetch_openrouter_pricing() -> dict[str, dict[str, Decimal]]:
     if _initialized:
         return _pricing_data
 
-    # 1. 尝试磁盘缓存（24h TTL）
     cached = _load_cache()
     if cached:
         _pricing_data = _deserialize_costs(cached)
         _initialized = True
         return _pricing_data
 
-    # 2. 拉取 OpenRouter API
+    _pricing_data = _fetch_from_openrouter() or _load_bundled()
+    _initialized = True
+    return _pricing_data
+
+
+def _fetch_from_openrouter() -> dict[str, dict[str, Decimal]] | None:
+    """从 OpenRouter API 拉取定价数据"""
     try:
         import urllib.request
 
@@ -171,9 +172,8 @@ def fetch_openrouter_pricing() -> dict[str, dict[str, Decimal]]:
         with urllib.request.urlopen(req, timeout=5) as resp:
             data = json.loads(resp.read())
 
-        models = data.get("data", [])
         result: dict[str, dict[str, Decimal]] = {}
-        for model in models:
+        for model in data.get("data", []):
             parsed = _parse_openrouter_model(model)
             if parsed:
                 name, costs = parsed
@@ -181,17 +181,12 @@ def fetch_openrouter_pricing() -> dict[str, dict[str, Decimal]]:
                     result[name] = costs
 
         if result:
-            _pricing_data = result
             _save_cache(_serialize_costs(result))
-            _initialized = True
-            return _pricing_data
+            return result
     except Exception:
         pass
 
-    # 3. 加载 bundled 文件（最终兜底）
-    _pricing_data = _load_bundled()
-    _initialized = True
-    return _pricing_data
+    return None
 
 
 def _load_bundled() -> dict[str, dict[str, Decimal]]:
@@ -217,17 +212,13 @@ class CostCalculator:
 
     def _resolve_costs(self, model_name: str) -> dict[str, Decimal]:
         """解析模型单价"""
-        # 1. 精确匹配
         if model_name in _pricing_data:
             return _pricing_data[model_name]
 
-        # 2. 规范化匹配：Anthropic API 用 claude-sonnet-4-5-20250929，
-        # OpenRouter 用 claude-sonnet-4.5，尝试去掉日期后缀 + 横杠转点号
         normalized = self._normalize_model_name(model_name)
         if normalized != model_name and normalized in _pricing_data:
             return _pricing_data[normalized]
 
-        # 3. 前缀匹配（如 gpt-4o-2024-08-06 → gpt-4o）
         for key in sorted(_pricing_data.keys(), key=len, reverse=True):
             if model_name.startswith(key):
                 return _pricing_data[key]
@@ -244,10 +235,7 @@ class CostCalculator:
         """
         import re
 
-        # 去掉末尾的日期后缀 -YYYYMMDD
         name = re.sub(r"-\d{8}$", "", name)
-        # 版本号横杠转点号：claude-sonnet-4-5 → claude-sonnet-4.5
-        # 匹配 -数字-数字 结尾（版本号模式）
         name = re.sub(r"-(\d+)-(\d+)$", r"-\1.\2", name)
         return name
 

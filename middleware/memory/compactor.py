@@ -70,13 +70,11 @@ class ContextCompactor:
                 break
             accumulated += msg_tokens
         else:
-            # All messages fit within keep_recent_tokens
             return [], messages
 
-        # Boundary adjustment: don't split AIMessage(tool_calls) from ToolMessages
+        # Adjust boundary to avoid splitting tool_calls from ToolMessages
         split_idx = self._adjust_boundary(messages, split_idx)
 
-        # Ensure we have at least something to summarize
         if split_idx <= 1:
             return [], messages
 
@@ -114,8 +112,6 @@ class ContextCompactor:
 
     def _adjust_boundary(self, messages: list[Any], split_idx: int) -> int:
         """Adjust split boundary so we don't separate AIMessage(tool_calls) from ToolMessages."""
-        # If the message at split_idx is a ToolMessage, move split_idx back
-        # to include the preceding AIMessage with tool_calls
         while split_idx < len(messages) and messages[split_idx].__class__.__name__ == "ToolMessage":
             split_idx -= 1
             if split_idx <= 0:
@@ -153,15 +149,7 @@ class ContextCompactor:
         return True, turn_prefix
 
     def _extract_turn_prefix(self, to_keep: list[Any], max_tokens: int) -> list[Any]:
-        """Extract prefix messages from to_keep up to max_tokens.
-
-        Args:
-            to_keep: Messages to split
-            max_tokens: Maximum tokens for the prefix
-
-        Returns:
-            List of prefix messages to be summarized
-        """
+        """Extract prefix messages from to_keep up to max_tokens."""
         accumulated = 0
         prefix_end_idx = 0
 
@@ -172,35 +160,25 @@ class ContextCompactor:
                 break
             accumulated += msg_tokens
         else:
-            # All messages fit, take all but last message
             prefix_end_idx = max(len(to_keep) - 1, 0)
 
-        # Adjust boundary to avoid splitting tool_calls
         prefix_end_idx = self._adjust_boundary(to_keep, prefix_end_idx)
-
         return to_keep[:prefix_end_idx]
 
     async def compact_with_split_turn(
         self, to_summarize: list[Any], turn_prefix: list[Any], model: Any
-    ) -> tuple[str, list[Any]]:
+    ) -> tuple[str, str]:
         """Generate summary with split turn handling.
 
         Creates two summaries:
         1. Historical summary (standard)
         2. Turn prefix summary (focused on original request)
 
-        Args:
-            to_summarize: Historical messages to summarize
-            turn_prefix: Prefix of current turn to summarize
-            model: LLM model for summarization
-
         Returns:
-            (combined_summary, remaining_suffix): Combined summary and messages to keep
+            (combined_summary, prefix_summary)
         """
-        # Generate historical summary
         history_summary = await self.compact(to_summarize, model)
 
-        # Generate turn prefix summary
         formatted_prefix = self._format_messages_for_summary(turn_prefix)
         prefix_messages = [
             SystemMessage(content=SPLIT_TURN_PREFIX_PROMPT),
@@ -209,9 +187,7 @@ class ContextCompactor:
         response = await model.ainvoke(prefix_messages)
         prefix_summary = response.content if hasattr(response, "content") else str(response)
 
-        # Combine summaries
         combined = f"{history_summary}\n\n---\n\n**Turn Context (split turn):**\n\n{prefix_summary}"
-
         return combined, prefix_summary
 
     def _format_messages_for_summary(self, messages: list[Any]) -> str:
@@ -220,6 +196,7 @@ class ContextCompactor:
         for msg in messages:
             role = msg.__class__.__name__.replace("Message", "")
             content = getattr(msg, "content", "")
+
             if isinstance(content, str):
                 text = content
             elif isinstance(content, list):
@@ -233,7 +210,6 @@ class ContextCompactor:
             else:
                 text = str(content)
 
-            # Truncate very long messages for summary input
             if len(text) > 2000:
                 text = text[:1000] + "\n[...truncated...]\n" + text[-500:]
 

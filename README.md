@@ -270,6 +270,44 @@ leonai sandbox resume <id>   # 恢复会话
 - SQLite 持久化会话映射
 - 详见 [docs/SANDBOX.md](docs/SANDBOX.md)
 
+## 更新日志
+
+### v0.3.0 (2026-02-09) - 230 commits
+
+**🌟 主要新增**：
+- **SummaryStore**：持久化对话记忆，自动恢复，Split Turn 检测（88% 覆盖率，28 测试）
+- **Terminal Persistence**：终端会话持久化，跨重启保持状态，pause/resume 支持
+- **Web Chat UI**：FastAPI + React 全功能 Web 界面，实时聊天，沙箱管理
+- **Monitor Middleware**：6 维度 token 追踪，动态成本计算（OpenRouter API + 314 模型缓存）
+- **Queue Mode**：5 种优先级消息队列（steer/followup/collect/backlog/interrupt）
+
+**🐛 关键修复**：
+- 修复 checkpointer 初始化顺序问题
+- 修复沙箱 read_file 崩溃
+- 修复 MCP 工具白名单过滤
+- 修复 thread_id 追踪（ContextVar）
+
+**🔧 架构优化**：
+- 沙箱提升为基础设施层
+- 解耦 sandbox/middleware 依赖
+- 替换 shell middleware 为 command middleware
+
+**📊 性能**：
+- SummaryStore 查询 ~0.12ms（目标 <50ms）
+- SummaryStore 写入 ~3.8ms（目标 <100ms）
+
+[完整 Release Notes](./RELEASE_NOTES_v0.3.0.md)
+
+---
+
+### v0.2.3 及更早版本
+
+**v0.2.3** - 配置向导美化，Rich UI 集成
+**v0.2.0** - Agent Profile 系统，Skills 渐进式披露，MCP 集成
+**v0.1.0** - 初始版本，Middleware 架构，TUI 界面，基础工具集
+
+---
+
 ## 路线
 
 **已完成**：
@@ -278,6 +316,9 @@ leonai sandbox resume <id>   # 恢复会话
 - [x] MCP 集成：可配置加载、工具白名单
 - [x] Skills 系统：渐进式能力披露
 - [x] Sandbox 沙箱：Docker / E2B / AgentBay，会话管理，自动恢复
+- [x] SummaryStore：持久化对话记忆，自动恢复
+- [x] Terminal Persistence：终端会话持久化
+- [x] Web Chat UI：FastAPI + React 界面
 
 **进行中**：
 - [ ] Hook 系统：工具调用前后的拦截与扩展

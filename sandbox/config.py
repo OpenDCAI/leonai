@@ -1,4 +1,4 @@
-"""Sandbox configuration — independent of AgentProfile.
+"""Sandbox configuration.
 
 Priority: --sandbox <name> > LEON_SANDBOX env > "local" (default)
 """
@@ -28,7 +28,7 @@ class E2BConfig(BaseModel):
     api_key: str | None = None
     template: str = "base"
     cwd: str = "/home/user"
-    timeout: int = 300  # seconds
+    timeout: int = 300
 
 
 class DaytonaConfig(BaseModel):
@@ -39,26 +39,16 @@ class DaytonaConfig(BaseModel):
 
 
 class SandboxConfig(BaseModel):
-    """Execution environment configuration.
-
-    Stored in ~/.leon/sandboxes/<name>.json.
-    "local" is the implicit default and needs no config file.
-    """
-
-    provider: str = "local"  # "local" | "agentbay" | "docker" | "e2b" | "daytona"
+    provider: str = "local"
     agentbay: AgentBayConfig = Field(default_factory=AgentBayConfig)
     docker: DockerConfig = Field(default_factory=DockerConfig)
     e2b: E2BConfig = Field(default_factory=E2BConfig)
     daytona: DaytonaConfig = Field(default_factory=DaytonaConfig)
-    on_exit: str = "pause"  # "pause" | "destroy"
+    on_exit: str = "pause"
     init_commands: list[str] = Field(default_factory=list)
 
     @classmethod
     def load(cls, name: str) -> SandboxConfig:
-        """Load config from ~/.leon/sandboxes/<name>.json.
-
-        Returns default (local) config if file doesn't exist.
-        """
         if name == "local":
             return cls()
 
@@ -70,24 +60,20 @@ class SandboxConfig(BaseModel):
         return cls(**data)
 
     def save(self, name: str) -> Path:
-        """Save config to ~/.leon/sandboxes/<name>.json.
-
-        Only serializes the active provider's config, not all three.
-        """
         path = Path.home() / ".leon" / "sandboxes" / f"{name}.json"
         path.parent.mkdir(parents=True, exist_ok=True)
+
         data = {"provider": self.provider, "on_exit": self.on_exit}
         if self.init_commands:
             data["init_commands"] = self.init_commands
-        # Only include the active provider's config
         if self.provider in ("agentbay", "docker", "e2b", "daytona"):
             data[self.provider] = getattr(self, self.provider).model_dump()
+
         path.write_text(json.dumps(data, indent=2))
         return path
 
 
 def resolve_sandbox_name(cli_arg: str | None) -> str:
-    """Resolve sandbox name: CLI > env > 'local'."""
     if cli_arg:
         return cli_arg
     return os.getenv("LEON_SANDBOX", "local")

@@ -17,7 +17,6 @@ from typing import Any
 import aiosqlite
 from langchain.agents import create_agent
 from langchain.chat_models import init_chat_model
-from langchain_core.tools import tool
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 # Load .env file
@@ -108,45 +107,23 @@ class LeonAgent:
         """
         self.verbose = verbose
 
-        # 加载 profile
-        if isinstance(profile, (str, Path)):
-            profile = AgentProfile.from_file(profile)
-            if self.verbose:
-                print(f"[LeonAgent] Profile: {profile} (from CLI argument)")
-        elif profile is None:
-            # 默认 profile 路径：~/.leon/profile.yaml
-            default_profile = Path.home() / ".leon" / "profile.yaml"
-            if default_profile.exists():
-                profile = AgentProfile.from_file(default_profile)
-                if self.verbose:
-                    print(f"[LeonAgent] Profile: {default_profile}")
-            else:
-                # 首次运行，创建默认配置文件
-                profile = self._create_default_profile(default_profile)
-                if self.verbose:
-                    print(f"[LeonAgent] Profile: {default_profile} (created)")
+        # Load profile
+        self.profile = self._load_profile(profile)
 
-        # CLI 参数覆盖 profile
-        if model_name is not None:
-            profile.agent.model = model_name
-        if workspace_root is not None:
-            profile.agent.workspace_root = str(workspace_root)
-        if allowed_file_extensions is not None:
-            profile.tools.filesystem.allowed_extensions = allowed_file_extensions
-        if block_dangerous_commands is not None:
-            profile.tools.command.block_dangerous_commands = block_dangerous_commands
-        if block_network_commands is not None:
-            profile.tools.command.block_network_commands = block_network_commands
-        if enable_audit_log is not None:
-            profile.agent.enable_audit_log = enable_audit_log
-        if enable_web_tools is not None:
-            profile.tools.web.enabled = enable_web_tools
-
-        self.profile = profile
+        # Apply CLI parameter overrides
+        self._apply_cli_overrides(
+            model_name=model_name,
+            workspace_root=workspace_root,
+            allowed_file_extensions=allowed_file_extensions,
+            block_dangerous_commands=block_dangerous_commands,
+            block_network_commands=block_network_commands,
+            enable_audit_log=enable_audit_log,
+            enable_web_tools=enable_web_tools,
+        )
         self.model_name = profile.agent.model
 
-        # API key 处理：构造参数 > profile > 环境变量
-        self.api_key = api_key or profile.agent.api_key or self._resolve_env_api_key()
+        # Resolve API key
+        self.api_key = api_key or self.profile.agent.api_key or self._resolve_env_api_key()
         if not self.api_key:
             raise ValueError(
                 "API key must be set via:\n"
@@ -156,99 +133,41 @@ class LeonAgent:
                 "  - profile agent.api_key field"
             )
 
-        # Workspace 设置
-        if profile.agent.workspace_root:
-            self.workspace_root = Path(profile.agent.workspace_root).expanduser().resolve()
-        else:
-            self.workspace_root = Path.cwd()
+        # Initialize workspace and configuration
+        self.workspace_root = self._resolve_workspace_root()
+        self._init_config_attributes()
+        self._sandbox = self._init_sandbox(sandbox)
 
-        # 配置参数
-        self.allowed_file_extensions = profile.agent.allowed_extensions
-        self.block_dangerous_commands = profile.agent.block_dangerous_commands
-        self.block_network_commands = profile.agent.block_network_commands
-        self.enable_audit_log = profile.agent.enable_audit_log
-        self.enable_web_tools = profile.tool.web.enabled
-        self.queue_mode = profile.agent.queue_mode
-        self._session_pool: dict[str, Any] = {}
-        self.db_path = Path.home() / ".leon" / "leon.db"
-        self.sandbox_db_path = Path.home() / ".leon" / "sandbox.db"
-
-        # Initialize sandbox (infrastructure layer — before middleware stack)
-        from sandbox import Sandbox as SandboxBase
-        from sandbox import SandboxConfig, create_sandbox, resolve_sandbox_name
-
-        if isinstance(sandbox, SandboxBase):
-            self._sandbox = sandbox
-        elif isinstance(sandbox, str) or sandbox is None:
-            sandbox_name = resolve_sandbox_name(sandbox)
-            sandbox_config = SandboxConfig.load(sandbox_name)
-            self._sandbox = create_sandbox(
-                sandbox_config,
-                workspace_root=str(self.workspace_root),
-                db_path=self.sandbox_db_path,
-            )
-        else:
-            raise TypeError(f"sandbox must be Sandbox, str, or None, got {type(sandbox)}")
-
-        # @@@ Override workspace_root for sandbox mode — path validation must use sandbox paths
+        # Override workspace_root for sandbox mode
         if self._sandbox.name != "local":
             self.workspace_root = Path(self._sandbox.working_dir)
         else:
             self.workspace_root.mkdir(parents=True, exist_ok=True)
 
-        # 初始化模型（统一路径）
+        # Initialize model
         self.model = self._create_model()
 
-        # @@@checkpointer-before-middleware - MemoryMiddleware requires checkpointer during stack construction.
-        import asyncio
+        # Initialize checkpointer and MCP tools
+        self._aiosqlite_conn, mcp_tools = self._init_async_components()
 
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            self._aiosqlite_conn = loop.run_until_complete(self._init_checkpointer())
-        finally:
-            loop.close()
-
-        # 构建 middleware 栈
+        # Build middleware stack
         middleware = self._build_middleware_stack()
 
-        # 加载 MCP 工具
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            mcp_tools = loop.run_until_complete(self._init_mcp_tools())
-        finally:
-            loop.close()
-
-        # Set parent middleware and checkpointer for TaskMiddleware
+        # Configure TaskMiddleware with parent context
         if hasattr(self, "_task_middleware"):
             self._task_middleware.set_parent_middleware(middleware)
             self._task_middleware.set_checkpointer(self.checkpointer)
 
-        # Check if any middleware has self.tools (BaseTool instances).
-        # langchain's create_agent creates ToolNode only when:
-        #   available_tools = middleware_tools + regular_tools is non-empty
-        # where middleware_tools = [t for m in middleware for t in getattr(m, "tools", [])]
-        #
-        # Most Leon middleware inject tools via wrap_model_call (dict schema),
-        # only CommandMiddleware has self.tools (BaseTool instances).
-        # If command is disabled and no MCP tools, we need a placeholder.
-        middleware_has_tools = any(getattr(m, "tools", None) for m in middleware)
-        if not mcp_tools and not middleware_has_tools:
+        # Ensure ToolNode is created (middleware tools need at least one BaseTool)
+        if not mcp_tools and not self._has_middleware_tools(middleware):
+            mcp_tools = [self._create_placeholder_tool()]
 
-            @tool
-            def _placeholder() -> str:
-                """Internal placeholder - ensures ToolNode is created for middleware tools."""
-                return ""
-
-            mcp_tools = [_placeholder]
-
-        # System prompt
-        # 内置 prompt 始终存在，用户配置的追加在后面
+        # Build system prompt
         self.system_prompt = self._build_system_prompt()
-        if profile.system_prompt:
-            self.system_prompt += f"\n\n**Custom Instructions:**\n{profile.system_prompt}"
+        if self.profile.system_prompt:
+            self.system_prompt += f"\n\n**Custom Instructions:**\n{self.profile.system_prompt}"
 
+        # Create agent
         self.agent = create_agent(
             model=self.model,
             tools=mcp_tools,
@@ -257,7 +176,7 @@ class LeonAgent:
             checkpointer=self.checkpointer,
         )
 
-        # 从 MonitorMiddleware 获取 runtime
+        # Get runtime from MonitorMiddleware
         self.runtime = self._monitor_middleware.runtime
 
         # Inject runtime/model into MemoryMiddleware
@@ -270,120 +189,227 @@ class LeonAgent:
             print(f"[LeonAgent] Workspace: {self.workspace_root}")
             print(f"[LeonAgent] Audit log: {self.enable_audit_log}")
 
-        # 初始化完成，转移到 READY 状态
+        # Mark agent as ready
         self._monitor_middleware.mark_ready()
 
+    def _init_async_components(self) -> tuple[Any, list]:
+        """Initialize async components (checkpointer and MCP tools)."""
+        import asyncio
+
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            conn = loop.run_until_complete(self._init_checkpointer())
+            mcp_tools = loop.run_until_complete(self._init_mcp_tools())
+            return conn, mcp_tools
+        finally:
+            loop.close()
+
+    def _has_middleware_tools(self, middleware: list) -> bool:
+        """Check if any middleware has BaseTool instances."""
+        return any(getattr(m, "tools", None) for m in middleware)
+
+    def _create_placeholder_tool(self):
+        """Create placeholder tool to ensure ToolNode is created."""
+        from langchain_core.tools import tool
+
+        @tool
+        def _placeholder() -> str:
+            """Internal placeholder - ensures ToolNode is created for middleware tools."""
+            return ""
+
+        return _placeholder
+
+    def _load_profile(self, profile: AgentProfile | str | Path | None) -> AgentProfile:
+        """Load agent profile from file or create default."""
+        if isinstance(profile, (str, Path)):
+            profile = AgentProfile.from_file(profile)
+            if self.verbose:
+                print(f"[LeonAgent] Profile: {profile} (from CLI argument)")
+            return profile
+
+        if profile is not None:
+            return profile
+
+        # Load or create default profile
+        default_profile = Path.home() / ".leon" / "profile.yaml"
+        if default_profile.exists():
+            profile = AgentProfile.from_file(default_profile)
+            if self.verbose:
+                print(f"[LeonAgent] Profile: {default_profile}")
+        else:
+            profile = self._create_default_profile(default_profile)
+            if self.verbose:
+                print(f"[LeonAgent] Profile: {default_profile} (created)")
+        return profile
+
+    def _apply_cli_overrides(
+        self,
+        model_name: str | None,
+        workspace_root: str | Path | None,
+        allowed_file_extensions: list[str] | None,
+        block_dangerous_commands: bool | None,
+        block_network_commands: bool | None,
+        enable_audit_log: bool | None,
+        enable_web_tools: bool | None,
+    ) -> None:
+        """Apply CLI parameter overrides to profile."""
+        if model_name is not None:
+            self.profile.agent.model = model_name
+        if workspace_root is not None:
+            self.profile.agent.workspace_root = str(workspace_root)
+        if allowed_file_extensions is not None:
+            self.profile.tools.filesystem.allowed_extensions = allowed_file_extensions
+        if block_dangerous_commands is not None:
+            self.profile.tools.command.block_dangerous_commands = block_dangerous_commands
+        if block_network_commands is not None:
+            self.profile.tools.command.block_network_commands = block_network_commands
+        if enable_audit_log is not None:
+            self.profile.agent.enable_audit_log = enable_audit_log
+        if enable_web_tools is not None:
+            self.profile.tools.web.enabled = enable_web_tools
+
+    def _resolve_workspace_root(self) -> Path:
+        """Resolve workspace root from profile or current directory."""
+        if self.profile.agent.workspace_root:
+            return Path(self.profile.agent.workspace_root).expanduser().resolve()
+        return Path.cwd()
+
+    def _init_config_attributes(self) -> None:
+        """Initialize configuration attributes from profile."""
+        self.allowed_file_extensions = self.profile.agent.allowed_extensions
+        self.block_dangerous_commands = self.profile.agent.block_dangerous_commands
+        self.block_network_commands = self.profile.agent.block_network_commands
+        self.enable_audit_log = self.profile.agent.enable_audit_log
+        self.enable_web_tools = self.profile.tool.web.enabled
+        self.queue_mode = self.profile.agent.queue_mode
+        self._session_pool: dict[str, Any] = {}
+        self.db_path = Path.home() / ".leon" / "leon.db"
+        self.sandbox_db_path = Path.home() / ".leon" / "sandbox.db"
+
+    def _init_sandbox(self, sandbox: Any) -> Any:
+        """Initialize sandbox infrastructure layer."""
+        from sandbox import Sandbox as SandboxBase
+        from sandbox import SandboxConfig, create_sandbox, resolve_sandbox_name
+
+        if isinstance(sandbox, SandboxBase):
+            return sandbox
+
+        if isinstance(sandbox, str) or sandbox is None:
+            sandbox_name = resolve_sandbox_name(sandbox)
+            sandbox_config = SandboxConfig.load(sandbox_name)
+            return create_sandbox(
+                sandbox_config,
+                workspace_root=str(self.workspace_root),
+                db_path=self.sandbox_db_path,
+            )
+
+        raise TypeError(f"sandbox must be Sandbox, str, or None, got {type(sandbox)}")
+
     def _resolve_env_api_key(self) -> str | None:
-        """根据 model_provider 解析环境变量中的 API key"""
+        """Resolve API key from environment variables based on model_provider."""
         provider = self.profile.agent.model_provider
-        if provider:
-            env_map = {
-                "openai": "OPENAI_API_KEY",
-                "anthropic": "ANTHROPIC_API_KEY",
-                "google_genai": "GOOGLE_API_KEY",
-                "bedrock": None,  # uses AWS credentials
-            }
-            env_var = env_map.get(provider)
-            if env_var:
-                return os.getenv(env_var)
-            return None
-        # 无 provider 时按优先级尝试
-        return os.getenv("OPENAI_API_KEY") or os.getenv("ANTHROPIC_API_KEY")
+        if not provider:
+            return os.getenv("OPENAI_API_KEY") or os.getenv("ANTHROPIC_API_KEY")
+
+        env_map = {
+            "openai": "OPENAI_API_KEY",
+            "anthropic": "ANTHROPIC_API_KEY",
+            "google_genai": "GOOGLE_API_KEY",
+            "bedrock": None,
+        }
+        env_var = env_map.get(provider)
+        return os.getenv(env_var) if env_var else None
 
     def _resolve_env_base_url(self) -> str | None:
-        """根据 model_provider 解析环境变量中的 base URL"""
+        """Resolve base URL from environment variables based on model_provider."""
         provider = self.profile.agent.model_provider
-        if provider:
-            env_map = {
-                "openai": "OPENAI_BASE_URL",
-            }
-            env_var = env_map.get(provider)
-            if env_var:
-                return os.getenv(env_var)
-            return None
-        # 无 provider 时向后兼容
-        return os.getenv("OPENAI_BASE_URL")
+        if not provider:
+            return os.getenv("OPENAI_BASE_URL")
+
+        env_map = {"openai": "OPENAI_BASE_URL"}
+        env_var = env_map.get(provider)
+        return os.getenv(env_var) if env_var else None
 
     def _create_model(self):
-        """统一模型初始化，所有参数透传给 init_chat_model"""
-        kwargs = {}
-
-        # model_provider：有就传，没有让 LangChain 推断
-        if self.profile.agent.model_provider:
-            kwargs["model_provider"] = self.profile.agent.model_provider
-
-        # base_url：profile > 对应 provider 的环境变量
-        base_url = self.profile.agent.base_url or self._resolve_env_base_url()
-        if base_url:
-            kwargs["base_url"] = base_url
-
-        # 常用参数
-        if self.profile.agent.temperature is not None:
-            kwargs["temperature"] = self.profile.agent.temperature
-        if self.profile.agent.max_tokens is not None:
-            kwargs["max_tokens"] = self.profile.agent.max_tokens
-
-        # 透传任意 kwargs
-        kwargs.update(self.profile.agent.model_kwargs)
-
+        """Initialize model with all parameters passed to init_chat_model."""
+        kwargs = self._build_model_kwargs()
         return init_chat_model(self.model_name, api_key=self.api_key, **kwargs)
 
     def _build_model_kwargs(self) -> dict:
-        """构建传递给 sub-agent 的模型参数"""
+        """Build model parameters for model initialization and sub-agents."""
         kwargs = {}
+
         if self.profile.agent.model_provider:
             kwargs["model_provider"] = self.profile.agent.model_provider
+
         base_url = self.profile.agent.base_url or self._resolve_env_base_url()
         if base_url:
             kwargs["base_url"] = base_url
+
         if self.profile.agent.temperature is not None:
             kwargs["temperature"] = self.profile.agent.temperature
         if self.profile.agent.max_tokens is not None:
             kwargs["max_tokens"] = self.profile.agent.max_tokens
+
         kwargs.update(self.profile.agent.model_kwargs)
         return kwargs
 
     def close(self):
-        """Clean up resources"""
-        # Close sandbox (pause/destroy sessions)
+        """Clean up resources."""
+        self._cleanup_sandbox()
+        self._mark_terminated()
+        self._cleanup_mcp_client()
+        self._cleanup_sqlite_connection()
+
+    def _cleanup_sandbox(self) -> None:
+        """Clean up sandbox resources."""
         if hasattr(self, "_sandbox") and self._sandbox:
             try:
                 self._sandbox.close()
             except Exception as e:
                 print(f"[LeonAgent] Sandbox cleanup error: {e}")
 
-        import asyncio
-
-        # 状态转移：→ TERMINATED
+    def _mark_terminated(self) -> None:
+        """Mark agent as terminated."""
         if hasattr(self, "_monitor_middleware"):
             self._monitor_middleware.mark_terminated()
 
-        # Close MCP client (kills subprocess)
-        if hasattr(self, "_mcp_client") and self._mcp_client:
-            try:
-                # Try graceful close first
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                try:
-                    loop.run_until_complete(self._mcp_client.close())
-                finally:
-                    loop.close()
-            except Exception:
-                pass
-            self._mcp_client = None
+    def _cleanup_mcp_client(self) -> None:
+        """Clean up MCP client."""
+        if not hasattr(self, "_mcp_client") or not self._mcp_client:
+            return
 
-        # Close sqlite connection
-        if hasattr(self, "_aiosqlite_conn") and self._aiosqlite_conn:
+        import asyncio
+
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
             try:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                try:
-                    loop.run_until_complete(self._aiosqlite_conn.close())
-                finally:
-                    loop.close()
-            except Exception:
-                pass
-            self._aiosqlite_conn = None
+                loop.run_until_complete(self._mcp_client.close())
+            finally:
+                loop.close()
+        except Exception:
+            pass
+        self._mcp_client = None
+
+    def _cleanup_sqlite_connection(self) -> None:
+        """Clean up SQLite connection."""
+        if not hasattr(self, "_aiosqlite_conn") or not self._aiosqlite_conn:
+            return
+
+        import asyncio
+
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                loop.run_until_complete(self._aiosqlite_conn.close())
+            finally:
+                loop.close()
+        except Exception:
+            pass
+        self._aiosqlite_conn = None
 
     def __del__(self):
         self.close()
@@ -452,157 +478,48 @@ tool:
         return AgentProfile.from_file(path)
 
     def _build_middleware_stack(self) -> list:
-        """构建 middleware 栈"""
+        """Build middleware stack."""
         middleware = []
 
-        # Get backends from sandbox (infrastructure layer)
-        fs_backend = self._sandbox.fs()  # None → LocalBackend (default)
-        cmd_executor = self._sandbox.shell()  # None → OS auto-detect (default)
+        # Get backends from sandbox
+        fs_backend = self._sandbox.fs()
+        cmd_executor = self._sandbox.shell()
 
-        # 0. Steering (highest priority - checks for steer messages before model calls)
+        # 0. Steering (highest priority)
         middleware.append(SteeringMiddleware())
 
-        # 1. Memory (context pruning + compaction — before prompt caching)
+        # 1. Memory (context pruning + compaction)
         if self.profile.agent.memory.enabled:
-            cfg = self.profile.agent.memory
-            db_path = Path.home() / ".leon" / "leon.db"
-            self._memory_middleware = MemoryMiddleware(
-                context_limit=self.profile.agent.context_limit,
-                pruning_config=cfg.pruning,
-                compaction_config=cfg.compaction,
-                db_path=db_path,
-                checkpointer=self.checkpointer,
-                compaction_threshold=0.7,
-                verbose=self.verbose,
-            )
-            middleware.append(self._memory_middleware)
+            self._add_memory_middleware(middleware)
 
-        # 2. Prompt Caching（架构级，固定启用）
+        # 2. Prompt Caching
         middleware.append(PromptCachingMiddleware(ttl="5m", min_messages_to_cache=0))
 
-        # 3. FileSystem (always loaded — sandbox swaps backend, not middleware)
+        # 3. FileSystem
         if self.profile.tool.filesystem.enabled:
-            # @@@ Skip file hooks for sandbox — they write to local disk
-            file_hooks = []
-            if self._sandbox.name == "local":
-                if self.enable_audit_log:
-                    file_hooks.append(
-                        FileAccessLoggerHook(
-                            workspace_root=self.workspace_root,
-                            log_file="file_access.log",
-                        )
-                    )
-                file_hooks.append(
-                    FilePermissionHook(
-                        workspace_root=self.workspace_root,
-                        allowed_extensions=self.allowed_file_extensions,
-                    )
-                )
-            fs_tools = {
-                "read_file": self.profile.tool.filesystem.tools.read_file.enabled,
-                "write_file": self.profile.tool.filesystem.tools.write_file,
-                "edit_file": self.profile.tool.filesystem.tools.edit_file,
-                "multi_edit": self.profile.tool.filesystem.tools.multi_edit,
-                "list_dir": self.profile.tool.filesystem.tools.list_dir,
-            }
-            middleware.append(
-                FileSystemMiddleware(
-                    workspace_root=self.workspace_root,
-                    max_file_size=self.profile.tool.filesystem.tools.read_file.max_file_size,
-                    allowed_extensions=self.allowed_file_extensions,
-                    hooks=file_hooks,
-                    enabled_tools=fs_tools,
-                    operation_recorder=get_recorder(),
-                    backend=fs_backend,
-                    verbose=self.verbose,
-                )
-            )
+            self._add_filesystem_middleware(middleware, fs_backend)
 
-        # 3. Search
+        # 4. Search
         if self.profile.tool.search.enabled:
-            search_tools = {
-                "grep_search": self.profile.tool.search.tools.grep_search.enabled,
-                "find_by_name": self.profile.tool.search.tools.find_by_name,
-            }
-            middleware.append(
-                SearchMiddleware(
-                    workspace_root=self.workspace_root,
-                    max_results=self.profile.tool.search.max_results,
-                    max_file_size=self.profile.tool.search.tools.grep_search.max_file_size,
-                    prefer_system_tools=True,
-                    enabled_tools=search_tools,
-                    verbose=self.verbose,
-                )
-            )
+            self._add_search_middleware(middleware)
 
-        # 4. Web
+        # 5. Web
         if self.profile.tool.web.enabled:
-            web_tools = {
-                "web_search": self.profile.tool.web.tools.web_search.enabled,
-                "read_url_content": self.profile.tool.web.tools.read_url_content.enabled,
-                "view_web_content": self.profile.tool.web.tools.view_web_content,
-            }
-            middleware.append(
-                WebMiddleware(
-                    tavily_api_key=self.profile.tool.web.tools.web_search.tavily_api_key or os.getenv("TAVILY_API_KEY"),
-                    exa_api_key=self.profile.tool.web.tools.web_search.exa_api_key or os.getenv("EXA_API_KEY"),
-                    firecrawl_api_key=self.profile.tool.web.tools.web_search.firecrawl_api_key
-                    or os.getenv("FIRECRAWL_API_KEY"),
-                    jina_api_key=self.profile.tool.web.tools.read_url_content.jina_api_key
-                    or os.getenv("JINA_AI_API_KEY"),
-                    max_search_results=self.profile.tool.web.tools.web_search.max_results,
-                    timeout=self.profile.tool.web.timeout,
-                    enabled_tools=web_tools,
-                    verbose=self.verbose,
-                )
-            )
+            self._add_web_middleware(middleware)
 
-        # 5. Command (always loaded — sandbox swaps executor, not middleware)
+        # 6. Command
         if self.profile.tool.command.enabled:
-            # @@@ Skip command hooks for sandbox — they resolve paths locally
-            command_hooks = []
-            if self._sandbox.name == "local":
-                if self.block_dangerous_commands:
-                    command_hooks.append(
-                        DangerousCommandsHook(
-                            workspace_root=self.workspace_root,
-                            block_network=self.block_network_commands,
-                            verbose=self.verbose,
-                        )
-                    )
-                command_hooks.append(PathSecurityHook(workspace_root=self.workspace_root))
-            command_tools = {
-                "run_command": self.profile.tool.command.tools.run_command.enabled,
-                "command_status": self.profile.tool.command.tools.command_status,
-            }
-            middleware.append(
-                CommandMiddleware(
-                    workspace_root=self.workspace_root,
-                    default_timeout=self.profile.tool.command.tools.run_command.default_timeout,
-                    hooks=command_hooks,
-                    enabled_tools=command_tools,
-                    executor=cmd_executor,
-                    verbose=self.verbose,
-                )
-            )
+            self._add_command_middleware(middleware, cmd_executor)
 
-        # 6. Skills
+        # 7. Skills
         if self.profile.skills.enabled and self.profile.skills.paths:
-            middleware.append(
-                SkillsMiddleware(
-                    skill_paths=self.profile.skills.paths,
-                    enabled_skills=self.profile.skills.skills,
-                    verbose=self.verbose,
-                )
-            )
+            self._add_skills_middleware(middleware)
 
-        # 7. Todo (task management and progress tracking)
+        # 8. Todo
         self._todo_middleware = TodoMiddleware(verbose=self.verbose)
         middleware.append(self._todo_middleware)
 
-        # 8. Subagent (sub-agent orchestration)
-        # TaskMiddleware needs parent middleware for tool inheritance
-        # We'll set it after building the stack
+        # 9. Task (sub-agent orchestration)
         self._task_middleware = TaskMiddleware(
             workspace_root=self.workspace_root,
             parent_model=self.model_name,
@@ -612,7 +529,7 @@ tool:
         )
         middleware.append(self._task_middleware)
 
-        # 9. Monitor (状态监控，放在最后以捕获所有请求/响应)
+        # 10. Monitor (last to capture all requests/responses)
         self._monitor_middleware = MonitorMiddleware(
             context_limit=self.profile.agent.context_limit,
             model_name=self.model_name,
@@ -621,6 +538,137 @@ tool:
         middleware.append(self._monitor_middleware)
 
         return middleware
+
+    def _add_memory_middleware(self, middleware: list) -> None:
+        """Add memory middleware to stack."""
+        cfg = self.profile.agent.memory
+        db_path = Path.home() / ".leon" / "leon.db"
+        self._memory_middleware = MemoryMiddleware(
+            context_limit=self.profile.agent.context_limit,
+            pruning_config=cfg.pruning,
+            compaction_config=cfg.compaction,
+            db_path=db_path,
+            checkpointer=self.checkpointer,
+            compaction_threshold=0.7,
+            verbose=self.verbose,
+        )
+        middleware.append(self._memory_middleware)
+
+    def _add_filesystem_middleware(self, middleware: list, fs_backend: Any) -> None:
+        """Add filesystem middleware to stack."""
+        file_hooks = []
+        if self._sandbox.name == "local":
+            if self.enable_audit_log:
+                file_hooks.append(
+                    FileAccessLoggerHook(
+                        workspace_root=self.workspace_root,
+                        log_file="file_access.log",
+                    )
+                )
+            file_hooks.append(
+                FilePermissionHook(
+                    workspace_root=self.workspace_root,
+                    allowed_extensions=self.allowed_file_extensions,
+                )
+            )
+
+        fs_tools = {
+            "read_file": self.profile.tool.filesystem.tools.read_file.enabled,
+            "write_file": self.profile.tool.filesystem.tools.write_file,
+            "edit_file": self.profile.tool.filesystem.tools.edit_file,
+            "multi_edit": self.profile.tool.filesystem.tools.multi_edit,
+            "list_dir": self.profile.tool.filesystem.tools.list_dir,
+        }
+
+        middleware.append(
+            FileSystemMiddleware(
+                workspace_root=self.workspace_root,
+                max_file_size=self.profile.tool.filesystem.tools.read_file.max_file_size,
+                allowed_extensions=self.allowed_file_extensions,
+                hooks=file_hooks,
+                enabled_tools=fs_tools,
+                operation_recorder=get_recorder(),
+                backend=fs_backend,
+                verbose=self.verbose,
+            )
+        )
+
+    def _add_search_middleware(self, middleware: list) -> None:
+        """Add search middleware to stack."""
+        search_tools = {
+            "grep_search": self.profile.tool.search.tools.grep_search.enabled,
+            "find_by_name": self.profile.tool.search.tools.find_by_name,
+        }
+        middleware.append(
+            SearchMiddleware(
+                workspace_root=self.workspace_root,
+                max_results=self.profile.tool.search.max_results,
+                max_file_size=self.profile.tool.search.tools.grep_search.max_file_size,
+                prefer_system_tools=True,
+                enabled_tools=search_tools,
+                verbose=self.verbose,
+            )
+        )
+
+    def _add_web_middleware(self, middleware: list) -> None:
+        """Add web middleware to stack."""
+        web_tools = {
+            "web_search": self.profile.tool.web.tools.web_search.enabled,
+            "read_url_content": self.profile.tool.web.tools.read_url_content.enabled,
+            "view_web_content": self.profile.tool.web.tools.view_web_content,
+        }
+        middleware.append(
+            WebMiddleware(
+                tavily_api_key=self.profile.tool.web.tools.web_search.tavily_api_key or os.getenv("TAVILY_API_KEY"),
+                exa_api_key=self.profile.tool.web.tools.web_search.exa_api_key or os.getenv("EXA_API_KEY"),
+                firecrawl_api_key=self.profile.tool.web.tools.web_search.firecrawl_api_key
+                or os.getenv("FIRECRAWL_API_KEY"),
+                jina_api_key=self.profile.tool.web.tools.read_url_content.jina_api_key or os.getenv("JINA_AI_API_KEY"),
+                max_search_results=self.profile.tool.web.tools.web_search.max_results,
+                timeout=self.profile.tool.web.timeout,
+                enabled_tools=web_tools,
+                verbose=self.verbose,
+            )
+        )
+
+    def _add_command_middleware(self, middleware: list, cmd_executor: Any) -> None:
+        """Add command middleware to stack."""
+        command_hooks = []
+        if self._sandbox.name == "local":
+            if self.block_dangerous_commands:
+                command_hooks.append(
+                    DangerousCommandsHook(
+                        workspace_root=self.workspace_root,
+                        block_network=self.block_network_commands,
+                        verbose=self.verbose,
+                    )
+                )
+            command_hooks.append(PathSecurityHook(workspace_root=self.workspace_root))
+
+        command_tools = {
+            "run_command": self.profile.tool.command.tools.run_command.enabled,
+            "command_status": self.profile.tool.command.tools.command_status,
+        }
+        middleware.append(
+            CommandMiddleware(
+                workspace_root=self.workspace_root,
+                default_timeout=self.profile.tool.command.tools.run_command.default_timeout,
+                hooks=command_hooks,
+                enabled_tools=command_tools,
+                executor=cmd_executor,
+                verbose=self.verbose,
+            )
+        )
+
+    def _add_skills_middleware(self, middleware: list) -> None:
+        """Add skills middleware to stack."""
+        middleware.append(
+            SkillsMiddleware(
+                skill_paths=self.profile.skills.paths,
+                enabled_skills=self.profile.skills.skills,
+                verbose=self.verbose,
+            )
+        )
 
     async def _init_mcp_tools(self) -> list:
         if not self.profile.mcp.enabled or not self.profile.mcp.servers:
@@ -691,27 +739,39 @@ tool:
         return True
 
     def _build_system_prompt(self) -> str:
-        """构建系统提示词"""
-        import os
+        """Build system prompt based on sandbox mode."""
         import platform
 
         os_name = platform.system()
         shell_name = os.environ.get("SHELL", "/bin/bash").split("/")[-1]
 
-        # @@@ Different prompt for sandbox vs local mode
         if self._sandbox.name != "local":
-            env_label = self._sandbox.env_label
-            working_dir = self._sandbox.working_dir
-            if self._sandbox.name == "docker":
-                mode_label = "Sandbox (isolated local container)"
-                location_rule = "All file and command operations run in a local Docker container, NOT on the user's host filesystem."
-            else:
-                mode_label = "Sandbox (isolated cloud environment)"
-                location_rule = (
-                    "All file and command operations run in a remote sandbox, NOT on the user's local machine."
-                )
+            prompt = self._build_sandbox_prompt()
+        else:
+            prompt = self._build_local_prompt(os_name, shell_name)
 
-            prompt = f"""You are a highly capable AI assistant with access to a sandbox environment.
+        prompt += self._build_common_prompt_sections()
+
+        if self.allowed_file_extensions:
+            prompt += f"\n6. **File Type Restriction**: Only these extensions allowed: {', '.join(self.allowed_file_extensions)}\n"
+
+        return prompt
+
+    def _build_sandbox_prompt(self) -> str:
+        """Build system prompt for sandbox mode."""
+        env_label = self._sandbox.env_label
+        working_dir = self._sandbox.working_dir
+
+        if self._sandbox.name == "docker":
+            mode_label = "Sandbox (isolated local container)"
+            location_rule = (
+                "All file and command operations run in a local Docker container, NOT on the user's host filesystem."
+            )
+        else:
+            mode_label = "Sandbox (isolated cloud environment)"
+            location_rule = "All file and command operations run in a remote sandbox, NOT on the user's local machine."
+
+        return f"""You are a highly capable AI assistant with access to a sandbox environment.
 
 **Context:**
 - Environment: {env_label}
@@ -730,8 +790,10 @@ tool:
 
 4. **Security**: The sandbox is isolated. You can install packages, run any commands, and modify files freely within the sandbox.
 """
-        else:
-            prompt = f"""You are a highly capable AI assistant with access to file and system tools.
+
+    def _build_local_prompt(self, os_name: str, shell_name: str) -> str:
+        """Build system prompt for local mode."""
+        return f"""You are a highly capable AI assistant with access to file and system tools.
 
 **Context:**
 - Workspace: `{self.workspace_root}`
@@ -753,8 +815,9 @@ tool:
 5. **Tool Priority**: Tools starting with `mcp__` are external MCP integrations. When a built-in tool and an MCP tool have the same functionality, use the built-in tool.
 """
 
-        # Common sections for both modes
-        prompt += """
+    def _build_common_prompt_sections(self) -> str:
+        """Build common prompt sections for both sandbox and local modes."""
+        return """
 **Task Tool (Sub-agent Orchestration):**
 
 Use the Task tool to launch specialized sub-agents for complex tasks:
@@ -791,25 +854,15 @@ When NOT to use Todo:
 - Trivial operations that don't need tracking
 """
 
-        if self.allowed_file_extensions:
-            prompt += f"\n6. **File Type Restriction**: Only these extensions allowed: {', '.join(self.allowed_file_extensions)}\n"
-
-        return prompt
-
-    def invoke(
-        self,
-        message: str,
-        thread_id: str = "default",
-    ) -> dict:
-        """
-        调用 agent
+    def invoke(self, message: str, thread_id: str = "default") -> dict:
+        """Invoke agent with a message.
 
         Args:
-            message: 用户消息
-            thread_id: 线程 ID
+            message: User message
+            thread_id: Thread ID
 
         Returns:
-            Agent 响应（包含消息和状态）
+            Agent response (includes messages and state)
         """
         import asyncio
 
@@ -826,22 +879,21 @@ When NOT to use Todo:
             raise
 
     def get_response(self, message: str, thread_id: str = "default", **kwargs) -> str:
-        """
-        获取 agent 的文本响应
+        """Get agent's text response.
 
         Args:
-            message: 用户消息
-            thread_id: 线程 ID
-            **kwargs: 额外的状态参数
+            message: User message
+            thread_id: Thread ID
+            **kwargs: Additional state parameters
 
         Returns:
-            Agent 的文本响应
+            Agent's text response
         """
         result = self.invoke(message, thread_id, **kwargs)
         return result["messages"][-1].content
 
     def cleanup(self):
-        """清理临时工作目录"""
+        """Clean up temporary workspace directory."""
         if self.workspace_root.exists() and "tmp" in str(self.workspace_root):
             import shutil
 
@@ -855,30 +907,27 @@ def create_leon_agent(
     sandbox: Any = None,
     **kwargs,
 ) -> LeonAgent:
-    """
-    工厂函数：创建 Leon Agent
+    """Create Leon Agent.
 
     Args:
-        model_name: Anthropic 模型名称
+        model_name: Model name
         api_key: API key
-        workspace_root: 工作目录
+        workspace_root: Workspace directory
         sandbox: Sandbox instance, name string, or None for local
-        **kwargs: 其他配置参数
+        **kwargs: Additional configuration parameters
 
     Returns:
-        配置好的 LeonAgent 实例
+        Configured LeonAgent instance
 
     Examples:
-        # 基本用法
+        # Basic usage
         agent = create_leon_agent()
 
-        # 使用 sandbox
+        # With sandbox
         agent = create_leon_agent(sandbox="agentbay")
 
-        # 自定义工作目录
-        agent = create_leon_agent(
-            workspace_root="/path/to/workspace"
-        )
+        # Custom workspace
+        agent = create_leon_agent(workspace_root="/path/to/workspace")
     """
     return LeonAgent(
         model_name=model_name,
@@ -890,7 +939,7 @@ def create_leon_agent(
 
 
 if __name__ == "__main__":
-    # 示例用法
+    # Example usage
     leon_agent = create_leon_agent()
 
     try:

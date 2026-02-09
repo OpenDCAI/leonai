@@ -107,49 +107,66 @@ class NonInteractiveRunner:
 
     def _print_runtime_state(self) -> None:
         """Print runtime state (if available)"""
-        if not self.debug or self.json_output:
+        if not self.debug or self.json_output or not hasattr(self.agent, "runtime"):
             return
 
-        if hasattr(self.agent, "runtime"):
-            status = self.agent.runtime.get_status_dict()
+        status = self.agent.runtime.get_status_dict()
 
-            # 状态
-            state_info = status.get("state", {})
-            print(f"\n[STATE] {state_info.get('state', 'unknown')}")
+        # 状态
+        state_info = status.get("state", {})
+        print(f"\n[STATE] {state_info.get('state', 'unknown')}")
 
-            # Token 统计
-            tokens = status.get("tokens", {})
-            if tokens.get("total_tokens", 0) > 0:
-                print(
-                    f"[TOKENS] total={tokens['total_tokens']} "
-                    f"(in={tokens.get('input_tokens', 0)}, "
-                    f"out={tokens.get('output_tokens', 0)}, "
-                    f"cache_r={tokens.get('cache_read_tokens', 0)}, "
-                    f"cache_w={tokens.get('cache_write_tokens', 0)}, "
-                    f"reasoning={tokens.get('reasoning_tokens', 0)})"
-                )
-                cost = tokens.get("cost", 0)
-                if cost > 0:
-                    print(f"[COST] ${cost:.4f}")
-                print(f"[LLM_CALLS] {tokens['call_count']}")
+        # Token 统计
+        self._print_token_stats(status.get("tokens", {}))
 
-            # 上下文统计
-            context = status.get("context", {})
-            if context.get("estimated_tokens", 0) > 0:
-                print(f"[CONTEXT] ~{context['estimated_tokens']} tokens ({context['usage_percent']}% of limit)")
+        # 上下文统计
+        self._print_context_stats(status.get("context", {}))
 
-            # Memory 状态
-            if hasattr(self.agent, "_memory_middleware"):
-                mm = self.agent._memory_middleware
-                parts = []
-                if mm._cached_summary:
-                    parts.append(f"summary_cached=yes (up_to_idx={mm._compact_up_to_index})")
-                else:
-                    parts.append("summary_cached=no")
-                flags = status.get("state", {}).get("flags", {})
-                if flags.get("compacting"):
-                    parts.append("COMPACTING")
-                print(f"[MEMORY] {', '.join(parts)}")
+        # Memory 状态
+        self._print_memory_stats(status)
+
+    def _print_token_stats(self, tokens: dict) -> None:
+        """Print token statistics"""
+        if tokens.get("total_tokens", 0) == 0:
+            return
+
+        print(
+            f"[TOKENS] total={tokens['total_tokens']} "
+            f"(in={tokens.get('input_tokens', 0)}, "
+            f"out={tokens.get('output_tokens', 0)}, "
+            f"cache_r={tokens.get('cache_read_tokens', 0)}, "
+            f"cache_w={tokens.get('cache_write_tokens', 0)}, "
+            f"reasoning={tokens.get('reasoning_tokens', 0)})"
+        )
+
+        cost = tokens.get("cost", 0)
+        if cost > 0:
+            print(f"[COST] ${cost:.4f}")
+        print(f"[LLM_CALLS] {tokens['call_count']}")
+
+    def _print_context_stats(self, context: dict) -> None:
+        """Print context statistics"""
+        if context.get("estimated_tokens", 0) > 0:
+            print(f"[CONTEXT] ~{context['estimated_tokens']} tokens ({context['usage_percent']}% of limit)")
+
+    def _print_memory_stats(self, status: dict) -> None:
+        """Print memory middleware statistics"""
+        if not hasattr(self.agent, "_memory_middleware"):
+            return
+
+        mm = self.agent._memory_middleware
+        parts = []
+
+        if mm._cached_summary:
+            parts.append(f"summary_cached=yes (up_to_idx={mm._compact_up_to_index})")
+        else:
+            parts.append("summary_cached=no")
+
+        flags = status.get("state", {}).get("flags", {})
+        if flags.get("compacting"):
+            parts.append("COMPACTING")
+
+        print(f"[MEMORY] {', '.join(parts)}")
 
     def _process_chunk(self, chunk: dict, result: dict) -> None:
         """Process streaming chunk, extract tool calls and response"""
@@ -172,20 +189,7 @@ class NonInteractiveRunner:
 
     def _handle_ai_message(self, msg: Any, result: dict) -> None:
         """Handle AIMessage - extract content and tool calls"""
-        # Extract text content
-        raw_content = getattr(msg, "content", "")
-        if isinstance(raw_content, str):
-            content = raw_content
-        elif isinstance(raw_content, list):
-            text_parts = []
-            for block in raw_content:
-                if isinstance(block, dict) and block.get("type") == "text":
-                    text_parts.append(block.get("text", ""))
-                elif isinstance(block, str):
-                    text_parts.append(block)
-            content = "".join(text_parts)
-        else:
-            content = str(raw_content)
+        content = self._extract_text_content(msg)
 
         if content:
             result["response"] = content
@@ -203,12 +207,34 @@ class NonInteractiveRunner:
             self.total_tool_calls += 1
 
             if self.debug and not self.json_output:
-                print(f"\n[TOOL_CALL] {tool_info['name']}")
-                for k, v in tool_info["args"].items():
-                    v_str = str(v)
-                    if len(v_str) > 100:
-                        v_str = v_str[:100] + "..."
-                    print(f"  {k}: {v_str}")
+                self._print_tool_call(tool_info)
+
+    def _extract_text_content(self, msg: Any) -> str:
+        """Extract text content from AIMessage"""
+        raw_content = getattr(msg, "content", "")
+
+        if isinstance(raw_content, str):
+            return raw_content
+
+        if isinstance(raw_content, list):
+            text_parts = []
+            for block in raw_content:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    text_parts.append(block.get("text", ""))
+                elif isinstance(block, str):
+                    text_parts.append(block)
+            return "".join(text_parts)
+
+        return str(raw_content)
+
+    def _print_tool_call(self, tool_info: dict) -> None:
+        """Print tool call information"""
+        print(f"\n[TOOL_CALL] {tool_info['name']}")
+        for k, v in tool_info["args"].items():
+            v_str = str(v)
+            if len(v_str) > 100:
+                v_str = v_str[:100] + "..."
+            print(f"  {k}: {v_str}")
 
     def _handle_tool_message(self, msg: Any) -> None:
         """Handle ToolMessage - show result preview"""
@@ -328,17 +354,57 @@ def cmd_run(args, unknown_args: list[str]) -> None:
         print("Error: No API key configured. Run 'leonai config' first.")
         return
 
-    # Parse arguments from unknown_args
+    # Parse arguments
+    run_config = _parse_run_args(args, unknown_args)
+
+    if run_config is None:
+        _show_run_help()
+        return
+
+    # Get workspace and thread
+    workspace = Path(args.workspace) if args.workspace else Path.cwd()
+    thread_id = args.thread or f"run-{uuid.uuid4().hex[:8]}"
+
+    # Auto-detect sandbox when resuming a thread
+    sandbox_arg = _detect_sandbox(args, thread_id)
+
+    # Create agent
+    agent = _create_agent(args, workspace, sandbox_arg, run_config["debug"])
+    if agent is None:
+        return
+
+    # Create and run
+    runner = NonInteractiveRunner(
+        agent,
+        thread_id,
+        debug=run_config["debug"],
+        json_output=run_config["json"],
+    )
+
+    try:
+        if run_config["interactive"]:
+            asyncio.run(runner.run_interactive())
+        elif run_config["stdin"]:
+            asyncio.run(runner.run_stdin())
+        elif run_config["message"]:
+            asyncio.run(runner.run_single(run_config["message"]))
+    except KeyboardInterrupt:
+        if run_config["debug"]:
+            print("\n[INTERRUPTED]")
+    finally:
+        agent.close()
+
+
+def _parse_run_args(args, unknown_args: list[str]) -> dict | None:
+    """Parse run command arguments. Returns None if help should be shown."""
     message = None
     stdin_mode = False
     interactive_mode = False
     debug_mode = False
     json_mode = False
 
-    i = 0
     positional_args = []
-    while i < len(unknown_args):
-        arg = unknown_args[i]
+    for arg in unknown_args:
         if arg == "--stdin":
             stdin_mode = True
         elif arg in ("-i", "--interactive"):
@@ -349,33 +415,14 @@ def cmd_run(args, unknown_args: list[str]) -> None:
             json_mode = True
         elif not arg.startswith("-"):
             positional_args.append(arg)
-        i += 1
 
-    # Message can come from:
-    # 1. args.subcommand (leonai run "message")
-    # 2. args.extra_args (leonai run -d "message")
-    # 3. positional_args from unknown (fallback)
+    # Message can come from multiple sources
     if args.subcommand and not args.subcommand.startswith("-"):
         message = args.subcommand
     elif args.extra_args:
         message = args.extra_args[0]
     elif positional_args:
         message = positional_args[0]
-
-    # Get workspace and thread from main args
-    workspace = Path(args.workspace) if args.workspace else Path.cwd()
-    thread_id = args.thread or f"run-{uuid.uuid4().hex[:8]}"
-
-    # @@@ Auto-detect sandbox when resuming a thread
-    sandbox_arg = getattr(args, "sandbox", None)
-    if not sandbox_arg and args.thread:
-        from sandbox.manager import lookup_sandbox_for_thread
-
-        detected = lookup_sandbox_for_thread(thread_id)
-        if detected:
-            config_path = Path.home() / ".leon" / "sandboxes" / f"{detected}.json"
-            if config_path.exists():
-                sandbox_arg = detected
 
     # Validate mode combinations
     mode_count = sum([bool(message), stdin_mode, interactive_mode])
@@ -385,35 +432,64 @@ def cmd_run(args, unknown_args: list[str]) -> None:
         print('  leonai run "message"       Single message')
         print("  leonai run --stdin         Read from stdin")
         print("  leonai run -i              Interactive mode")
-        return
+        return None
 
     if mode_count == 0:
-        # Show help
-        print("Usage: leonai run [OPTIONS] [MESSAGE]")
-        print()
-        print("Options:")
-        print("  MESSAGE              Single message to send")
-        print("  --stdin              Read messages from stdin (blank line separated)")
-        print("  -i, --interactive    Interactive mode (simple readline)")
-        print("  -d, --debug          Show debug output (tool calls, queue status)")
-        print("  --json               JSON output (single message mode only)")
-        print("  --workspace <dir>    Working directory")
-        print("  --thread <id>        Thread ID (for multi-turn persistence)")
-        print()
-        print("Examples:")
-        print('  leonai run "List files in current directory"')
-        print('  leonai run -d "Read README.md"')
-        print("  leonai run -i -d")
-        print('  echo -e "List files\\n\\nRead README.md" | leonai run --stdin -d')
-        print('  leonai run --thread my-test "First message"')
-        print('  leonai run --thread my-test "Continue conversation"')
-        return
+        return None
 
-    # Create agent
-    if debug_mode:
+    return {
+        "message": message,
+        "stdin": stdin_mode,
+        "interactive": interactive_mode,
+        "debug": debug_mode,
+        "json": json_mode,
+    }
+
+
+def _show_run_help() -> None:
+    """Show help for run command"""
+    print("Usage: leonai run [OPTIONS] [MESSAGE]")
+    print()
+    print("Options:")
+    print("  MESSAGE              Single message to send")
+    print("  --stdin              Read messages from stdin (blank line separated)")
+    print("  -i, --interactive    Interactive mode (simple readline)")
+    print("  -d, --debug          Show debug output (tool calls, queue status)")
+    print("  --json               JSON output (single message mode only)")
+    print("  --workspace <dir>    Working directory")
+    print("  --thread <id>        Thread ID (for multi-turn persistence)")
+    print()
+    print("Examples:")
+    print('  leonai run "List files in current directory"')
+    print('  leonai run -d "Read README.md"')
+    print("  leonai run -i -d")
+    print('  echo -e "List files\\n\\nRead README.md" | leonai run --stdin -d')
+    print('  leonai run --thread my-test "First message"')
+    print('  leonai run --thread my-test "Continue conversation"')
+
+
+def _detect_sandbox(args, thread_id: str) -> str | None:
+    """Auto-detect sandbox when resuming a thread"""
+    sandbox_arg = getattr(args, "sandbox", None)
+    if not sandbox_arg and args.thread:
+        from sandbox.manager import lookup_sandbox_for_thread
+
+        detected = lookup_sandbox_for_thread(thread_id)
+        if detected:
+            config_path = Path.home() / ".leon" / "sandboxes" / f"{detected}.json"
+            if config_path.exists():
+                return detected
+    return sandbox_arg
+
+
+def _create_agent(args, workspace: Path, sandbox_arg: str | None, debug: bool):
+    """Create agent with error handling"""
+    import os
+
+    if debug:
         print("[DEBUG] Initializing agent...", flush=True)
         print(f"[DEBUG] Workspace: {workspace}", flush=True)
-        print(f"[DEBUG] Thread: {thread_id}", flush=True)
+        print(f"[DEBUG] Thread: {args.thread or 'auto'}", flush=True)
 
     from agent import create_leon_agent
 
@@ -425,32 +501,11 @@ def cmd_run(args, unknown_args: list[str]) -> None:
             profile=args.profile,
             workspace_root=workspace,
             sandbox=sandbox_arg,
-            verbose=debug_mode,  # Only show middleware logs in debug mode
+            verbose=debug,
         )
+        if debug:
+            print("[DEBUG] Agent ready", flush=True)
+        return agent
     except Exception as e:
         print(f"Error: Failed to initialize agent: {e}")
-        return
-
-    if debug_mode:
-        print("[DEBUG] Agent ready", flush=True)
-
-    # Create runner
-    runner = NonInteractiveRunner(
-        agent,
-        thread_id,
-        debug=debug_mode,
-        json_output=json_mode,
-    )
-
-    try:
-        if interactive_mode:
-            asyncio.run(runner.run_interactive())
-        elif stdin_mode:
-            asyncio.run(runner.run_stdin())
-        elif message:
-            asyncio.run(runner.run_single(message))
-    except KeyboardInterrupt:
-        if debug_mode:
-            print("\n[INTERRUPTED]")
-    finally:
-        agent.close()
+        return None

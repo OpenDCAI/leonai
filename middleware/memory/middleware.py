@@ -112,7 +112,6 @@ class MemoryMiddleware(AgentMiddleware):
                 await self._restore_summary_from_store(thread_id)
                 self._summary_restored = True
 
-        # Account for system_message in token budget
         sys_tokens = self._estimate_system_tokens(request)
 
         # Layer 1: Prune old ToolMessage content
@@ -134,18 +133,19 @@ class MemoryMiddleware(AgentMiddleware):
         # Layer 2: Compaction
         estimated = self._estimate_tokens(messages) + sys_tokens
         if self.verbose:
+            threshold = int(self._context_limit * self._compaction_threshold)
+            should_compact = self.compactor.should_compact(estimated, self._context_limit, self._compaction_threshold)
             print(
                 f"[Memory] Context: ~{estimated} tokens "
                 f"(sys={sys_tokens}, msgs={estimated - sys_tokens}), "
-                f"limit={self._context_limit}, threshold={int(self._context_limit * self._compaction_threshold)}, "
-                f"compact={'YES' if self.compactor.should_compact(estimated, self._context_limit, self._compaction_threshold) else 'no'}"
+                f"limit={self._context_limit}, threshold={threshold}, "
+                f"compact={'YES' if should_compact else 'no'}"
             )
 
         if self.compactor.should_compact(estimated, self._context_limit, self._compaction_threshold) and self._model:
             thread_id = self._extract_thread_id(request)
             messages = await self._do_compact(messages, thread_id)
         elif self._cached_summary and self._compact_up_to_index > 0:
-            # Use cached summary for messages already compacted
             if self._compact_up_to_index <= len(messages):
                 summary_msg = SystemMessage(content=f"[Conversation Summary]\n{self._cached_summary}")
                 messages = [summary_msg] + messages[self._compact_up_to_index :]
@@ -163,7 +163,6 @@ class MemoryMiddleware(AgentMiddleware):
                 f"sent to LLM (original: {original_count} msgs)"
             )
 
-        # Apply modified messages to request
         request.messages = messages
         return await handler(request)
 
@@ -174,17 +173,14 @@ class MemoryMiddleware(AgentMiddleware):
         try:
             to_summarize, to_keep = self.compactor.split_messages(messages)
             if len(to_summarize) < 2:
-                return messages  # not enough to summarize
+                return messages
 
-            # Check for split turn
             is_split_turn, turn_prefix = self.compactor.detect_split_turn(messages, to_keep, self._context_limit)
 
             if is_split_turn:
-                # Generate combined summary with split turn handling
                 summary_text, prefix_summary = await self.compactor.compact_with_split_turn(
                     to_summarize, turn_prefix, self._model
                 )
-                # Remove prefix from to_keep
                 to_keep = to_keep[len(turn_prefix) :]
                 if self.verbose:
                     print(
@@ -192,17 +188,14 @@ class MemoryMiddleware(AgentMiddleware):
                         f"{len(turn_prefix)} prefix msgs → summary + {len(to_keep)} suffix msgs"
                     )
             else:
-                # Standard compaction
                 summary_text = await self.compactor.compact(to_summarize, self._model)
                 prefix_summary = None
                 if self.verbose:
                     print(f"[Memory] Compacted: {len(to_summarize)} msgs → summary + {len(to_keep)} recent")
 
-            # Update cache
             self._cached_summary = summary_text
             self._compact_up_to_index = len(messages) - len(to_keep)
 
-            # Save to store if available
             if self.summary_store and thread_id:
                 try:
                     summary_id = self.summary_store.save_summary(
@@ -217,7 +210,6 @@ class MemoryMiddleware(AgentMiddleware):
                         print(f"[Memory] Saved summary {summary_id} to store")
                 except Exception as e:
                     logger.error(f"[Memory] Failed to save summary to store: {e}")
-                    # Continue execution - summary loss doesn't break functionality
 
             summary_msg = SystemMessage(content=f"[Conversation Summary]\n{summary_text}")
             return [summary_msg] + to_keep
@@ -241,16 +233,15 @@ class MemoryMiddleware(AgentMiddleware):
             summary_text = await self.compactor.compact(to_summarize, self._model)
             self._cached_summary = summary_text
             self._compact_up_to_index = len(messages) - len(to_keep)
+            return {
+                "stats": {
+                    "summarized": len(to_summarize),
+                    "kept": len(to_keep),
+                }
+            }
         finally:
             if self._runtime:
                 self._runtime.set_flag("isCompacting", False)
-
-        return {
-            "stats": {
-                "summarized": len(to_summarize),
-                "kept": len(to_keep),
-            }
-        }
 
     def _estimate_tokens(self, messages: list[Any]) -> int:
         """Estimate total tokens for messages (chars // 2)."""
@@ -270,12 +261,10 @@ class MemoryMiddleware(AgentMiddleware):
     def _estimate_system_tokens(self, request: Any) -> int:
         """Estimate tokens for system_message (not in messages list)."""
         sys_msg = getattr(request, "system_message", None)
-        if sys_msg is None:
+        if not sys_msg:
             return 0
         content = getattr(sys_msg, "content", "")
-        if isinstance(content, str):
-            return len(content) // 2
-        return 0
+        return len(content) // 2 if isinstance(content, str) else 0
 
     def _extract_thread_id(self, request: ModelRequest) -> str | None:
         """Extract thread_id from request config."""
@@ -288,14 +277,7 @@ class MemoryMiddleware(AgentMiddleware):
         return configurable.get("thread_id")
 
     async def _restore_summary_from_store(self, thread_id: str) -> None:
-        """Restore summary from SummaryStore.
-
-        Args:
-            thread_id: Thread identifier
-
-        Raises:
-            ValueError: If thread_id is missing (required for persistence)
-        """
+        """Restore summary from SummaryStore."""
         if not thread_id:
             raise ValueError(
                 "[Memory] thread_id is required for summary persistence. "
@@ -305,23 +287,19 @@ class MemoryMiddleware(AgentMiddleware):
         try:
             summary_data = self.summary_store.get_latest_summary(thread_id)
 
-            if summary_data is None:
-                # No summary exists or data is corrupted
+            if not summary_data:
                 if self.verbose:
                     print(f"[Memory] No summary found in store for thread {thread_id}")
-                # Try to rebuild from checkpointer if data corruption suspected
                 if self.checkpointer:
                     await self._rebuild_summary_from_checkpointer(thread_id)
                 return
 
-            # Validate data integrity
             if not summary_data.summary_text or summary_data.compact_up_to_index < 0:
                 logger.warning(f"[Memory] Invalid summary data for thread {thread_id}, rebuilding...")
                 if self.checkpointer:
                     await self._rebuild_summary_from_checkpointer(thread_id)
                 return
 
-            # Restore cache
             self._cached_summary = summary_data.summary_text
             self._compact_up_to_index = summary_data.compact_up_to_index
 
@@ -335,42 +313,33 @@ class MemoryMiddleware(AgentMiddleware):
 
         except Exception as e:
             logger.error(f"[Memory] Failed to restore summary: {e}")
-            # Try to rebuild from checkpointer
             if self.checkpointer:
                 await self._rebuild_summary_from_checkpointer(thread_id)
 
     async def _rebuild_summary_from_checkpointer(self, thread_id: str) -> None:
-        """Rebuild summary from checkpointer when store data is corrupted.
-
-        Args:
-            thread_id: Thread identifier
-        """
+        """Rebuild summary from checkpointer when store data is corrupted."""
         try:
             if self.verbose:
                 print(f"[Memory] Rebuilding summary from checkpointer for thread {thread_id}...")
 
-            # Load checkpoint
             checkpoint = self.checkpointer.get({"configurable": {"thread_id": thread_id}})
             if not checkpoint:
                 if self.verbose:
                     print("[Memory] No checkpoint found, skipping rebuild")
                 return
 
-            # Extract messages
             messages = checkpoint.get("channel_values", {}).get("messages", [])
             if not messages:
                 if self.verbose:
                     print("[Memory] No messages in checkpoint, skipping rebuild")
                 return
 
-            # Check if compaction is needed
             estimated = self._estimate_tokens(messages)
             if not self.compactor.should_compact(estimated, self._context_limit, self._compaction_threshold):
                 if self.verbose:
                     print("[Memory] Context below threshold, no rebuild needed")
                 return
 
-            # Run full compaction logic
             pruned = self.pruner.prune(messages)
             to_summarize, to_keep = self.compactor.split_messages(pruned)
             if len(to_summarize) < 2:
@@ -378,7 +347,6 @@ class MemoryMiddleware(AgentMiddleware):
                     print("[Memory] Not enough messages to summarize, skipping rebuild")
                 return
 
-            # Check for split turn
             is_split_turn, turn_prefix = self.compactor.detect_split_turn(pruned, to_keep, self._context_limit)
 
             if is_split_turn:
@@ -390,11 +358,9 @@ class MemoryMiddleware(AgentMiddleware):
                 summary_text = await self.compactor.compact(to_summarize, self._model)
                 prefix_summary = None
 
-            # Update cache
             self._cached_summary = summary_text
             self._compact_up_to_index = len(messages) - len(to_keep)
 
-            # Save rebuilt summary to store
             summary_id = self.summary_store.save_summary(
                 thread_id=thread_id,
                 summary_text=summary_text,
@@ -409,4 +375,3 @@ class MemoryMiddleware(AgentMiddleware):
 
         except Exception as e:
             logger.error(f"[Memory] Failed to rebuild summary from checkpointer: {e}")
-            # Continue execution - summary loss doesn't break functionality

@@ -106,13 +106,12 @@ class StateMonitor(BaseMonitor):
 
     def mark_terminated(self) -> bool:
         """标记为终止"""
-        # 从任何状态都可以转移到 TERMINATED（通过中间状态）
         if self.state == AgentState.ACTIVE:
             self.transition(AgentState.IDLE)
-        if self.state in (AgentState.READY, AgentState.IDLE, AgentState.SUSPENDED):
+
+        if self.state in (AgentState.READY, AgentState.IDLE, AgentState.SUSPENDED, AgentState.ERROR):
             return self.transition(AgentState.TERMINATED)
-        elif self.state == AgentState.ERROR:
-            return self.transition(AgentState.TERMINATED)
+
         return False
 
     def can_accept_task(self) -> bool:

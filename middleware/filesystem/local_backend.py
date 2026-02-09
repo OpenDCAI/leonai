@@ -1,7 +1,4 @@
-"""Local filesystem backend.
-
-Direct local I/O — extracted from FileSystemMiddleware.
-"""
+"""Local filesystem backend - direct local I/O."""
 
 from __future__ import annotations
 
@@ -25,11 +22,10 @@ class LocalBackend(FileSystemBackend):
         return FileReadResult(content=content, size=p.stat().st_size)
 
     def write_file(self, path: str, content: str) -> FileWriteResult:
-        p = Path(path)
         try:
+            p = Path(path)
             p.parent.mkdir(parents=True, exist_ok=True)
-            with open(p, "w", encoding="utf-8") as f:
-                f.write(content)
+            p.write_text(content, encoding="utf-8")
             return FileWriteResult(success=True)
         except Exception as e:
             return FileWriteResult(success=False, error=str(e))
@@ -53,27 +49,15 @@ class LocalBackend(FileSystemBackend):
         return Path(path).is_dir()
 
     def list_dir(self, path: str) -> DirListResult:
-        p = Path(path)
         try:
+            p = Path(path)
             entries = []
             for item in sorted(p.iterdir()):
                 if item.is_file():
-                    entries.append(
-                        DirEntry(
-                            name=item.name,
-                            is_dir=False,
-                            size=item.stat().st_size,
-                        )
-                    )
+                    entries.append(DirEntry(name=item.name, is_dir=False, size=item.stat().st_size))
                 elif item.is_dir():
                     count = sum(1 for _ in item.iterdir())
-                    entries.append(
-                        DirEntry(
-                            name=item.name,
-                            is_dir=True,
-                            children_count=count,
-                        )
-                    )
+                    entries.append(DirEntry(name=item.name, is_dir=True, children_count=count))
             return DirListResult(entries=entries)
         except Exception as e:
             return DirListResult(error=str(e))

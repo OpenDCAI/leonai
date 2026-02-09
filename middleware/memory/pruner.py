@@ -48,14 +48,18 @@ class SessionPruner:
         for msg in reversed(messages):
             if count >= self.protect_recent:
                 break
-            if self._is_ai_message(msg):
-                tool_calls = getattr(msg, "tool_calls", None)
-                if tool_calls:
-                    for tc in tool_calls:
-                        tc_id = tc.get("id", "") if isinstance(tc, dict) else getattr(tc, "id", "")
-                        if tc_id:
-                            ids.add(tc_id)
-                    count += 1
+            if not self._is_ai_message(msg):
+                continue
+
+            tool_calls = getattr(msg, "tool_calls", None)
+            if not tool_calls:
+                continue
+
+            for tc in tool_calls:
+                tc_id = tc.get("id", "") if isinstance(tc, dict) else getattr(tc, "id", "")
+                if tc_id:
+                    ids.add(tc_id)
+            count += 1
         return ids
 
     def _is_tool_message(self, msg: Any) -> bool:
@@ -71,21 +75,19 @@ class SessionPruner:
     def _prune_tool_message(self, msg: Any) -> Any:
         content = getattr(msg, "content", "")
         if not isinstance(content, str):
-            return msg  # skip non-string content (images, etc.)
+            return msg
 
         n = len(content)
         if n <= self.soft_trim_chars:
-            return msg  # small enough, keep as-is
+            return msg
 
+        # Determine new content based on size
         if n > self.hard_clear_threshold:
-            # hard-clear
             new_content = f"[Tool output cleared — {n} chars]"
         else:
-            # soft-trim: keep head + tail
             half = self.soft_trim_chars // 2
             new_content = content[:half] + "\n\n[...trimmed...]\n\n" + content[-half:]
 
-        # Shallow copy with replaced content
         new_msg = copy.copy(msg)
         new_msg.content = new_content
         return new_msg

@@ -1,8 +1,4 @@
-"""
-危险命令拦截 Hook - 禁止执行危险命令
-
-扩展安全策略，拦截可能造成系统损坏的命令。
-"""
+"""Dangerous commands hook - blocks commands that may harm the system."""
 
 import re
 from pathlib import Path
@@ -12,39 +8,29 @@ from .base import BashHook, HookResult
 
 
 class DangerousCommandsHook(BashHook):
-    """
-    危险命令拦截 Hook
+    """Dangerous commands hook - blocks destructive system commands."""
 
-    功能：
-    - 拦截删除命令（rm -rf, rmdir 等）
-    - 拦截系统修改命令（chmod, chown 等）
-    - 拦截网络命令（curl, wget 等）
-    - 可配置的命令黑名单
-    """
-
-    priority = 5  # 高优先级，在路径安全检查之前
+    priority = 5
     name = "DangerousCommands"
     description = "Block dangerous commands that may harm the system"
     enabled = True
 
-    # 默认危险命令列表
     DEFAULT_BLOCKED_COMMANDS = [
-        r"\brm\s+-rf",  # rm -rf
-        r"\brm\s+.*-.*r.*f",  # rm with -r and -f flags
-        r"\brmdir\b",  # rmdir
-        r"\bchmod\b",  # chmod
-        r"\bchown\b",  # chown
-        r"\bsudo\b",  # sudo
-        r"\bsu\b",  # su
-        r"\bkill\b",  # kill
-        r"\bpkill\b",  # pkill
-        r"\breboot\b",  # reboot
-        r"\bshutdown\b",  # shutdown
-        r"\bmkfs\b",  # mkfs (format disk)
-        r"\bdd\b",  # dd (disk operations)
+        r"\brm\s+-rf",
+        r"\brm\s+.*-.*r.*f",
+        r"\brmdir\b",
+        r"\bchmod\b",
+        r"\bchown\b",
+        r"\bsudo\b",
+        r"\bsu\b",
+        r"\bkill\b",
+        r"\bpkill\b",
+        r"\breboot\b",
+        r"\bshutdown\b",
+        r"\bmkfs\b",
+        r"\bdd\b",
     ]
 
-    # 可选的网络命令限制
     NETWORK_COMMANDS = [
         r"\bcurl\b",
         r"\bwget\b",
@@ -62,41 +48,23 @@ class DangerousCommandsHook(BashHook):
         verbose: bool = True,
         **kwargs,
     ):
-        """
-        初始化危险命令 hook
-
-        Args:
-            workspace_root: 工作目录
-            block_network: 是否拦截网络命令
-            custom_blocked: 自定义拦截的命令模式（正则表达式）
-            verbose: 是否输出详细日志
-            **kwargs: 其他配置参数
-        """
         super().__init__(workspace_root, **kwargs)
         self.verbose = verbose
 
-        # 构建拦截列表
-        self.blocked_patterns = self.DEFAULT_BLOCKED_COMMANDS.copy()
-
+        patterns = self.DEFAULT_BLOCKED_COMMANDS.copy()
         if block_network:
-            self.blocked_patterns.extend(self.NETWORK_COMMANDS)
-
+            patterns.extend(self.NETWORK_COMMANDS)
         if custom_blocked:
-            self.blocked_patterns.extend(custom_blocked)
+            patterns.extend(custom_blocked)
 
-        # 编译正则表达式
-        self.compiled_patterns = [re.compile(pattern, re.IGNORECASE) for pattern in self.blocked_patterns]
+        self.compiled_patterns = [re.compile(p, re.IGNORECASE) for p in patterns]
 
-        if self.verbose:
+        if verbose:
             print(f"[DangerousCommands] Loaded {len(self.compiled_patterns)} blocked command patterns")
 
     def check_command(self, command: str, context: dict[str, Any]) -> HookResult:
-        """检查命令是否危险"""
-        command = command.strip()
-
-        # 检查每个危险模式
         for pattern in self.compiled_patterns:
-            if pattern.search(command):
+            if pattern.search(command.strip()):
                 return HookResult.block_command(
                     error_message=(
                         f"❌ SECURITY ERROR: Dangerous command detected\n"
@@ -106,8 +74,6 @@ class DangerousCommandsHook(BashHook):
                         f"   💡 If you need to perform this operation, ask the user for permission."
                     )
                 )
-
-        # 命令安全，允许执行
         return HookResult.allow_command()
 
 
