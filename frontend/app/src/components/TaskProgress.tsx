@@ -1,4 +1,5 @@
 import { ExternalLink, Terminal } from "lucide-react";
+import type { StreamStatus } from "../api";
 
 const sandboxTypeLabels: Record<string, string> = {
   local: "本地",
@@ -10,6 +11,7 @@ const sandboxTypeLabels: Record<string, string> = {
 
 interface TaskProgressProps {
   isStreaming: boolean;
+  runtimeStatus: StreamStatus | null;
   sandboxType: string | null;
   sandboxStatus: string | null;
   onOpenComputer?: () => void;
@@ -22,7 +24,21 @@ function statusColor(status: string | null): string {
   return "#ef4444";
 }
 
-export default function TaskProgress({ isStreaming, sandboxType, sandboxStatus, onOpenComputer }: TaskProgressProps) {
+function formatTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return String(n);
+}
+
+function formatCost(c: number): string {
+  if (c < 0.01) return "<$0.01";
+  return `$${c.toFixed(2)}`;
+}
+
+export default function TaskProgress({ isStreaming, runtimeStatus, sandboxType, sandboxStatus, onOpenComputer }: TaskProgressProps) {
+  const tokens = runtimeStatus?.tokens;
+  const context = runtimeStatus?.context;
+
   return (
     <div className="bg-white">
       <div className="max-w-3xl mx-auto px-4">
@@ -43,6 +59,22 @@ export default function TaskProgress({ isStreaming, sandboxType, sandboxStatus, 
                   {isStreaming ? "Leon 正在工作" : "Leon 待命中"}
                 </span>
               </div>
+
+              {/* Token / context stats row */}
+              {tokens && (
+                <div className="flex items-center gap-3 mt-1 text-[10px] text-[#a3a3a3]">
+                  <span>Tokens: {formatTokens(tokens.total_tokens)}</span>
+                  <span>费用: {formatCost(tokens.cost)}</span>
+                  {context && (
+                    <>
+                      <span>上下文: {context.usage_percent}%</span>
+                      {context.near_limit && (
+                        <span className="text-amber-500 font-medium">接近上限</span>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
             </div>
             <button
               onClick={onOpenComputer}
