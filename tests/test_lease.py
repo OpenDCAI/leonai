@@ -2,7 +2,7 @@
 
 import sqlite3
 import tempfile
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -182,6 +182,7 @@ class TestSQLiteLease:
 
         assert instance2.instance_id == instance1.instance_id
         assert mock_provider.create_session.call_count == 1  # Only called once
+        assert mock_provider.get_session_status.call_count == 0
 
     def test_ensure_active_instance_converges_stale_paused_state(self, store, mock_provider):
         """If DB says paused but provider says running, lease status must converge to running."""
@@ -220,6 +221,7 @@ class TestSQLiteLease:
         lease.ensure_active_instance(mock_provider)
 
         # Mock provider to report instance is paused
+        lease.observed_at = datetime.now() - timedelta(seconds=10)
         mock_provider.get_session_status.return_value = "paused"
         with pytest.raises(RuntimeError, match="is paused"):
             lease.ensure_active_instance(mock_provider)
@@ -238,6 +240,7 @@ class TestSQLiteLease:
         lease.ensure_active_instance(mock_provider)
 
         # Mock provider to report instance is dead
+        lease.observed_at = datetime.now() - timedelta(seconds=10)
         mock_provider.get_session_status.side_effect = Exception("Instance not found")
         mock_provider.create_session.return_value = SessionInfo(
             session_id="inst-456",
@@ -250,6 +253,21 @@ class TestSQLiteLease:
 
         assert instance.instance_id == "inst-456"
         assert mock_provider.create_session.call_count == 2
+
+    def test_ensure_active_instance_refreshes_when_snapshot_stale(self, store, mock_provider):
+        """Stale running snapshot must probe provider once."""
+        lease = store.create("lease-1", "test-provider")
+        mock_provider.create_session.return_value = SessionInfo(
+            session_id="inst-123",
+            provider="test-provider",
+            status="running",
+        )
+        lease.ensure_active_instance(mock_provider)
+        lease.observed_at = datetime.now() - timedelta(seconds=10)
+        mock_provider.get_session_status.return_value = "running"
+
+        lease.ensure_active_instance(mock_provider)
+        assert mock_provider.get_session_status.call_count == 1
 
     def test_destroy_instance(self, store, mock_provider):
         """Test destroying instance."""

@@ -258,6 +258,57 @@ class TestRemoteWrappedRuntime:
         # Close should not raise
         await runtime.close()
 
+    @pytest.mark.asyncio
+    async def test_infra_error_retries_once(self, terminal_store, lease_store, mock_provider):
+        """Infra execution error should trigger one recovery retry."""
+        terminal = terminal_store.create("term-1", "thread-1", "lease-1", "/root")
+        lease = lease_store.create("lease-1", "test-provider")
+
+        instance = SandboxInstance(
+            instance_id="inst-123",
+            provider_name="test-provider",
+            status="running",
+            created_at=None,
+        )
+        lease.ensure_active_instance = MagicMock(return_value=instance)
+        lease.refresh_instance_status = MagicMock(return_value="detached")
+
+        mock_provider.execute.side_effect = [
+            ProviderExecResult(exit_code=1, output="", error="session not found"),
+            ProviderExecResult(exit_code=0, output="ok", error=None),
+        ]
+
+        runtime = RemoteWrappedRuntime(terminal, lease, mock_provider)
+        result = await runtime.execute("echo ok")
+
+        assert result.exit_code == 0
+        assert "ok" in result.stdout
+        assert mock_provider.execute.call_count == 2
+        assert lease.refresh_instance_status.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_non_infra_error_no_retry(self, terminal_store, lease_store, mock_provider):
+        """Normal command failure should not trigger recovery retry."""
+        terminal = terminal_store.create("term-1", "thread-1", "lease-1", "/root")
+        lease = lease_store.create("lease-1", "test-provider")
+
+        instance = SandboxInstance(
+            instance_id="inst-123",
+            provider_name="test-provider",
+            status="running",
+            created_at=None,
+        )
+        lease.ensure_active_instance = MagicMock(return_value=instance)
+        lease.refresh_instance_status = MagicMock(return_value="running")
+        mock_provider.execute.return_value = ProviderExecResult(exit_code=2, output="grep: bad regex", error="")
+
+        runtime = RemoteWrappedRuntime(terminal, lease, mock_provider)
+        result = await runtime.execute("grep")
+
+        assert result.exit_code == 2
+        assert mock_provider.execute.call_count == 1
+        assert lease.refresh_instance_status.call_count == 0
+
 
 class TestRuntimeIntegration:
     """Integration tests for runtime lifecycle."""
