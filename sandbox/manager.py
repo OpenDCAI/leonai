@@ -13,6 +13,7 @@ from collections.abc import Callable
 from pathlib import Path
 import uuid
 import os
+from datetime import datetime
 
 from sandbox.capability import SandboxCapability
 from sandbox.chat_session import ChatSessionManager, ChatSessionPolicy
@@ -132,6 +133,9 @@ class SandboxManager:
         3. Wrap in SandboxCapability
         4. Return to agent
         """
+        # @@@idle-timeout-enforce - Run external idle policy before reusing/creating session.
+        self.enforce_idle_timeouts()
+
         # Try to get existing session
         session = self.session_manager.get(thread_id)
 
@@ -178,6 +182,47 @@ class SandboxManager:
             self._fire_session_ready(instance.instance_id, "create")
 
         return SandboxCapability(session)
+
+    def enforce_idle_timeouts(self) -> int:
+        """Pause expired leases and close chat sessions.
+
+        Rule:
+        - If a chat session is idle past idle_ttl_sec, or older than max_duration_sec:
+          1) pause physical lease instance (remote providers)
+          2) close chat session runtime + mark session closed
+        """
+        now = datetime.now()
+        count = 0
+
+        for row in self.session_manager.list_active():
+            session_id = row.get("session_id")
+            thread_id = row.get("thread_id")
+            started_at_raw = row.get("started_at")
+            last_active_raw = row.get("last_active_at")
+            if not session_id or not thread_id or not started_at_raw or not last_active_raw:
+                continue
+
+            started_at = datetime.fromisoformat(str(started_at_raw))
+            last_active_at = datetime.fromisoformat(str(last_active_raw))
+            idle_ttl_sec = int(row.get("idle_ttl_sec") or 0)
+            max_duration_sec = int(row.get("max_duration_sec") or 0)
+
+            idle_elapsed = (now - last_active_at).total_seconds()
+            total_elapsed = (now - started_at).total_seconds()
+            if idle_elapsed <= idle_ttl_sec and total_elapsed <= max_duration_sec:
+                continue
+
+            terminal = self.terminal_store.get(thread_id)
+            lease = self.lease_store.get(terminal.lease_id) if terminal else None
+            if lease and self.provider.name != "local":
+                status = lease.refresh_instance_status(self.provider)
+                if status == "running" and not lease.pause_instance(self.provider):
+                    raise RuntimeError(f"Failed to pause expired lease {lease.lease_id} for thread {thread_id}")
+
+            self.session_manager.delete(session_id, reason="idle_timeout")
+            count += 1
+
+        return count
 
     def get_or_create_session(self, thread_id: str):
         """Return provider SessionInfo for current thread lease instance."""

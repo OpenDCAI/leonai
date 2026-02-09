@@ -60,7 +60,7 @@ class TestChatSessionPolicy:
     def test_default_policy(self):
         """Test default policy values."""
         policy = ChatSessionPolicy()
-        assert policy.idle_ttl_sec == 600
+        assert policy.idle_ttl_sec == 300
         assert policy.max_duration_sec == 86400
 
     def test_custom_policy(self):
