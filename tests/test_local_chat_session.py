@@ -52,11 +52,10 @@ async def test_local_chat_session_persistence_and_resume(tmp_path: Path):
     sandbox.close()
 
 
-def test_local_provider_pause_resume_survives_state_reset():
+def test_local_provider_pause_resume_state_recovery():
     provider = LocalSessionProvider()
-    session = provider.create_session(context_id="local-test-session")
+    session = provider.create_session(context_id="leon-lease-test-session")
     sid = session.session_id
-
     provider._session_states.clear()
     assert provider.pause_session(sid)
     assert provider.get_session_status(sid) == "paused"
@@ -64,3 +63,4 @@ def test_local_provider_pause_resume_survives_state_reset():
     provider._session_states.clear()
     assert provider.resume_session(sid)
     assert provider.get_session_status(sid) == "running"
+    assert not provider.pause_session("unknown-session-id")

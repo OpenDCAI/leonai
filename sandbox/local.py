@@ -18,7 +18,6 @@ if TYPE_CHECKING:
     from sandbox.interfaces.executor import BaseExecutor
     from sandbox.interfaces.filesystem import FileSystemBackend
 
-
 @dataclass
 class LocalSessionProvider(SandboxProvider):
     name: str = "local"
@@ -55,21 +54,23 @@ class LocalSessionProvider(SandboxProvider):
     def pause_session(self, session_id: str) -> bool:
         with self._state_lock:
             state = self._session_states.get(session_id)
-            if state == "detached":
+            if state is None and session_id.startswith("leon-lease-"):
+                state = self._session_states[session_id] = "running"
+            if state in {None, "detached"}:
                 return False
-            if state == "paused":
-                return True
-            self._session_states[session_id] = "paused"
+            if state != "paused":
+                self._session_states[session_id] = "paused"
         return True
 
     def resume_session(self, session_id: str) -> bool:
         with self._state_lock:
             state = self._session_states.get(session_id)
-            if state == "detached":
+            if state is None and session_id.startswith("leon-lease-"):
+                state = self._session_states[session_id] = "running"
+            if state in {None, "detached"}:
                 return False
-            if state == "running":
-                return True
-            self._session_states[session_id] = "running"
+            if state != "running":
+                self._session_states[session_id] = "running"
         return True
 
     def get_session_status(self, session_id: str) -> str:

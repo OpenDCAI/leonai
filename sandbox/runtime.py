@@ -104,11 +104,8 @@ class LocalPersistentShellRuntime(PhysicalTerminalRuntime):
                 stderr=asyncio.subprocess.STDOUT,
                 cwd=state.cwd,
             )
-            # Disable PS1 prompt
             self._session.stdin.write(b"export PS1=''\n")
             await self._session.stdin.drain()
-
-            # Hydrate env_delta
             if state.env_delta:
                 for key, value in state.env_delta.items():
                     self._session.stdin.write(f"export {key}={shlex.quote(value)}\n".encode())
@@ -148,6 +145,8 @@ class LocalPersistentShellRuntime(PhysicalTerminalRuntime):
         """Execute command in local shell."""
         async with self._session_lock:
             try:
+                if self.lease.observed_state == "paused":
+                    raise RuntimeError(f"Sandbox lease {self.lease.lease_id} is paused. Resume before executing commands.")
                 proc = await self._ensure_session()
 
                 stdout, stderr, exit_code = await asyncio.wait_for(
