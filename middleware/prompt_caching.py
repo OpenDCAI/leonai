@@ -91,7 +91,9 @@ class PromptCachingMiddleware(AgentMiddleware):
                 warn(msg, stacklevel=3)
             return False
 
-        messages_count = len(request.messages) + 1 if request.system_message else len(request.messages)
+        messages_count = len(request.messages)
+        if request.system_message:
+            messages_count += 1
         return messages_count >= self.min_messages_to_cache
 
     def wrap_model_call(
@@ -111,9 +113,8 @@ class PromptCachingMiddleware(AgentMiddleware):
         if not self._should_apply_caching(request):
             return handler(request)
 
-        model_settings = request.model_settings
         new_model_settings = {
-            **model_settings,
+            **request.model_settings,
             "cache_control": {"type": self.type, "ttl": self.ttl},
         }
         return handler(request.override(model_settings=new_model_settings))
@@ -135,9 +136,8 @@ class PromptCachingMiddleware(AgentMiddleware):
         if not self._should_apply_caching(request):
             return await handler(request)
 
-        model_settings = request.model_settings
         new_model_settings = {
-            **model_settings,
+            **request.model_settings,
             "cache_control": {"type": self.type, "ttl": self.ttl},
         }
         return await handler(request.override(model_settings=new_model_settings))
