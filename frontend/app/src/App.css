@@ -101,3 +101,34 @@ button, input, textarea {
 @keyframes spin {
   to { transform: rotate(360deg); }
 }
+
+/* Shimmer wave effect for tool execution */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.tool-shimmer {
+  background: linear-gradient(
+    90deg,
+    #a3a3a3 0%,
+    #525252 40%,
+    #a3a3a3 60%,
+    #a3a3a3 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: shimmer 2s ease-in-out infinite;
+}
+
+/* Pulse glow for card-level tools while calling */
+@keyframes pulse-border {
+  0%, 100% { border-color: #e5e5e5; }
+  50% { border-color: #a3a3a3; }
+}
+
+.tool-card-calling {
+  animation: pulse-border 2s ease-in-out infinite;
+}

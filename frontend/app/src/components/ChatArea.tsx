@@ -2,7 +2,7 @@ import { Check, ChevronDown, ChevronRight, Copy } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AssistantTurn, ChatEntry, StreamStatus, ToolSegment, UserMessage } from "../api";
 import MarkdownContent from "./MarkdownContent";
-import { getToolRenderer } from "./tool-renderers";
+import { getDisclosureLevel, getToolRenderer } from "./tool-renderers";
 
 interface ChatAreaProps {
   entries: ChatEntry[];
@@ -66,23 +66,45 @@ function UserBubble({ entry }: { entry: UserMessage }) {
   );
 }
 
-function ToolStepBlock({ seg }: { seg: ToolSegment }) {
-  const [expanded, setExpanded] = useState(false);
+/** Inline disclosure: single grey line with shimmer while calling */
+function InlineToolStep({ seg }: { seg: ToolSegment }) {
   const Renderer = getToolRenderer(seg.step);
+  const isCalling = seg.step.status === "calling";
 
   return (
-    <div className="ml-0.5 animate-fade-in">
+    <div className={`py-0.5 animate-fade-in ${isCalling ? "tool-shimmer" : ""}`}>
+      <Renderer step={seg.step} expanded={false} />
+    </div>
+  );
+}
+
+/** Card disclosure: bordered expandable card with pulse while calling */
+function CardToolStep({ seg }: { seg: ToolSegment }) {
+  const [expanded, setExpanded] = useState(false);
+  const Renderer = getToolRenderer(seg.step);
+  const isCalling = seg.step.status === "calling";
+
+  return (
+    <div
+      className={`rounded-lg border bg-white animate-fade-in ${
+        isCalling ? "tool-card-calling border-[#d4d4d4]" : "border-[#e5e5e5]"
+      }`}
+    >
       <button
-        className="flex items-center gap-1 w-full text-left py-1 hover:bg-[#fafafa] rounded px-1.5 -mx-1.5 transition-colors"
+        className="flex items-center gap-1.5 w-full text-left px-3 py-2 hover:bg-[#fafafa] rounded-lg transition-colors"
         onClick={() => setExpanded((v) => !v)}
       >
-        {expanded ? <ChevronDown className="w-3 h-3 text-[#a3a3a3] flex-shrink-0" /> : <ChevronRight className="w-3 h-3 text-[#a3a3a3] flex-shrink-0" />}
-        <div className="flex-1 min-w-0">
+        {expanded ? (
+          <ChevronDown className="w-3 h-3 text-[#a3a3a3] flex-shrink-0" />
+        ) : (
+          <ChevronRight className="w-3 h-3 text-[#a3a3a3] flex-shrink-0" />
+        )}
+        <div className={`flex-1 min-w-0 ${isCalling ? "tool-shimmer" : ""}`}>
           <Renderer step={seg.step} expanded={false} />
         </div>
       </button>
       {expanded && (
-        <div className="ml-4 mt-1 animate-scale-in">
+        <div className="px-3 pb-3 pt-0 animate-scale-in">
           <Renderer step={seg.step} expanded={true} />
         </div>
       )}
@@ -90,12 +112,27 @@ function ToolStepBlock({ seg }: { seg: ToolSegment }) {
   );
 }
 
+function ToolStepBlock({ seg }: { seg: ToolSegment }) {
+  const level = getDisclosureLevel(seg.step);
+  if (level === "silent") return null;
+  if (level === "inline") return <InlineToolStep seg={seg} />;
+  return <CardToolStep seg={seg} />;
+}
+
 function AssistantBlock({ entry }: { entry: AssistantTurn }) {
-  // Collect all text content for the copy button
   const fullText = entry.segments
     .filter((s) => s.type === "text")
     .map((s) => s.content)
     .join("\n");
+
+  // Check if there are any visible segments
+  const hasVisible = entry.segments.some((s) => {
+    if (s.type === "text") return s.content.trim().length > 0;
+    if (s.type === "tool") return getDisclosureLevel(s.step) !== "silent";
+    return false;
+  });
+
+  if (!hasVisible) return null;
 
   return (
     <div className="flex gap-3.5 animate-fade-in">
@@ -110,22 +147,16 @@ function AssistantBlock({ entry }: { entry: AssistantTurn }) {
           )}
         </div>
 
-        {/* Render segments in order */}
         {entry.segments.map((seg, i) => {
           if (seg.type === "text" && seg.content.trim()) {
             return <MarkdownContent key={`seg-${i}`} content={seg.content} />;
           }
           if (seg.type === "tool") {
-            return (
-              <div key={seg.step.id} className="border-l-2 border-[#e5e5e5] pl-3">
-                <ToolStepBlock seg={seg} />
-              </div>
-            );
+            return <ToolStepBlock key={seg.step.id} seg={seg} />;
           }
           return null;
         })}
 
-        {/* Copy button */}
         {fullText.trim() && (
           <div className="flex justify-start mt-1">
             <CopyButton text={fullText} />
@@ -153,7 +184,6 @@ export default function ChatArea({ entries, isStreaming, runtimeStatus }: ChatAr
           return <AssistantBlock key={entry.id} entry={entry} />;
         })}
 
-        {/* Streaming indicator */}
         {isStreaming && (
           <div className="flex items-center gap-3 animate-fade-in">
             <div className="flex items-center gap-1.5">
@@ -164,12 +194,11 @@ export default function ChatArea({ entries, isStreaming, runtimeStatus }: ChatAr
             <span className="text-sm text-[#a3a3a3]">
               {runtimeStatus?.current_tool
                 ? `Leon 正在使用 ${runtimeStatus.current_tool}...`
-                : "Leon 正在回复..."}
+                : "Leon 正在思考..."}
             </span>
           </div>
         )}
 
-        {/* Empty state */}
         {!isStreaming && entries.length === 0 && (
           <div className="flex flex-col items-center justify-center py-24 animate-fade-in">
             <div className="w-14 h-14 rounded-2xl bg-[#171717] flex items-center justify-center mb-6">
