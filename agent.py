@@ -199,20 +199,21 @@ class LeonAgent:
         # 初始化模型（统一路径）
         self.model = self._create_model()
 
-        # 构建 middleware 栈
-        middleware = self._build_middleware_stack()
-
-        # 加载 MCP 工具
+        # 初始化 checkpointer（必须在 middleware 栈之前）
         import asyncio
 
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
-            mcp_tools = loop.run_until_complete(self._init_mcp_tools())
             # 初始化异步 checkpointer
             self._aiosqlite_conn = loop.run_until_complete(self._init_checkpointer())
+            # 加载 MCP 工具
+            mcp_tools = loop.run_until_complete(self._init_mcp_tools())
         finally:
             loop.close()
+
+        # 构建 middleware 栈（checkpointer 已初始化）
+        middleware = self._build_middleware_stack()
 
         # Set parent middleware and checkpointer for TaskMiddleware
         if hasattr(self, "_task_middleware"):
