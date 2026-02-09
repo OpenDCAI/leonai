@@ -103,4 +103,3 @@ def assert_lease_instance_transition(
     }
     if (current, target) not in allowed:
         raise RuntimeError(f"Illegal lease transition: {current} -> {target} ({reason})")
-

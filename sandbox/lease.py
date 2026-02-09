@@ -119,20 +119,16 @@ class SandboxLease(ABC):
         return self._current_instance
 
     @abstractmethod
-    def ensure_active_instance(self, provider: SandboxProvider) -> SandboxInstance:
-        ...
+    def ensure_active_instance(self, provider: SandboxProvider) -> SandboxInstance: ...
 
     @abstractmethod
-    def destroy_instance(self, provider: SandboxProvider) -> None:
-        ...
+    def destroy_instance(self, provider: SandboxProvider) -> None: ...
 
     @abstractmethod
-    def pause_instance(self, provider: SandboxProvider) -> bool:
-        ...
+    def pause_instance(self, provider: SandboxProvider) -> bool: ...
 
     @abstractmethod
-    def resume_instance(self, provider: SandboxProvider) -> bool:
-        ...
+    def resume_instance(self, provider: SandboxProvider) -> bool: ...
 
     @abstractmethod
     def refresh_instance_status(
@@ -141,12 +137,10 @@ class SandboxLease(ABC):
         *,
         force: bool = False,
         max_age_sec: float = LEASE_FRESHNESS_TTL_SEC,
-    ) -> str:
-        ...
+    ) -> str: ...
 
     @abstractmethod
-    def mark_needs_refresh(self, hint_at: datetime | None = None) -> None:
-        ...
+    def mark_needs_refresh(self, hint_at: datetime | None = None) -> None: ...
 
     @abstractmethod
     def apply(
@@ -157,8 +151,7 @@ class SandboxLease(ABC):
         source: str,
         payload: dict[str, Any] | None = None,
         event_id: str | None = None,
-    ) -> dict[str, Any]:
-        ...
+    ) -> dict[str, Any]: ...
 
 
 class SQLiteLease(SandboxLease):
@@ -462,9 +455,7 @@ class SQLiteLease(SandboxLease):
                         raise RuntimeError(f"Lease {self.lease_id} has no instance to pause")
                     ok = provider.pause_session(self._current_instance.instance_id)
                     if not ok:
-                        raise RuntimeError(
-                            f"Provider pause_session returned false for lease {self.lease_id}"
-                        )
+                        raise RuntimeError(f"Provider pause_session returned false for lease {self.lease_id}")
                     self.desired_state = "paused"
                     self._set_observed_state("paused", reason="intent.pause")
                     self.status = "active"
@@ -480,9 +471,7 @@ class SQLiteLease(SandboxLease):
                         raise RuntimeError(f"Lease {self.lease_id} has no instance to resume")
                     ok = provider.resume_session(self._current_instance.instance_id)
                     if not ok:
-                        raise RuntimeError(
-                            f"Provider resume_session returned false for lease {self.lease_id}"
-                        )
+                        raise RuntimeError(f"Provider resume_session returned false for lease {self.lease_id}")
                     self.desired_state = "running"
                     self._set_observed_state("running", reason="intent.resume")
                     self.status = "active"
@@ -497,9 +486,7 @@ class SQLiteLease(SandboxLease):
                     if self._current_instance:
                         ok = provider.destroy_session(self._current_instance.instance_id)
                         if not ok:
-                            raise RuntimeError(
-                                f"Provider destroy_session returned false for lease {self.lease_id}"
-                            )
+                            raise RuntimeError(f"Provider destroy_session returned false for lease {self.lease_id}")
                     self.desired_state = "destroyed"
                     self._set_observed_state("detached", reason="intent.destroy")
                     self.status = "expired"
@@ -509,9 +496,7 @@ class SQLiteLease(SandboxLease):
 
                 elif event_type == "intent.ensure_running":
                     if not self._current_instance:
-                        raise RuntimeError(
-                            f"Lease {self.lease_id}: intent.ensure_running requires bound instance"
-                        )
+                        raise RuntimeError(f"Lease {self.lease_id}: intent.ensure_running requires bound instance")
                     self.desired_state = "running"
                     self._set_observed_state("running", reason="intent.ensure_running")
                     self.status = "active"

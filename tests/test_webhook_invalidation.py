@@ -87,7 +87,9 @@ def test_webhook_events_endpoint_lists_recent(tmp_path, monkeypatch):
     _seed_lease_with_instance(db_path, "daytona", "inst-abc")
 
     with TestClient(web_main.app) as client:
-        r1 = client.post("/api/webhooks/daytona", json={"data": {"id": "inst-abc"}, "event": "sandbox.lifecycle.paused"})
+        r1 = client.post(
+            "/api/webhooks/daytona", json={"data": {"id": "inst-abc"}, "event": "sandbox.lifecycle.paused"}
+        )
         assert r1.status_code == 200
 
         r2 = client.get("/api/webhooks/events?limit=5")
