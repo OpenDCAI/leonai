@@ -985,6 +985,18 @@ async def steer_thread(thread_id: str, payload: SteerRequest) -> dict[str, Any]:
     return {"ok": True, "thread_id": thread_id, "mode": QueueMode.STEER.value}
 
 
+# --- Runtime status endpoint ---
+
+
+@app.get("/api/threads/{thread_id}/runtime")
+async def get_thread_runtime(thread_id: str) -> dict[str, Any]:
+    sandbox_type = _resolve_thread_sandbox(app, thread_id)
+    agent = await _get_or_create_agent(app, sandbox_type, thread_id=thread_id)
+    if not hasattr(agent, "runtime"):
+        raise HTTPException(status_code=404, detail="Agent has no runtime monitor")
+    return agent.runtime.get_status_dict()
+
+
 # --- Run endpoint (SSE streaming) ---
 
 
@@ -1082,6 +1094,21 @@ async def run_thread(thread_id: str, payload: RunRequest) -> EventSourceResponse
                                     ),
                                 }
 
+                                # Emit runtime status after each tool result
+                                if hasattr(agent, "runtime"):
+                                    status = agent.runtime.get_status_dict()
+                                    status["current_tool"] = getattr(msg, "name", None)
+                                    yield {
+                                        "event": "status",
+                                        "data": json.dumps(status, ensure_ascii=False),
+                                    }
+
+            # Final status before done
+            if hasattr(agent, "runtime"):
+                yield {
+                    "event": "status",
+                    "data": json.dumps(agent.runtime.get_status_dict(), ensure_ascii=False),
+                }
             yield {"event": "done", "data": json.dumps({"thread_id": thread_id})}
         except Exception as e:
             yield {"event": "error", "data": json.dumps({"error": str(e)}, ensure_ascii=False)}
