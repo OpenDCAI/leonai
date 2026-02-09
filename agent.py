@@ -120,7 +120,7 @@ class LeonAgent:
             enable_audit_log=enable_audit_log,
             enable_web_tools=enable_web_tools,
         )
-        self.model_name = profile.agent.model
+        self.model_name = self.profile.agent.model
 
         # Resolve API key
         self.api_key = api_key or self.profile.agent.api_key or self._resolve_env_api_key()
