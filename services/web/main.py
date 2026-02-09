@@ -29,6 +29,7 @@ from tui.config import ConfigManager
 DB_PATH = Path.home() / ".leon" / "leon.db"
 SANDBOXES_DIR = Path.home() / ".leon" / "sandboxes"
 LOCAL_WORKSPACE_ROOT = Path.cwd().resolve()
+IDLE_REAPER_INTERVAL_SEC = 30
 
 
 # --- Request models ---
@@ -241,6 +242,42 @@ def _is_virtual_thread_id(thread_id: str | None) -> bool:
     return bool(thread_id) and thread_id.startswith("(") and thread_id.endswith(")")
 
 
+def _run_idle_reaper_once(app_obj: FastAPI) -> int:
+    """External idle manager: enforce idle timeout across providers."""
+    total = 0
+    managed_providers: set[str] = set()
+
+    # First use live managers from resident agents (can close live runtimes safely).
+    for agent in app_obj.state.agent_pool.values():
+        sandbox = getattr(agent, "_sandbox", None)
+        manager = getattr(sandbox, "manager", None)
+        if manager is None:
+            continue
+        provider_name = str(getattr(manager.provider, "name", ""))
+        managed_providers.add(provider_name)
+        total += manager.enforce_idle_timeouts()
+
+    # Then cover providers without resident agent (DB-only cleanup).
+    _, managers = _init_providers_and_managers()
+    for provider_name, manager in managers.items():
+        if provider_name in managed_providers:
+            continue
+        total += manager.enforce_idle_timeouts()
+
+    return total
+
+
+async def _idle_reaper_loop(app_obj: FastAPI) -> None:
+    while True:
+        try:
+            count = await asyncio.to_thread(_run_idle_reaper_once, app_obj)
+            if count > 0:
+                print(f"[idle-reaper] paused+closed {count} expired chat session(s)")
+        except Exception as e:
+            print(f"[idle-reaper] error: {e}")
+        await asyncio.sleep(IDLE_REAPER_INTERVAL_SEC)
+
+
 # --- Lifespan + App ---
 
 
@@ -253,10 +290,19 @@ async def lifespan(app: FastAPI):
     app.state.thread_sandbox: dict[str, str] = {}
     app.state.thread_locks: dict[str, asyncio.Lock] = {}
     app.state.thread_locks_guard = asyncio.Lock()
+    app.state.idle_reaper_task: asyncio.Task | None = None
 
     try:
+        app.state.idle_reaper_task = asyncio.create_task(_idle_reaper_loop(app))
         yield
     finally:
+        task = app.state.idle_reaper_task
+        if task:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
         for agent in app.state.agent_pool.values():
             try:
                 agent.close()
@@ -922,11 +968,15 @@ async def run_thread(thread_id: str, payload: RunRequest) -> EventSourceResponse
 
                     def _prime_sandbox() -> None:
                         mgr = agent._sandbox.manager
-                        session = mgr.session_manager.get(thread_id)
-                        if session and session.status == "paused":
-                            if not agent._sandbox.resume_thread(thread_id):
-                                raise RuntimeError(f"Failed to auto-resume paused sandbox for thread {thread_id}")
+                        mgr.enforce_idle_timeouts()
                         agent._sandbox.ensure_session(thread_id)
+                        terminal = mgr.terminal_store.get(thread_id)
+                        lease = mgr.lease_store.get(terminal.lease_id) if terminal else None
+                        if lease and mgr.provider.name != "local":
+                            lease_status = lease.refresh_instance_status(mgr.provider)
+                            if lease_status == "paused":
+                                if not agent._sandbox.resume_thread(thread_id):
+                                    raise RuntimeError(f"Failed to auto-resume paused sandbox for thread {thread_id}")
 
                     await asyncio.to_thread(_prime_sandbox)
 

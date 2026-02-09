@@ -51,7 +51,7 @@ def _connect(db_path: Path) -> sqlite3.Connection:
 class ChatSessionPolicy:
     """Policy configuration for ChatSession lifecycle."""
 
-    idle_ttl_sec: int = 600
+    idle_ttl_sec: int = 300
     max_duration_sec: int = 86400
 
 
@@ -440,7 +440,8 @@ class ChatSessionManager:
             rows = conn.execute(
                 """
                 SELECT chat_session_id AS session_id, thread_id, terminal_id, lease_id,
-                       runtime_id, status, budget_json, started_at, last_active_at,
+                       runtime_id, status, idle_ttl_sec, max_duration_sec,
+                       budget_json, started_at, last_active_at,
                        ended_at, close_reason
                 FROM chat_sessions
                 WHERE status IN ('active', 'idle', 'paused')
