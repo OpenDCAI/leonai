@@ -7,6 +7,7 @@ import { getToolRenderer } from "./tool-renderers";
 interface ChatAreaProps {
   entries: ChatEntry[];
   isStreaming: boolean;
+  streamTurnId?: string | null;
   runtimeStatus: StreamStatus | null;
 }
 
@@ -100,7 +101,7 @@ function ToolStepBlock({ seg }: { seg: ToolSegment }) {
   );
 }
 
-function AssistantBlock({ entry }: { entry: AssistantTurn }) {
+function AssistantBlock({ entry, isStreamingThis }: { entry: AssistantTurn; isStreamingThis?: boolean }) {
   const fullText = entry.segments
     .filter((s) => s.type === "text")
     .map((s) => s.content)
@@ -128,6 +129,13 @@ function AssistantBlock({ entry }: { entry: AssistantTurn }) {
 
         {entry.segments.map((seg, i) => {
           if (seg.type === "text" && seg.content.trim()) {
+            if (isStreamingThis) {
+              return (
+                <div key={`seg-${i}`} className="text-sm leading-relaxed text-[#404040] whitespace-pre-wrap">
+                  {seg.content}
+                </div>
+              );
+            }
             return <MarkdownContent key={`seg-${i}`} content={seg.content} />;
           }
           if (seg.type === "tool") {
@@ -146,7 +154,7 @@ function AssistantBlock({ entry }: { entry: AssistantTurn }) {
   );
 }
 
-export default function ChatArea({ entries, isStreaming, runtimeStatus }: ChatAreaProps) {
+export default function ChatArea({ entries, isStreaming, streamTurnId, runtimeStatus }: ChatAreaProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -160,7 +168,7 @@ export default function ChatArea({ entries, isStreaming, runtimeStatus }: ChatAr
           if (entry.role === "user") {
             return <UserBubble key={entry.id} entry={entry} />;
           }
-          return <AssistantBlock key={entry.id} entry={entry} />;
+          return <AssistantBlock key={entry.id} entry={entry} isStreamingThis={isStreaming && entry.id === streamTurnId} />;
         })}
 
         {isStreaming && (

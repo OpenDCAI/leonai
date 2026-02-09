@@ -1,5 +1,5 @@
 import { Send } from "lucide-react";
-import { useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 interface InputBoxProps {
   disabled?: boolean;
@@ -11,6 +11,17 @@ export default function InputBox({ disabled = false, placeholder = "告诉 Leon 
   const [value, setValue] = useState("");
   const [focused, setFocused] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  const autoResize = useCallback(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+  }, []);
+
+  useEffect(() => {
+    autoResize();
+  }, [value, autoResize]);
 
   async function handleSend() {
     const text = value.trim();
@@ -24,11 +35,12 @@ export default function InputBox({ disabled = false, placeholder = "告诉 Leon 
     <div className="bg-white pb-4">
       <div className="max-w-3xl mx-auto px-4">
         <div
-          className={`flex items-end gap-2 rounded-2xl border transition-all ${
-            focused ? "border-[#171717] shadow-sm" : "border-[#e5e5e5]"
-          }`}
+          onClick={() => inputRef.current?.focus()}
+          className={`flex items-end gap-2 rounded-2xl border transition-all cursor-text ${
+            focused ? "border-[#e5e5e5] shadow-sm" : "border-transparent"
+          } bg-[#fafafa]`}
         >
-          <div className="flex-1 py-3 pl-4">
+          <div className="flex-1 py-4 pl-4">
             <textarea
               ref={inputRef}
               value={value}
@@ -43,13 +55,14 @@ export default function InputBox({ disabled = false, placeholder = "告诉 Leon 
                 }
               }}
               placeholder={placeholder}
-              className="w-full bg-transparent text-sm resize-none outline-none min-h-[20px] max-h-[120px] text-[#171717] placeholder:text-[#a3a3a3] disabled:opacity-50"
+              className="w-full bg-transparent text-sm resize-none outline-none border-none text-[#171717] placeholder:text-[#a3a3a3] disabled:opacity-50"
               rows={1}
+              style={{ boxShadow: "none", overflow: "hidden" }}
             />
           </div>
-          <div className="flex items-center pr-3 py-3">
+          <div className="flex items-center pr-3 py-4">
             <button
-              onClick={() => void handleSend()}
+              onClick={(e) => { e.stopPropagation(); void handleSend(); }}
               disabled={disabled || !value.trim()}
               className={`w-8 h-8 rounded-full flex items-center justify-center transition-all ${
                 !disabled && value.trim()

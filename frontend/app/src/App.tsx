@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { flushSync } from "react-dom";
 import "./App.css";
 import ChatArea from "./components/ChatArea";
 import ComputerPanel from "./components/ComputerPanel";
@@ -152,20 +153,22 @@ export default function App() {
           if (event.type === "text") {
             const payload = event.data as { content?: string } | string | undefined;
             const chunk = typeof payload === "string" ? payload : payload?.content ?? "";
-            setEntries((prev) =>
-              prev.map((e) => {
-                if (e.id !== turnId || e.role !== "assistant") return e;
-                const turn = e as AssistantTurn;
-                const segs = [...turn.segments];
-                const last = segs[segs.length - 1];
-                if (last && last.type === "text") {
-                  segs[segs.length - 1] = { type: "text", content: last.content + chunk };
-                } else {
-                  segs.push({ type: "text", content: chunk });
-                }
-                return { ...turn, segments: segs };
-              }),
-            );
+            flushSync(() => {
+              setEntries((prev) =>
+                prev.map((e) => {
+                  if (e.id !== turnId || e.role !== "assistant") return e;
+                  const turn = e as AssistantTurn;
+                  const segs = [...turn.segments];
+                  const last = segs[segs.length - 1];
+                  if (last && last.type === "text") {
+                    segs[segs.length - 1] = { type: "text", content: last.content + chunk };
+                  } else {
+                    segs.push({ type: "text", content: chunk });
+                  }
+                  return { ...turn, segments: segs };
+                }),
+              );
+            });
             return;
           }
 
@@ -289,7 +292,7 @@ export default function App() {
                 {sandboxActionError}
               </div>
             )}
-            <ChatArea entries={entries} isStreaming={isStreaming} runtimeStatus={runtimeStatus} />
+            <ChatArea entries={entries} isStreaming={isStreaming} streamTurnId={streamTurnId} runtimeStatus={runtimeStatus} />
             {(isStreaming || activeSandbox?.status === "running" || activeSandbox?.status === "paused") && (
               <TaskProgress
                 isStreaming={isStreaming}

@@ -238,14 +238,14 @@ export function mapBackendEntries(payload: unknown): ChatEntry[] {
       const toolCalls = Array.isArray(msg.tool_calls) ? msg.tool_calls : [];
 
       if (toolCalls.length > 0) {
-        // AIMessage with tool_calls → new turn with text segment then tool segments
-        const segments: TurnSegment[] = [];
+        // AIMessage with tool_calls
+        const newSegments: TurnSegment[] = [];
         if (textContent) {
-          segments.push({ type: "text", content: textContent });
+          newSegments.push({ type: "text", content: textContent });
         }
         for (let j = 0; j < toolCalls.length; j++) {
           const call = toolCalls[j] as { id?: string; name?: string; args?: unknown };
-          segments.push({
+          newSegments.push({
             type: "tool",
             step: {
               id: call.id ?? `hist-tc-${i}-${j}`,
@@ -256,14 +256,19 @@ export function mapBackendEntries(payload: unknown): ChatEntry[] {
             },
           });
         }
-        const turn: AssistantTurn = {
-          id: `hist-turn-${i}`,
-          role: "assistant",
-          segments,
-          timestamp: now,
-        };
-        currentTurn = turn;
-        entries.push(turn);
+        if (currentTurn) {
+          // Append to existing turn (multi-step agent loop)
+          currentTurn.segments.push(...newSegments);
+        } else {
+          const turn: AssistantTurn = {
+            id: `hist-turn-${i}`,
+            role: "assistant",
+            segments: newSegments,
+            timestamp: now,
+          };
+          currentTurn = turn;
+          entries.push(turn);
+        }
       } else if (currentTurn) {
         // AIMessage without tool_calls after a tool turn → append text segment
         if (textContent) {
@@ -463,8 +468,10 @@ export async function startRun(threadId: string, message: string, onEvent: (even
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const chunks = buffer.split("\n\n");
+    const decoded = decoder.decode(value, { stream: true });
+    buffer += decoded;
+    // SSE events are separated by blank lines; handle both \r\n and \n line endings
+    const chunks = buffer.split(/\r?\n\r?\n/);
     buffer = chunks.pop() ?? "";
     for (const chunk of chunks) {
       if (!chunk.trim()) continue;
