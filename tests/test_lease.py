@@ -2,7 +2,7 @@
 
 import sqlite3
 import tempfile
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -76,6 +76,8 @@ class TestLeaseStore:
         assert lease.lease_id == "lease-123"
         assert lease.provider_name == "e2b"
         assert lease.get_instance() is None
+        assert lease.needs_refresh is False
+        assert lease.refresh_hint_at is None
 
     def test_get_lease(self, store):
         """Test retrieving lease by lease_id."""
@@ -136,6 +138,19 @@ class TestLeaseStore:
         assert len(agentbay_leases) == 1
         assert agentbay_leases[0]["provider_name"] == "agentbay"
 
+    def test_find_by_instance(self, store, mock_provider):
+        lease = store.create("lease-1", "test-provider")
+        mock_provider.create_session.return_value = SessionInfo(
+            session_id="inst-lookup",
+            provider="test-provider",
+            status="running",
+        )
+        lease.ensure_active_instance(mock_provider)
+
+        found = store.find_by_instance(provider_name="test-provider", instance_id="inst-lookup")
+        assert found is not None
+        assert found.lease_id == "lease-1"
+
 
 class TestSQLiteLease:
     """Test SQLiteLease instance management."""
@@ -178,6 +193,7 @@ class TestSQLiteLease:
 
         assert instance2.instance_id == instance1.instance_id
         assert mock_provider.create_session.call_count == 1  # Only called once
+        assert mock_provider.get_session_status.call_count == 0
 
     def test_ensure_active_instance_converges_stale_paused_state(self, store, mock_provider):
         """If DB says paused but provider says running, lease status must converge to running."""
@@ -216,6 +232,7 @@ class TestSQLiteLease:
         lease.ensure_active_instance(mock_provider)
 
         # Mock provider to report instance is paused
+        lease.observed_at = datetime.now() - timedelta(seconds=10)
         mock_provider.get_session_status.return_value = "paused"
         with pytest.raises(RuntimeError, match="is paused"):
             lease.ensure_active_instance(mock_provider)
@@ -234,6 +251,7 @@ class TestSQLiteLease:
         lease.ensure_active_instance(mock_provider)
 
         # Mock provider to report instance is dead
+        lease.observed_at = datetime.now() - timedelta(seconds=10)
         mock_provider.get_session_status.side_effect = Exception("Instance not found")
         mock_provider.create_session.return_value = SessionInfo(
             session_id="inst-456",
@@ -246,6 +264,51 @@ class TestSQLiteLease:
 
         assert instance.instance_id == "inst-456"
         assert mock_provider.create_session.call_count == 2
+
+    def test_ensure_active_instance_refreshes_when_snapshot_stale(self, store, mock_provider):
+        """Stale running snapshot must probe provider once."""
+        lease = store.create("lease-1", "test-provider")
+        mock_provider.create_session.return_value = SessionInfo(
+            session_id="inst-123",
+            provider="test-provider",
+            status="running",
+        )
+        lease.ensure_active_instance(mock_provider)
+        lease.observed_at = datetime.now() - timedelta(seconds=10)
+        mock_provider.get_session_status.return_value = "running"
+
+        lease.ensure_active_instance(mock_provider)
+        assert mock_provider.get_session_status.call_count == 1
+
+    def test_invalidation_forces_refresh_even_when_snapshot_fresh(self, store, mock_provider):
+        lease = store.create("lease-1", "test-provider")
+        mock_provider.create_session.return_value = SessionInfo(
+            session_id="inst-123",
+            provider="test-provider",
+            status="running",
+        )
+        lease.ensure_active_instance(mock_provider)
+        assert lease.needs_refresh is False
+
+        lease.mark_needs_refresh()
+        assert lease.needs_refresh is True
+
+        mock_provider.get_session_status.return_value = "running"
+        lease.ensure_active_instance(mock_provider)
+
+        assert mock_provider.get_session_status.call_count == 1
+        assert lease.needs_refresh is False
+
+    def test_store_mark_needs_refresh(self, store):
+        lease = store.create("lease-1", "test-provider")
+        assert lease.needs_refresh is False
+        updated = store.mark_needs_refresh(lease_id="lease-1")
+        assert updated is True
+
+        reloaded = store.get("lease-1")
+        assert reloaded is not None
+        assert reloaded.needs_refresh is True
+        assert reloaded.refresh_hint_at is not None
 
     def test_destroy_instance(self, store, mock_provider):
         """Test destroying instance."""
@@ -306,6 +369,26 @@ class TestSQLiteLease:
         assert result is True
         assert lease.get_instance().status == "running"
         mock_provider.resume_session.assert_called_once_with("inst-123")
+
+    def test_pause_instance_raises_with_provider_error(self, store, mock_provider):
+        """Pause should fail loudly and persist refresh_error."""
+        lease = store.create("lease-1", "test-provider")
+
+        mock_provider.create_session.return_value = SessionInfo(
+            session_id="inst-123",
+            provider="test-provider",
+            status="running",
+        )
+        lease.ensure_active_instance(mock_provider)
+
+        mock_provider.pause_session.side_effect = RuntimeError("BenefitLevel.NotSupport")
+        with pytest.raises(RuntimeError, match="Failed to pause lease lease-1"):
+            lease.pause_instance(mock_provider)
+
+        reloaded = store.get("lease-1")
+        assert reloaded is not None
+        assert reloaded.refresh_error is not None
+        assert "BenefitLevel.NotSupport" in reloaded.refresh_error
 
     def test_instance_persists_to_db(self, store, mock_provider, temp_db):
         """Test that instance state persists to database."""

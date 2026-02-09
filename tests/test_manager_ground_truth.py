@@ -1,5 +1,8 @@
 """Tests for SandboxManager inspect ground-truth behavior."""
 
+import asyncio
+from datetime import datetime, timedelta
+import sqlite3
 import tempfile
 import uuid
 from pathlib import Path
@@ -98,5 +101,35 @@ def test_list_sessions_includes_provider_orphan() -> None:
         orphan = provider.create_session()
         rows = mgr.list_sessions()
         assert any(r["instance_id"] == orphan.session_id and r["source"] == "provider_orphan" for r in rows)
+    finally:
+        db.unlink(missing_ok=True)
+
+
+def test_enforce_idle_timeouts_pauses_lease_and_closes_session() -> None:
+    db = _temp_db()
+    try:
+        provider = FakeProvider()
+        mgr = SandboxManager(provider=provider, db_path=db)
+
+        capability = mgr.get_sandbox("thread-1")
+        asyncio.run(capability.command.execute("echo hi"))
+        session_id = capability._session.session_id
+        instance_id = capability._session.lease.get_instance().instance_id
+
+        with sqlite3.connect(str(db)) as conn:
+            conn.execute(
+                """
+                UPDATE chat_sessions
+                SET idle_ttl_sec = 1, last_active_at = ?
+                WHERE chat_session_id = ?
+                """,
+                ((datetime.now() - timedelta(seconds=5)).isoformat(), session_id),
+            )
+            conn.commit()
+
+        count = mgr.enforce_idle_timeouts()
+        assert count == 1
+        assert provider.get_session_status(instance_id) == "paused"
+        assert mgr.session_manager.get("thread-1") is None
     finally:
         db.unlink(missing_ok=True)

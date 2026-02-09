@@ -3,9 +3,9 @@
 Orchestrates: Thread → ChatSession → Runtime → Terminal → Lease → Instance
 """
 
-import os
 import uuid
 from collections.abc import Callable
+from datetime import datetime
 from pathlib import Path
 
 from sandbox.capability import SandboxCapability
@@ -69,14 +69,13 @@ class SandboxManager:
 
     def _default_terminal_cwd(self) -> str:
         if self.provider.name == "local":
-            return os.path.expanduser("~")
-
+            # @@@local-cwd-alignment - Local terminal cwd must align with workspace root to keep fs/command semantics consistent.
+            return str(Path.cwd().resolve())
         for attr in ("default_cwd", "default_context_path", "mount_path"):
             if hasattr(self.provider, attr):
                 value = getattr(self.provider, attr)
                 if isinstance(value, str) and value:
                     return value
-
         return "/home/user"
 
     def _fire_session_ready(self, session_id: str, reason: str) -> None:
@@ -89,6 +88,13 @@ class SandboxManager:
     def get_sandbox(self, thread_id: str) -> SandboxCapability:
         session = self.session_manager.get(thread_id)
         if session:
+            # @@@activity-resume - Any new activity against a paused thread must resume before command execution.
+            if session.status == "paused":
+                if not self.resume_session(thread_id):
+                    raise RuntimeError(f"Failed to resume paused session for thread {thread_id}")
+                session = self.session_manager.get(thread_id)
+                if not session:
+                    raise RuntimeError(f"Session disappeared after resume for thread {thread_id}")
             return SandboxCapability(session)
 
         terminal = self.terminal_store.get(thread_id)
@@ -122,6 +128,47 @@ class SandboxManager:
 
         return SandboxCapability(session)
 
+    def enforce_idle_timeouts(self) -> int:
+        """Pause expired leases and close chat sessions.
+
+        Rule:
+        - If a chat session is idle past idle_ttl_sec, or older than max_duration_sec:
+          1) pause physical lease instance (remote providers)
+          2) close chat session runtime + mark session closed
+        """
+        now = datetime.now()
+        count = 0
+
+        for row in self.session_manager.list_active():
+            session_id = row.get("session_id")
+            thread_id = row.get("thread_id")
+            started_at_raw = row.get("started_at")
+            last_active_raw = row.get("last_active_at")
+            if not session_id or not thread_id or not started_at_raw or not last_active_raw:
+                continue
+
+            started_at = datetime.fromisoformat(str(started_at_raw))
+            last_active_at = datetime.fromisoformat(str(last_active_raw))
+            idle_ttl_sec = int(row.get("idle_ttl_sec") or 0)
+            max_duration_sec = int(row.get("max_duration_sec") or 0)
+
+            idle_elapsed = (now - last_active_at).total_seconds()
+            total_elapsed = (now - started_at).total_seconds()
+            if idle_elapsed <= idle_ttl_sec and total_elapsed <= max_duration_sec:
+                continue
+
+            terminal = self.terminal_store.get(thread_id)
+            lease = self.lease_store.get(terminal.lease_id) if terminal else None
+            if lease and self.provider.name != "local":
+                status = lease.refresh_instance_status(self.provider)
+                if status == "running" and not lease.pause_instance(self.provider):
+                    raise RuntimeError(f"Failed to pause expired lease {lease.lease_id} for thread {thread_id}")
+
+            self.session_manager.delete(session_id, reason="idle_timeout")
+            count += 1
+
+        return count
+
     def get_or_create_session(self, thread_id: str):
         from sandbox.provider import SessionInfo
         from sandbox.runtime import RemoteWrappedRuntime
@@ -139,10 +186,7 @@ class SandboxManager:
         )
 
     def pause_session(self, thread_id: str) -> bool:
-        session = self.session_manager.get(thread_id)
-        if session and session.status != "paused":
-            self.session_manager.pause(session.session_id)
-
+        """Pause session for thread."""
         terminal = self.terminal_store.get(thread_id)
         if not terminal:
             return False
@@ -151,9 +195,14 @@ class SandboxManager:
         if not lease:
             return False
 
-        if self.provider.name == "local":
-            return True
-        return lease.pause_instance(self.provider)
+        if self.provider.name != "local":
+            if not lease.pause_instance(self.provider):
+                return False
+
+        session = self.session_manager.get(thread_id)
+        if session and session.status != "paused":
+            self.session_manager.pause(session.session_id)
+        return True
 
     def _get_thread_lease(self, thread_id: str):
         terminal = self.terminal_store.get(thread_id)

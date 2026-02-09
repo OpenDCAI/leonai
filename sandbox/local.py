@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 from sandbox.base import Sandbox
 from sandbox.manager import SandboxManager
-from sandbox.provider import Metrics, ProviderExecResult, SandboxProvider, SessionInfo
+from sandbox.provider import Metrics, ProviderCapability, ProviderExecResult, SandboxProvider, SessionInfo
 from sandbox.thread_context import get_current_thread_id, set_current_thread_id
 
 if TYPE_CHECKING:
@@ -20,6 +20,14 @@ if TYPE_CHECKING:
 @dataclass
 class LocalSessionProvider(SandboxProvider):
     name: str = "local"
+
+    def get_capability(self) -> ProviderCapability:
+        return ProviderCapability(
+            can_pause=False,
+            can_resume=False,
+            can_destroy=False,
+            supports_webhook=False,
+        )
 
     def create_session(self, context_id: str | None = None) -> SessionInfo:
         return SessionInfo(session_id="local", provider="local", status="running")

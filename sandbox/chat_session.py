@@ -17,6 +17,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from sandbox.db import DEFAULT_DB_PATH
+from sandbox.lifecycle import (
+    ChatSessionState,
+    assert_chat_session_transition,
+    parse_chat_session_state,
+)
 
 if TYPE_CHECKING:
     from sandbox.lease import SandboxLease
@@ -51,7 +56,7 @@ def _connect(db_path: Path) -> sqlite3.Connection:
 class ChatSessionPolicy:
     """Policy configuration for ChatSession lifecycle."""
 
-    idle_ttl_sec: int = 600
+    idle_ttl_sec: int = 300
     max_duration_sec: int = 86400
 
 
@@ -85,6 +90,7 @@ class ChatSession:
         self.started_at = started_at
         self.last_active_at = last_active_at
         self.runtime_id = runtime_id
+        parse_chat_session_state(status)
         self.status = status
         self.budget_json = budget_json
         self.ended_at = ended_at
@@ -101,6 +107,11 @@ class ChatSession:
         now = datetime.now()
         self.last_active_at = now
         if self.status != "paused":
+            assert_chat_session_transition(
+                parse_chat_session_state(self.status),
+                ChatSessionState.ACTIVE,
+                reason="touch",
+            )
             self.status = "active"
         with _connect(self._db_path) as conn:
             conn.execute(
@@ -115,6 +126,11 @@ class ChatSession:
 
     async def close(self, reason: str = "closed") -> None:
         await self.runtime.close()
+        assert_chat_session_transition(
+            parse_chat_session_state(self.status),
+            ChatSessionState.CLOSED,
+            reason=reason,
+        )
         self.status = "closed"
         self.ended_at = datetime.now()
         self.close_reason = reason
@@ -226,6 +242,19 @@ class ChatSessionManager:
         if self.provider.name == "local":
             return LocalPersistentShellRuntime(terminal, lease)
         return RemoteWrappedRuntime(terminal, lease, self.provider)
+
+    def _load_status(self, session_id: str) -> str | None:
+        with _connect(self.db_path) as conn:
+            row = conn.execute(
+                """
+                SELECT status
+                FROM chat_sessions
+                WHERE chat_session_id = ?
+                LIMIT 1
+                """,
+                (session_id,),
+            ).fetchone()
+        return str(row[0]) if row else None
 
     def get(self, thread_id: str) -> ChatSession | None:
         live = self._live_sessions.get(thread_id)
@@ -358,23 +387,27 @@ class ChatSessionManager:
         return session
 
     def touch(self, session_id: str) -> None:
+        current_raw = self._load_status(session_id)
+        if not current_raw:
+            return
+        current = parse_chat_session_state(current_raw)
+        target = ChatSessionState.PAUSED if current == ChatSessionState.PAUSED else ChatSessionState.ACTIVE
+        assert_chat_session_transition(current, target, reason="touch_manager")
         now = datetime.now().isoformat()
         with _connect(self.db_path) as conn:
             conn.execute(
                 """
                 UPDATE chat_sessions
-                SET last_active_at = ?,
-                    status = CASE WHEN status = 'paused' THEN 'paused' ELSE 'active' END
+                SET last_active_at = ?, status = ?
                 WHERE chat_session_id = ?
                 """,
-                (now, session_id),
+                (now, target.value, session_id),
             )
             conn.commit()
         for session in self._live_sessions.values():
             if session.session_id == session_id:
                 session.last_active_at = datetime.fromisoformat(now)
-                if session.status != "paused":
-                    session.status = "active"
+                session.status = target.value
                 break
 
     def pause(self, session_id: str) -> None:
@@ -390,6 +423,11 @@ class ChatSessionManager:
             conn.commit()
         for session in self._live_sessions.values():
             if session.session_id == session_id:
+                assert_chat_session_transition(
+                    parse_chat_session_state(session.status),
+                    ChatSessionState.PAUSED,
+                    reason="pause",
+                )
                 session.status = "paused"
                 session.close_reason = "paused"
                 break
@@ -407,6 +445,11 @@ class ChatSessionManager:
             conn.commit()
         for session in self._live_sessions.values():
             if session.session_id == session_id:
+                assert_chat_session_transition(
+                    parse_chat_session_state(session.status),
+                    ChatSessionState.ACTIVE,
+                    reason="resume",
+                )
                 session.status = "active"
                 session.close_reason = None
                 break
@@ -420,6 +463,11 @@ class ChatSessionManager:
                 break
 
         if session_to_close:
+            assert_chat_session_transition(
+                parse_chat_session_state(session_to_close.status),
+                ChatSessionState.CLOSED,
+                reason=reason,
+            )
             self._close_runtime(session_to_close, reason=reason)
             return
 
@@ -440,7 +488,8 @@ class ChatSessionManager:
             rows = conn.execute(
                 """
                 SELECT chat_session_id AS session_id, thread_id, terminal_id, lease_id,
-                       runtime_id, status, budget_json, started_at, last_active_at,
+                       runtime_id, status, idle_ttl_sec, max_duration_sec,
+                       budget_json, started_at, last_active_at,
                        ended_at, close_reason
                 FROM chat_sessions
                 WHERE status IN ('active', 'idle', 'paused')

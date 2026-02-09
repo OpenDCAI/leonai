@@ -5,6 +5,16 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
+@dataclass(frozen=True)
+class ProviderCapability:
+    """Declared lifecycle capability of a provider implementation."""
+
+    can_pause: bool
+    can_resume: bool
+    can_destroy: bool
+    supports_webhook: bool = False
+
+
 @dataclass
 class SessionInfo:
     session_id: str
@@ -32,7 +42,14 @@ class Metrics:
 
 
 class SandboxProvider(ABC):
-    name: str
+    """Abstract interface for sandbox providers."""
+
+    name: str  # Provider identifier: 'agentbay', 'e2b', 'docker', 'local'
+
+    @abstractmethod
+    def get_capability(self) -> ProviderCapability:
+        """Return lifecycle capability contract for this provider."""
+        pass
 
     @abstractmethod
     def create_session(self, context_id: str | None = None) -> SessionInfo:

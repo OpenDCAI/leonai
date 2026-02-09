@@ -16,6 +16,7 @@ from typing import Any
 
 from sandbox.provider import (
     Metrics,
+    ProviderCapability,
     ProviderExecResult,
     SandboxProvider,
     SessionInfo,
@@ -27,6 +28,14 @@ class E2BProvider(SandboxProvider):
 
     name = "e2b"
     WORKSPACE_ROOT = "/home/user/workspace"
+
+    def get_capability(self) -> ProviderCapability:
+        return ProviderCapability(
+            can_pause=True,
+            can_resume=True,
+            can_destroy=True,
+            supports_webhook=False,
+        )
 
     def __init__(
         self,

@@ -10,7 +10,7 @@ import shlex
 import subprocess
 import uuid
 
-from sandbox.provider import Metrics, ProviderExecResult, SandboxProvider, SessionInfo
+from sandbox.provider import Metrics, ProviderCapability, ProviderExecResult, SandboxProvider, SessionInfo
 
 
 class DockerProvider(SandboxProvider):
@@ -24,6 +24,14 @@ class DockerProvider(SandboxProvider):
     """
 
     name = "docker"
+
+    def get_capability(self) -> ProviderCapability:
+        return ProviderCapability(
+            can_pause=True,
+            can_resume=True,
+            can_destroy=True,
+            supports_webhook=False,
+        )
 
     def __init__(self, image: str, mount_path: str = "/workspace"):
         self.image = image

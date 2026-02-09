@@ -1,37 +1,50 @@
-"""SandboxLease - Durable shared compute handle.
-
-This module implements the lease abstraction that provides a stable handle
-to sandbox compute resources that can be shared across multiple terminals.
+"""SandboxLease - durable compute handle with lease-level state machine.
 
 Architecture:
-    SandboxLease (durable handle) → SandboxInstance (ephemeral compute)
+    SandboxLease (durable) -> SandboxInstance (ephemeral)
 
-A lease can have 0 or 1 active instances. When an instance dies, the lease
-can create a new one. Multiple terminals can share the same lease.
+State machine contract:
+- Physical lifecycle writes must go through SQLiteLease.apply(event).
+- Lease snapshot stores desired_state + observed_state + version.
 """
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import threading
+import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from sandbox.db import DEFAULT_DB_PATH
+from sandbox.lifecycle import (
+    LeaseInstanceState,
+    assert_lease_instance_transition,
+    parse_lease_instance_state,
+)
 
 if TYPE_CHECKING:
     from sandbox.provider import SandboxProvider
+
+LEASE_FRESHNESS_TTL_SEC = 3.0
 
 REQUIRED_LEASE_COLUMNS = {
     "lease_id",
     "provider_name",
     "workspace_key",
     "current_instance_id",
-    "instance_status",
     "instance_created_at",
+    "desired_state",
+    "observed_state",
+    "version",
+    "observed_at",
+    "last_error",
+    "needs_refresh",
+    "refresh_hint_at",
     "status",
     "created_at",
     "updated_at",
@@ -44,6 +57,15 @@ REQUIRED_INSTANCE_COLUMNS = {
     "created_at",
     "last_seen_at",
 }
+REQUIRED_EVENT_COLUMNS = {
+    "event_id",
+    "lease_id",
+    "event_type",
+    "source",
+    "payload_json",
+    "error",
+    "created_at",
+}
 
 
 def _connect(db_path: Path) -> sqlite3.Connection:
@@ -54,34 +76,16 @@ def _connect(db_path: Path) -> sqlite3.Connection:
 
 @dataclass
 class SandboxInstance:
-    """Ephemeral sandbox compute instance.
+    """Ephemeral sandbox compute instance."""
 
-    Represents an active VM/container. Can be stopped/started/destroyed.
-    When destroyed, the lease can create a new instance.
-    """
-
-    instance_id: str  # Provider's session_id
+    instance_id: str
     provider_name: str
-    status: str  # "running", "paused", "stopped"
+    status: str
     created_at: datetime
 
 
 class SandboxLease(ABC):
-    """Durable shared compute handle.
-
-    Provides stable identity for sandbox compute that can outlive
-    individual instances. Multiple terminals can share one lease.
-
-    Responsibilities:
-    - Maintain lease identity (lease_id, provider_name)
-    - Track current instance (if any)
-    - Create/recover instances on demand
-    - Health check and recovery
-
-    Does NOT:
-    - Own terminal state (that's AbstractTerminal)
-    - Own physical runtime process (that's PhysicalTerminalRuntime)
-    """
+    """Durable shared compute handle."""
 
     def __init__(
         self,
@@ -90,55 +94,70 @@ class SandboxLease(ABC):
         current_instance: SandboxInstance | None = None,
         status: str = "active",
         workspace_key: str | None = None,
+        desired_state: str = "running",
+        observed_state: str = "detached",
+        version: int = 0,
+        observed_at: datetime | None = None,
+        last_error: str | None = None,
+        needs_refresh: bool = False,
+        refresh_hint_at: datetime | None = None,
     ):
         self.lease_id = lease_id
         self.provider_name = provider_name
         self._current_instance = current_instance
         self.status = status
         self.workspace_key = workspace_key
+        self.desired_state = desired_state
+        self.observed_state = observed_state
+        self.version = version
+        self.observed_at = observed_at
+        self.last_error = last_error
+        self.needs_refresh = needs_refresh
+        self.refresh_hint_at = refresh_hint_at
 
     def get_instance(self) -> SandboxInstance | None:
-        """Get current active instance, if any."""
         return self._current_instance
 
     @abstractmethod
     def ensure_active_instance(self, provider: SandboxProvider) -> SandboxInstance:
-        """Ensure there's an active instance, creating if needed.
-
-        This is the convergence point:
-        - If instance exists and healthy → return it
-        - If instance dead/missing → create new one
-        - Update lease state in DB
-
-        Args:
-            provider: SandboxProvider to use for instance operations
-
-        Returns:
-            Active SandboxInstance
-        """
         ...
 
     @abstractmethod
     def destroy_instance(self, provider: SandboxProvider) -> None:
-        """Destroy current instance and clear lease state."""
         ...
 
     @abstractmethod
     def pause_instance(self, provider: SandboxProvider) -> bool:
-        """Pause current instance if supported."""
         ...
 
     @abstractmethod
     def resume_instance(self, provider: SandboxProvider) -> bool:
-        """Resume paused instance if supported."""
         ...
 
     @abstractmethod
-    def refresh_instance_status(self, provider: SandboxProvider) -> str:
-        """Refresh status from provider and converge persisted lease state.
+    def refresh_instance_status(
+        self,
+        provider: SandboxProvider,
+        *,
+        force: bool = False,
+        max_age_sec: float = LEASE_FRESHNESS_TTL_SEC,
+    ) -> str:
+        ...
 
-        Returns one of: running, paused, detached, unknown.
-        """
+    @abstractmethod
+    def mark_needs_refresh(self, hint_at: datetime | None = None) -> None:
+        ...
+
+    @abstractmethod
+    def apply(
+        self,
+        provider: SandboxProvider,
+        *,
+        event_type: str,
+        source: str,
+        payload: dict[str, Any] | None = None,
+        event_id: str | None = None,
+    ) -> dict[str, Any]:
         ...
 
 
@@ -146,7 +165,7 @@ class SQLiteLease(SandboxLease):
     """SQLite-backed lease implementation."""
 
     _lock_guard = threading.Lock()
-    _lease_locks: dict[str, threading.Lock] = {}
+    _lease_locks: dict[str, threading.RLock] = {}
 
     def __init__(
         self,
@@ -156,6 +175,13 @@ class SQLiteLease(SandboxLease):
         db_path: Path = DEFAULT_DB_PATH,
         status: str = "active",
         workspace_key: str | None = None,
+        desired_state: str = "running",
+        observed_state: str = "detached",
+        version: int = 0,
+        observed_at: datetime | None = None,
+        last_error: str | None = None,
+        needs_refresh: bool = False,
+        refresh_hint_at: datetime | None = None,
     ):
         super().__init__(
             lease_id=lease_id,
@@ -163,180 +189,198 @@ class SQLiteLease(SandboxLease):
             current_instance=current_instance,
             status=status,
             workspace_key=workspace_key,
+            desired_state=desired_state,
+            observed_state=observed_state,
+            version=version,
+            observed_at=observed_at,
+            last_error=last_error,
+            needs_refresh=needs_refresh,
+            refresh_hint_at=refresh_hint_at,
         )
         self.db_path = db_path
+        self._detached_instance: SandboxInstance | None = None
 
-    def ensure_active_instance(self, provider: SandboxProvider) -> SandboxInstance:
-        """Ensure active instance exists."""
-        # Check if current instance is healthy
-        if self._current_instance:
-            try:
-                status = provider.get_session_status(self._current_instance.instance_id)
-                if status == "running":
-                    # @@@status-convergence - Provider is source of truth; converge persisted lease state immediately.
-                    if self._current_instance.status != "running":
-                        self._current_instance.status = "running"
-                        self._persist_instance()
-                    return self._current_instance
-                elif status == "paused":
-                    if self._current_instance.status != "paused":
-                        self._current_instance.status = "paused"
-                        self._persist_instance()
-                    raise RuntimeError(f"Sandbox lease {self.lease_id} is paused. Resume before executing commands.")
-            except RuntimeError:
-                raise
-            except Exception:
-                # Instance is dead, need to create new one
-                pass
-
-        with self._instance_lock():
-            # Re-check persisted pointer after acquiring lock (winner-takes-recovery).
-            refreshed = LeaseStore(db_path=self.db_path).get(self.lease_id)
-            if refreshed and refreshed.get_instance():
-                candidate = refreshed.get_instance()
-                try:
-                    status = provider.get_session_status(candidate.instance_id)
-                    if status == "running":
-                        self._current_instance = candidate
-                        return self._current_instance
-                    if status == "paused":
-                        candidate.status = "paused"
-                        self._current_instance = candidate
-                        self._persist_instance()
-                        raise RuntimeError(
-                            f"Sandbox lease {self.lease_id} is paused. Resume before executing commands."
-                        )
-                except RuntimeError:
-                    raise
-                except Exception:
-                    pass
-
-            # Create new instance
-            self.status = "recovering"
-            self._persist_lease_metadata()
-            session_info = provider.create_session(context_id=f"leon-{self.lease_id}")
-            instance = SandboxInstance(
-                instance_id=session_info.session_id,
-                provider_name=self.provider_name,
-                status="running",
-                created_at=datetime.now(),
-            )
-            self._current_instance = instance
-            self.status = "active"
-            self._persist_instance()
-            return instance
-
-    def _instance_lock(self) -> threading.Lock:
+    def _instance_lock(self) -> threading.RLock:
         with self._lock_guard:
             lock = self._lease_locks.get(self.lease_id)
             if lock is None:
-                lock = threading.Lock()
+                # @@@reentrant-lease-lock - apply() may be called inside ensure_active_instance critical sections.
+                lock = threading.RLock()
                 self._lease_locks[self.lease_id] = lock
             return lock
 
-    def destroy_instance(self, provider: SandboxProvider) -> None:
-        """Destroy current instance."""
-        if self._current_instance:
-            previous_instance = self._current_instance
-            try:
-                provider.destroy_session(self._current_instance.instance_id)
-            except Exception:
-                pass  # Already destroyed
-            self._current_instance = None
-            self.status = "expired"
-            self._clear_instance(previous_instance)
-
-    def pause_instance(self, provider: SandboxProvider) -> bool:
-        """Pause current instance."""
-        if not self._current_instance:
+    def _is_fresh(self, max_age_sec: float = LEASE_FRESHNESS_TTL_SEC) -> bool:
+        if not self.observed_at:
             return False
+        return (datetime.now() - self.observed_at).total_seconds() <= max_age_sec
 
-        try:
-            if provider.pause_session(self._current_instance.instance_id):
-                self._current_instance.status = "paused"
-                self._persist_instance()
-                return True
-        except Exception:
-            pass
-        return False
-
-    def resume_instance(self, provider: SandboxProvider) -> bool:
-        """Resume paused instance."""
+    def _instance_state(self) -> LeaseInstanceState:
         if not self._current_instance:
-            return False
+            return LeaseInstanceState.DETACHED
+        return parse_lease_instance_state(self._current_instance.status)
 
-        try:
-            if provider.resume_session(self._current_instance.instance_id):
+    def _normalize_provider_state(self, raw: str) -> str:
+        lowered = raw.lower().strip()
+        if lowered in {"running", "paused", "unknown"}:
+            return lowered
+        if lowered in {"deleted", "dead", "stopped", "detached"}:
+            return "detached"
+        return "unknown"
+
+    def _set_observed_state(self, observed: str, *, reason: str) -> None:
+        if observed in {"running", "paused", "unknown"} and not self._current_instance:
+            if observed == "unknown":
+                self.observed_state = observed
+                return
+            raise RuntimeError(
+                f"Lease {self.lease_id}: cannot set observed={observed} without bound instance ({reason})"
+            )
+
+        if observed == "running":
+            assert_lease_instance_transition(self._instance_state(), LeaseInstanceState.RUNNING, reason=reason)
+            if self._current_instance:
                 self._current_instance.status = "running"
-                self._persist_instance()
-                return True
-        except Exception:
-            pass
-        return False
-
-    def refresh_instance_status(self, provider: SandboxProvider) -> str:
-        """Refresh status from provider and converge lease state."""
-        if not self._current_instance:
-            return "detached"
-        try:
-            status = provider.get_session_status(self._current_instance.instance_id)
-        except Exception:
-            status = "unknown"
-
-        if status in {"running", "paused"}:
-            if self._current_instance.status != status:
-                self._current_instance.status = status
-                self._persist_instance()
-            return status
-
-        if status in {"deleted", "stopped", "dead"}:
-            previous_instance = self._current_instance
-            self._current_instance = None
-            self._clear_instance(previous_instance)
-            return "detached"
-
-        return self._current_instance.status or "unknown"
-
-    def _persist_instance(self) -> None:
-        """Persist current instance to DB."""
-        if not self._current_instance:
+            self.observed_state = "running"
             return
 
+        if observed == "paused":
+            assert_lease_instance_transition(self._instance_state(), LeaseInstanceState.PAUSED, reason=reason)
+            if self._current_instance:
+                self._current_instance.status = "paused"
+            self.observed_state = "paused"
+            return
+
+        if observed == "detached":
+            assert_lease_instance_transition(self._instance_state(), LeaseInstanceState.DETACHED, reason=reason)
+            self._detached_instance = self._current_instance
+            self._current_instance = None
+            self.observed_state = "detached"
+            return
+
+        if observed == "unknown":
+            if self._current_instance:
+                assert_lease_instance_transition(self._instance_state(), LeaseInstanceState.UNKNOWN, reason=reason)
+                self._current_instance.status = "unknown"
+            self.observed_state = "unknown"
+            return
+
+        raise RuntimeError(f"Lease {self.lease_id}: invalid observed state '{observed}'")
+
+    def _snapshot(self) -> dict[str, Any]:
+        return {
+            "lease_id": self.lease_id,
+            "provider_name": self.provider_name,
+            "status": self.status,
+            "desired_state": self.desired_state,
+            "observed_state": self.observed_state,
+            "version": self.version,
+            "observed_at": self.observed_at.isoformat() if self.observed_at else None,
+            "last_error": self.last_error,
+            "needs_refresh": self.needs_refresh,
+            "refresh_hint_at": self.refresh_hint_at.isoformat() if self.refresh_hint_at else None,
+            "instance": {
+                "instance_id": self._current_instance.instance_id if self._current_instance else None,
+                "state": self._current_instance.status if self._current_instance else None,
+                "started_at": self._current_instance.created_at.isoformat() if self._current_instance else None,
+            },
+        }
+
+    def _append_event(
+        self,
+        *,
+        event_type: str,
+        source: str,
+        payload: dict[str, Any],
+        error: str | None,
+        event_id: str,
+    ) -> None:
+        with _connect(self.db_path) as conn:
+            conn.execute(
+                """
+                INSERT INTO lease_events (event_id, lease_id, event_type, source, payload_json, error, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    event_id,
+                    self.lease_id,
+                    event_type,
+                    source,
+                    json.dumps(payload),
+                    error,
+                    datetime.now().isoformat(),
+                ),
+            )
+            conn.commit()
+
+    def _persist_snapshot(self) -> None:
         with _connect(self.db_path) as conn:
             conn.execute(
                 """
                 UPDATE sandbox_leases
-                SET current_instance_id = ?, instance_status = ?, instance_created_at = ?, status = ?, updated_at = ?
+                SET current_instance_id = ?,
+                    instance_created_at = ?,
+                    desired_state = ?,
+                    observed_state = ?,
+                    version = ?,
+                    observed_at = ?,
+                    last_error = ?,
+                    needs_refresh = ?,
+                    refresh_hint_at = ?,
+                    status = ?,
+                    updated_at = ?
                 WHERE lease_id = ?
                 """,
                 (
-                    self._current_instance.instance_id,
-                    self._current_instance.status,
-                    self._current_instance.created_at.isoformat(),
+                    self._current_instance.instance_id if self._current_instance else None,
+                    self._current_instance.created_at.isoformat() if self._current_instance else None,
+                    self.desired_state,
+                    self.observed_state,
+                    self.version,
+                    self.observed_at.isoformat() if self.observed_at else None,
+                    self.last_error,
+                    1 if self.needs_refresh else 0,
+                    self.refresh_hint_at.isoformat() if self.refresh_hint_at else None,
                     self.status,
                     datetime.now().isoformat(),
                     self.lease_id,
                 ),
             )
-            conn.execute(
-                """
-                INSERT INTO sandbox_instances (
-                    instance_id, lease_id, provider_session_id, status, created_at, last_seen_at
+
+            if self._current_instance:
+                conn.execute(
+                    """
+                    INSERT INTO sandbox_instances (instance_id, lease_id, provider_session_id, status, created_at, last_seen_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(instance_id) DO UPDATE SET
+                        lease_id = excluded.lease_id,
+                        status = excluded.status,
+                        last_seen_at = excluded.last_seen_at
+                    """,
+                    (
+                        self._current_instance.instance_id,
+                        self.lease_id,
+                        self._current_instance.instance_id,
+                        self._current_instance.status,
+                        self._current_instance.created_at.isoformat(),
+                        datetime.now().isoformat(),
+                    ),
                 )
-                VALUES (?, ?, ?, ?, ?, ?)
-                ON CONFLICT(instance_id) DO UPDATE SET
-                    status = excluded.status,
-                    last_seen_at = excluded.last_seen_at
-                """,
-                (
-                    self._current_instance.instance_id,
-                    self.lease_id,
-                    self._current_instance.instance_id,
-                    self._current_instance.status,
-                    self._current_instance.created_at.isoformat(),
-                    datetime.now().isoformat(),
-                ),
-            )
+
+            if self._detached_instance:
+                conn.execute(
+                    """
+                    UPDATE sandbox_instances
+                    SET status = ?, last_seen_at = ?
+                    WHERE instance_id = ?
+                    """,
+                    (
+                        "stopped",
+                        datetime.now().isoformat(),
+                        self._detached_instance.instance_id,
+                    ),
+                )
+                self._detached_instance = None
+
             conn.commit()
 
     def _persist_lease_metadata(self) -> None:
@@ -344,34 +388,299 @@ class SQLiteLease(SandboxLease):
             conn.execute(
                 """
                 UPDATE sandbox_leases
-                SET status = ?, updated_at = ?
+                SET desired_state = ?,
+                    observed_state = ?,
+                    version = ?,
+                    observed_at = ?,
+                    last_error = ?,
+                    needs_refresh = ?,
+                    refresh_hint_at = ?,
+                    status = ?,
+                    updated_at = ?
                 WHERE lease_id = ?
                 """,
-                (self.status, datetime.now().isoformat(), self.lease_id),
+                (
+                    self.desired_state,
+                    self.observed_state,
+                    self.version,
+                    self.observed_at.isoformat() if self.observed_at else None,
+                    self.last_error,
+                    1 if self.needs_refresh else 0,
+                    self.refresh_hint_at.isoformat() if self.refresh_hint_at else None,
+                    self.status,
+                    datetime.now().isoformat(),
+                    self.lease_id,
+                ),
             )
             conn.commit()
 
-    def _clear_instance(self, previous_instance: SandboxInstance | None = None) -> None:
-        """Clear instance from DB."""
-        with _connect(self.db_path) as conn:
-            conn.execute(
-                """
-                UPDATE sandbox_leases
-                SET current_instance_id = NULL, instance_status = NULL, instance_created_at = NULL, status = ?, updated_at = ?
-                WHERE lease_id = ?
-                """,
-                (self.status, datetime.now().isoformat(), self.lease_id),
-            )
-            if previous_instance:
-                conn.execute(
-                    """
-                    UPDATE sandbox_instances
-                    SET status = ?, last_seen_at = ?
-                    WHERE instance_id = ?
-                    """,
-                    ("stopped", datetime.now().isoformat(), previous_instance.instance_id),
+    def _record_provider_error(self, message: str) -> None:
+        self.last_error = message[:500]
+        self.needs_refresh = True
+        self.refresh_hint_at = datetime.now()
+        self.version += 1
+        self._persist_lease_metadata()
+
+    def _sync_from(self, other: SQLiteLease) -> None:
+        self._current_instance = other._current_instance
+        self.status = other.status
+        self.workspace_key = other.workspace_key
+        self.desired_state = other.desired_state
+        self.observed_state = other.observed_state
+        self.version = other.version
+        self.observed_at = other.observed_at
+        self.last_error = other.last_error
+        self.needs_refresh = other.needs_refresh
+        self.refresh_hint_at = other.refresh_hint_at
+
+    def apply(
+        self,
+        provider: SandboxProvider,
+        *,
+        event_type: str,
+        source: str,
+        payload: dict[str, Any] | None = None,
+        event_id: str | None = None,
+    ) -> dict[str, Any]:
+        payload = payload or {}
+        eid = event_id or f"evt-{uuid.uuid4().hex}"
+
+        with self._instance_lock():
+            if event_type != "intent.ensure_running":
+                latest = LeaseStore(db_path=self.db_path).get(self.lease_id)
+                if isinstance(latest, SQLiteLease):
+                    self._sync_from(latest)
+            now = datetime.now()
+            error: str | None = None
+
+            try:
+                if event_type == "intent.pause":
+                    capability = provider.get_capability()
+                    if not capability.can_pause:
+                        raise RuntimeError(f"Provider {provider.name} does not support pause")
+                    if not self._current_instance:
+                        raise RuntimeError(f"Lease {self.lease_id} has no instance to pause")
+                    ok = provider.pause_session(self._current_instance.instance_id)
+                    if not ok:
+                        raise RuntimeError(
+                            f"Provider pause_session returned false for lease {self.lease_id}"
+                        )
+                    self.desired_state = "paused"
+                    self._set_observed_state("paused", reason="intent.pause")
+                    self.status = "active"
+                    self.last_error = None
+                    self.needs_refresh = False
+                    self.refresh_hint_at = None
+
+                elif event_type == "intent.resume":
+                    capability = provider.get_capability()
+                    if not capability.can_resume:
+                        raise RuntimeError(f"Provider {provider.name} does not support resume")
+                    if not self._current_instance:
+                        raise RuntimeError(f"Lease {self.lease_id} has no instance to resume")
+                    ok = provider.resume_session(self._current_instance.instance_id)
+                    if not ok:
+                        raise RuntimeError(
+                            f"Provider resume_session returned false for lease {self.lease_id}"
+                        )
+                    self.desired_state = "running"
+                    self._set_observed_state("running", reason="intent.resume")
+                    self.status = "active"
+                    self.last_error = None
+                    self.needs_refresh = False
+                    self.refresh_hint_at = None
+
+                elif event_type == "intent.destroy":
+                    capability = provider.get_capability()
+                    if not capability.can_destroy:
+                        raise RuntimeError(f"Provider {provider.name} does not support destroy")
+                    if self._current_instance:
+                        ok = provider.destroy_session(self._current_instance.instance_id)
+                        if not ok:
+                            raise RuntimeError(
+                                f"Provider destroy_session returned false for lease {self.lease_id}"
+                            )
+                    self.desired_state = "destroyed"
+                    self._set_observed_state("detached", reason="intent.destroy")
+                    self.status = "expired"
+                    self.last_error = None
+                    self.needs_refresh = False
+                    self.refresh_hint_at = None
+
+                elif event_type == "intent.ensure_running":
+                    if not self._current_instance:
+                        raise RuntimeError(
+                            f"Lease {self.lease_id}: intent.ensure_running requires bound instance"
+                        )
+                    self.desired_state = "running"
+                    self._set_observed_state("running", reason="intent.ensure_running")
+                    self.status = "active"
+                    self.last_error = None
+                    self.needs_refresh = False
+                    self.refresh_hint_at = None
+
+                elif event_type == "observe.status":
+                    raw = str(payload.get("status") or payload.get("observed_state") or "unknown")
+                    observed = self._normalize_provider_state(raw)
+                    self._set_observed_state(observed, reason="observe.status")
+                    self.status = "expired" if observed == "detached" else "active"
+                    self.last_error = None
+                    self.needs_refresh = False
+                    self.refresh_hint_at = None
+
+                elif event_type == "provider.error":
+                    self.last_error = str(payload.get("error") or "provider error")[:500]
+                    self.needs_refresh = True
+                    self.refresh_hint_at = now
+
+                else:
+                    raise RuntimeError(f"Unsupported lease event type: {event_type}")
+
+                self.observed_at = now
+                self.version += 1
+                self._persist_snapshot()
+
+            except Exception as exc:
+                error = str(exc)
+                self.last_error = error[:500]
+                self.needs_refresh = True
+                self.refresh_hint_at = datetime.now()
+                self.observed_at = datetime.now()
+                self.version += 1
+                self._persist_lease_metadata()
+                self._append_event(
+                    event_type=event_type,
+                    source=source,
+                    payload=payload,
+                    error=error,
+                    event_id=eid,
                 )
-            conn.commit()
+                raise
+
+            self._append_event(
+                event_type=event_type,
+                source=source,
+                payload=payload,
+                error=error,
+                event_id=eid,
+            )
+            return self._snapshot()
+
+    def ensure_active_instance(self, provider: SandboxProvider) -> SandboxInstance:
+        if self._current_instance and self.observed_state == "running" and self._is_fresh() and not self.needs_refresh:
+            return self._current_instance
+
+        if self._current_instance:
+            try:
+                status = provider.get_session_status(self._current_instance.instance_id)
+                self.apply(
+                    provider,
+                    event_type="observe.status",
+                    source="run.refresh",
+                    payload={"status": status},
+                )
+                if self.observed_state == "running" and self._current_instance:
+                    return self._current_instance
+                if self.observed_state == "paused":
+                    raise RuntimeError(f"Sandbox lease {self.lease_id} is paused. Resume before executing commands.")
+            except RuntimeError:
+                raise
+            except Exception as exc:
+                self._record_provider_error(str(exc))
+
+        with self._instance_lock():
+            refreshed = LeaseStore(db_path=self.db_path).get(self.lease_id)
+            if isinstance(refreshed, SQLiteLease):
+                self._sync_from(refreshed)
+
+            if self._current_instance:
+                try:
+                    status = provider.get_session_status(self._current_instance.instance_id)
+                    self.apply(
+                        provider,
+                        event_type="observe.status",
+                        source="run.refresh_locked",
+                        payload={"status": status},
+                    )
+                    if self.observed_state == "running" and self._current_instance:
+                        return self._current_instance
+                    if self.observed_state == "paused":
+                        raise RuntimeError(
+                            f"Sandbox lease {self.lease_id} is paused. Resume before executing commands."
+                        )
+                except RuntimeError:
+                    raise
+                except Exception as exc:
+                    self._record_provider_error(str(exc))
+
+            self.status = "recovering"
+            self._persist_lease_metadata()
+            session_info = provider.create_session(context_id=f"leon-{self.lease_id}")
+            self._current_instance = SandboxInstance(
+                instance_id=session_info.session_id,
+                provider_name=self.provider_name,
+                status="running",
+                created_at=datetime.now(),
+            )
+            self.apply(
+                provider,
+                event_type="intent.ensure_running",
+                source="run.create",
+                payload={"created": True, "instance_id": session_info.session_id},
+            )
+            if not self._current_instance:
+                raise RuntimeError(f"Lease {self.lease_id}: failed to bind created instance")
+            return self._current_instance
+
+    def destroy_instance(self, provider: SandboxProvider) -> None:
+        self.apply(provider, event_type="intent.destroy", source="api")
+
+    def pause_instance(self, provider: SandboxProvider) -> bool:
+        self.apply(provider, event_type="intent.pause", source="api")
+        return True
+
+    def resume_instance(self, provider: SandboxProvider) -> bool:
+        self.apply(provider, event_type="intent.resume", source="api")
+        return True
+
+    def refresh_instance_status(
+        self,
+        provider: SandboxProvider,
+        *,
+        force: bool = False,
+        max_age_sec: float = LEASE_FRESHNESS_TTL_SEC,
+    ) -> str:
+        if self.needs_refresh:
+            force = True
+
+        if not self._current_instance:
+            return "detached"
+
+        if not force and self._is_fresh(max_age_sec):
+            return self.observed_state
+
+        try:
+            status = provider.get_session_status(self._current_instance.instance_id)
+            self.apply(
+                provider,
+                event_type="observe.status",
+                source="read.status",
+                payload={"status": status},
+            )
+        except Exception as exc:
+            self.apply(
+                provider,
+                event_type="provider.error",
+                source="read.status",
+                payload={"error": str(exc)},
+            )
+        return self.observed_state
+
+    def mark_needs_refresh(self, hint_at: datetime | None = None) -> None:
+        self.needs_refresh = True
+        self.refresh_hint_at = hint_at or datetime.now()
+        self.version += 1
+        self._persist_lease_metadata()
 
 
 class LeaseStore:
@@ -382,7 +691,6 @@ class LeaseStore:
         self._ensure_tables()
 
     def _ensure_tables(self) -> None:
-        """Ensure sandbox_leases table exists."""
         with _connect(self.db_path) as conn:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute(
@@ -392,8 +700,14 @@ class LeaseStore:
                     provider_name TEXT NOT NULL,
                     workspace_key TEXT,
                     current_instance_id TEXT,
-                    instance_status TEXT,
                     instance_created_at TIMESTAMP,
+                    desired_state TEXT NOT NULL DEFAULT 'running',
+                    observed_state TEXT NOT NULL DEFAULT 'detached',
+                    version INTEGER NOT NULL DEFAULT 0,
+                    observed_at TIMESTAMP,
+                    last_error TEXT,
+                    needs_refresh INTEGER NOT NULL DEFAULT 0,
+                    refresh_hint_at TIMESTAMP,
                     status TEXT DEFAULT 'active',
                     created_at TIMESTAMP NOT NULL,
                     updated_at TIMESTAMP NOT NULL
@@ -412,9 +726,30 @@ class LeaseStore:
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS lease_events (
+                    event_id TEXT PRIMARY KEY,
+                    lease_id TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    payload_json TEXT,
+                    error TEXT,
+                    created_at TIMESTAMP NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_lease_events_lease_created
+                ON lease_events(lease_id, created_at DESC)
+                """
+            )
             conn.commit()
             lease_cols = {row[1] for row in conn.execute("PRAGMA table_info(sandbox_leases)").fetchall()}
             instance_cols = {row[1] for row in conn.execute("PRAGMA table_info(sandbox_instances)").fetchall()}
+            event_cols = {row[1] for row in conn.execute("PRAGMA table_info(lease_events)").fetchall()}
+
         missing_lease = REQUIRED_LEASE_COLUMNS - lease_cols
         if missing_lease:
             raise RuntimeError(
@@ -423,17 +758,32 @@ class LeaseStore:
         missing_instances = REQUIRED_INSTANCE_COLUMNS - instance_cols
         if missing_instances:
             raise RuntimeError(
-                f"sandbox_instances schema mismatch: missing {sorted(missing_instances)}. "
-                "Purge ~/.leon/sandbox.db and retry."
+                f"sandbox_instances schema mismatch: missing {sorted(missing_instances)}. Purge ~/.leon/sandbox.db and retry."
+            )
+        missing_events = REQUIRED_EVENT_COLUMNS - event_cols
+        if missing_events:
+            raise RuntimeError(
+                f"lease_events schema mismatch: missing {sorted(missing_events)}. Purge ~/.leon/sandbox.db and retry."
             )
 
     def get(self, lease_id: str) -> SandboxLease | None:
-        """Get lease by lease_id."""
         with _connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             row = conn.execute(
                 """
-                SELECT lease_id, provider_name, workspace_key, current_instance_id, instance_status, instance_created_at, status
+                SELECT lease_id,
+                       provider_name,
+                       workspace_key,
+                       current_instance_id,
+                       instance_created_at,
+                       desired_state,
+                       observed_state,
+                       version,
+                       observed_at,
+                       last_error,
+                       needs_refresh,
+                       refresh_hint_at,
+                       status
                 FROM sandbox_leases
                 WHERE lease_id = ?
                 """,
@@ -445,11 +795,12 @@ class LeaseStore:
 
             instance = None
             if row["current_instance_id"]:
+                created_raw = row["instance_created_at"] or datetime.now().isoformat()
                 instance = SandboxInstance(
                     instance_id=row["current_instance_id"],
                     provider_name=row["provider_name"],
-                    status=row["instance_status"],
-                    created_at=datetime.fromisoformat(row["instance_created_at"]),
+                    status=row["observed_state"] or "unknown",
+                    created_at=datetime.fromisoformat(created_raw),
                 )
 
             return SQLiteLease(
@@ -459,23 +810,51 @@ class LeaseStore:
                 db_path=self.db_path,
                 status=row["status"] or "active",
                 workspace_key=row["workspace_key"],
+                desired_state=row["desired_state"] or "running",
+                observed_state=row["observed_state"] or "detached",
+                version=int(row["version"] or 0),
+                observed_at=datetime.fromisoformat(row["observed_at"]) if row["observed_at"] else None,
+                last_error=row["last_error"],
+                needs_refresh=bool(row["needs_refresh"]),
+                refresh_hint_at=datetime.fromisoformat(row["refresh_hint_at"]) if row["refresh_hint_at"] else None,
             )
 
-    def create(
-        self,
-        lease_id: str,
-        provider_name: str,
-    ) -> SandboxLease:
-        """Create new lease."""
+    def create(self, lease_id: str, provider_name: str) -> SandboxLease:
         now = datetime.now().isoformat()
 
         with _connect(self.db_path) as conn:
             conn.execute(
                 """
-                INSERT INTO sandbox_leases (lease_id, provider_name, status, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO sandbox_leases (
+                    lease_id,
+                    provider_name,
+                    desired_state,
+                    observed_state,
+                    version,
+                    observed_at,
+                    last_error,
+                    needs_refresh,
+                    refresh_hint_at,
+                    status,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (lease_id, provider_name, "active", now, now),
+                (
+                    lease_id,
+                    provider_name,
+                    "running",
+                    "detached",
+                    0,
+                    now,
+                    None,
+                    0,
+                    None,
+                    "active",
+                    now,
+                    now,
+                ),
             )
             conn.commit()
 
@@ -485,43 +864,181 @@ class LeaseStore:
             current_instance=None,
             db_path=self.db_path,
             status="active",
+            desired_state="running",
+            observed_state="detached",
+            version=0,
+            observed_at=datetime.fromisoformat(now),
+            last_error=None,
+            needs_refresh=False,
+            refresh_hint_at=None,
         )
 
-    def delete(self, lease_id: str) -> None:
-        """Delete lease."""
+    def find_by_instance(self, *, provider_name: str, instance_id: str) -> SandboxLease | None:
+        with _connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                """
+                SELECT lease_id
+                FROM sandbox_leases
+                WHERE provider_name = ? AND current_instance_id = ?
+                LIMIT 1
+                """,
+                (provider_name, instance_id),
+            ).fetchone()
+            if not row:
+                return None
+            return self.get(row["lease_id"])
+
+    def adopt_instance(
+        self,
+        *,
+        lease_id: str,
+        provider_name: str,
+        instance_id: str,
+        status: str = "unknown",
+    ) -> SandboxLease:
+        lease = self.get(lease_id)
+        if lease is None:
+            lease = self.create(lease_id=lease_id, provider_name=provider_name)
+        if lease.provider_name != provider_name:
+            raise RuntimeError(
+                f"Lease provider mismatch during adopt: lease={lease.provider_name}, requested={provider_name}"
+            )
+
+        now = datetime.now().isoformat()
+        normalized = parse_lease_instance_state(status).value
+        desired = "paused" if normalized == "paused" else "running"
         with _connect(self.db_path) as conn:
             conn.execute(
-                "DELETE FROM sandbox_leases WHERE lease_id = ?",
-                (lease_id,),
+                """
+                UPDATE sandbox_leases
+                SET current_instance_id = ?,
+                    instance_created_at = ?,
+                    desired_state = ?,
+                    observed_state = ?,
+                    version = version + 1,
+                    observed_at = ?,
+                    last_error = ?,
+                    needs_refresh = ?,
+                    refresh_hint_at = ?,
+                    status = ?,
+                    updated_at = ?
+                WHERE lease_id = ?
+                """,
+                (
+                    instance_id,
+                    now,
+                    desired,
+                    normalized,
+                    now,
+                    None,
+                    1,
+                    now,
+                    "active",
+                    now,
+                    lease_id,
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO sandbox_instances (
+                    instance_id, lease_id, provider_session_id, status, created_at, last_seen_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(instance_id) DO UPDATE SET
+                    lease_id = excluded.lease_id,
+                    status = excluded.status,
+                    last_seen_at = excluded.last_seen_at
+                """,
+                (
+                    instance_id,
+                    lease_id,
+                    instance_id,
+                    normalized,
+                    now,
+                    now,
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO lease_events (event_id, lease_id, event_type, source, payload_json, error, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    f"evt-{uuid.uuid4().hex}",
+                    lease_id,
+                    "observe.status",
+                    "adopt",
+                    json.dumps({"status": normalized, "instance_id": instance_id}),
+                    None,
+                    now,
+                ),
             )
             conn.commit()
 
+        adopted = self.get(lease_id)
+        if adopted is None:
+            raise RuntimeError(f"Failed to load adopted lease: {lease_id}")
+        return adopted
+
+    def mark_needs_refresh(self, *, lease_id: str, hint_at: datetime | None = None) -> bool:
+        hinted_at = (hint_at or datetime.now()).isoformat()
+        with _connect(self.db_path) as conn:
+            cursor = conn.execute(
+                """
+                UPDATE sandbox_leases
+                SET needs_refresh = 1,
+                    refresh_hint_at = ?,
+                    version = version + 1,
+                    updated_at = ?
+                WHERE lease_id = ?
+                """,
+                (hinted_at, datetime.now().isoformat(), lease_id),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def delete(self, lease_id: str) -> None:
+        with _connect(self.db_path) as conn:
+            conn.execute("DELETE FROM sandbox_leases WHERE lease_id = ?", (lease_id,))
+            conn.commit()
+
     def list_all(self) -> list[dict]:
-        """List all leases."""
         with _connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 """
-                SELECT lease_id, provider_name, current_instance_id, instance_status, created_at, updated_at
+                SELECT lease_id,
+                       provider_name,
+                       current_instance_id,
+                       desired_state,
+                       observed_state,
+                       version,
+                       created_at,
+                       updated_at
                 FROM sandbox_leases
                 ORDER BY created_at DESC
                 """
             ).fetchall()
-
             return [dict(row) for row in rows]
 
     def list_by_provider(self, provider_name: str) -> list[dict]:
-        """List all leases for a provider."""
         with _connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 """
-                SELECT lease_id, provider_name, current_instance_id, instance_status, created_at, updated_at
+                SELECT lease_id,
+                       provider_name,
+                       current_instance_id,
+                       desired_state,
+                       observed_state,
+                       version,
+                       created_at,
+                       updated_at
                 FROM sandbox_leases
                 WHERE provider_name = ?
                 ORDER BY created_at DESC
                 """,
                 (provider_name,),
             ).fetchall()
-
             return [dict(row) for row in rows]

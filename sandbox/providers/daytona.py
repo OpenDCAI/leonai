@@ -17,6 +17,7 @@ from typing import Any
 
 from sandbox.provider import (
     Metrics,
+    ProviderCapability,
     ProviderExecResult,
     SandboxProvider,
     SessionInfo,
@@ -27,6 +28,14 @@ class DaytonaProvider(SandboxProvider):
     """Daytona cloud sandbox provider."""
 
     name = "daytona"
+
+    def get_capability(self) -> ProviderCapability:
+        return ProviderCapability(
+            can_pause=True,
+            can_resume=True,
+            can_destroy=True,
+            supports_webhook=True,
+        )
 
     def __init__(
         self,
