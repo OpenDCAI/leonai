@@ -36,7 +36,7 @@ def create_sandbox(
     if provider == "local":
         from sandbox.local import LocalSandbox
 
-        return LocalSandbox(workspace_root=workspace_root or str(Path.cwd()))
+        return LocalSandbox(workspace_root=workspace_root or str(Path.cwd()), db_path=db_path)
 
     if provider == "agentbay":
         from sandbox.agentbay import AgentBaySandbox
@@ -68,23 +68,12 @@ __all__ = [
     "resolve_sandbox_name",
     "set_current_thread_id",
     "get_current_thread_id",
-    # New exports from refactoring
-    "SandboxExecutor",
-    "SandboxFileBackend",
     "RemoteSandbox",
 ]
 
 
 def __getattr__(name: str):
     """Lazy imports for new exports to avoid circular imports."""
-    if name == "SandboxExecutor":
-        from sandbox.executor import SandboxExecutor
-
-        return SandboxExecutor
-    if name == "SandboxFileBackend":
-        from sandbox.file_backend import SandboxFileBackend
-
-        return SandboxFileBackend
     if name == "RemoteSandbox":
         from sandbox.remote import RemoteSandbox
 

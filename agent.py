@@ -171,6 +171,7 @@ class LeonAgent:
         self.queue_mode = profile.agent.queue_mode
         self._session_pool: dict[str, Any] = {}
         self.db_path = Path.home() / ".leon" / "leon.db"
+        self.sandbox_db_path = Path.home() / ".leon" / "sandbox.db"
 
         # Initialize sandbox (infrastructure layer — before middleware stack)
         from sandbox import Sandbox as SandboxBase
@@ -184,7 +185,7 @@ class LeonAgent:
             self._sandbox = create_sandbox(
                 sandbox_config,
                 workspace_root=str(self.workspace_root),
-                db_path=self.db_path,
+                db_path=self.sandbox_db_path,
             )
         else:
             raise TypeError(f"sandbox must be Sandbox, str, or None, got {type(sandbox)}")
@@ -198,20 +199,21 @@ class LeonAgent:
         # 初始化模型（统一路径）
         self.model = self._create_model()
 
-        # 构建 middleware 栈
-        middleware = self._build_middleware_stack()
-
-        # 加载 MCP 工具
+        # 初始化 checkpointer（必须在 middleware 栈之前）
         import asyncio
 
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
-            mcp_tools = loop.run_until_complete(self._init_mcp_tools())
             # 初始化异步 checkpointer
             self._aiosqlite_conn = loop.run_until_complete(self._init_checkpointer())
+            # 加载 MCP 工具
+            mcp_tools = loop.run_until_complete(self._init_mcp_tools())
         finally:
             loop.close()
+
+        # 构建 middleware 栈（checkpointer 已初始化）
+        middleware = self._build_middleware_stack()
 
         # Set parent middleware and checkpointer for TaskMiddleware
         if hasattr(self, "_task_middleware"):
@@ -458,10 +460,14 @@ tool:
         # 1. Memory (context pruning + compaction — before prompt caching)
         if self.profile.agent.memory.enabled:
             cfg = self.profile.agent.memory
+            db_path = Path.home() / ".leon" / "leon.db"
             self._memory_middleware = MemoryMiddleware(
                 context_limit=self.profile.agent.context_limit,
                 pruning_config=cfg.pruning,
                 compaction_config=cfg.compaction,
+                db_path=db_path,
+                checkpointer=self.checkpointer,
+                compaction_threshold=0.7,
                 verbose=self.verbose,
             )
             middleware.append(self._memory_middleware)
@@ -661,6 +667,7 @@ tool:
         conn = await aiosqlite.connect(str(db_path))
         # @@@ WAL mode allows concurrent reads/writes from sandbox manager
         await conn.execute("PRAGMA journal_mode=WAL")
+        await conn.execute("PRAGMA busy_timeout=30000")
         self.checkpointer = AsyncSqliteSaver(conn)
         await self.checkpointer.setup()
         return conn

@@ -180,7 +180,11 @@ class CommandMiddleware(AgentMiddleware[CommandState]):
         if not allowed:
             return error_msg
 
-        work_dir = cwd or str(self.workspace_root)
+        # @@@runtime-owned-cwd - Stateful runtimes (remote/local chat session shells) own cwd continuity.
+        if self._executor.runtime_owns_cwd:
+            work_dir = cwd
+        else:
+            work_dir = cwd or str(self.workspace_root)
 
         if blocking:
             timeout_secs = float(timeout) if timeout else self.default_timeout

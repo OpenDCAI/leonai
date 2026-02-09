@@ -48,7 +48,7 @@ class FileSystemBackend(ABC):
 
     Implementations:
     - LocalBackend: direct local filesystem access
-    - SandboxFileBackend: delegates to SandboxProvider
+    - Remote capability wrapper: delegates to SandboxProvider via lease/runtime
     """
 
     is_remote: bool = False

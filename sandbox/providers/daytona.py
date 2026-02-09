@@ -79,9 +79,10 @@ class DaytonaProvider(SandboxProvider):
         return True
 
     def get_session_status(self, session_id: str) -> str:
-        # @@@ state is enum SandboxState — use .value to get string
+        # @@@status-refresh - Always refetch sandbox before reading state to avoid stale cached status.
         try:
-            sb = self._get_sandbox(session_id)
+            sb = self.client.find_one(session_id)
+            self._sandboxes[session_id] = sb
             state = sb.state.value  # "started", "stopped", etc.
             if state == "started":
                 return "running"
