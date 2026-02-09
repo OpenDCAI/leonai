@@ -279,13 +279,15 @@ export default function App() {
               </div>
             )}
             <ChatArea entries={entries} isStreaming={isStreaming} runtimeStatus={runtimeStatus} />
-            <TaskProgress
-              isStreaming={isStreaming}
-              runtimeStatus={runtimeStatus}
-              sandboxType={activeSandbox?.type ?? "local"}
-              sandboxStatus={activeSandbox?.status ?? (activeSandbox?.type === "local" ? "running" : null)}
-              onOpenComputer={() => setComputerOpen(true)}
-            />
+            {(isStreaming || activeSandbox?.status === "running" || activeSandbox?.status === "paused") && (
+              <TaskProgress
+                isStreaming={isStreaming}
+                runtimeStatus={runtimeStatus}
+                sandboxType={activeSandbox?.type ?? "local"}
+                sandboxStatus={activeSandbox?.status ?? (activeSandbox?.type === "local" ? "running" : null)}
+                onOpenComputer={() => setComputerOpen(true)}
+              />
+            )}
             <InputBox
               disabled={isStreaming}
               placeholder={activeThreadId ? "告诉 Leon 你需要什么帮助..." : "新建会话后开始对话"}
