@@ -29,6 +29,7 @@ export interface SandboxSession {
   instance_id?: string | null;
   chat_session_id?: string | null;
   source?: string;
+  inspect_visible?: boolean;
 }
 
 export interface SandboxInfo {

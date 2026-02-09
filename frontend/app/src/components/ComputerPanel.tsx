@@ -41,8 +41,9 @@ export default function ComputerPanel({ isOpen, onClose, threadId, sandboxType }
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
 
   const isRemote = sandboxType !== null && sandboxType !== "local";
-  const canPause = session?.status === "active" || session?.status === "idle" || (isRemote && lease?.instance?.state === "running");
-  const canResume = session?.status === "paused" || (isRemote && lease?.instance?.state === "paused");
+  const instanceState = lease?.instance?.state ?? null;
+  const canPause = instanceState === "running";
+  const canResume = instanceState === "paused";
 
   async function refreshStatus() {
     if (!threadId) return;

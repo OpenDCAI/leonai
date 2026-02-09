@@ -50,6 +50,7 @@ class SandboxManager:
         on_session_ready: Callable[[str, str], None] | None = None,
     ):
         self.provider = provider
+        self.provider_capability = provider.get_capability()
         self.default_context_id = default_context_id
         self._on_session_ready = on_session_ready
 
@@ -68,9 +69,6 @@ class SandboxManager:
         return None
 
     def _default_terminal_cwd(self) -> str:
-        if self.provider.name == "local":
-            # @@@local-cwd-alignment - Local terminal cwd must align with workspace root to keep fs/command semantics consistent.
-            return str(Path.cwd().resolve())
         for attr in ("default_cwd", "default_context_path", "mount_path"):
             if hasattr(self.provider, attr):
                 value = getattr(self.provider, attr)
@@ -81,6 +79,10 @@ class SandboxManager:
     def _fire_session_ready(self, session_id: str, reason: str) -> None:
         if self._on_session_ready:
             self._on_session_ready(session_id, reason)
+
+    def _ensure_bound_instance(self, lease) -> None:
+        if self.provider_capability.eager_instance_binding and not lease.get_instance():
+            lease.ensure_active_instance(self.provider)
 
     def close(self):
         return None
@@ -95,8 +97,7 @@ class SandboxManager:
                 session = self.session_manager.get(thread_id)
                 if not session:
                     raise RuntimeError(f"Session disappeared after resume for thread {thread_id}")
-            if self.provider.name == "local" and not session.lease.get_instance():
-                session.lease.ensure_active_instance(self.provider)
+            self._ensure_bound_instance(session.lease)
             return SandboxCapability(session)
 
         terminal = self.terminal_store.get(thread_id)
@@ -116,8 +117,7 @@ class SandboxManager:
             if not lease:
                 lease = self.lease_store.create(terminal.lease_id, self.provider.name)
 
-        if self.provider.name == "local" and not lease.get_instance():
-            lease.ensure_active_instance(self.provider)
+        self._ensure_bound_instance(lease)
 
         session_id = f"sess-{uuid.uuid4().hex[:12]}"
         session = self.session_manager.create(
@@ -272,6 +272,7 @@ class SandboxManager:
         rows = self.session_manager.list_all()
         active_rows = [r for r in rows if r.get("status") in {"active", "idle", "paused"}]
         chat_by_thread: dict[str, dict] = {row["thread_id"]: row for row in active_rows if row.get("thread_id")}
+        inspect_visible = self.provider_capability.inspect_visible
 
         seen_instance_ids: set[str] = set()
 
@@ -306,6 +307,7 @@ class SandboxManager:
                         "instance_id": refreshed_instance.instance_id,
                         "chat_session_id": None,
                         "source": "lease",
+                        "inspect_visible": inspect_visible,
                     }
                 )
                 continue
@@ -324,6 +326,7 @@ class SandboxManager:
                         "instance_id": refreshed_instance.instance_id,
                         "chat_session_id": (chat or {}).get("session_id"),
                         "source": "lease",
+                        "inspect_visible": inspect_visible,
                     }
                 )
 
@@ -351,6 +354,7 @@ class SandboxManager:
                         "instance_id": instance_id,
                         "chat_session_id": None,
                         "source": "provider_orphan",
+                        "inspect_visible": inspect_visible,
                     }
                 )
 

@@ -13,6 +13,9 @@ class ProviderCapability:
     can_resume: bool
     can_destroy: bool
     supports_webhook: bool = False
+    supports_status_probe: bool = True
+    eager_instance_binding: bool = False
+    inspect_visible: bool = True
 
 
 @dataclass

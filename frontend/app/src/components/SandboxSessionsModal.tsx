@@ -68,7 +68,7 @@ export default function SandboxSessionsModal({ isOpen, onClose, onSessionMutated
     }
   }
 
-  const visibleSessions = sessions.filter((row) => row.provider !== "local");
+  const visibleSessions = sessions.filter((row) => row.inspect_visible !== false);
 
   return (
     <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/60 backdrop-blur-sm">
