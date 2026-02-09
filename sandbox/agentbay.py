@@ -11,13 +11,7 @@ from sandbox.remote import RemoteSandbox
 
 
 class AgentBaySandbox(RemoteSandbox):
-    """Cloud sandbox backed by AgentBay."""
-
-    def __init__(
-        self,
-        config: SandboxConfig,
-        db_path: Path | None = None,
-    ) -> None:
+    def __init__(self, config: SandboxConfig, db_path: Path | None = None) -> None:
         ab = config.agentbay
         api_key = ab.api_key or os.getenv("AGENTBAY_API_KEY")
         if not api_key:

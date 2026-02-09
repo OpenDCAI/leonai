@@ -1,8 +1,4 @@
-"""LocalSandbox with ChatSession-managed persistent terminal runtime.
-
-Architecture alignment:
-    Thread -> ChatSession -> LocalPersistentShellRuntime -> AbstractTerminal -> SandboxLease
-"""
+"""LocalSandbox with ChatSession-managed persistent terminal runtime."""
 
 from __future__ import annotations
 
@@ -23,12 +19,6 @@ if TYPE_CHECKING:
 
 @dataclass
 class LocalSessionProvider(SandboxProvider):
-    """Local provider shim for ChatSession orchestration.
-
-    Runtime execution is handled by LocalPersistentShellRuntime directly,
-    so provider execution/file APIs are intentionally unsupported.
-    """
-
     name: str = "local"
 
     def create_session(self, context_id: str | None = None) -> SessionInfo:
@@ -69,8 +59,6 @@ class LocalSessionProvider(SandboxProvider):
 
 
 class LocalSandbox(Sandbox):
-    """Local execution with ChatSession-managed terminal persistence."""
-
     def __init__(self, workspace_root: str, db_path: Path | None = None) -> None:
         self._workspace_root = workspace_root
         self._provider = LocalSessionProvider()
@@ -115,7 +103,6 @@ class LocalSandbox(Sandbox):
         return self._manager.resume_session(thread_id)
 
     def fs(self) -> FileSystemBackend | None:
-        # Keep local filesystem backend path/permission semantics unchanged.
         return None
 
     def shell(self) -> BaseExecutor:

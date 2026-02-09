@@ -10,18 +10,9 @@ from sandbox.remote import RemoteSandbox
 
 
 class DockerSandbox(RemoteSandbox):
-    """Local Docker container sandbox."""
-
-    def __init__(
-        self,
-        config: SandboxConfig,
-        db_path: Path | None = None,
-    ) -> None:
+    def __init__(self, config: SandboxConfig, db_path: Path | None = None) -> None:
         dc = config.docker
-        provider = DockerProvider(
-            image=dc.image,
-            mount_path=dc.mount_path,
-        )
+        provider = DockerProvider(image=dc.image, mount_path=dc.mount_path)
         super().__init__(
             provider=provider,
             config=config,
