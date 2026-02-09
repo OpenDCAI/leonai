@@ -272,28 +272,122 @@ class SandboxManager:
         return True
 
     def list_sessions(self) -> list[dict]:
-        """List all sessions."""
-        rows = self.session_manager.list_all()
+        """List sessions with ground-truth focus (lease/provider first, chat-session second)."""
         sessions: list[dict] = []
-        for row in rows:
-            if row.get("status") not in {"active", "idle", "paused"}:
+
+        # Build helper maps for thread/session metadata.
+        terminals = self.terminal_store.list_all()
+        threads_by_lease: dict[str, list[str]] = {}
+        for term in terminals:
+            lease_id = term.get("lease_id")
+            thread_id = term.get("thread_id")
+            if not lease_id or not thread_id:
                 continue
-            lease = self.lease_store.get(row["lease_id"])
-            if not lease or lease.provider_name != self.provider.name:
+            threads_by_lease.setdefault(lease_id, []).append(thread_id)
+
+        rows = self.session_manager.list_all()
+        active_rows = [r for r in rows if r.get("status") in {"active", "idle", "paused"}]
+        chat_by_thread: dict[str, dict] = {row["thread_id"]: row for row in active_rows if row.get("thread_id")}
+
+        if self.provider.name == "local":
+            for row in active_rows:
+                sessions.append(
+                    {
+                        "session_id": row["session_id"],
+                        "thread_id": row["thread_id"],
+                        "provider": self.provider.name,
+                        "status": row["status"],
+                        "created_at": row.get("started_at"),
+                        "last_active": row.get("last_active_at"),
+                        "lease_id": row.get("lease_id"),
+                        "instance_id": None,
+                        "chat_session_id": row.get("session_id"),
+                        "source": "chat_session",
+                    }
+                )
+            return sessions
+
+        seen_instance_ids: set[str] = set()
+
+        # @@@ground-truth-lease-view - Inspect must show real machine occupancy even if chat session is absent/expired.
+        for lease_row in self.lease_store.list_by_provider(self.provider.name):
+            lease_id = lease_row["lease_id"]
+            lease = self.lease_store.get(lease_id)
+            if not lease:
                 continue
             instance = lease.get_instance()
-            if instance:
-                status = lease.refresh_instance_status(self.provider)
-            else:
-                status = "detached"
-            sessions.append(
-                {
-                    "session_id": row["session_id"],
-                    "thread_id": row["thread_id"],
-                    "provider": self.provider.name,
-                    "status": status,
-                    "created_at": row.get("started_at"),
-                    "last_active": row.get("last_active_at"),
-                }
-            )
+            if not instance:
+                continue
+
+            status = lease.refresh_instance_status(self.provider)
+            refreshed_instance = lease.get_instance()
+            if not refreshed_instance:
+                continue
+            if status in {"detached", "deleted", "stopped", "dead"}:
+                continue
+
+            seen_instance_ids.add(refreshed_instance.instance_id)
+            threads = sorted(set(threads_by_lease.get(lease_id) or []))
+            if not threads:
+                sessions.append(
+                    {
+                        "session_id": refreshed_instance.instance_id,
+                        "thread_id": "(untracked)",
+                        "provider": self.provider.name,
+                        "status": status,
+                        "created_at": lease_row.get("created_at"),
+                        "last_active": lease_row.get("updated_at"),
+                        "lease_id": lease_id,
+                        "instance_id": refreshed_instance.instance_id,
+                        "chat_session_id": None,
+                        "source": "lease",
+                    }
+                )
+                continue
+
+            for thread_id in threads:
+                chat = chat_by_thread.get(thread_id)
+                sessions.append(
+                    {
+                        "session_id": refreshed_instance.instance_id,
+                        "thread_id": thread_id,
+                        "provider": self.provider.name,
+                        "status": status,
+                        "created_at": lease_row.get("created_at"),
+                        "last_active": (chat or {}).get("last_active_at") or lease_row.get("updated_at"),
+                        "lease_id": lease_id,
+                        "instance_id": refreshed_instance.instance_id,
+                        "chat_session_id": (chat or {}).get("session_id"),
+                        "source": "lease",
+                    }
+                )
+
+        # Provider orphan resources (machine exists but no DB lease).
+        if hasattr(self.provider, "list_provider_sessions"):
+            try:
+                provider_sessions = self.provider.list_provider_sessions() or []
+            except Exception:
+                provider_sessions = []
+            for ps in provider_sessions:
+                instance_id = getattr(ps, "session_id", None)
+                status = getattr(ps, "status", None) or "unknown"
+                if not instance_id or status in {"deleted", "dead", "stopped"}:
+                    continue
+                if instance_id in seen_instance_ids:
+                    continue
+                sessions.append(
+                    {
+                        "session_id": instance_id,
+                        "thread_id": "(orphan)",
+                        "provider": self.provider.name,
+                        "status": status,
+                        "created_at": None,
+                        "last_active": None,
+                        "lease_id": None,
+                        "instance_id": instance_id,
+                        "chat_session_id": None,
+                        "source": "provider_orphan",
+                    }
+                )
+
         return sessions
