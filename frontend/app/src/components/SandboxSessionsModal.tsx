@@ -1,3 +1,4 @@
+import { Loader2, Pause, Play, Trash2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
   destroySandboxSession,
@@ -68,83 +69,132 @@ export default function SandboxSessionsModal({ isOpen, onClose, onSessionMutated
     }
   }
 
+  function statusBadge(status: string) {
+    if (status === "running") {
+      return (
+        <span className="px-2 py-0.5 rounded text-xs font-medium bg-green-50 text-green-700 border border-green-200">
+          运行中
+        </span>
+      );
+    }
+    if (status === "paused") {
+      return (
+        <span className="px-2 py-0.5 rounded text-xs font-medium bg-yellow-50 text-yellow-700 border border-yellow-200">
+          已暂停
+        </span>
+      );
+    }
+    return (
+      <span className="px-2 py-0.5 rounded text-xs font-medium bg-[#f5f5f5] text-[#737373] border border-[#e5e5e5]">
+        {status}
+      </span>
+    );
+  }
+
   return (
-    <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="w-[860px] max-w-[95vw] max-h-[85vh] rounded-xl border border-[#333] bg-[#1f1f1f] shadow-2xl overflow-hidden">
-        <div className="h-12 px-4 border-b border-[#333] flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <h3 className="text-white text-sm font-semibold">Sandbox Sessions</h3>
-            {refreshing && <span className="text-xs text-gray-500">Refreshing…</span>}
+    <div
+      className="fixed inset-0 z-[120] flex items-center justify-center bg-black/40 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        className="w-[860px] max-w-[95vw] max-h-[85vh] rounded-2xl overflow-hidden bg-white border border-[#e5e5e5] shadow-xl animate-scale-in"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="h-12 px-5 flex items-center justify-between border-b border-[#e5e5e5]">
+          <div className="flex items-center gap-3">
+            <h3 className="text-sm font-semibold text-[#171717]">运行环境会话</h3>
+            {refreshing && (
+              <Loader2 className="w-3.5 h-3.5 animate-spin text-[#a3a3a3]" />
+            )}
           </div>
           <div className="flex items-center gap-2">
-            <button className="px-3 py-1 text-xs rounded bg-[#2d2d2d] hover:bg-[#3a3a3a] text-gray-200" onClick={() => void refresh()}>
-              Refresh
+            <button
+              className="px-3 py-1.5 rounded-lg text-xs border border-[#e5e5e5] text-[#525252] hover:bg-[#f5f5f5] hover:text-[#171717]"
+              onClick={() => void refresh()}
+            >
+              刷新
             </button>
-            <button className="px-3 py-1 text-xs rounded bg-[#2d2d2d] hover:bg-[#3a3a3a] text-gray-200" onClick={onClose}>
-              Close
+            <button
+              className="w-7 h-7 rounded-lg flex items-center justify-center text-[#a3a3a3] hover:bg-[#f5f5f5] hover:text-[#171717]"
+              onClick={onClose}
+            >
+              <X className="w-4 h-4" />
             </button>
           </div>
         </div>
-        <div className="p-4 overflow-auto max-h-[calc(85vh-48px)]">
-          {loading && sessions.length === 0 && <p className="text-sm text-gray-400">Loading...</p>}
-          {error && sessions.length === 0 && <p className="text-sm text-red-400">{error}</p>}
-          {error && sessions.length > 0 && <p className="text-xs text-red-400 mb-2">Refresh failed: {error}</p>}
-          {!loading && sessions.length === 0 && !error && <p className="text-sm text-gray-400">No active sessions.</p>}
+
+        {/* Content */}
+        <div className="p-5 overflow-auto max-h-[calc(85vh-48px)] custom-scrollbar">
+          {loading && sessions.length === 0 && (
+            <div className="flex items-center gap-2 py-8 justify-center">
+              <Loader2 className="w-4 h-4 animate-spin text-[#a3a3a3]" />
+              <span className="text-sm text-[#737373]">加载中...</span>
+            </div>
+          )}
+          {error && sessions.length === 0 && <p className="text-sm py-8 text-center text-red-500">{error}</p>}
+          {error && sessions.length > 0 && <p className="text-xs mb-3 text-red-500">刷新失败: {error}</p>}
+          {!loading && sessions.length === 0 && !error && (
+            <p className="text-sm py-8 text-center text-[#a3a3a3]">暂无活跃会话</p>
+          )}
           {sessions.length > 0 && (
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-gray-400 border-b border-[#333]">
-                  <th className="text-left py-2">Thread</th>
-                  <th className="text-left py-2">Session</th>
-                  <th className="text-left py-2">Provider</th>
-                  <th className="text-left py-2">Status</th>
-                  <th className="text-left py-2">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sessions.map((row) => {
-                  return (
-                  <tr key={row.session_id} className="border-b border-[#2a2a2a] text-gray-200">
-                    <td className="py-2 font-mono text-xs">{row.thread_id.slice(0, 16)}</td>
-                    <td className="py-2 font-mono text-xs">{row.session_id.slice(0, 16)}</td>
-                    <td className="py-2">{row.provider}</td>
-                    <td className="py-2">
-                      <span className="px-2 py-0.5 rounded bg-[#2d2d2d] text-xs">{row.status}</span>
-                    </td>
-                    <td className="py-2">
-                      <div className="flex items-center gap-2">
-                        {row.status === "running" && (
-                          <button
-                            className="px-2 py-1 text-xs rounded bg-[#384e8a] hover:bg-[#4560aa] disabled:opacity-50"
-                            disabled={busy === row.session_id}
-                            onClick={() => void withBusy(row, () => pauseSandboxSession(row.session_id, row.provider))}
-                          >
-                            Pause
-                          </button>
-                        )}
-                        {row.status === "paused" && (
-                          <button
-                            className="px-2 py-1 text-xs rounded bg-[#2d6a4f] hover:bg-[#367d5c] disabled:opacity-50"
-                            disabled={busy === row.session_id}
-                            onClick={() => void withBusy(row, () => resumeSandboxSession(row.session_id, row.provider))}
-                          >
-                            Resume
-                          </button>
-                        )}
-                        <button
-                          className="px-2 py-1 text-xs rounded bg-[#8a3838] hover:bg-[#aa4545] disabled:opacity-50"
-                          disabled={busy === row.session_id}
-                          onClick={() => void withBusy(row, () => destroySandboxSession(row.session_id, row.provider))}
-                        >
-                          Destroy
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+            <div className="space-y-2">
+              {sessions.map((row) => (
+                <div
+                  key={row.session_id}
+                  className="flex items-center gap-4 p-3 rounded-xl bg-[#fafafa] border border-[#e5e5e5]"
+                >
+                  <div className="flex-1 min-w-0 grid grid-cols-4 gap-3 items-center">
+                    <div>
+                      <div className="text-[10px] uppercase tracking-wider mb-0.5 text-[#a3a3a3]">对话</div>
+                      <div className="text-sm font-mono truncate text-[#171717]">{row.thread_id.slice(0, 16)}</div>
+                    </div>
+                    <div>
+                      <div className="text-[10px] uppercase tracking-wider mb-0.5 text-[#a3a3a3]">会话</div>
+                      <div className="text-sm font-mono truncate text-[#171717]">{row.session_id.slice(0, 16)}</div>
+                    </div>
+                    <div>
+                      <div className="text-[10px] uppercase tracking-wider mb-0.5 text-[#a3a3a3]">环境</div>
+                      <div className="text-sm text-[#171717]">{row.provider}</div>
+                    </div>
+                    <div>
+                      <div className="text-[10px] uppercase tracking-wider mb-0.5 text-[#a3a3a3]">状态</div>
+                      {statusBadge(row.status)}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5 flex-shrink-0">
+                    {row.status === "running" && (
+                      <button
+                        className="w-8 h-8 rounded-lg flex items-center justify-center text-[#a3a3a3] hover:bg-[#f0f0f0] hover:text-[#171717] disabled:opacity-30"
+                        disabled={busy === row.session_id}
+                        onClick={() => void withBusy(row, () => pauseSandboxSession(row.session_id, row.provider))}
+                        title="暂停"
+                      >
+                        <Pause className="w-4 h-4" />
+                      </button>
+                    )}
+                    {row.status === "paused" && (
+                      <button
+                        className="w-8 h-8 rounded-lg flex items-center justify-center text-[#a3a3a3] hover:bg-[#f0f0f0] hover:text-green-600 disabled:opacity-30"
+                        disabled={busy === row.session_id}
+                        onClick={() => void withBusy(row, () => resumeSandboxSession(row.session_id, row.provider))}
+                        title="恢复"
+                      >
+                        <Play className="w-4 h-4" />
+                      </button>
+                    )}
+                    <button
+                      className="w-8 h-8 rounded-lg flex items-center justify-center text-[#a3a3a3] hover:bg-[#fee2e2] hover:text-[#dc2626] disabled:opacity-30"
+                      disabled={busy === row.session_id}
+                      onClick={() => void withBusy(row, () => destroySandboxSession(row.session_id, row.provider))}
+                      title="销毁"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
           )}
         </div>
       </div>
