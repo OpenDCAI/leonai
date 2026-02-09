@@ -239,51 +239,65 @@ def _init_sandbox_providers() -> tuple[dict, dict]:
         name = config_file.stem
         try:
             config = SandboxConfig.load(name)
-            if config.provider == "agentbay":
-                from sandbox.providers.agentbay import AgentBayProvider
-
-                key = config.agentbay.api_key or os.getenv("AGENTBAY_API_KEY")
-                if key:
-                    providers["agentbay"] = AgentBayProvider(
-                        api_key=key,
-                        region_id=config.agentbay.region_id,
-                        default_context_path=config.agentbay.context_path,
-                        image_id=config.agentbay.image_id,
-                    )
-            elif config.provider == "docker":
-                from sandbox.providers.docker import DockerProvider
-
-                providers["docker"] = DockerProvider(
-                    image=config.docker.image,
-                    mount_path=config.docker.mount_path,
-                )
-            elif config.provider == "e2b":
-                from sandbox.providers.e2b import E2BProvider
-
-                key = config.e2b.api_key or os.getenv("E2B_API_KEY")
-                if key:
-                    providers["e2b"] = E2BProvider(
-                        api_key=key,
-                        template=config.e2b.template,
-                        default_cwd=config.e2b.cwd,
-                        timeout=config.e2b.timeout,
-                    )
-            elif config.provider == "daytona":
-                from sandbox.providers.daytona import DaytonaProvider
-
-                key = config.daytona.api_key or os.getenv("DAYTONA_API_KEY")
-                if key:
-                    providers["daytona"] = DaytonaProvider(
-                        api_key=key,
-                        api_url=config.daytona.api_url,
-                        target=config.daytona.target,
-                        default_cwd=config.daytona.cwd,
-                    )
+            provider = _create_provider(config)
+            if provider:
+                providers[config.provider] = provider
         except Exception as e:
             print(f"[sandbox] Failed to load {name}: {e}")
 
     managers = {name: SandboxManager(provider=provider) for name, provider in providers.items()}
     return providers, managers
+
+
+def _create_provider(config):
+    """Create provider instance from config"""
+    import os
+
+    if config.provider == "agentbay":
+        from sandbox.providers.agentbay import AgentBayProvider
+
+        key = config.agentbay.api_key or os.getenv("AGENTBAY_API_KEY")
+        if key:
+            return AgentBayProvider(
+                api_key=key,
+                region_id=config.agentbay.region_id,
+                default_context_path=config.agentbay.context_path,
+                image_id=config.agentbay.image_id,
+            )
+
+    elif config.provider == "docker":
+        from sandbox.providers.docker import DockerProvider
+
+        return DockerProvider(
+            image=config.docker.image,
+            mount_path=config.docker.mount_path,
+        )
+
+    elif config.provider == "e2b":
+        from sandbox.providers.e2b import E2BProvider
+
+        key = config.e2b.api_key or os.getenv("E2B_API_KEY")
+        if key:
+            return E2BProvider(
+                api_key=key,
+                template=config.e2b.template,
+                default_cwd=config.e2b.cwd,
+                timeout=config.e2b.timeout,
+            )
+
+    elif config.provider == "daytona":
+        from sandbox.providers.daytona import DaytonaProvider
+
+        key = config.daytona.api_key or os.getenv("DAYTONA_API_KEY")
+        if key:
+            return DaytonaProvider(
+                api_key=key,
+                api_url=config.daytona.api_url,
+                target=config.daytona.target,
+                default_cwd=config.daytona.cwd,
+            )
+
+    return None
 
 
 def _load_all_sessions(managers: dict) -> list[dict]:
@@ -322,18 +336,10 @@ def cmd_sandbox(args):
 
     # No subcommand → launch TUI
     if subcommand is None:
-        api_key = os.getenv("AGENTBAY_API_KEY")
-        try:
-            from tui.widgets.sandbox_manager import SandboxManagerApp
-
-            SandboxManagerApp(api_key=api_key).run()
-        except ImportError as e:
-            print(f"Failed to import sandbox manager: {e}")
-            sys.exit(1)
+        _launch_sandbox_tui()
         return
 
     from rich.console import Console
-    from rich.table import Table
 
     console = Console()
 
@@ -343,156 +349,223 @@ def cmd_sandbox(args):
         console.print("Add config files to ~/.leon/sandboxes/ (see docs/SANDBOX.md)")
         return
 
-    if subcommand in ("ls", "list"):
-        sessions = _load_all_sessions(managers)
-        if not sessions:
-            console.print("[yellow]No active sessions.[/yellow]")
-            return
-        table = Table(title="Sandbox Sessions")
-        table.add_column("Session ID", style="cyan")
-        table.add_column("Status", style="green")
-        table.add_column("Provider", style="magenta")
-        table.add_column("Thread", style="white")
-        for s in sessions:
-            status_style = {"running": "green", "paused": "yellow"}.get(s["status"], "red")
-            table.add_row(s["id"], f"[{status_style}]{s['status']}[/{status_style}]", s["provider"], s["thread"])
-        console.print(table)
+    # Dispatch to handler
+    handlers = {
+        "ls": _cmd_sandbox_list,
+        "list": _cmd_sandbox_list,
+        "new": _cmd_sandbox_new,
+        "rm": _cmd_sandbox_rm,
+        "delete": _cmd_sandbox_rm,
+        "pause": _cmd_sandbox_pause,
+        "resume": _cmd_sandbox_resume,
+        "metrics": _cmd_sandbox_metrics,
+        "destroy-all-sessions": _cmd_sandbox_destroy_all,
+    }
 
-    elif subcommand == "new":
-        provider_name = args.extra_args[0] if args.extra_args else None
-        if not provider_name:
-            # Pick first available
-            for name in ("agentbay", "e2b", "docker", "daytona"):
-                if name in managers:
-                    provider_name = name
-                    break
-        if not provider_name or provider_name not in managers:
-            console.print(f"[red]Provider not available: {provider_name or 'none'}[/red]")
-            console.print(f"Available: {', '.join(managers.keys())}")
-            return
-        manager = managers[provider_name]
-        thread_id = f"sandbox-{os.urandom(4).hex()}"
-        try:
-            info = manager.get_or_create_session(thread_id)
-            console.print(f"[green]Created {provider_name} session:[/green] {info.session_id}")
-            console.print(f"  Thread: {thread_id}")
-        except Exception as e:
-            console.print(f"[red]Failed to create session: {e}[/red]")
-
-    elif subcommand in ("rm", "delete"):
-        if not args.extra_args:
-            console.print("Usage: leonai sandbox rm <session_id>")
-            return
-        sessions = _load_all_sessions(managers)
-        target = _find_session(sessions, args.extra_args[0])
-        if not target:
-            console.print(f"[red]Session not found: {args.extra_args[0]}[/red]")
-            return
-        manager = managers.get(target["provider"])
-        if not manager:
-            console.print("[red]Provider unavailable[/red]")
-            return
-        if manager.destroy_session(thread_id=target["thread"], session_id=target["id"]):
-            console.print(f"[green]Deleted:[/green] {target['id']}")
-        else:
-            console.print("[red]Delete failed[/red]")
-
-    elif subcommand == "pause":
-        if not args.extra_args:
-            console.print("Usage: leonai sandbox pause <session_id>")
-            return
-        sessions = _load_all_sessions(managers)
-        target = _find_session(sessions, args.extra_args[0])
-        if not target:
-            console.print(f"[red]Session not found: {args.extra_args[0]}[/red]")
-            return
-        manager = managers.get(target["provider"])
-        try:
-            if manager and manager.pause_session(target["thread"]):
-                console.print(f"[green]Paused:[/green] {target['id']}")
-            else:
-                console.print("[red]Pause failed[/red]")
-        except Exception as e:
-            console.print(f"[red]Pause failed: {e}[/red]")
-
-    elif subcommand == "resume":
-        if not args.extra_args:
-            console.print("Usage: leonai sandbox resume <session_id>")
-            return
-        sessions = _load_all_sessions(managers)
-        target = _find_session(sessions, args.extra_args[0])
-        if not target:
-            console.print(f"[red]Session not found: {args.extra_args[0]}[/red]")
-            return
-        manager = managers.get(target["provider"])
-        try:
-            if manager and manager.resume_session(target["thread"]):
-                console.print(f"[green]Resumed:[/green] {target['id']}")
-            else:
-                console.print("[red]Resume failed[/red]")
-        except Exception as e:
-            console.print(f"[red]Resume failed: {e}[/red]")
-
-    elif subcommand == "metrics":
-        if not args.extra_args:
-            console.print("Usage: leonai sandbox metrics <session_id>")
-            return
-        sessions = _load_all_sessions(managers)
-        target = _find_session(sessions, args.extra_args[0])
-        if not target:
-            console.print(f"[red]Session not found: {args.extra_args[0]}[/red]")
-            return
-        provider = providers.get(target["provider"])
-        if not provider:
-            console.print("[red]Provider unavailable[/red]")
-            return
-        try:
-            metrics = provider.get_metrics(target["id"])
-            if metrics:
-                console.print(f"[bold]Session:[/bold] {target['id']}")
-                console.print(f"  CPU:     {metrics.cpu_percent:.1f}%")
-                console.print(f"  Memory:  {metrics.memory_used_mb:.0f}MB / {metrics.memory_total_mb:.0f}MB")
-                console.print(f"  Disk:    {metrics.disk_used_gb:.1f}GB / {metrics.disk_total_gb:.1f}GB")
-                console.print(
-                    f"  Network: RX {metrics.network_rx_kbps:.1f} KB/s | TX {metrics.network_tx_kbps:.1f} KB/s"
-                )
-                if target["provider"] == "agentbay":
-                    url = provider.get_web_url(target["id"])
-                    if url:
-                        console.print(f"  URL:     {url}")
-            else:
-                console.print("[yellow]Metrics not available for this provider.[/yellow]")
-        except Exception as e:
-            console.print(f"[red]Failed to get metrics: {e}[/red]")
-
-    elif subcommand == "destroy-all-sessions":
-        sessions = _load_all_sessions(managers)
-        if not sessions:
-            console.print("[yellow]No active sessions.[/yellow]")
-            return
-        console.print(f"[bold red]This will destroy {len(sessions)} session(s):[/bold red]")
-        for s in sessions:
-            console.print(f"  {s['id']}  ({s['provider']}, {s['status']})")
-        confirm = input("\nType 'yes' to confirm: ")
-        if confirm != "yes":
-            console.print("[yellow]Cancelled.[/yellow]")
-            return
-        from concurrent.futures import ThreadPoolExecutor
-
-        def _destroy(s):
-            mgr = managers.get(s["provider"])
-            if mgr:
-                mgr.destroy_session(thread_id=s["thread"], session_id=s["id"])
-            return s["id"]
-
-        with ThreadPoolExecutor(max_workers=min(len(sessions), 8)) as pool:
-            for sid in pool.map(_destroy, sessions):
-                console.print(f"  [red]Destroyed:[/red] {sid}")
-        console.print(f"[green]Done. {len(sessions)} session(s) destroyed.[/green]")
-
+    handler = handlers.get(subcommand)
+    if handler:
+        handler(args, console, providers, managers)
     else:
         console.print(f"[red]Unknown subcommand: {subcommand}[/red]")
         console.print("Available: ls, new, rm, pause, resume, metrics, destroy-all-sessions")
+
+
+def _launch_sandbox_tui() -> None:
+    """Launch sandbox manager TUI"""
+    import os
+    import sys
+
+    api_key = os.getenv("AGENTBAY_API_KEY")
+    try:
+        from tui.widgets.sandbox_manager import SandboxManagerApp
+
+        SandboxManagerApp(api_key=api_key).run()
+    except ImportError as e:
+        print(f"Failed to import sandbox manager: {e}")
+        sys.exit(1)
+
+
+def _cmd_sandbox_list(args, console, providers, managers) -> None:
+    """List all sandbox sessions"""
+    from rich.table import Table
+
+    sessions = _load_all_sessions(managers)
+    if not sessions:
+        console.print("[yellow]No active sessions.[/yellow]")
+        return
+
+    table = Table(title="Sandbox Sessions")
+    table.add_column("Session ID", style="cyan")
+    table.add_column("Status", style="green")
+    table.add_column("Provider", style="magenta")
+    table.add_column("Thread", style="white")
+
+    for s in sessions:
+        status_style = {"running": "green", "paused": "yellow"}.get(s["status"], "red")
+        table.add_row(s["id"], f"[{status_style}]{s['status']}[/{status_style}]", s["provider"], s["thread"])
+
+    console.print(table)
+
+
+def _cmd_sandbox_new(args, console, providers, managers) -> None:
+    """Create new sandbox session"""
+    import os
+
+    provider_name = args.extra_args[0] if args.extra_args else None
+    if not provider_name:
+        # Pick first available
+        for name in ("agentbay", "e2b", "docker", "daytona"):
+            if name in managers:
+                provider_name = name
+                break
+
+    if not provider_name or provider_name not in managers:
+        console.print(f"[red]Provider not available: {provider_name or 'none'}[/red]")
+        console.print(f"Available: {', '.join(managers.keys())}")
+        return
+
+    manager = managers[provider_name]
+    thread_id = f"sandbox-{os.urandom(4).hex()}"
+
+    try:
+        info = manager.get_or_create_session(thread_id)
+        console.print(f"[green]Created {provider_name} session:[/green] {info.session_id}")
+        console.print(f"  Thread: {thread_id}")
+    except Exception as e:
+        console.print(f"[red]Failed to create session: {e}[/red]")
+
+
+def _cmd_sandbox_rm(args, console, providers, managers) -> None:
+    """Delete sandbox session"""
+    if not args.extra_args:
+        console.print("Usage: leonai sandbox rm <session_id>")
+        return
+
+    sessions = _load_all_sessions(managers)
+    target = _find_session(sessions, args.extra_args[0])
+    if not target:
+        console.print(f"[red]Session not found: {args.extra_args[0]}[/red]")
+        return
+
+    manager = managers.get(target["provider"])
+    if not manager:
+        console.print("[red]Provider unavailable[/red]")
+        return
+
+    if manager.destroy_session(thread_id=target["thread"], session_id=target["id"]):
+        console.print(f"[green]Deleted:[/green] {target['id']}")
+    else:
+        console.print("[red]Delete failed[/red]")
+
+
+def _cmd_sandbox_pause(args, console, providers, managers) -> None:
+    """Pause sandbox session"""
+    if not args.extra_args:
+        console.print("Usage: leonai sandbox pause <session_id>")
+        return
+
+    sessions = _load_all_sessions(managers)
+    target = _find_session(sessions, args.extra_args[0])
+    if not target:
+        console.print(f"[red]Session not found: {args.extra_args[0]}[/red]")
+        return
+
+    manager = managers.get(target["provider"])
+    try:
+        if manager and manager.pause_session(target["thread"]):
+            console.print(f"[green]Paused:[/green] {target['id']}")
+        else:
+            console.print("[red]Pause failed[/red]")
+    except Exception as e:
+        console.print(f"[red]Pause failed: {e}[/red]")
+
+
+def _cmd_sandbox_resume(args, console, providers, managers) -> None:
+    """Resume sandbox session"""
+    if not args.extra_args:
+        console.print("Usage: leonai sandbox resume <session_id>")
+        return
+
+    sessions = _load_all_sessions(managers)
+    target = _find_session(sessions, args.extra_args[0])
+    if not target:
+        console.print(f"[red]Session not found: {args.extra_args[0]}[/red]")
+        return
+
+    manager = managers.get(target["provider"])
+    try:
+        if manager and manager.resume_session(target["thread"]):
+            console.print(f"[green]Resumed:[/green] {target['id']}")
+        else:
+            console.print("[red]Resume failed[/red]")
+    except Exception as e:
+        console.print(f"[red]Resume failed: {e}[/red]")
+
+
+def _cmd_sandbox_metrics(args, console, providers, managers) -> None:
+    """Show sandbox metrics"""
+    if not args.extra_args:
+        console.print("Usage: leonai sandbox metrics <session_id>")
+        return
+
+    sessions = _load_all_sessions(managers)
+    target = _find_session(sessions, args.extra_args[0])
+    if not target:
+        console.print(f"[red]Session not found: {args.extra_args[0]}[/red]")
+        return
+
+    provider = providers.get(target["provider"])
+    if not provider:
+        console.print("[red]Provider unavailable[/red]")
+        return
+
+    try:
+        metrics = provider.get_metrics(target["id"])
+        if metrics:
+            console.print(f"[bold]Session:[/bold] {target['id']}")
+            console.print(f"  CPU:     {metrics.cpu_percent:.1f}%")
+            console.print(f"  Memory:  {metrics.memory_used_mb:.0f}MB / {metrics.memory_total_mb:.0f}MB")
+            console.print(f"  Disk:    {metrics.disk_used_gb:.1f}GB / {metrics.disk_total_gb:.1f}GB")
+            console.print(f"  Network: RX {metrics.network_rx_kbps:.1f} KB/s | TX {metrics.network_tx_kbps:.1f} KB/s")
+            if target["provider"] == "agentbay":
+                url = provider.get_web_url(target["id"])
+                if url:
+                    console.print(f"  URL:     {url}")
+        else:
+            console.print("[yellow]Metrics not available for this provider.[/yellow]")
+    except Exception as e:
+        console.print(f"[red]Failed to get metrics: {e}[/red]")
+
+
+def _cmd_sandbox_destroy_all(args, console, providers, managers) -> None:
+    """Destroy all sandbox sessions"""
+    from concurrent.futures import ThreadPoolExecutor
+
+    sessions = _load_all_sessions(managers)
+    if not sessions:
+        console.print("[yellow]No active sessions.[/yellow]")
+        return
+
+    console.print(f"[bold red]This will destroy {len(sessions)} session(s):[/bold red]")
+    for s in sessions:
+        console.print(f"  {s['id']}  ({s['provider']}, {s['status']})")
+
+    confirm = input("\nType 'yes' to confirm: ")
+    if confirm != "yes":
+        console.print("[yellow]Cancelled.[/yellow]")
+        return
+
+    def _destroy(s):
+        mgr = managers.get(s["provider"])
+        if mgr:
+            mgr.destroy_session(thread_id=s["thread"], session_id=s["id"])
+        return s["id"]
+
+    with ThreadPoolExecutor(max_workers=min(len(sessions), 8)) as pool:
+        for sid in pool.map(_destroy, sessions):
+            console.print(f"  [red]Destroyed:[/red] {sid}")
+
+    console.print(f"[green]Done. {len(sessions)} session(s) destroyed.[/green]")
 
 
 def main():
@@ -512,95 +585,124 @@ def main():
     args, unknown = parser.parse_known_args()
 
     if args.help and not args.command:
-        print("Leon AI - 你的 AI 编程助手\n")
-        print("用法:")
-        print("  leonai                    启动 Leon (新对话)")
-        print("  leonai -c                 继续上次对话")
-        print("  leonai --model <name>     使用指定模型")
-        print("  leonai --profile <path>   使用指定 profile 启动")
-        print("  leonai --workspace <dir>  指定工作目录")
-        print("  leonai --sandbox <name>   使用指定 sandbox 配置")
-        print("  leonai --thread <id>      恢复指定对话")
-        print("  leonai config             配置 API key 和其他设置")
-        print("  leonai config show        显示当前配置")
-        print()
-        print("非交互式运行:")
-        print('  leonai run "消息"         发送单条消息')
-        print("  leonai run --stdin        从 stdin 读取消息（空行分隔）")
-        print("  leonai run -i             交互模式（无 TUI）")
-        print("  leonai run -d             带 debug 输出")
-        print()
-        print("Thread 管理:")
-        print("  leonai thread ls          列出所有对话")
-        print("  leonai thread list        列出所有对话")
-        print("  leonai thread history <thread_id>   查看对话历史")
-        print("  leonai thread rewind <thread_id> <checkpoint_id>  回退到指定节点")
-        print("  leonai thread rm <thread_id>        删除对话")
-        print()
-        print("Sandbox 管理:")
-        print("  leonai sandbox            打开 sandbox 会话管理器 (TUI)")
-        print("  leonai sandbox ls         列出所有 sandbox 会话")
-        print("  leonai sandbox new [provider]  创建新会话 (agentbay/e2b/docker/daytona)")
-        print("  leonai sandbox pause <id>      暂停会话")
-        print("  leonai sandbox resume <id>     恢复会话")
-        print("  leonai sandbox rm <id>         删除会话")
-        print("  leonai sandbox metrics <id>    查看会话资源指标")
+        _show_main_help()
         return
 
-    # Handle config command
+    # Handle commands
     if args.command == "config":
-        if args.subcommand == "show":
-            show_config()
-        else:
-            interactive_config()
+        _handle_config_command(args)
         return
 
-    # Handle thread command
     if args.command == "thread":
-        subcommand = args.subcommand
-
-        if subcommand in ("ls", "list", None):
-            cmd_thread_list(args)
-        elif subcommand == "history":
-            if not args.extra_args:
-                print("用法: leonai thread history <thread_id>")
-                sys.exit(1)
-            args.thread_id = args.extra_args[0]
-            cmd_thread_history(args)
-        elif subcommand == "rewind":
-            if len(args.extra_args) < 2:
-                print("用法: leonai thread rewind <thread_id> <checkpoint_id> [-y]")
-                sys.exit(1)
-            args.thread_id = args.extra_args[0]
-            args.checkpoint_id = args.extra_args[1]
-            args.yes = "-y" in unknown or "--yes" in unknown
-            cmd_thread_rewind(args)
-        elif subcommand == "rm":
-            if not args.extra_args:
-                print("用法: leonai thread rm <thread_id> [-y]")
-                sys.exit(1)
-            args.thread_id = args.extra_args[0]
-            args.yes = "-y" in unknown or "--yes" in unknown
-            cmd_thread_rm(args)
-        else:
-            print(f"未知子命令: {subcommand}")
-            print("可用子命令: ls, list, history, rewind, rm")
-            sys.exit(1)
+        _handle_thread_command(args, unknown)
         return
 
-    # Handle sandbox command - load config first for API key
     if args.command == "sandbox":
-        config_manager = ConfigManager()
-        config_manager.load_to_env()
-        cmd_sandbox(args)
+        _handle_sandbox_command(args)
         return
-    # Handle run command
+
     if args.command == "run":
-        from tui.runner import cmd_run
-
-        cmd_run(args, unknown)
+        _handle_run_command(args, unknown)
         return
 
+    # Default: launch TUI
+    _launch_tui(args)
+
+
+def _show_main_help() -> None:
+    """Show main help message"""
+    print("Leon AI - 你的 AI 编程助手\n")
+    print("用法:")
+    print("  leonai                    启动 Leon (新对话)")
+    print("  leonai -c                 继续上次对话")
+    print("  leonai --model <name>     使用指定模型")
+    print("  leonai --profile <path>   使用指定 profile 启动")
+    print("  leonai --workspace <dir>  指定工作目录")
+    print("  leonai --sandbox <name>   使用指定 sandbox 配置")
+    print("  leonai --thread <id>      恢复指定对话")
+    print("  leonai config             配置 API key 和其他设置")
+    print("  leonai config show        显示当前配置")
+    print()
+    print("非交互式运行:")
+    print('  leonai run "消息"         发送单条消息')
+    print("  leonai run --stdin        从 stdin 读取消息（空行分隔）")
+    print("  leonai run -i             交互模式（无 TUI）")
+    print("  leonai run -d             带 debug 输出")
+    print()
+    print("Thread 管理:")
+    print("  leonai thread ls          列出所有对话")
+    print("  leonai thread list        列出所有对话")
+    print("  leonai thread history <thread_id>   查看对话历史")
+    print("  leonai thread rewind <thread_id> <checkpoint_id>  回退到指定节点")
+    print("  leonai thread rm <thread_id>        删除对话")
+    print()
+    print("Sandbox 管理:")
+    print("  leonai sandbox            打开 sandbox 会话管理器 (TUI)")
+    print("  leonai sandbox ls         列出所有 sandbox 会话")
+    print("  leonai sandbox new [provider]  创建新会话 (agentbay/e2b/docker/daytona)")
+    print("  leonai sandbox pause <id>      暂停会话")
+    print("  leonai sandbox resume <id>     恢复会话")
+    print("  leonai sandbox rm <id>         删除会话")
+    print("  leonai sandbox metrics <id>    查看会话资源指标")
+
+
+def _handle_config_command(args) -> None:
+    """Handle config command"""
+    if args.subcommand == "show":
+        show_config()
+    else:
+        interactive_config()
+
+
+def _handle_thread_command(args, unknown: list[str]) -> None:
+    """Handle thread command"""
+    subcommand = args.subcommand
+
+    if subcommand in ("ls", "list", None):
+        cmd_thread_list(args)
+    elif subcommand == "history":
+        if not args.extra_args:
+            print("用法: leonai thread history <thread_id>")
+            sys.exit(1)
+        args.thread_id = args.extra_args[0]
+        cmd_thread_history(args)
+    elif subcommand == "rewind":
+        if len(args.extra_args) < 2:
+            print("用法: leonai thread rewind <thread_id> <checkpoint_id> [-y]")
+            sys.exit(1)
+        args.thread_id = args.extra_args[0]
+        args.checkpoint_id = args.extra_args[1]
+        args.yes = "-y" in unknown or "--yes" in unknown
+        cmd_thread_rewind(args)
+    elif subcommand == "rm":
+        if not args.extra_args:
+            print("用法: leonai thread rm <thread_id> [-y]")
+            sys.exit(1)
+        args.thread_id = args.extra_args[0]
+        args.yes = "-y" in unknown or "--yes" in unknown
+        cmd_thread_rm(args)
+    else:
+        print(f"未知子命令: {subcommand}")
+        print("可用子命令: ls, list, history, rewind, rm")
+        sys.exit(1)
+
+
+def _handle_sandbox_command(args) -> None:
+    """Handle sandbox command"""
+    config_manager = ConfigManager()
+    config_manager.load_to_env()
+    cmd_sandbox(args)
+
+
+def _handle_run_command(args, unknown: list[str]) -> None:
+    """Handle run command"""
+    from tui.runner import cmd_run
+
+    cmd_run(args, unknown)
+
+
+def _launch_tui(args) -> None:
+    """Launch TUI mode"""
     config_manager = ConfigManager()
     config_manager.load_to_env()
 
@@ -611,45 +713,21 @@ def main():
         if not os.getenv("OPENAI_API_KEY"):
             print("\n❌ 配置未完成，退出")
             sys.exit(1)
-        print()  # 空行分隔
+        print()
 
     workspace = Path(args.workspace) if args.workspace else Path.cwd()
-
     model_name = getattr(args, "model", None) or os.getenv("MODEL_NAME") or None
 
     from agent import create_leon_agent
     from tui.app import run_tui
 
-    # Session 管理
     session_mgr = SessionManager()
 
-    # @@@ Resolve thread_id BEFORE agent creation — needed for sandbox auto-detection
-    if args.thread:
-        thread_id = args.thread
-        print(f"📝 恢复对话: {thread_id}")
-    elif args.continue_last:
-        last_thread = session_mgr.get_last_thread_id()
-        if last_thread:
-            thread_id = last_thread
-            print(f"📝 继续上次对话: {thread_id}")
-        else:
-            thread_id = f"tui-{uuid.uuid4().hex[:8]}"
-            print(f"📝 新对话: {thread_id}")
-    else:
-        thread_id = f"tui-{uuid.uuid4().hex[:8]}"
-        print(f"📝 新对话: {thread_id}")
+    # Resolve thread_id
+    thread_id = _resolve_thread_id(args, session_mgr)
 
-    # @@@ Auto-detect sandbox when resuming a thread
-    sandbox_arg = getattr(args, "sandbox", None)
-    if not sandbox_arg and (args.thread or args.continue_last):
-        from sandbox.manager import lookup_sandbox_for_thread
-
-        detected = lookup_sandbox_for_thread(thread_id)
-        if detected:
-            config_path = Path.home() / ".leon" / "sandboxes" / f"{detected}.json"
-            if config_path.exists():
-                sandbox_arg = detected
-                print(f"🔄 Auto-detected sandbox: {detected}")
+    # Auto-detect sandbox when resuming
+    sandbox_arg = _auto_detect_sandbox(args, thread_id)
 
     print("🚀 初始化 Leon Agent...")
 
@@ -659,7 +737,7 @@ def main():
             profile=args.profile,
             workspace_root=workspace,
             sandbox=sandbox_arg,
-            verbose=False,  # TUI mode: quiet initialization
+            verbose=False,
         )
     except Exception as e:
         print(f"❌ 初始化失败: {e}")
@@ -673,11 +751,41 @@ def main():
     except KeyboardInterrupt:
         print("\n\n👋 再见！")
     finally:
-        # 保存 session
         session_mgr.save_session(thread_id, str(workspace))
-        # 清理资源
         agent.close()
         print("\n🧹 已退出")
+
+
+def _resolve_thread_id(args, session_mgr: SessionManager) -> str:
+    """Resolve thread ID from args or create new one"""
+    if args.thread:
+        print(f"📝 恢复对话: {args.thread}")
+        return args.thread
+
+    if args.continue_last:
+        last_thread = session_mgr.get_last_thread_id()
+        if last_thread:
+            print(f"📝 继续上次对话: {last_thread}")
+            return last_thread
+
+    thread_id = f"tui-{uuid.uuid4().hex[:8]}"
+    print(f"📝 新对话: {thread_id}")
+    return thread_id
+
+
+def _auto_detect_sandbox(args, thread_id: str) -> str | None:
+    """Auto-detect sandbox when resuming a thread"""
+    sandbox_arg = getattr(args, "sandbox", None)
+    if not sandbox_arg and (args.thread or args.continue_last):
+        from sandbox.manager import lookup_sandbox_for_thread
+
+        detected = lookup_sandbox_for_thread(thread_id)
+        if detected:
+            config_path = Path.home() / ".leon" / "sandboxes" / f"{detected}.json"
+            if config_path.exists():
+                print(f"🔄 Auto-detected sandbox: {detected}")
+                return detected
+    return sandbox_arg
 
 
 if __name__ == "__main__":

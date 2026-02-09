@@ -146,17 +146,18 @@ class LeonApp(App):
             # IDLE 时自动处理 followup 队列
             self.call_after_refresh(self._state_driven_followup)
 
+    QUEUE_MODE_MAP = {
+        "steer": QueueMode.STEER,
+        "followup": QueueMode.FOLLOWUP,
+        "collect": QueueMode.COLLECT,
+        "steer_backlog": QueueMode.STEER_BACKLOG,
+        "steer-backlog": QueueMode.STEER_BACKLOG,
+        "interrupt": QueueMode.INTERRUPT,
+    }
+
     def _parse_queue_mode(self, mode_str: str) -> QueueMode:
         """Parse queue mode string to enum"""
-        mode_map = {
-            "steer": QueueMode.STEER,
-            "followup": QueueMode.FOLLOWUP,
-            "collect": QueueMode.COLLECT,
-            "steer_backlog": QueueMode.STEER_BACKLOG,
-            "steer-backlog": QueueMode.STEER_BACKLOG,
-            "interrupt": QueueMode.INTERRUPT,
-        }
-        return mode_map.get(mode_str.lower(), QueueMode.STEER)
+        return self.QUEUE_MODE_MAP.get(mode_str.lower(), QueueMode.STEER)
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -183,11 +184,9 @@ class LeonApp(App):
 
     def _refocus_input(self) -> None:
         """Refocus input if no modal is open"""
-        # 检查是否有模态框打开
-        if self.query("HistoryBrowser") or self.query("CheckpointBrowser") or self.query("ThreadSelector"):
+        if self.query("HistoryBrowser, CheckpointBrowser, ThreadSelector"):
             return
-        chat_input = self.query_one("#chat-input", ChatInput)
-        chat_input.focus_input()
+        self.query_one("#chat-input", ChatInput).focus_input()
 
     def on_key(self, event) -> None:
         """Handle global key events for double-ESC detection"""
@@ -203,86 +202,101 @@ class LeonApp(App):
         content = event.value
 
         # Handle special commands
-        if content.lower() == "/help":
-            self._show_help()
-            return
-
-        if content.lower() == "/clear":
-            self.action_clear_history()
-            return
-
-        if content.lower() in ["/exit", "/quit"]:
-            self.exit()
-            return
-
-        if content.lower() == "/history":
-            self.action_show_history()
-            return
-
-        if content.lower() == "/resume":
-            self._show_resume_dialog()
-            return
-
-        # Handle /rollback N command
-        if content.lower().startswith("/rollback ") or content.lower().startswith("/回退 "):
-            try:
-                parts = content.split()
-                if len(parts) == 2:
-                    steps = int(parts[1])
-                    self._rollback_history(steps)
-                    return
-            except ValueError:
-                self.notify("⚠ 用法: /rollback <数字> 或 /回退 <数字>", severity="warning")
-                return
-
-        # Handle /mode command to switch queue mode
-        if content.lower().startswith("/mode "):
-            mode_name = content[6:].strip().lower()
-            mode_map = {
-                "steer": QueueMode.STEER,
-                "followup": QueueMode.FOLLOWUP,
-                "collect": QueueMode.COLLECT,
-                "steer-backlog": QueueMode.STEER_BACKLOG,
-                "interrupt": QueueMode.INTERRUPT,
-            }
-            if mode_name in mode_map:
-                self._queue_mode = mode_map[mode_name]
-                get_queue_manager().set_mode(self._queue_mode)
-                self.notify(f"✓ 队列模式: {mode_name}")
-            else:
-                self.notify(
-                    f"⚠ 未知模式: {mode_name}。可用: steer, followup, collect, steer-backlog, interrupt",
-                    severity="warning",
-                )
-            return
-
-        if content.lower() == "/compact":
-            self._trigger_compact()
+        if self._handle_special_command(content):
             return
 
         # Queue mode routing: if agent is active, queue the message
         if self._is_agent_active:
-            queue_manager = get_queue_manager()
-            if self._queue_mode == QueueMode.INTERRUPT:
-                # Interrupt mode: cancel current run
-                if self._agent_worker:
-                    self._agent_worker.cancel()
-                    self.notify("⚠ 已中断")
-            else:
-                # Queue the message
-                queue_manager.enqueue(content, self._queue_mode)
-                mode_labels = {
-                    QueueMode.STEER: "转向",
-                    QueueMode.FOLLOWUP: "排队",
-                    QueueMode.COLLECT: "收集",
-                    QueueMode.STEER_BACKLOG: "转向+排队",
-                }
-                label = mode_labels.get(self._queue_mode, "排队")
-                self.notify(f"✓ 消息已{label}")
+            self._handle_active_agent_message(content)
             return
 
-        # 从 SUSPENDED/ERROR 恢复
+        # Resume from SUSPENDED/ERROR or start new run
+        self._start_agent_run(content)
+
+    def _handle_special_command(self, content: str) -> bool:
+        """Handle special commands. Returns True if command was handled."""
+        cmd = content.lower()
+
+        if cmd == "/help":
+            self._show_help()
+            return True
+
+        if cmd == "/clear":
+            self.action_clear_history()
+            return True
+
+        if cmd in ["/exit", "/quit"]:
+            self.exit()
+            return True
+
+        if cmd == "/history":
+            self.action_show_history()
+            return True
+
+        if cmd == "/resume":
+            self._show_resume_dialog()
+            return True
+
+        if cmd.startswith("/rollback ") or cmd.startswith("/回退 "):
+            self._handle_rollback_command(content)
+            return True
+
+        if cmd.startswith("/mode "):
+            self._handle_mode_command(content)
+            return True
+
+        if cmd == "/compact":
+            self._trigger_compact()
+            return True
+
+        return False
+
+    def _handle_rollback_command(self, content: str) -> None:
+        """Handle /rollback N command"""
+        try:
+            parts = content.split()
+            if len(parts) == 2:
+                steps = int(parts[1])
+                self._rollback_history(steps)
+        except ValueError:
+            self.notify("⚠ 用法: /rollback <数字> 或 /回退 <数字>", severity="warning")
+
+    def _handle_mode_command(self, content: str) -> None:
+        """Handle /mode command to switch queue mode"""
+        mode_name = content[6:].strip().lower()
+        if mode_name in self.QUEUE_MODE_MAP:
+            self._queue_mode = self.QUEUE_MODE_MAP[mode_name]
+            get_queue_manager().set_mode(self._queue_mode)
+            self.notify(f"✓ 队列模式: {mode_name}")
+        else:
+            self.notify(
+                f"⚠ 未知模式: {mode_name}。可用: steer, followup, collect, steer-backlog, interrupt",
+                severity="warning",
+            )
+
+    def _handle_active_agent_message(self, content: str) -> None:
+        """Handle message when agent is active (queue or interrupt)"""
+        queue_manager = get_queue_manager()
+
+        if self._queue_mode == QueueMode.INTERRUPT:
+            if self._agent_worker:
+                self._agent_worker.cancel()
+                self.notify("⚠ 已中断")
+        else:
+            queue_manager.enqueue(content, self._queue_mode)
+            mode_labels = {
+                QueueMode.STEER: "转向",
+                QueueMode.FOLLOWUP: "排队",
+                QueueMode.COLLECT: "收集",
+                QueueMode.STEER_BACKLOG: "转向+排队",
+            }
+            label = mode_labels.get(self._queue_mode, "排队")
+            self.notify(f"✓ 消息已{label}")
+
+    def _start_agent_run(self, content: str) -> None:
+        """Start agent run, handling state transitions"""
         current = self.agent.runtime.current_state
+
         if current == AgentState.SUSPENDED:
             self.agent.runtime.transition(AgentState.ACTIVE)
         elif current == AgentState.ERROR:
@@ -291,10 +305,28 @@ class LeonApp(App):
             self.agent.runtime.set_flag("hasError", False)
             self.agent.runtime.transition(AgentState.ACTIVE)
         else:
-            # READY/IDLE → ACTIVE
             self.agent.runtime.transition(AgentState.ACTIVE)
+
         self._quit_pending = False
         self._agent_worker = self.run_worker(self._handle_submission(content), exclusive=False)
+
+    def _extract_text_content(self, msg) -> str:
+        """Extract text content from AIMessage"""
+        raw_content = getattr(msg, "content", "")
+
+        if isinstance(raw_content, str):
+            return raw_content
+
+        if isinstance(raw_content, list):
+            text_parts = []
+            for block in raw_content:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    text_parts.append(block.get("text", ""))
+                elif isinstance(block, str):
+                    text_parts.append(block)
+            return "".join(text_parts)
+
+        return str(raw_content)
 
     async def _handle_submission(self, content: str) -> None:
         """Handle message submission asynchronously to ensure proper rendering"""
@@ -390,20 +422,7 @@ class LeonApp(App):
                             continue
 
                         if msg_class == "AIMessage":
-                            raw_content = getattr(msg, "content", "")
-
-                            if isinstance(raw_content, str):
-                                content = raw_content
-                            elif isinstance(raw_content, list):
-                                text_parts = []
-                                for block in raw_content:
-                                    if isinstance(block, dict) and block.get("type") == "text":
-                                        text_parts.append(block.get("text", ""))
-                                    elif isinstance(block, str):
-                                        text_parts.append(block)
-                                content = "".join(text_parts)
-                            else:
-                                content = str(raw_content)
+                            content = self._extract_text_content(msg)
 
                             if content and content != last_content:
                                 if thinking_spinner and thinking_spinner.is_mounted:
@@ -683,21 +702,13 @@ class LeonApp(App):
             self.notify("⚠ 正在中断...", timeout=2)
 
     def action_quit_or_interrupt(self) -> None:
-        """Handle Ctrl+C - interrupt agent or quit on double press.
-
-        Priority:
-        1. If agent is running, interrupt it
-        2. If double press (quit_pending), quit
-        3. Otherwise show quit hint
-        """
-        # If agent is running, interrupt it
+        """Handle Ctrl+C - interrupt agent or quit on double press"""
         if self._is_agent_active and self._agent_worker:
             self._agent_worker.cancel()
             self._quit_pending = False
             self.notify("⚠ 正在中断...", timeout=2)
             return
 
-        # Double Ctrl+C to quit
         if self._quit_pending:
             self.exit()
         else:
@@ -851,28 +862,7 @@ class LeonApp(App):
 
             # 渲染历史消息
             for msg in messages:
-                msg_class = msg.__class__.__name__
-
-                if msg_class == "HumanMessage":
-                    await messages_container.mount(UserMessage(msg.content))
-                    self._message_count += 1
-                elif msg_class == "AIMessage":
-                    content = msg.content
-                    if isinstance(content, list):
-                        text_parts = [b.get("text", "") if isinstance(b, dict) else str(b) for b in content]
-                        content = "".join(text_parts)
-                    if content:
-                        await messages_container.mount(AssistantMessage(content))
-                        self._last_assistant_message = content
-
-                    # 显示 tool calls
-                    tool_calls = getattr(msg, "tool_calls", [])
-                    for tool_call in tool_calls:
-                        await messages_container.mount(
-                            ToolCallMessage(tool_call.get("name", "unknown"), tool_call.get("args", {}))
-                        )
-                elif msg_class == "ToolMessage":
-                    await messages_container.mount(ToolResultMessage(msg.content))
+                await self._render_history_message(msg, messages_container)
 
             # 更新状态栏
             self._update_status_bar()
@@ -884,6 +874,30 @@ class LeonApp(App):
                 self.notify(f"✓ 已加载 {self._message_count} 条历史消息")
         except Exception as e:
             self.notify(f"⚠ 加载历史失败: {str(e)}", severity="warning")
+
+    async def _render_history_message(self, msg, messages_container: Container) -> None:
+        """Render a single history message"""
+        msg_class = msg.__class__.__name__
+
+        if msg_class == "HumanMessage":
+            await messages_container.mount(UserMessage(msg.content))
+            self._message_count += 1
+
+        elif msg_class == "AIMessage":
+            content = self._extract_text_content(msg)
+            if content:
+                await messages_container.mount(AssistantMessage(content))
+                self._last_assistant_message = content
+
+            # 显示 tool calls
+            tool_calls = getattr(msg, "tool_calls", [])
+            for tool_call in tool_calls:
+                await messages_container.mount(
+                    ToolCallMessage(tool_call.get("name", "unknown"), tool_call.get("args", {}))
+                )
+
+        elif msg_class == "ToolMessage":
+            await messages_container.mount(ToolResultMessage(msg.content))
 
 
 def run_tui(agent, workspace_root: Path, thread_id: str = "default", session_mgr=None) -> None:
