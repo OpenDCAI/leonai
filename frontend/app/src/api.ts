@@ -25,6 +25,10 @@ export interface SandboxSession {
   status: string;
   created_at?: string;
   last_active?: string;
+  lease_id?: string | null;
+  instance_id?: string | null;
+  chat_session_id?: string | null;
+  source?: string;
 }
 
 export interface SandboxInfo {
@@ -205,6 +209,27 @@ export async function resumeThreadSandbox(threadId: string): Promise<void> {
 
 export async function destroyThreadSandbox(threadId: string): Promise<void> {
   await request(`/api/threads/${encodeURIComponent(threadId)}/sandbox`, { method: "DELETE" });
+}
+
+export async function pauseSandboxSession(sessionId: string, provider: string): Promise<void> {
+  await request(
+    `/api/sandbox/sessions/${encodeURIComponent(sessionId)}/pause?provider=${encodeURIComponent(provider)}`,
+    { method: "POST" },
+  );
+}
+
+export async function resumeSandboxSession(sessionId: string, provider: string): Promise<void> {
+  await request(
+    `/api/sandbox/sessions/${encodeURIComponent(sessionId)}/resume?provider=${encodeURIComponent(provider)}`,
+    { method: "POST" },
+  );
+}
+
+export async function destroySandboxSession(sessionId: string, provider: string): Promise<void> {
+  await request(
+    `/api/sandbox/sessions/${encodeURIComponent(sessionId)}?provider=${encodeURIComponent(provider)}`,
+    { method: "DELETE" },
+  );
 }
 
 export async function getThreadSession(threadId: string): Promise<SessionStatus> {

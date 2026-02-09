@@ -169,6 +169,10 @@ def _load_all_sessions(managers: dict) -> list[dict]:
                     "status": row.get("status", "running"),
                     "created_at": row.get("created_at"),
                     "last_active": row.get("last_active"),
+                    "lease_id": row.get("lease_id"),
+                    "instance_id": row.get("instance_id"),
+                    "chat_session_id": row.get("chat_session_id"),
+                    "source": row.get("source", "unknown"),
                 })
 
     # @@@stable-session-order - Keep deterministic ordering across refreshes/providers.
@@ -193,13 +197,35 @@ def _load_all_sessions(managers: dict) -> list[dict]:
 
 
 def _find_session_and_manager(
-    sessions: list[dict], managers: dict, session_id: str,
+    sessions: list[dict],
+    managers: dict,
+    session_id: str,
+    provider_name: str | None = None,
 ) -> tuple[dict | None, Any | None]:
-    """Find session by ID or prefix, return (session, manager)."""
+    """Find session by ID/prefix (+optional provider), return (session, manager)."""
+    candidates: list[dict] = []
     for s in sessions:
-        if s["session_id"] == session_id or s["session_id"].startswith(session_id):
-            return s, managers.get(s["provider"])
-    return None, None
+        if provider_name and s.get("provider") != provider_name:
+            continue
+        sid = str(s.get("session_id") or "")
+        if sid == session_id or sid.startswith(session_id):
+            candidates.append(s)
+    if not candidates:
+        return None, None
+    if len(candidates) == 1:
+        chosen = candidates[0]
+        return chosen, managers.get(chosen["provider"])
+    exact = [s for s in candidates if str(s.get("session_id") or "") == session_id]
+    if len(exact) == 1:
+        chosen = exact[0]
+        return chosen, managers.get(chosen["provider"])
+    raise RuntimeError(
+        f"Ambiguous session_id '{session_id}'. Specify provider query param."
+    )
+
+
+def _is_virtual_thread_id(thread_id: str | None) -> bool:
+    return bool(thread_id) and thread_id.startswith("(") and thread_id.endswith(")")
 
 
 # --- Lifespan + App ---
@@ -385,10 +411,13 @@ async def list_sandbox_sessions() -> dict[str, Any]:
 
 
 @app.get("/api/sandbox/sessions/{session_id}/metrics")
-async def get_session_metrics(session_id: str) -> dict[str, Any]:
+async def get_session_metrics(session_id: str, provider: str | None = Query(default=None)) -> dict[str, Any]:
     providers, managers = await asyncio.to_thread(_init_providers_and_managers)
     sessions = await asyncio.to_thread(_load_all_sessions, managers)
-    session, _ = _find_session_and_manager(sessions, managers, session_id)
+    try:
+        session, _ = _find_session_and_manager(sessions, managers, session_id, provider_name=provider)
+    except RuntimeError as e:
+        raise HTTPException(409, str(e)) from e
     if not session:
         raise HTTPException(404, f"Session not found: {session_id}")
     provider = providers.get(session["provider"])
@@ -410,6 +439,114 @@ async def get_session_metrics(session_id: str) -> dict[str, Any]:
             "network_tx_kbps": metrics.network_tx_kbps,
         }
     return result
+
+
+def _mutate_sandbox_session(
+    *,
+    session_id: str,
+    action: str,
+    provider_hint: str | None = None,
+) -> dict[str, Any]:
+    providers, managers = _init_providers_and_managers()
+    sessions = _load_all_sessions(managers)
+    session, manager = _find_session_and_manager(sessions, managers, session_id, provider_name=provider_hint)
+    if not session:
+        raise RuntimeError(f"Session not found: {session_id}")
+
+    provider_name = str(session.get("provider") or "")
+    provider = providers.get(provider_name)
+    if not provider:
+        raise RuntimeError(f"Provider unavailable: {provider_name}")
+
+    thread_id = str(session.get("thread_id") or "")
+    lease_id = session.get("lease_id")
+    target_session_id = str(session.get("session_id") or session_id)
+
+    ok = False
+    mode = "provider"
+
+    if manager and thread_id and not _is_virtual_thread_id(thread_id):
+        mode = "manager_thread"
+        if action == "pause":
+            ok = manager.pause_session(thread_id)
+        elif action == "resume":
+            ok = manager.resume_session(thread_id)
+        elif action == "destroy":
+            ok = manager.destroy_session(thread_id)
+        else:
+            raise RuntimeError(f"Unknown action: {action}")
+    else:
+        lease = manager.lease_store.get(lease_id) if manager and lease_id else None
+        if lease:
+            mode = "manager_lease"
+            if action == "pause":
+                ok = lease.pause_instance(provider)
+            elif action == "resume":
+                ok = lease.resume_instance(provider)
+            elif action == "destroy":
+                lease.destroy_instance(provider)
+                ok = True
+            else:
+                raise RuntimeError(f"Unknown action: {action}")
+        else:
+            mode = "provider_direct"
+            if action == "pause":
+                ok = provider.pause_session(target_session_id)
+            elif action == "resume":
+                ok = provider.resume_session(target_session_id)
+            elif action == "destroy":
+                ok = provider.destroy_session(target_session_id)
+            else:
+                raise RuntimeError(f"Unknown action: {action}")
+
+    if not ok:
+        raise RuntimeError(f"Failed to {action} session {target_session_id}")
+
+    return {
+        "ok": True,
+        "action": action,
+        "session_id": target_session_id,
+        "provider": provider_name,
+        "thread_id": thread_id or None,
+        "lease_id": lease_id,
+        "mode": mode,
+    }
+
+
+@app.post("/api/sandbox/sessions/{session_id}/pause")
+async def pause_sandbox_session(session_id: str, provider: str | None = Query(default=None)) -> dict[str, Any]:
+    try:
+        return await asyncio.to_thread(
+            _mutate_sandbox_session, session_id=session_id, action="pause", provider_hint=provider
+        )
+    except RuntimeError as e:
+        message = str(e)
+        status = 404 if "not found" in message.lower() else 409
+        raise HTTPException(status, message) from e
+
+
+@app.post("/api/sandbox/sessions/{session_id}/resume")
+async def resume_sandbox_session(session_id: str, provider: str | None = Query(default=None)) -> dict[str, Any]:
+    try:
+        return await asyncio.to_thread(
+            _mutate_sandbox_session, session_id=session_id, action="resume", provider_hint=provider
+        )
+    except RuntimeError as e:
+        message = str(e)
+        status = 404 if "not found" in message.lower() else 409
+        raise HTTPException(status, message) from e
+
+
+@app.delete("/api/sandbox/sessions/{session_id}")
+async def destroy_sandbox_session(session_id: str, provider: str | None = Query(default=None)) -> dict[str, Any]:
+    try:
+        return await asyncio.to_thread(
+            _mutate_sandbox_session, session_id=session_id, action="destroy", provider_hint=provider
+        )
+    except RuntimeError as e:
+        message = str(e)
+        status = 404 if "not found" in message.lower() else 409
+        raise HTTPException(status, message) from e
 
 
 # @@@ Thread-level sandbox control — routes through the agent's own sandbox so cache stays consistent
