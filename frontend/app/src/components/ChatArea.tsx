@@ -1,10 +1,13 @@
-import { ChevronDown, ChevronRight, Wrench } from "lucide-react";
-import { useState } from "react";
-import type { ChatMessage } from "../api";
+import { ChevronDown, ChevronRight } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import type { AssistantTurn, ChatEntry, StreamStatus, UserMessage } from "../api";
+import MarkdownContent from "./MarkdownContent";
+import { getToolRenderer } from "./tool-renderers";
 
 interface ChatAreaProps {
-  messages: ChatMessage[];
+  entries: ChatEntry[];
   isStreaming: boolean;
+  runtimeStatus: StreamStatus | null;
 }
 
 function formatTime(ts?: number): string {
@@ -13,89 +16,95 @@ function formatTime(ts?: number): string {
   return d.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
 }
 
-function ToolBlock({ message }: { message: ChatMessage }) {
-  const [open, setOpen] = useState(false);
-  const isCall = message.role === "tool_call";
+function UserBubble({ entry }: { entry: UserMessage }) {
   return (
-    <div className="animate-fade-in">
-      <button
-        className="flex items-center gap-2 text-xs py-1.5 text-[#737373] hover:text-[#171717] transition-colors group"
-        onClick={() => setOpen((v) => !v)}
-      >
-        <Wrench className="w-3 h-3 text-[#a3a3a3]" />
-        {open ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
-        <span>
-          {isCall ? "工具调用" : "工具结果"}{message.name ? `: ${message.name}` : ""}
-        </span>
-        {message.timestamp && (
-          <span className="ml-1 text-[#d4d4d4]">{formatTime(message.timestamp)}</span>
+    <div className="flex justify-end animate-fade-in">
+      <div className="max-w-[78%]">
+        <div className="rounded-2xl rounded-br-md px-4 py-3 bg-[#f5f5f5] border border-[#e5e5e5]">
+          <p className="text-sm whitespace-pre-wrap leading-relaxed text-[#171717]">
+            {entry.content}
+          </p>
+        </div>
+        {entry.timestamp && (
+          <div className="text-[10px] text-right mt-1.5 pr-1 text-[#d4d4d4]">
+            {formatTime(entry.timestamp)}
+          </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+function ToolStepBlock({ step }: { step: AssistantTurn["toolSteps"][number] }) {
+  const [expanded, setExpanded] = useState(false);
+  const Renderer = getToolRenderer(step);
+
+  return (
+    <div className="ml-0.5 animate-fade-in">
+      <button
+        className="flex items-center gap-1 w-full text-left py-1 hover:bg-[#fafafa] rounded px-1.5 -mx-1.5 transition-colors"
+        onClick={() => setExpanded((v) => !v)}
+      >
+        {expanded ? <ChevronDown className="w-3 h-3 text-[#a3a3a3] flex-shrink-0" /> : <ChevronRight className="w-3 h-3 text-[#a3a3a3] flex-shrink-0" />}
+        <div className="flex-1 min-w-0">
+          <Renderer step={step} expanded={false} />
+        </div>
       </button>
-      {open && (
-        <div className="ml-5 mt-1 animate-scale-in">
-          {message.content && (
-            <pre className="p-3 rounded-lg text-xs overflow-x-auto max-h-[200px] overflow-y-auto font-mono bg-[#fafafa] border border-[#e5e5e5] text-[#525252]">
-              {message.content}
-            </pre>
-          )}
-          {message.args !== undefined && (
-            <pre className="p-3 rounded-lg text-xs overflow-x-auto max-h-[200px] overflow-y-auto font-mono bg-[#fafafa] border border-[#e5e5e5] text-[#525252]">
-              {JSON.stringify(message.args, null, 2)}
-            </pre>
-          )}
+      {expanded && (
+        <div className="ml-4 mt-1 animate-scale-in">
+          <Renderer step={step} expanded={true} />
         </div>
       )}
     </div>
   );
 }
 
-export default function ChatArea({ messages, isStreaming }: ChatAreaProps) {
+function AssistantBlock({ entry }: { entry: AssistantTurn }) {
+  const hasTools = entry.toolSteps.length > 0;
+  const hasContent = entry.content.trim().length > 0;
+
+  return (
+    <div className="flex gap-3.5 animate-fade-in">
+      <div className="w-7 h-7 rounded-full bg-[#171717] flex items-center justify-center flex-shrink-0 mt-0.5">
+        <span className="text-xs font-semibold text-white">L</span>
+      </div>
+      <div className="flex-1 max-w-[calc(100%-44px)] space-y-2">
+        <div className="flex items-center gap-2 mb-1">
+          <span className="text-sm font-medium text-[#171717]">Leon</span>
+          {entry.timestamp && (
+            <span className="text-[10px] text-[#d4d4d4]">{formatTime(entry.timestamp)}</span>
+          )}
+        </div>
+
+        {hasContent && <MarkdownContent content={entry.content} />}
+
+        {hasTools && (
+          <div className="space-y-0.5 border-l-2 border-[#e5e5e5] pl-3 mt-2">
+            {entry.toolSteps.map((step) => (
+              <ToolStepBlock key={step.id} step={step} />
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export default function ChatArea({ entries, isStreaming, runtimeStatus }: ChatAreaProps) {
+  const bottomRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [entries, isStreaming]);
+
   return (
     <div className="flex-1 overflow-y-auto py-8 bg-white">
       <div className="max-w-3xl mx-auto px-6 space-y-6">
-        {messages.map((message) => {
-          if (message.role === "tool_call" || message.role === "tool_result") {
-            return <ToolBlock key={message.id} message={message} />;
+        {entries.map((entry) => {
+          if (entry.role === "user") {
+            return <UserBubble key={entry.id} entry={entry} />;
           }
-
-          if (message.role === "user") {
-            return (
-              <div key={message.id} className="flex justify-end animate-fade-in">
-                <div className="max-w-[78%]">
-                  <div className="rounded-2xl rounded-br-md px-4 py-3 bg-[#f5f5f5] border border-[#e5e5e5]">
-                    <p className="text-sm whitespace-pre-wrap leading-relaxed text-[#171717]">
-                      {message.content}
-                    </p>
-                  </div>
-                  {message.timestamp && (
-                    <div className="text-[10px] text-right mt-1.5 pr-1 text-[#d4d4d4]">
-                      {formatTime(message.timestamp)}
-                    </div>
-                  )}
-                </div>
-              </div>
-            );
-          }
-
-          return (
-            <div key={message.id} className="flex gap-3.5 animate-fade-in">
-              {/* Leon avatar */}
-              <div className="w-7 h-7 rounded-full bg-[#171717] flex items-center justify-center flex-shrink-0 mt-0.5">
-                <span className="text-xs font-semibold text-white">L</span>
-              </div>
-              <div className="flex-1 max-w-[calc(100%-44px)]">
-                <div className="flex items-center gap-2 mb-1.5">
-                  <span className="text-sm font-medium text-[#171717]">Leon</span>
-                  {message.timestamp && (
-                    <span className="text-[10px] text-[#d4d4d4]">{formatTime(message.timestamp)}</span>
-                  )}
-                </div>
-                <div className="text-sm whitespace-pre-wrap break-words leading-relaxed text-[#404040]">
-                  {message.content}
-                </div>
-              </div>
-            </div>
-          );
+          return <AssistantBlock key={entry.id} entry={entry} />;
         })}
 
         {/* Streaming indicator */}
@@ -106,12 +115,16 @@ export default function ChatArea({ messages, isStreaming }: ChatAreaProps) {
               <span className="w-1.5 h-1.5 rounded-full bg-[#171717] thinking-dot" />
               <span className="w-1.5 h-1.5 rounded-full bg-[#171717] thinking-dot" />
             </div>
-            <span className="text-sm text-[#a3a3a3]">Leon 正在回复...</span>
+            <span className="text-sm text-[#a3a3a3]">
+              {runtimeStatus?.current_tool
+                ? `Leon 正在使用 ${runtimeStatus.current_tool}...`
+                : "Leon 正在回复..."}
+            </span>
           </div>
         )}
 
         {/* Empty state */}
-        {!isStreaming && messages.length === 0 && (
+        {!isStreaming && entries.length === 0 && (
           <div className="flex flex-col items-center justify-center py-24 animate-fade-in">
             <div className="w-14 h-14 rounded-2xl bg-[#171717] flex items-center justify-center mb-6">
               <span className="text-2xl font-semibold text-white">L</span>
@@ -143,6 +156,8 @@ export default function ChatArea({ messages, isStreaming }: ChatAreaProps) {
             </div>
           </div>
         )}
+
+        <div ref={bottomRef} />
       </div>
     </div>
   );
