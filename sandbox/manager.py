@@ -133,9 +133,6 @@ class SandboxManager:
         3. Wrap in SandboxCapability
         4. Return to agent
         """
-        # @@@idle-timeout-enforce - Run external idle policy before reusing/creating session.
-        self.enforce_idle_timeouts()
-
         # Try to get existing session
         session = self.session_manager.get(thread_id)
 

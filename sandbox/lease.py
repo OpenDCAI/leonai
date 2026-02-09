@@ -202,10 +202,11 @@ class SQLiteLease(SandboxLease):
             try:
                 status = provider.get_session_status(self._current_instance.instance_id)
                 self.observed_at = datetime.now()
+                had_refresh_error = self.refresh_error is not None
                 self.refresh_error = None
                 if status == "running":
                     # @@@status-convergence - Provider is source of truth; converge persisted lease state immediately.
-                    if self._current_instance.status != "running" or self.refresh_error is None:
+                    if self._current_instance.status != "running" or had_refresh_error:
                         self._current_instance.status = "running"
                         self._persist_instance()
                     else:
