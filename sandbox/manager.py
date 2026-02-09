@@ -95,6 +95,8 @@ class SandboxManager:
                 session = self.session_manager.get(thread_id)
                 if not session:
                     raise RuntimeError(f"Session disappeared after resume for thread {thread_id}")
+            if self.provider.name == "local" and not session.lease.get_instance():
+                session.lease.ensure_active_instance(self.provider)
             return SandboxCapability(session)
 
         terminal = self.terminal_store.get(thread_id)
@@ -113,6 +115,9 @@ class SandboxManager:
             lease = self.lease_store.get(terminal.lease_id)
             if not lease:
                 lease = self.lease_store.create(terminal.lease_id, self.provider.name)
+
+        if self.provider.name == "local" and not lease.get_instance():
+            lease.ensure_active_instance(self.provider)
 
         session_id = f"sess-{uuid.uuid4().hex[:12]}"
         session = self.session_manager.create(
@@ -159,7 +164,7 @@ class SandboxManager:
 
             terminal = self.terminal_store.get(thread_id)
             lease = self.lease_store.get(terminal.lease_id) if terminal else None
-            if lease and self.provider.name != "local":
+            if lease:
                 status = lease.refresh_instance_status(self.provider)
                 if status == "running" and not lease.pause_instance(self.provider):
                     raise RuntimeError(f"Failed to pause expired lease {lease.lease_id} for thread {thread_id}")
@@ -195,9 +200,8 @@ class SandboxManager:
         if not lease:
             return False
 
-        if self.provider.name != "local":
-            if not lease.pause_instance(self.provider):
-                return False
+        if not lease.pause_instance(self.provider):
+            return False
 
         session = self.session_manager.get(thread_id)
         if session and session.status != "paused":
@@ -220,7 +224,7 @@ class SandboxManager:
         if not lease:
             return False
 
-        if self.provider.name != "local" and not lease.resume_instance(self.provider):
+        if not lease.resume_instance(self.provider):
             return False
 
         session = self.session_manager.get(thread_id)
@@ -251,8 +255,7 @@ class SandboxManager:
         if not lease:
             return False
 
-        if self.provider.name != "local":
-            lease.destroy_instance(self.provider)
+        lease.destroy_instance(self.provider)
         return True
 
     def list_sessions(self) -> list[dict]:
@@ -269,24 +272,6 @@ class SandboxManager:
         rows = self.session_manager.list_all()
         active_rows = [r for r in rows if r.get("status") in {"active", "idle", "paused"}]
         chat_by_thread: dict[str, dict] = {row["thread_id"]: row for row in active_rows if row.get("thread_id")}
-
-        if self.provider.name == "local":
-            for row in active_rows:
-                sessions.append(
-                    {
-                        "session_id": row["session_id"],
-                        "thread_id": row["thread_id"],
-                        "provider": self.provider.name,
-                        "status": row["status"],
-                        "created_at": row.get("started_at"),
-                        "last_active": row.get("last_active_at"),
-                        "lease_id": row.get("lease_id"),
-                        "instance_id": None,
-                        "chat_session_id": row.get("session_id"),
-                        "source": "chat_session",
-                    }
-                )
-            return sessions
 
         seen_instance_ids: set[str] = set()
 

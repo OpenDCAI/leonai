@@ -41,16 +41,12 @@ export default function ComputerPanel({ isOpen, onClose, threadId, sandboxType }
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
 
   const isRemote = sandboxType !== null && sandboxType !== "local";
+  const canPause = session?.status === "active" || session?.status === "idle" || (isRemote && lease?.instance?.state === "running");
+  const canResume = session?.status === "paused" || (isRemote && lease?.instance?.state === "paused");
 
   async function refreshStatus() {
     if (!threadId) return;
     setStatusError(null);
-    if (!isRemote) {
-      setSession(null);
-      setLease(null);
-      setTerminal(null);
-      return;
-    }
     try {
       const [s, t, l] = await Promise.all([
         getThreadSession(threadId),
@@ -104,12 +100,12 @@ export default function ComputerPanel({ isOpen, onClose, threadId, sandboxType }
           <p className="text-[11px] text-gray-500 font-mono">{threadId ? threadId.slice(0, 20) : "no-thread"}</p>
         </div>
         <div className="flex items-center gap-1">
-          {isRemote && lease?.instance?.state === "running" && (
+          {canPause && (
             <button className="w-8 h-8 rounded-lg hover:bg-[#2a2a2a] flex items-center justify-center" onClick={() => void (threadId && pauseThreadSandbox(threadId).then(refreshStatus))}>
               <Pause className="w-4 h-4 text-gray-300" />
             </button>
           )}
-          {isRemote && lease?.instance?.state === "paused" && (
+          {canResume && (
             <button className="w-8 h-8 rounded-lg hover:bg-[#2a2a2a] flex items-center justify-center" onClick={() => void (threadId && resumeThreadSandbox(threadId).then(refreshStatus))}>
               <Play className="w-4 h-4 text-gray-300" />
             </button>

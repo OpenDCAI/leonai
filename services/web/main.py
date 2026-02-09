@@ -107,9 +107,14 @@ def _resolve_thread_sandbox(app_obj: FastAPI, thread_id: str) -> str:
 
 def _init_providers_and_managers() -> tuple[dict, dict]:
     """Load sandbox providers and managers from config files."""
-    providers: dict[str, Any] = {}
+    from sandbox.local import LocalSessionProvider
+
+    providers: dict[str, Any] = {
+        "local": LocalSessionProvider(db_path=SANDBOX_DB_PATH),
+    }
     if not SANDBOXES_DIR.exists():
-        return {}, {}
+        managers = {name: SandboxManager(provider=p) for name, p in providers.items()}
+        return providers, managers
 
     for config_file in SANDBOXES_DIR.glob("*.json"):
         name = config_file.stem
@@ -943,19 +948,19 @@ async def get_thread_messages(thread_id: str) -> dict[str, Any]:
 
     # Get sandbox session info (new architecture)
     sandbox_info: dict[str, Any] = {"type": sandbox_type, "status": None, "session_id": None}
-    if sandbox_type != "local" and hasattr(agent, "_sandbox"):
+    if hasattr(agent, "_sandbox"):
         try:
             mgr = agent._sandbox.manager
             session = mgr.session_manager.get(thread_id)
             terminal = mgr.terminal_store.get(thread_id)
+            if session:
+                sandbox_info["session_id"] = session.session_id
             if terminal:
                 lease = mgr.lease_store.get(terminal.lease_id)
                 if lease:
-                    instance = lease.get_instance()
-                    sandbox_info["status"] = instance.status if instance else "detached"
+                    status = lease.refresh_instance_status(mgr.provider)
+                    sandbox_info["status"] = status
                 sandbox_info["terminal_id"] = terminal.terminal_id
-            if session:
-                sandbox_info["session_id"] = session.session_id
         except Exception as exc:
             sandbox_info["status"] = "error"
             sandbox_info["error"] = str(exc)

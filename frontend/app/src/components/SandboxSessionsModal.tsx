@@ -68,6 +68,8 @@ export default function SandboxSessionsModal({ isOpen, onClose, onSessionMutated
     }
   }
 
+  const visibleSessions = sessions.filter((row) => row.provider !== "local");
+
   return (
     <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/60 backdrop-blur-sm">
       <div className="w-[860px] max-w-[95vw] max-h-[85vh] rounded-xl border border-[#333] bg-[#1f1f1f] shadow-2xl overflow-hidden">
@@ -89,8 +91,8 @@ export default function SandboxSessionsModal({ isOpen, onClose, onSessionMutated
           {loading && sessions.length === 0 && <p className="text-sm text-gray-400">Loading...</p>}
           {error && sessions.length === 0 && <p className="text-sm text-red-400">{error}</p>}
           {error && sessions.length > 0 && <p className="text-xs text-red-400 mb-2">Refresh failed: {error}</p>}
-          {!loading && sessions.length === 0 && !error && <p className="text-sm text-gray-400">No active sessions.</p>}
-          {sessions.length > 0 && (
+          {!loading && visibleSessions.length === 0 && !error && <p className="text-sm text-gray-400">No remote sessions.</p>}
+          {visibleSessions.length > 0 && (
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-gray-400 border-b border-[#333]">
@@ -102,7 +104,7 @@ export default function SandboxSessionsModal({ isOpen, onClose, onSessionMutated
                 </tr>
               </thead>
               <tbody>
-                {sessions.map((row) => {
+                {visibleSessions.map((row) => {
                   return (
                   <tr key={row.session_id} className="border-b border-[#2a2a2a] text-gray-200">
                     <td className="py-2 font-mono text-xs">{row.thread_id.slice(0, 16)}</td>

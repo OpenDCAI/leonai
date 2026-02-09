@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sqlite3
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -20,17 +22,19 @@ if TYPE_CHECKING:
 @dataclass
 class LocalSessionProvider(SandboxProvider):
     name: str = "local"
+    db_path: Path = Path.home() / ".leon" / "sandbox.db"
 
     def get_capability(self) -> ProviderCapability:
         return ProviderCapability(
-            can_pause=False,
-            can_resume=False,
-            can_destroy=False,
+            can_pause=True,
+            can_resume=True,
+            can_destroy=True,
             supports_webhook=False,
         )
 
     def create_session(self, context_id: str | None = None) -> SessionInfo:
-        return SessionInfo(session_id="local", provider="local", status="running")
+        session_id = context_id or f"local-{uuid.uuid4().hex[:12]}"
+        return SessionInfo(session_id=session_id, provider="local", status="running")
 
     def destroy_session(self, session_id: str, sync: bool = True) -> bool:
         return True
@@ -42,7 +46,24 @@ class LocalSessionProvider(SandboxProvider):
         return True
 
     def get_session_status(self, session_id: str) -> str:
-        return "running"
+        with sqlite3.connect(str(self.db_path), timeout=5) as conn:
+            row = conn.execute(
+                """
+                SELECT status
+                FROM sandbox_instances
+                WHERE instance_id = ?
+                LIMIT 1
+                """,
+                (session_id,),
+            ).fetchone()
+        if not row or not row[0]:
+            return "detached"
+        status = str(row[0]).lower()
+        if status in {"running", "paused", "unknown"}:
+            return status
+        if status in {"stopped", "dead", "deleted"}:
+            return "detached"
+        return "unknown"
 
     def execute(
         self,
@@ -69,8 +90,9 @@ class LocalSessionProvider(SandboxProvider):
 class LocalSandbox(Sandbox):
     def __init__(self, workspace_root: str, db_path: Path | None = None) -> None:
         self._workspace_root = workspace_root
-        self._provider = LocalSessionProvider()
-        self._manager = SandboxManager(provider=self._provider, db_path=db_path)
+        target_db = db_path or (Path.home() / ".leon" / "sandbox.db")
+        self._provider = LocalSessionProvider(db_path=target_db)
+        self._manager = SandboxManager(provider=self._provider, db_path=target_db)
         self._capability_cache: dict[str, SandboxCapability] = {}
 
     @property
