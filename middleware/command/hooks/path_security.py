@@ -1,8 +1,4 @@
-"""
-路径安全检查 Hook
-
-确保所有 bash 命令只能在工作目录内执行。
-"""
+"""Path security hook - restricts bash commands to workspace directory only."""
 
 import re
 from pathlib import Path
@@ -12,16 +8,9 @@ from .base import BashHook, HookResult
 
 
 class PathSecurityHook(BashHook):
-    """
-    路径安全检查 Hook
+    """Path security hook - prevents directory traversal and access outside workspace."""
 
-    功能：
-    - 禁止 cd 到工作目录外的绝对路径
-    - 禁止使用 ../ 向上遍历目录
-    - 禁止访问工作目录外的绝对路径
-    """
-
-    priority = 10  # 高优先级，最先执行
+    priority = 10
     name = "PathSecurity"
     description = "Restrict bash commands to workspace directory only"
 
@@ -34,41 +23,34 @@ class PathSecurityHook(BashHook):
         self.strict_mode = strict_mode
 
     def check_command(self, command: str, context: dict[str, Any]) -> HookResult:
-        """检查命令是否安全"""
         command = command.strip()
 
-        # 检查是否试图 cd 到绝对路径
-        cd_absolute = re.search(r"\bcd\s+(/[^\s;|&]*)", command)
-        if cd_absolute:
-            target_path = Path(cd_absolute.group(1)).resolve()
-            if not self._is_within_workspace(target_path):
+        cd_match = re.search(r"\bcd\s+(/[^\s;|&]*)", command)
+        if cd_match:
+            target = Path(cd_match.group(1)).resolve()
+            if not self._is_within_workspace(target):
                 return HookResult.block_command(
                     error_message=(
-                        f"❌ SECURITY ERROR: Cannot cd to '{cd_absolute.group(1)}'\n"
+                        f"❌ SECURITY ERROR: Cannot cd to '{cd_match.group(1)}'\n"
                         f"   Reason: Path is outside workspace\n"
                         f"   Workspace: {self.workspace_root}\n"
-                        f"   Attempted: {target_path}\n"
+                        f"   Attempted: {target}\n"
                         f"   💡 You can only execute commands within the workspace directory."
                     )
                 )
 
-        # 检查是否使用 ../ 向上遍历
-        if self.strict_mode and ".." in command:
-            if re.search(r"\.\./|/\.\.|cd\s+\.\.", command):
-                return HookResult.block_command(
-                    error_message=(
-                        f"❌ SECURITY ERROR: Path traversal detected in command\n"
-                        f"   Command: {command[:100]}\n"
-                        f"   Reason: '../' is not allowed (may escape workspace)\n"
-                        f"   Workspace: {self.workspace_root}\n"
-                        f"   💡 Use relative paths within workspace or ask user for permission."
-                    )
+        if self.strict_mode and ".." in command and re.search(r"\.\./|/\.\.|cd\s+\.\.", command):
+            return HookResult.block_command(
+                error_message=(
+                    f"❌ SECURITY ERROR: Path traversal detected in command\n"
+                    f"   Command: {command[:100]}\n"
+                    f"   Reason: '../' is not allowed (may escape workspace)\n"
+                    f"   Workspace: {self.workspace_root}\n"
+                    f"   💡 Use relative paths within workspace or ask user for permission."
                 )
+            )
 
-        # 检查绝对路径访问
-        absolute_paths = re.findall(r"\s(/[^\s;|&]+)", command)
-        for abs_path in absolute_paths:
-            # 跳过常见的系统命令
+        for abs_path in re.findall(r"\s(/[^\s;|&]+)", command):
             if abs_path.startswith(("/bin/", "/usr/", "/etc/bash", "/dev/", "/tmp/")):
                 continue
 
@@ -85,14 +67,11 @@ class PathSecurityHook(BashHook):
                         )
                     )
             except Exception:
-                # 如果路径无法解析，可能是命令参数，允许通过
                 pass
 
-        # 命令安全，允许执行
         return HookResult.allow_command()
 
     def _is_within_workspace(self, path: Path) -> bool:
-        """检查路径是否在工作目录内"""
         try:
             path.resolve().relative_to(self.workspace_root)
             return True
