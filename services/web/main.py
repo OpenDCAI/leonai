@@ -6,7 +6,6 @@ import os
 import sqlite3
 import uuid
 from collections.abc import AsyncGenerator
-from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -22,6 +21,7 @@ from middleware.monitor import AgentState
 from middleware.queue import QueueMode, get_queue_manager
 from sandbox.config import SandboxConfig
 from sandbox.db import DEFAULT_DB_PATH as SANDBOX_DB_PATH
+from sandbox.lease import LeaseStore
 from sandbox.manager import SandboxManager, lookup_sandbox_for_thread
 from sandbox.thread_context import set_current_thread_id
 from tui.config import ConfigManager
@@ -166,30 +166,23 @@ def _load_all_sessions(managers: dict) -> list[dict]:
     sessions: list[dict] = []
     if not managers:
         return sessions
-    from concurrent.futures import as_completed
-
-    with ThreadPoolExecutor(max_workers=len(managers)) as pool:
-        futures = {
-            pool.submit(manager.list_sessions): (provider_name, manager) for provider_name, manager in managers.items()
-        }
-        for future in as_completed(futures):
-            provider_name, _manager = futures[future]
-            rows = future.result()
-            for row in rows:
-                sessions.append(
-                    {
-                        "session_id": row["session_id"],
-                        "thread_id": row["thread_id"],
-                        "provider": row.get("provider", provider_name),
-                        "status": row.get("status", "running"),
-                        "created_at": row.get("created_at"),
-                        "last_active": row.get("last_active"),
-                        "lease_id": row.get("lease_id"),
-                        "instance_id": row.get("instance_id"),
-                        "chat_session_id": row.get("chat_session_id"),
-                        "source": row.get("source", "unknown"),
-                    }
-                )
+    for provider_name, manager in managers.items():
+        rows = manager.list_sessions()
+        for row in rows:
+            sessions.append(
+                {
+                    "session_id": row["session_id"],
+                    "thread_id": row["thread_id"],
+                    "provider": row.get("provider", provider_name),
+                    "status": row.get("status", "running"),
+                    "created_at": row.get("created_at"),
+                    "last_active": row.get("last_active"),
+                    "lease_id": row.get("lease_id"),
+                    "instance_id": row.get("instance_id"),
+                    "chat_session_id": row.get("chat_session_id"),
+                    "source": row.get("source", "unknown"),
+                }
+            )
 
     # @@@stable-session-order - Keep deterministic ordering across refreshes/providers.
     def _to_ts(value: Any) -> float:
@@ -581,6 +574,24 @@ def _find_sandbox_session_record(session_id: str, provider_hint: str | None = No
     return session
 
 
+def _extract_webhook_instance_id(payload: dict[str, Any]) -> str | None:
+    """Extract provider instance/session id from webhook payload."""
+    direct_keys = ("session_id", "sandbox_id", "instance_id", "id")
+    for key in direct_keys:
+        value = payload.get(key)
+        if isinstance(value, str) and value:
+            return value
+
+    nested = payload.get("data")
+    if isinstance(nested, dict):
+        for key in direct_keys:
+            value = nested.get(key)
+            if isinstance(value, str) and value:
+                return value
+
+    return None
+
+
 async def _mutate_sandbox_session_with_live_thread_manager(
     session_id: str,
     action: str,
@@ -665,6 +676,33 @@ async def destroy_sandbox_session(session_id: str, provider: str | None = Query(
         message = str(e)
         status = 404 if "not found" in message.lower() else 409
         raise HTTPException(status, message) from e
+
+
+@app.post("/api/webhooks/{provider_name}")
+async def ingest_provider_webhook(provider_name: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """Ingest provider webhook and mark lease snapshot as invalidated."""
+    instance_id = _extract_webhook_instance_id(payload)
+    if not instance_id:
+        raise HTTPException(400, "Webhook payload missing instance/session id")
+
+    store = LeaseStore(db_path=SANDBOX_DB_PATH)
+    lease = await asyncio.to_thread(store.find_by_instance, provider_name=provider_name, instance_id=instance_id)
+    if not lease:
+        return {
+            "ok": True,
+            "provider": provider_name,
+            "instance_id": instance_id,
+            "matched": False,
+        }
+
+    lease.mark_needs_refresh()
+    return {
+        "ok": True,
+        "provider": provider_name,
+        "instance_id": instance_id,
+        "matched": True,
+        "lease_id": lease.lease_id,
+    }
 
 
 # @@@ Thread-level sandbox control — routes through the agent's own sandbox so cache stays consistent
@@ -907,7 +945,6 @@ async def get_thread_messages(thread_id: str) -> dict[str, Any]:
             if terminal:
                 lease = mgr.lease_store.get(terminal.lease_id)
                 if lease:
-                    lease.refresh_instance_status(mgr.provider)
                     instance = lease.get_instance()
                     sandbox_info["status"] = instance.status if instance else "detached"
                 sandbox_info["terminal_id"] = terminal.terminal_id

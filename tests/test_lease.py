@@ -76,6 +76,8 @@ class TestLeaseStore:
         assert lease.lease_id == "lease-123"
         assert lease.provider_name == "e2b"
         assert lease.get_instance() is None
+        assert lease.needs_refresh is False
+        assert lease.refresh_hint_at is None
 
     def test_get_lease(self, store):
         """Test retrieving lease by lease_id."""
@@ -135,6 +137,19 @@ class TestLeaseStore:
         agentbay_leases = store.list_by_provider("agentbay")
         assert len(agentbay_leases) == 1
         assert agentbay_leases[0]["provider_name"] == "agentbay"
+
+    def test_find_by_instance(self, store, mock_provider):
+        lease = store.create("lease-1", "test-provider")
+        mock_provider.create_session.return_value = SessionInfo(
+            session_id="inst-lookup",
+            provider="test-provider",
+            status="running",
+        )
+        lease.ensure_active_instance(mock_provider)
+
+        found = store.find_by_instance(provider_name="test-provider", instance_id="inst-lookup")
+        assert found is not None
+        assert found.lease_id == "lease-1"
 
 
 class TestSQLiteLease:
@@ -264,6 +279,36 @@ class TestSQLiteLease:
 
         lease.ensure_active_instance(mock_provider)
         assert mock_provider.get_session_status.call_count == 1
+
+    def test_invalidation_forces_refresh_even_when_snapshot_fresh(self, store, mock_provider):
+        lease = store.create("lease-1", "test-provider")
+        mock_provider.create_session.return_value = SessionInfo(
+            session_id="inst-123",
+            provider="test-provider",
+            status="running",
+        )
+        lease.ensure_active_instance(mock_provider)
+        assert lease.needs_refresh is False
+
+        lease.mark_needs_refresh()
+        assert lease.needs_refresh is True
+
+        mock_provider.get_session_status.return_value = "running"
+        lease.ensure_active_instance(mock_provider)
+
+        assert mock_provider.get_session_status.call_count == 1
+        assert lease.needs_refresh is False
+
+    def test_store_mark_needs_refresh(self, store):
+        lease = store.create("lease-1", "test-provider")
+        assert lease.needs_refresh is False
+        updated = store.mark_needs_refresh(lease_id="lease-1")
+        assert updated is True
+
+        reloaded = store.get("lease-1")
+        assert reloaded is not None
+        assert reloaded.needs_refresh is True
+        assert reloaded.refresh_hint_at is not None
 
     def test_destroy_instance(self, store, mock_provider):
         """Test destroying instance."""
