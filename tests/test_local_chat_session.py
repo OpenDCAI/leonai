@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from sandbox.local import LocalSandbox
+from sandbox.local import LocalSandbox, LocalSessionProvider
 from sandbox.manager import lookup_sandbox_for_thread
 from sandbox.thread_context import set_current_thread_id
 
@@ -50,3 +50,17 @@ async def test_local_chat_session_persistence_and_resume(tmp_path: Path):
     assert "chat-session-ok" in resumed_env.stdout
 
     sandbox.close()
+
+
+def test_local_provider_pause_resume_survives_state_reset():
+    provider = LocalSessionProvider()
+    session = provider.create_session(context_id="local-test-session")
+    sid = session.session_id
+
+    provider._session_states.clear()
+    assert provider.pause_session(sid)
+    assert provider.get_session_status(sid) == "paused"
+
+    provider._session_states.clear()
+    assert provider.resume_session(sid)
+    assert provider.get_session_status(sid) == "running"

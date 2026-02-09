@@ -54,16 +54,20 @@ class LocalSessionProvider(SandboxProvider):
     def pause_session(self, session_id: str) -> bool:
         with self._state_lock:
             state = self._session_states.get(session_id)
-            if state != "running":
+            if state == "detached":
                 return False
+            if state == "paused":
+                return True
             self._session_states[session_id] = "paused"
         return True
 
     def resume_session(self, session_id: str) -> bool:
         with self._state_lock:
             state = self._session_states.get(session_id)
-            if state != "paused":
+            if state == "detached":
                 return False
+            if state == "running":
+                return True
             self._session_states[session_id] = "running"
         return True
 
