@@ -494,11 +494,6 @@ class LeaseStore:
                 )
                 """
             )
-            lease_cols = {row[1] for row in conn.execute("PRAGMA table_info(sandbox_leases)").fetchall()}
-            if "observed_at" not in lease_cols:
-                conn.execute("ALTER TABLE sandbox_leases ADD COLUMN observed_at TIMESTAMP")
-            if "refresh_error" not in lease_cols:
-                conn.execute("ALTER TABLE sandbox_leases ADD COLUMN refresh_error TEXT")
             conn.commit()
             lease_cols = {row[1] for row in conn.execute("PRAGMA table_info(sandbox_leases)").fetchall()}
             instance_cols = {row[1] for row in conn.execute("PRAGMA table_info(sandbox_instances)").fetchall()}
