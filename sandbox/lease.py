@@ -25,6 +25,8 @@ from sandbox.db import DEFAULT_DB_PATH
 if TYPE_CHECKING:
     from sandbox.provider import SandboxProvider
 
+LEASE_FRESHNESS_TTL_SEC = 3.0
+
 REQUIRED_LEASE_COLUMNS = {
     "lease_id",
     "provider_name",
@@ -32,6 +34,8 @@ REQUIRED_LEASE_COLUMNS = {
     "current_instance_id",
     "instance_status",
     "instance_created_at",
+    "observed_at",
+    "refresh_error",
     "status",
     "created_at",
     "updated_at",
@@ -90,12 +94,16 @@ class SandboxLease(ABC):
         current_instance: SandboxInstance | None = None,
         status: str = "active",
         workspace_key: str | None = None,
+        observed_at: datetime | None = None,
+        refresh_error: str | None = None,
     ):
         self.lease_id = lease_id
         self.provider_name = provider_name
         self._current_instance = current_instance
         self.status = status
         self.workspace_key = workspace_key
+        self.observed_at = observed_at
+        self.refresh_error = refresh_error
 
     def get_instance(self) -> SandboxInstance | None:
         """Get current active instance, if any."""
@@ -134,7 +142,13 @@ class SandboxLease(ABC):
         ...
 
     @abstractmethod
-    def refresh_instance_status(self, provider: SandboxProvider) -> str:
+    def refresh_instance_status(
+        self,
+        provider: SandboxProvider,
+        *,
+        force: bool = False,
+        max_age_sec: float = LEASE_FRESHNESS_TTL_SEC,
+    ) -> str:
         """Refresh status from provider and converge persisted lease state.
 
         Returns one of: running, paused, detached, unknown.
@@ -156,6 +170,8 @@ class SQLiteLease(SandboxLease):
         db_path: Path = DEFAULT_DB_PATH,
         status: str = "active",
         workspace_key: str | None = None,
+        observed_at: datetime | None = None,
+        refresh_error: str | None = None,
     ):
         super().__init__(
             lease_id=lease_id,
@@ -163,20 +179,37 @@ class SQLiteLease(SandboxLease):
             current_instance=current_instance,
             status=status,
             workspace_key=workspace_key,
+            observed_at=observed_at,
+            refresh_error=refresh_error,
         )
         self.db_path = db_path
+
+    def _is_fresh(self, max_age_sec: float = LEASE_FRESHNESS_TTL_SEC) -> bool:
+        if not self.observed_at:
+            return False
+        return (datetime.now() - self.observed_at).total_seconds() <= max_age_sec
+
+    def _record_refresh_error(self, error: str) -> None:
+        self.refresh_error = error[:500]
+        self._persist_lease_metadata()
 
     def ensure_active_instance(self, provider: SandboxProvider) -> SandboxInstance:
         """Ensure active instance exists."""
         # Check if current instance is healthy
         if self._current_instance:
+            if self._current_instance.status == "running" and self._is_fresh():
+                return self._current_instance
             try:
                 status = provider.get_session_status(self._current_instance.instance_id)
+                self.observed_at = datetime.now()
+                self.refresh_error = None
                 if status == "running":
                     # @@@status-convergence - Provider is source of truth; converge persisted lease state immediately.
-                    if self._current_instance.status != "running":
+                    if self._current_instance.status != "running" or self.refresh_error is None:
                         self._current_instance.status = "running"
                         self._persist_instance()
+                    else:
+                        self._persist_lease_metadata()
                     return self._current_instance
                 elif status == "paused":
                     if self._current_instance.status != "paused":
@@ -185,7 +218,8 @@ class SQLiteLease(SandboxLease):
                     raise RuntimeError(f"Sandbox lease {self.lease_id} is paused. Resume before executing commands.")
             except RuntimeError:
                 raise
-            except Exception:
+            except Exception as e:
+                self._record_refresh_error(str(e))
                 # Instance is dead, need to create new one
                 pass
 
@@ -194,10 +228,18 @@ class SQLiteLease(SandboxLease):
             refreshed = LeaseStore(db_path=self.db_path).get(self.lease_id)
             if refreshed and refreshed.get_instance():
                 candidate = refreshed.get_instance()
+                if candidate.status == "running" and refreshed._is_fresh():
+                    self._current_instance = candidate
+                    self.observed_at = refreshed.observed_at
+                    self.refresh_error = refreshed.refresh_error
+                    return self._current_instance
                 try:
                     status = provider.get_session_status(candidate.instance_id)
+                    self.observed_at = datetime.now()
+                    self.refresh_error = None
                     if status == "running":
                         self._current_instance = candidate
+                        self._persist_lease_metadata()
                         return self._current_instance
                     if status == "paused":
                         candidate.status = "paused"
@@ -208,7 +250,8 @@ class SQLiteLease(SandboxLease):
                         )
                 except RuntimeError:
                     raise
-                except Exception:
+                except Exception as e:
+                    self._record_refresh_error(str(e))
                     pass
 
             # Create new instance
@@ -223,6 +266,8 @@ class SQLiteLease(SandboxLease):
             )
             self._current_instance = instance
             self.status = "active"
+            self.observed_at = datetime.now()
+            self.refresh_error = None
             self._persist_instance()
             return instance
 
@@ -244,6 +289,8 @@ class SQLiteLease(SandboxLease):
                 pass  # Already destroyed
             self._current_instance = None
             self.status = "expired"
+            self.observed_at = datetime.now()
+            self.refresh_error = None
             self._clear_instance(previous_instance)
 
     def pause_instance(self, provider: SandboxProvider) -> bool:
@@ -254,10 +301,12 @@ class SQLiteLease(SandboxLease):
         try:
             if provider.pause_session(self._current_instance.instance_id):
                 self._current_instance.status = "paused"
+                self.observed_at = datetime.now()
+                self.refresh_error = None
                 self._persist_instance()
                 return True
-        except Exception:
-            pass
+        except Exception as e:
+            self._record_refresh_error(str(e))
         return False
 
     def resume_instance(self, provider: SandboxProvider) -> bool:
@@ -268,30 +317,46 @@ class SQLiteLease(SandboxLease):
         try:
             if provider.resume_session(self._current_instance.instance_id):
                 self._current_instance.status = "running"
+                self.observed_at = datetime.now()
+                self.refresh_error = None
                 self._persist_instance()
                 return True
-        except Exception:
-            pass
+        except Exception as e:
+            self._record_refresh_error(str(e))
         return False
 
-    def refresh_instance_status(self, provider: SandboxProvider) -> str:
+    def refresh_instance_status(
+        self,
+        provider: SandboxProvider,
+        *,
+        force: bool = False,
+        max_age_sec: float = LEASE_FRESHNESS_TTL_SEC,
+    ) -> str:
         """Refresh status from provider and converge lease state."""
         if not self._current_instance:
             return "detached"
+        if not force and self._current_instance.status in {"running", "paused"} and self._is_fresh(max_age_sec):
+            return self._current_instance.status
         try:
             status = provider.get_session_status(self._current_instance.instance_id)
-        except Exception:
-            status = "unknown"
+            self.observed_at = datetime.now()
+            self.refresh_error = None
+        except Exception as e:
+            self._record_refresh_error(str(e))
+            return self._current_instance.status or "unknown"
 
         if status in {"running", "paused"}:
             if self._current_instance.status != status:
                 self._current_instance.status = status
                 self._persist_instance()
+            else:
+                self._persist_lease_metadata()
             return status
 
         if status in {"deleted", "stopped", "dead"}:
             previous_instance = self._current_instance
             self._current_instance = None
+            self.refresh_error = None
             self._clear_instance(previous_instance)
             return "detached"
 
@@ -306,13 +371,15 @@ class SQLiteLease(SandboxLease):
             conn.execute(
                 """
                 UPDATE sandbox_leases
-                SET current_instance_id = ?, instance_status = ?, instance_created_at = ?, status = ?, updated_at = ?
+                SET current_instance_id = ?, instance_status = ?, instance_created_at = ?, observed_at = ?, refresh_error = ?, status = ?, updated_at = ?
                 WHERE lease_id = ?
                 """,
                 (
                     self._current_instance.instance_id,
                     self._current_instance.status,
                     self._current_instance.created_at.isoformat(),
+                    self.observed_at.isoformat() if self.observed_at else None,
+                    self.refresh_error,
                     self.status,
                     datetime.now().isoformat(),
                     self.lease_id,
@@ -344,10 +411,16 @@ class SQLiteLease(SandboxLease):
             conn.execute(
                 """
                 UPDATE sandbox_leases
-                SET status = ?, updated_at = ?
+                SET observed_at = ?, refresh_error = ?, status = ?, updated_at = ?
                 WHERE lease_id = ?
                 """,
-                (self.status, datetime.now().isoformat(), self.lease_id),
+                (
+                    self.observed_at.isoformat() if self.observed_at else None,
+                    self.refresh_error,
+                    self.status,
+                    datetime.now().isoformat(),
+                    self.lease_id,
+                ),
             )
             conn.commit()
 
@@ -357,10 +430,17 @@ class SQLiteLease(SandboxLease):
             conn.execute(
                 """
                 UPDATE sandbox_leases
-                SET current_instance_id = NULL, instance_status = NULL, instance_created_at = NULL, status = ?, updated_at = ?
+                SET current_instance_id = NULL, instance_status = NULL, instance_created_at = NULL,
+                    observed_at = ?, refresh_error = ?, status = ?, updated_at = ?
                 WHERE lease_id = ?
                 """,
-                (self.status, datetime.now().isoformat(), self.lease_id),
+                (
+                    self.observed_at.isoformat() if self.observed_at else None,
+                    self.refresh_error,
+                    self.status,
+                    datetime.now().isoformat(),
+                    self.lease_id,
+                ),
             )
             if previous_instance:
                 conn.execute(
@@ -394,6 +474,8 @@ class LeaseStore:
                     current_instance_id TEXT,
                     instance_status TEXT,
                     instance_created_at TIMESTAMP,
+                    observed_at TIMESTAMP,
+                    refresh_error TEXT,
                     status TEXT DEFAULT 'active',
                     created_at TIMESTAMP NOT NULL,
                     updated_at TIMESTAMP NOT NULL
@@ -412,6 +494,11 @@ class LeaseStore:
                 )
                 """
             )
+            lease_cols = {row[1] for row in conn.execute("PRAGMA table_info(sandbox_leases)").fetchall()}
+            if "observed_at" not in lease_cols:
+                conn.execute("ALTER TABLE sandbox_leases ADD COLUMN observed_at TIMESTAMP")
+            if "refresh_error" not in lease_cols:
+                conn.execute("ALTER TABLE sandbox_leases ADD COLUMN refresh_error TEXT")
             conn.commit()
             lease_cols = {row[1] for row in conn.execute("PRAGMA table_info(sandbox_leases)").fetchall()}
             instance_cols = {row[1] for row in conn.execute("PRAGMA table_info(sandbox_instances)").fetchall()}
@@ -433,7 +520,8 @@ class LeaseStore:
             conn.row_factory = sqlite3.Row
             row = conn.execute(
                 """
-                SELECT lease_id, provider_name, workspace_key, current_instance_id, instance_status, instance_created_at, status
+                SELECT lease_id, provider_name, workspace_key, current_instance_id, instance_status, instance_created_at,
+                       observed_at, refresh_error, status
                 FROM sandbox_leases
                 WHERE lease_id = ?
                 """,
@@ -459,6 +547,8 @@ class LeaseStore:
                 db_path=self.db_path,
                 status=row["status"] or "active",
                 workspace_key=row["workspace_key"],
+                observed_at=datetime.fromisoformat(row["observed_at"]) if row["observed_at"] else None,
+                refresh_error=row["refresh_error"],
             )
 
     def create(
@@ -472,10 +562,10 @@ class LeaseStore:
         with _connect(self.db_path) as conn:
             conn.execute(
                 """
-                INSERT INTO sandbox_leases (lease_id, provider_name, status, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO sandbox_leases (lease_id, provider_name, observed_at, refresh_error, status, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (lease_id, provider_name, "active", now, now),
+                (lease_id, provider_name, now, None, "active", now, now),
             )
             conn.commit()
 

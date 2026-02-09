@@ -224,9 +224,35 @@ class RemoteWrappedRuntime(PhysicalTerminalRuntime):
         super().__init__(terminal, lease)
         self.provider = provider
 
-    async def execute(self, command: str, timeout: float | None = None) -> ExecuteResult:
-        """Execute command via provider."""
-        # Ensure instance is active
+    @staticmethod
+    def _looks_like_infra_error(text: str) -> bool:
+        message = text.lower()
+        markers = (
+            "not found",
+            "no such session",
+            "session does not exist",
+            "is paused",
+            "stopped",
+            "connection",
+            "transport",
+            "unreachable",
+            "timed out",
+            "timeout",
+            "detached",
+        )
+        return any(marker in message for marker in markers)
+
+    def _recover_infra(self) -> None:
+        # @@@infra-recovery - Refresh provider truth once, then resume/recreate and retry command exactly once.
+        status = self.lease.refresh_instance_status(self.provider, force=True, max_age_sec=0)
+        if status == "paused":
+            if not self.lease.resume_instance(self.provider):
+                raise RuntimeError(f"Failed to resume paused lease {self.lease.lease_id}")
+            return
+        if status in {"detached", "unknown"}:
+            self.lease.ensure_active_instance(self.provider)
+
+    def _execute_once(self, command: str, timeout: float | None = None) -> ExecuteResult:
         instance = self.lease.ensure_active_instance(self.provider)
         state = self.terminal.get_state()
         timeout_ms = int(timeout * 1000) if timeout else 30000
@@ -281,11 +307,31 @@ class RemoteWrappedRuntime(PhysicalTerminalRuntime):
         except ValueError:
             pass
 
+        exit_code = result.exit_code
+        if result.error and exit_code == 0:
+            exit_code = 1
+
         return ExecuteResult(
-            exit_code=result.exit_code,
+            exit_code=exit_code,
             stdout=raw_output,
             stderr=result.error or "",
         )
+
+    async def execute(self, command: str, timeout: float | None = None) -> ExecuteResult:
+        """Execute command via provider."""
+        try:
+            first = self._execute_once(command, timeout)
+        except Exception as e:
+            if not self._looks_like_infra_error(str(e)):
+                raise
+            self._recover_infra()
+            return self._execute_once(command, timeout)
+
+        if first.exit_code != 0 and self._looks_like_infra_error(first.stderr or first.stdout):
+            self._recover_infra()
+            return self._execute_once(command, timeout)
+
+        return first
 
     async def close(self) -> None:
         """No-op for remote runtime - instance lifecycle managed by lease."""
