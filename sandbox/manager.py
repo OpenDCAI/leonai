@@ -138,6 +138,13 @@ class SandboxManager:
         session = self.session_manager.get(thread_id)
 
         if session:
+            # @@@activity-resume - Any new activity against a paused thread must resume before command execution.
+            if session.status == "paused":
+                if not self.resume_session(thread_id):
+                    raise RuntimeError(f"Failed to resume paused session for thread {thread_id}")
+                session = self.session_manager.get(thread_id)
+                if not session:
+                    raise RuntimeError(f"Session disappeared after resume for thread {thread_id}")
             # Session exists and not expired
             return SandboxCapability(session)
 
@@ -244,10 +251,6 @@ class SandboxManager:
 
     def pause_session(self, thread_id: str) -> bool:
         """Pause session for thread."""
-        session = self.session_manager.get(thread_id)
-        if session and session.status != "paused":
-            self.session_manager.pause(session.session_id)
-
         terminal = self.terminal_store.get(thread_id)
         if not terminal:
             return False
@@ -255,9 +258,14 @@ class SandboxManager:
         if not lease:
             return False
 
-        if self.provider.name == "local":
-            return True
-        return lease.pause_instance(self.provider)
+        if self.provider.name != "local":
+            if not lease.pause_instance(self.provider):
+                return False
+
+        session = self.session_manager.get(thread_id)
+        if session and session.status != "paused":
+            self.session_manager.pause(session.session_id)
+        return True
 
     def _get_thread_lease(self, thread_id: str):
         terminal = self.terminal_store.get(thread_id)

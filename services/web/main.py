@@ -566,14 +566,6 @@ def _mutate_sandbox_session(
     }
 
 
-def _find_sandbox_session_record(session_id: str, provider_hint: str | None = None) -> dict[str, Any] | None:
-    """Resolve a session record from inspect list (ground-truth view)."""
-    _, managers = _init_providers_and_managers()
-    sessions = _load_all_sessions(managers)
-    session, _ = _find_session_and_manager(sessions, managers, session_id, provider_name=provider_hint)
-    return session
-
-
 def _extract_webhook_instance_id(payload: dict[str, Any]) -> str | None:
     """Extract provider instance/session id from webhook payload."""
     direct_keys = ("session_id", "sandbox_id", "instance_id", "id")
@@ -592,61 +584,14 @@ def _extract_webhook_instance_id(payload: dict[str, Any]) -> str | None:
     return None
 
 
-async def _mutate_sandbox_session_with_live_thread_manager(
-    session_id: str,
-    action: str,
-    provider_hint: str | None = None,
-) -> dict[str, Any]:
-    """Mutate session using live thread agent first; fallback to provider/lease direct path."""
-    session = await asyncio.to_thread(_find_sandbox_session_record, session_id, provider_hint)
-    if not session:
-        raise RuntimeError(f"Session not found: {session_id}")
-
-    thread_id = str(session.get("thread_id") or "")
-    provider_name = str(session.get("provider") or "")
-    target_session_id = str(session.get("session_id") or session_id)
-    lease_id = session.get("lease_id")
-
-    if thread_id and not _is_virtual_thread_id(thread_id):
-        try:
-            agent = await _get_thread_agent(thread_id)
-            if hasattr(agent, "_sandbox") and agent._sandbox.name == provider_name:
-                if action == "pause":
-                    ok = await asyncio.to_thread(agent._sandbox.pause_thread, thread_id)
-                elif action == "resume":
-                    ok = await asyncio.to_thread(agent._sandbox.resume_thread, thread_id)
-                elif action == "destroy":
-                    ok = await asyncio.to_thread(agent._sandbox.manager.destroy_session, thread_id)
-                    agent._sandbox._capability_cache.pop(thread_id, None)
-                else:
-                    raise RuntimeError(f"Unknown action: {action}")
-                if not ok:
-                    raise RuntimeError(f"Failed to {action} session {target_session_id}")
-                return {
-                    "ok": True,
-                    "action": action,
-                    "session_id": target_session_id,
-                    "provider": provider_name,
-                    "thread_id": thread_id,
-                    "lease_id": lease_id,
-                    "mode": "manager_thread_live",
-                }
-        except HTTPException:
-            pass
-
-    return await asyncio.to_thread(
-        _mutate_sandbox_session,
-        session_id=session_id,
-        action=action,
-        provider_hint=provider_hint,
-    )
-
-
 @app.post("/api/sandbox/sessions/{session_id}/pause")
 async def pause_sandbox_session(session_id: str, provider: str | None = Query(default=None)) -> dict[str, Any]:
     try:
-        return await _mutate_sandbox_session_with_live_thread_manager(
-            session_id=session_id, action="pause", provider_hint=provider
+        return await asyncio.to_thread(
+            _mutate_sandbox_session,
+            session_id=session_id,
+            action="pause",
+            provider_hint=provider,
         )
     except RuntimeError as e:
         message = str(e)
@@ -657,8 +602,11 @@ async def pause_sandbox_session(session_id: str, provider: str | None = Query(de
 @app.post("/api/sandbox/sessions/{session_id}/resume")
 async def resume_sandbox_session(session_id: str, provider: str | None = Query(default=None)) -> dict[str, Any]:
     try:
-        return await _mutate_sandbox_session_with_live_thread_manager(
-            session_id=session_id, action="resume", provider_hint=provider
+        return await asyncio.to_thread(
+            _mutate_sandbox_session,
+            session_id=session_id,
+            action="resume",
+            provider_hint=provider,
         )
     except RuntimeError as e:
         message = str(e)
@@ -669,8 +617,11 @@ async def resume_sandbox_session(session_id: str, provider: str | None = Query(d
 @app.delete("/api/sandbox/sessions/{session_id}")
 async def destroy_sandbox_session(session_id: str, provider: str | None = Query(default=None)) -> dict[str, Any]:
     try:
-        return await _mutate_sandbox_session_with_live_thread_manager(
-            session_id=session_id, action="destroy", provider_hint=provider
+        return await asyncio.to_thread(
+            _mutate_sandbox_session,
+            session_id=session_id,
+            action="destroy",
+            provider_hint=provider,
         )
     except RuntimeError as e:
         message = str(e)
@@ -680,7 +631,7 @@ async def destroy_sandbox_session(session_id: str, provider: str | None = Query(
 
 @app.post("/api/webhooks/{provider_name}")
 async def ingest_provider_webhook(provider_name: str, payload: dict[str, Any]) -> dict[str, Any]:
-    """Ingest provider webhook: persist event and invalidate matched lease snapshot."""
+    """Ingest provider webhook: persist provider event and converge lease observed state."""
     instance_id = _extract_webhook_instance_id(payload)
     if not instance_id:
         raise HTTPException(400, "Webhook payload missing instance/session id")
@@ -709,8 +660,27 @@ async def ingest_provider_webhook(provider_name: str, payload: dict[str, Any]) -
             "event_type": event_type,
             "matched": False,
         }
+    status_hint = str(payload.get("status") or payload.get("state") or payload.get("event") or "unknown").lower()
+    if "pause" in status_hint:
+        status_hint = "paused"
+    elif "resume" in status_hint or "start" in status_hint or "running" in status_hint:
+        status_hint = "running"
+    elif "destroy" in status_hint or "delete" in status_hint or "stop" in status_hint:
+        status_hint = "detached"
+    else:
+        status_hint = "unknown"
 
-    lease.mark_needs_refresh()
+    _, managers = await asyncio.to_thread(_init_providers_and_managers)
+    manager = managers.get(provider_name)
+    if not manager:
+        raise HTTPException(503, f"Provider manager unavailable: {provider_name}")
+    await asyncio.to_thread(
+        lease.apply,
+        manager.provider,
+        event_type="observe.status",
+        source="webhook",
+        payload={"status": status_hint, "raw_event_type": event_type},
+    )
     return {
         "ok": True,
         "provider": provider_name,
@@ -731,30 +701,39 @@ async def list_provider_events(limit: int = Query(default=100, ge=1, le=1000)) -
 # @@@ Thread-level sandbox control — routes through the agent's own sandbox so cache stays consistent
 @app.post("/api/threads/{thread_id}/sandbox/pause")
 async def pause_thread_sandbox(thread_id: str) -> dict[str, Any]:
-    agent = await _get_thread_agent(thread_id)
-    ok = await asyncio.to_thread(agent._sandbox.pause_thread, thread_id)
-    if not ok:
-        raise HTTPException(409, f"Failed to pause sandbox for thread {thread_id}")
-    return {"ok": ok, "thread_id": thread_id}
+    try:
+        agent = await _get_thread_agent(thread_id)
+        ok = await asyncio.to_thread(agent._sandbox.pause_thread, thread_id)
+        if not ok:
+            raise HTTPException(409, f"Failed to pause sandbox for thread {thread_id}")
+        return {"ok": ok, "thread_id": thread_id}
+    except RuntimeError as e:
+        raise HTTPException(409, str(e)) from e
 
 
 @app.post("/api/threads/{thread_id}/sandbox/resume")
 async def resume_thread_sandbox(thread_id: str) -> dict[str, Any]:
-    agent = await _get_thread_agent(thread_id)
-    ok = await asyncio.to_thread(agent._sandbox.resume_thread, thread_id)
-    if not ok:
-        raise HTTPException(409, f"Failed to resume sandbox for thread {thread_id}")
-    return {"ok": ok, "thread_id": thread_id}
+    try:
+        agent = await _get_thread_agent(thread_id)
+        ok = await asyncio.to_thread(agent._sandbox.resume_thread, thread_id)
+        if not ok:
+            raise HTTPException(409, f"Failed to resume sandbox for thread {thread_id}")
+        return {"ok": ok, "thread_id": thread_id}
+    except RuntimeError as e:
+        raise HTTPException(409, str(e)) from e
 
 
 @app.delete("/api/threads/{thread_id}/sandbox")
 async def destroy_thread_sandbox(thread_id: str) -> dict[str, Any]:
-    agent = await _get_thread_agent(thread_id)
-    ok = await asyncio.to_thread(agent._sandbox.manager.destroy_session, thread_id)
-    if not ok:
-        raise HTTPException(404, f"No sandbox session found for thread {thread_id}")
-    agent._sandbox._capability_cache.pop(thread_id, None)
-    return {"ok": ok, "thread_id": thread_id}
+    try:
+        agent = await _get_thread_agent(thread_id)
+        ok = await asyncio.to_thread(agent._sandbox.manager.destroy_session, thread_id)
+        if not ok:
+            raise HTTPException(404, f"No sandbox session found for thread {thread_id}")
+        agent._sandbox._capability_cache.pop(thread_id, None)
+        return {"ok": ok, "thread_id": thread_id}
+    except RuntimeError as e:
+        raise HTTPException(409, str(e)) from e
 
 
 # --- New architecture endpoints: session/terminal/lease status ---
@@ -840,6 +819,10 @@ async def get_thread_lease_status(thread_id: str) -> dict[str, Any]:
         "thread_id": thread_id,
         "lease_id": lease.lease_id,
         "provider_name": lease.provider_name,
+        "desired_state": lease.desired_state,
+        "observed_state": lease.observed_state,
+        "version": lease.version,
+        "last_error": lease.last_error,
         "instance": {
             "instance_id": instance.instance_id if instance else None,
             "state": instance.status if instance else None,
@@ -1029,6 +1012,10 @@ async def run_thread(thread_id: str, payload: RunRequest) -> EventSourceResponse
                     def _prime_sandbox() -> None:
                         mgr = agent._sandbox.manager
                         mgr.enforce_idle_timeouts()
+                        existing = mgr.session_manager.get(thread_id)
+                        if existing and existing.status == "paused":
+                            if not agent._sandbox.resume_thread(thread_id):
+                                raise RuntimeError(f"Failed to resume paused session for thread {thread_id}")
                         agent._sandbox.ensure_session(thread_id)
                         terminal = mgr.terminal_store.get(thread_id)
                         lease = mgr.lease_store.get(terminal.lease_id) if terminal else None

@@ -8,6 +8,7 @@ from typing import Any
 
 from sandbox.provider import (
     Metrics,
+    ProviderCapability,
     ProviderExecResult,
     SandboxProvider,
     SessionInfo,
@@ -26,6 +27,14 @@ class AgentBayProvider(SandboxProvider):
     """
 
     name = "agentbay"
+
+    def get_capability(self) -> ProviderCapability:
+        return ProviderCapability(
+            can_pause=True,
+            can_resume=True,
+            can_destroy=True,
+            supports_webhook=False,
+        )
 
     def __init__(
         self,

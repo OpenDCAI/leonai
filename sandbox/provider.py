@@ -9,6 +9,16 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
+@dataclass(frozen=True)
+class ProviderCapability:
+    """Declared lifecycle capability of a provider implementation."""
+
+    can_pause: bool
+    can_resume: bool
+    can_destroy: bool
+    supports_webhook: bool = False
+
+
 @dataclass
 class SessionInfo:
     """Information about a sandbox session."""
@@ -52,6 +62,11 @@ class SandboxProvider(ABC):
     """
 
     name: str  # Provider identifier: 'agentbay', 'e2b', 'docker', 'local'
+
+    @abstractmethod
+    def get_capability(self) -> ProviderCapability:
+        """Return lifecycle capability contract for this provider."""
+        pass
 
     # ==================== Session Lifecycle ====================
 
