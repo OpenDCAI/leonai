@@ -35,6 +35,7 @@ class LocalSessionProvider(SandboxProvider):
             supports_status_probe=False,
             eager_instance_binding=True,
             inspect_visible=False,
+            runtime_kind="local",
         )
 
     def create_session(self, context_id: str | None = None) -> SessionInfo:

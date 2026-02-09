@@ -16,6 +16,7 @@ class ProviderCapability:
     supports_status_probe: bool = True
     eager_instance_binding: bool = False
     inspect_visible: bool = True
+    runtime_kind: str = "remote"
 
 
 @dataclass

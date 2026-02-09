@@ -51,7 +51,6 @@ class PhysicalTerminalRuntime(ABC):
     ):
         self.terminal = terminal
         self.lease = lease
-        self._hydrated = False
         self.runtime_id = f"runtime-{uuid.uuid4().hex[:12]}"
 
     @abstractmethod
@@ -102,7 +101,7 @@ class LocalPersistentShellRuntime(PhysicalTerminalRuntime):
                 *self.shell_command,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
                 cwd=state.cwd,
             )
             # Disable PS1 prompt
@@ -114,8 +113,6 @@ class LocalPersistentShellRuntime(PhysicalTerminalRuntime):
                 for key, value in state.env_delta.items():
                     self._session.stdin.write(f"export {key}={shlex.quote(value)}\n".encode())
                 await self._session.stdin.drain()
-
-            self._hydrated = True
 
         return self._session
 

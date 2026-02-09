@@ -46,12 +46,10 @@ class SandboxManager:
         self,
         provider: SandboxProvider,
         db_path: Path | None = None,
-        default_context_id: str | None = None,
         on_session_ready: Callable[[str, str], None] | None = None,
     ):
         self.provider = provider
         self.provider_capability = provider.get_capability()
-        self.default_context_id = default_context_id
         self._on_session_ready = on_session_ready
 
         self.db_path = db_path or DEFAULT_DB_PATH
@@ -62,11 +60,6 @@ class SandboxManager:
             db_path=self.db_path,
             default_policy=ChatSessionPolicy(),
         )
-
-    def _build_context_id(self, thread_id: str) -> str | None:
-        if self.provider.name in ("agentbay", "docker"):
-            return f"leon-{thread_id}"
-        return None
 
     def _default_terminal_cwd(self) -> str:
         for attr in ("default_cwd", "default_context_path", "mount_path"):
@@ -85,7 +78,7 @@ class SandboxManager:
             lease.ensure_active_instance(self.provider)
 
     def close(self):
-        return None
+        self.session_manager.close(reason="manager_close")
 
     def get_sandbox(self, thread_id: str) -> SandboxCapability:
         session = self.session_manager.get(thread_id)
