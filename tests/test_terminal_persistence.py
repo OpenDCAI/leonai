@@ -2,14 +2,13 @@
 
 import asyncio
 
-import pytest
-
 from middleware.command.bash.executor import BashExecutor
 from middleware.command.zsh.executor import ZshExecutor
 
 
 def test_bash_env_persistence():
     """Test that environment variables persist across commands in bash."""
+
     async def run():
         executor = BashExecutor()
 
@@ -27,6 +26,7 @@ def test_bash_env_persistence():
 
 def test_bash_cwd_persistence():
     """Test that working directory persists across commands in bash."""
+
     async def run():
         executor = BashExecutor()
 
@@ -48,6 +48,7 @@ def test_bash_cwd_persistence():
 
 def test_zsh_env_persistence():
     """Test that environment variables persist across commands in zsh."""
+
     async def run():
         executor = ZshExecutor()
 
@@ -65,6 +66,7 @@ def test_zsh_env_persistence():
 
 def test_zsh_cwd_persistence():
     """Test that working directory persists across commands in zsh."""
+
     async def run():
         executor = ZshExecutor()
 

@@ -3,17 +3,17 @@
 import re
 import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock, AsyncMock
+from unittest.mock import MagicMock
 
 import pytest
 
-from sandbox.provider import ProviderExecResult
 from sandbox.lease import LeaseStore, SandboxInstance
+from sandbox.provider import ProviderExecResult
 from sandbox.runtime import (
     LocalPersistentShellRuntime,
     RemoteWrappedRuntime,
 )
-from sandbox.terminal import TerminalState, TerminalStore
+from sandbox.terminal import TerminalStore
 
 
 @pytest.fixture
@@ -227,13 +227,7 @@ class TestRemoteWrappedRuntime:
             start_match = re.search(r"__LEON_STATE_START_[a-f0-9]{8}__", command)
             end_match = re.search(r"__LEON_STATE_END_[a-f0-9]{8}__", command)
             if start_match and end_match:
-                output = (
-                    "command output\n"
-                    f"{start_match.group(0)}\n"
-                    "/home/user\n"
-                    "TEST_FLAG=1\n"
-                    f"{end_match.group(0)}\n"
-                )
+                output = f"command output\n{start_match.group(0)}\n/home/user\nTEST_FLAG=1\n{end_match.group(0)}\n"
                 return ProviderExecResult(exit_code=0, output=output, error=None)
             return ProviderExecResult(exit_code=0, output="", error=None)
 

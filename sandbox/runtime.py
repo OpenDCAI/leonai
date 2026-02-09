@@ -119,9 +119,7 @@ class LocalPersistentShellRuntime(PhysicalTerminalRuntime):
 
         return self._session
 
-    async def _send_command(
-        self, proc: asyncio.subprocess.Process, command: str
-    ) -> tuple[str, str, int]:
+    async def _send_command(self, proc: asyncio.subprocess.Process, command: str) -> tuple[str, str, int]:
         """Send command to persistent session and read output."""
         marker = f"__END_{uuid.uuid4().hex[:8]}__"
         full_cmd = f"{command}\necho {marker} $?\n"
@@ -234,10 +232,7 @@ class RemoteWrappedRuntime(PhysicalTerminalRuntime):
         timeout_ms = int(timeout * 1000) if timeout else 30000
         start_marker = f"__LEON_STATE_START_{uuid.uuid4().hex[:8]}__"
         end_marker = f"__LEON_STATE_END_{uuid.uuid4().hex[:8]}__"
-        exports = "\n".join(
-            f"export {key}={shlex.quote(value)}"
-            for key, value in state.env_delta.items()
-        )
+        exports = "\n".join(f"export {key}={shlex.quote(value)}" for key, value in state.env_delta.items())
         wrapped = "\n".join(
             part
             for part in [

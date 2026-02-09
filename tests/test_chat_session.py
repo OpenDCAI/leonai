@@ -15,7 +15,6 @@ from sandbox.chat_session import (
     ChatSessionPolicy,
 )
 from sandbox.lease import LeaseStore
-from sandbox.provider import SessionInfo
 from sandbox.terminal import TerminalStore
 
 
@@ -211,9 +210,7 @@ class TestChatSessionManager:
         import sqlite3
 
         with sqlite3.connect(str(temp_db)) as conn:
-            cursor = conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='chat_sessions'"
-            )
+            cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='chat_sessions'")
             assert cursor.fetchone() is not None
 
     def test_create_session(self, session_manager, terminal_store, lease_store):

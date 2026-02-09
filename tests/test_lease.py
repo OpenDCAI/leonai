@@ -11,8 +11,6 @@ import pytest
 from sandbox.lease import (
     LeaseStore,
     SandboxInstance,
-    SandboxLease,
-    SQLiteLease,
 )
 from sandbox.provider import SessionInfo
 
@@ -68,9 +66,7 @@ class TestLeaseStore:
 
         # Verify table exists
         with sqlite3.connect(str(temp_db)) as conn:
-            cursor = conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='sandbox_leases'"
-            )
+            cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='sandbox_leases'")
             assert cursor.fetchone() is not None
 
     def test_create_lease(self, store):

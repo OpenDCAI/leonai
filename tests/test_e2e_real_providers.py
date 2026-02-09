@@ -6,17 +6,14 @@ and file operations through the actual agent interface.
 """
 
 import os
-import asyncio
+
 import pytest
 
 from agent import create_leon_agent
 from sandbox.thread_context import set_current_thread_id
 
 
-@pytest.mark.skipif(
-    not os.getenv("E2B_API_KEY"),
-    reason="E2B_API_KEY not set"
-)
+@pytest.mark.skipif(not os.getenv("E2B_API_KEY"), reason="E2B_API_KEY not set")
 class TestE2BRealE2E:
     """Real E2E tests with E2B provider - NO MOCKS."""
 
@@ -98,10 +95,7 @@ class TestE2BRealE2E:
         agent.close()
 
 
-@pytest.mark.skipif(
-    not os.getenv("AGENTBAY_API_KEY"),
-    reason="AGENTBAY_API_KEY not set"
-)
+@pytest.mark.skipif(not os.getenv("AGENTBAY_API_KEY"), reason="AGENTBAY_API_KEY not set")
 class TestAgentBayRealE2E:
     """Real E2E tests with AgentBay provider - NO MOCKS."""
 
@@ -159,10 +153,7 @@ class TestAgentBayRealE2E:
         agent.close()
 
 
-@pytest.mark.skipif(
-    not os.getenv("DAYTONA_API_KEY"),
-    reason="DAYTONA_API_KEY not set"
-)
+@pytest.mark.skipif(not os.getenv("DAYTONA_API_KEY"), reason="DAYTONA_API_KEY not set")
 class TestDaytonaRealE2E:
     """Real E2E tests with Daytona provider - NO MOCKS."""
 

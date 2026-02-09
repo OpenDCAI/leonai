@@ -217,8 +217,7 @@ class ChatSessionManager:
         missing = REQUIRED_CHAT_SESSION_COLUMNS - cols
         if missing:
             raise RuntimeError(
-                f"chat_sessions schema mismatch: missing {sorted(missing)}. "
-                "Purge ~/.leon/sandbox.db and retry."
+                f"chat_sessions schema mismatch: missing {sorted(missing)}. Purge ~/.leon/sandbox.db and retry."
             )
 
     def _build_runtime(self, terminal: AbstractTerminal, lease: SandboxLease) -> PhysicalTerminalRuntime:

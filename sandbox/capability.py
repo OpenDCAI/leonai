@@ -51,13 +51,16 @@ class SandboxCapability:
 
 class _CommandWrapper(BaseExecutor):
     """Wrapper that delegates to runtime's execute method."""
+
     runtime_owns_cwd = True
 
     def __init__(self, session: ChatSession):
         super().__init__(default_cwd=session.terminal.get_state().cwd)
         self._session = session
 
-    async def execute(self, command: str, cwd: str | None = None, timeout: float | None = None, env: dict[str, str] | None = None):
+    async def execute(
+        self, command: str, cwd: str | None = None, timeout: float | None = None, env: dict[str, str] | None = None
+    ):
         """Execute command via runtime."""
         self._session.touch()
         # @@@command-context - CommandMiddleware passes Cwd/env; preserve that context for remote runtimes.
@@ -98,6 +101,7 @@ class _FileSystemWrapper(FileSystemBackend):
         """Get provider from session's lease."""
         # Provider is passed to runtime, we need to access it
         from sandbox.runtime import RemoteWrappedRuntime
+
         if isinstance(self._session.runtime, RemoteWrappedRuntime):
             return self._session.runtime.provider
         raise RuntimeError("FileSystem operations only supported for remote runtimes")
@@ -106,6 +110,7 @@ class _FileSystemWrapper(FileSystemBackend):
         """Get active instance ID."""
         # @@@lease-convergence - File operations can also wake paused instances; always converge through lease.
         from sandbox.runtime import RemoteWrappedRuntime
+
         if isinstance(self._session.runtime, RemoteWrappedRuntime):
             instance = self._session.lease.ensure_active_instance(self._session.runtime.provider)
         else:

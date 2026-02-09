@@ -144,6 +144,7 @@ class SandboxLease(ABC):
 
 class SQLiteLease(SandboxLease):
     """SQLite-backed lease implementation."""
+
     _lock_guard = threading.Lock()
     _lease_locks: dict[str, threading.Lock] = {}
 
@@ -181,9 +182,7 @@ class SQLiteLease(SandboxLease):
                     if self._current_instance.status != "paused":
                         self._current_instance.status = "paused"
                         self._persist_instance()
-                    raise RuntimeError(
-                        f"Sandbox lease {self.lease_id} is paused. Resume before executing commands."
-                    )
+                    raise RuntimeError(f"Sandbox lease {self.lease_id} is paused. Resume before executing commands.")
             except RuntimeError:
                 raise
             except Exception:
@@ -419,8 +418,7 @@ class LeaseStore:
         missing_lease = REQUIRED_LEASE_COLUMNS - lease_cols
         if missing_lease:
             raise RuntimeError(
-                f"sandbox_leases schema mismatch: missing {sorted(missing_lease)}. "
-                "Purge ~/.leon/sandbox.db and retry."
+                f"sandbox_leases schema mismatch: missing {sorted(missing_lease)}. Purge ~/.leon/sandbox.db and retry."
             )
         missing_instances = REQUIRED_INSTANCE_COLUMNS - instance_cols
         if missing_instances:

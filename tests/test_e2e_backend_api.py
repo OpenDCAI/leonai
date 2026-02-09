@@ -8,10 +8,9 @@ Tests the terminal persistence architecture through real API calls.
 """
 
 import os
-import pytest
+
 import httpx
-import asyncio
-import json
+import pytest
 
 
 @pytest.fixture
@@ -28,10 +27,7 @@ class TestBackendAPIE2E:
         """Test: Create thread with E2B sandbox."""
         async with httpx.AsyncClient(timeout=30.0) as client:
             # Frontend: POST /api/threads with sandbox type
-            response = await client.post(
-                f"{api_base_url}/api/threads",
-                json={"sandbox": "e2b"}
-            )
+            response = await client.post(f"{api_base_url}/api/threads", json={"sandbox": "e2b"})
             assert response.status_code == 200
             data = response.json()
             assert "thread_id" in data
@@ -43,10 +39,7 @@ class TestBackendAPIE2E:
         """Test: Session/Terminal/Lease status endpoints."""
         async with httpx.AsyncClient(timeout=60.0) as client:
             # Create thread
-            response = await client.post(
-                f"{api_base_url}/api/threads",
-                json={"sandbox": "e2b"}
-            )
+            response = await client.post(f"{api_base_url}/api/threads", json={"sandbox": "e2b"})
             thread_id = response.json()["thread_id"]
 
             # Note: These endpoints require an agent to be initialized first
@@ -72,10 +65,7 @@ class TestBackendAPIE2E:
         """Test: Pause and resume sandbox via API."""
         async with httpx.AsyncClient(timeout=60.0) as client:
             # Create thread
-            response = await client.post(
-                f"{api_base_url}/api/threads",
-                json={"sandbox": "e2b"}
-            )
+            response = await client.post(f"{api_base_url}/api/threads", json={"sandbox": "e2b"})
             thread_id = response.json()["thread_id"]
 
             # Note: Pause/resume require an agent to be initialized first
@@ -105,10 +95,7 @@ class TestBackendAPIE2E:
         """Test: Get thread messages."""
         async with httpx.AsyncClient(timeout=60.0) as client:
             # Create thread
-            response = await client.post(
-                f"{api_base_url}/api/threads",
-                json={"sandbox": "e2b"}
-            )
+            response = await client.post(f"{api_base_url}/api/threads", json={"sandbox": "e2b"})
             thread_id = response.json()["thread_id"]
 
             # Frontend: GET /api/threads/{id}
@@ -125,10 +112,7 @@ class TestBackendAPIE2E:
         """Test: Delete thread."""
         async with httpx.AsyncClient(timeout=30.0) as client:
             # Create thread
-            response = await client.post(
-                f"{api_base_url}/api/threads",
-                json={"sandbox": "e2b"}
-            )
+            response = await client.post(f"{api_base_url}/api/threads", json={"sandbox": "e2b"})
             thread_id = response.json()["thread_id"]
 
             # Frontend: DELETE /api/threads/{id}
@@ -166,18 +150,12 @@ class TestBackendAPIE2E:
         """Test: Create multiple threads with different sandbox types."""
         async with httpx.AsyncClient(timeout=30.0) as client:
             # Create E2B thread
-            response = await client.post(
-                f"{api_base_url}/api/threads",
-                json={"sandbox": "e2b"}
-            )
+            response = await client.post(f"{api_base_url}/api/threads", json={"sandbox": "e2b"})
             e2b_thread_id = response.json()["thread_id"]
             assert response.json()["sandbox"] == "e2b"
 
             # Create local thread
-            response = await client.post(
-                f"{api_base_url}/api/threads",
-                json={"sandbox": "local"}
-            )
+            response = await client.post(f"{api_base_url}/api/threads", json={"sandbox": "local"})
             local_thread_id = response.json()["thread_id"]
             assert response.json()["sandbox"] == "local"
 
@@ -189,16 +167,12 @@ class TestBackendAPIE2E:
         """Test: Send steering message."""
         async with httpx.AsyncClient(timeout=30.0) as client:
             # Create thread
-            response = await client.post(
-                f"{api_base_url}/api/threads",
-                json={"sandbox": "e2b"}
-            )
+            response = await client.post(f"{api_base_url}/api/threads", json={"sandbox": "e2b"})
             thread_id = response.json()["thread_id"]
 
             # Frontend: POST /api/threads/{id}/steer
             response = await client.post(
-                f"{api_base_url}/api/threads/{thread_id}/steer",
-                json={"message": "Test steering message"}
+                f"{api_base_url}/api/threads/{thread_id}/steer", json={"message": "Test steering message"}
             )
             assert response.status_code == 200
             data = response.json()
@@ -208,18 +182,12 @@ class TestBackendAPIE2E:
 class TestBackendAPIAgentBay:
     """E2E tests with AgentBay sandbox."""
 
-    @pytest.mark.skipif(
-        not os.getenv("AGENTBAY_API_KEY"),
-        reason="AGENTBAY_API_KEY not set"
-    )
+    @pytest.mark.skipif(not os.getenv("AGENTBAY_API_KEY"), reason="AGENTBAY_API_KEY not set")
     @pytest.mark.asyncio
     async def test_create_thread_with_agentbay(self, api_base_url):
         """Test: Create thread with AgentBay sandbox."""
         async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(
-                f"{api_base_url}/api/threads",
-                json={"sandbox": "agentbay"}
-            )
+            response = await client.post(f"{api_base_url}/api/threads", json={"sandbox": "agentbay"})
             assert response.status_code == 200
             data = response.json()
             assert data["sandbox"] == "agentbay"
@@ -228,18 +196,12 @@ class TestBackendAPIAgentBay:
 class TestBackendAPIDaytona:
     """E2E tests with Daytona sandbox."""
 
-    @pytest.mark.skipif(
-        not os.getenv("DAYTONA_API_KEY"),
-        reason="DAYTONA_API_KEY not set"
-    )
+    @pytest.mark.skipif(not os.getenv("DAYTONA_API_KEY"), reason="DAYTONA_API_KEY not set")
     @pytest.mark.asyncio
     async def test_create_thread_with_daytona(self, api_base_url):
         """Test: Create thread with Daytona sandbox."""
         async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(
-                f"{api_base_url}/api/threads",
-                json={"sandbox": "daytona"}
-            )
+            response = await client.post(f"{api_base_url}/api/threads", json={"sandbox": "daytona"})
             assert response.status_code == 200
             data = response.json()
             assert data["sandbox"] == "daytona"

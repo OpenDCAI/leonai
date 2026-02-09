@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING
 from sandbox.db import DEFAULT_DB_PATH
 
 if TYPE_CHECKING:
-    from sandbox.lease import SandboxLease
+    pass
 
 
 def _connect(db_path: Path) -> sqlite3.Connection:
@@ -45,11 +45,13 @@ class TerminalState:
 
     def to_json(self) -> str:
         """Serialize to JSON for DB storage."""
-        return json.dumps({
-            "cwd": self.cwd,
-            "env_delta": self.env_delta,
-            "state_version": self.state_version,
-        })
+        return json.dumps(
+            {
+                "cwd": self.cwd,
+                "env_delta": self.env_delta,
+                "state_version": self.state_version,
+            }
+        )
 
     @classmethod
     def from_json(cls, data: str) -> TerminalState:

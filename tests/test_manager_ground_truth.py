@@ -1,8 +1,8 @@
 """Tests for SandboxManager inspect ground-truth behavior."""
 
-from pathlib import Path
 import tempfile
 import uuid
+from pathlib import Path
 
 from sandbox.manager import SandboxManager
 from sandbox.provider import Metrics, ProviderExecResult, SandboxProvider, SessionInfo
@@ -61,8 +61,7 @@ class FakeProvider(SandboxProvider):
 
     def list_provider_sessions(self) -> list[SessionInfo]:
         return [
-            SessionInfo(session_id=sid, provider=self.name, status=status)
-            for sid, status in self._statuses.items()
+            SessionInfo(session_id=sid, provider=self.name, status=status) for sid, status in self._statuses.items()
         ]
 
 
@@ -98,9 +97,6 @@ def test_list_sessions_includes_provider_orphan() -> None:
         mgr = SandboxManager(provider=provider, db_path=db)
         orphan = provider.create_session()
         rows = mgr.list_sessions()
-        assert any(
-            r["instance_id"] == orphan.session_id and r["source"] == "provider_orphan"
-            for r in rows
-        )
+        assert any(r["instance_id"] == orphan.session_id and r["source"] == "provider_orphan" for r in rows)
     finally:
         db.unlink(missing_ok=True)

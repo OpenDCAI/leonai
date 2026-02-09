@@ -9,10 +9,10 @@ Architecture:
 - Lease manages Instance (ephemeral VM/container)
 """
 
+import os
+import uuid
 from collections.abc import Callable
 from pathlib import Path
-import uuid
-import os
 
 from sandbox.capability import SandboxCapability
 from sandbox.chat_session import ChatSessionManager, ChatSessionPolicy
@@ -189,10 +189,9 @@ class SandboxManager:
         if not instance:
             # Ensure instance exists
             from sandbox.runtime import RemoteWrappedRuntime
+
             if isinstance(capability._session.runtime, RemoteWrappedRuntime):
-                instance = capability._session.lease.ensure_active_instance(
-                    capability._session.runtime.provider
-                )
+                instance = capability._session.lease.ensure_active_instance(capability._session.runtime.provider)
 
         return SessionInfo(
             session_id=instance.instance_id if instance else "local",

@@ -3,7 +3,6 @@
 Tests the complete flow: Thread → ChatSession → Runtime → Terminal → Lease → Instance
 """
 
-import asyncio
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -147,6 +146,7 @@ class TestFullArchitectureFlow:
 
         # Update terminal state
         from sandbox.terminal import TerminalState
+
         new_state = TerminalState(cwd="/tmp", env_delta={"FOO": "bar"})
         capability1._session.terminal.update_state(new_state)
 
@@ -194,6 +194,7 @@ class TestFullArchitectureFlow:
         old_activity = capability._session.last_active_at
 
         import time
+
         time.sleep(0.01)
 
         capability.touch()
@@ -234,7 +235,6 @@ class TestSessionLifecycle:
 
     def test_session_expiry_cleanup(self, sandbox_manager, temp_db):
         """Test that expired sessions are cleaned up."""
-        from sandbox.chat_session import ChatSessionPolicy
 
         thread_id = "test-thread-9"
 
@@ -249,6 +249,7 @@ class TestSessionLifecycle:
         )
 
         import time
+
         time.sleep(0.1)
 
         # Cleanup expired
@@ -318,6 +319,7 @@ class TestMultiThreadScenarios:
         # Work on thread 1
         cap1 = sandbox_manager.get_sandbox(thread_id1)
         from sandbox.terminal import TerminalState
+
         cap1._session.terminal.update_state(TerminalState(cwd="/tmp"))
 
         # Switch to thread 2

@@ -459,10 +459,14 @@ tool:
         # 1. Memory (context pruning + compaction — before prompt caching)
         if self.profile.agent.memory.enabled:
             cfg = self.profile.agent.memory
+            db_path = Path.home() / ".leon" / "leon.db"
             self._memory_middleware = MemoryMiddleware(
                 context_limit=self.profile.agent.context_limit,
                 pruning_config=cfg.pruning,
                 compaction_config=cfg.compaction,
+                db_path=db_path,
+                checkpointer=self.checkpointer,
+                compaction_threshold=0.7,
                 verbose=self.verbose,
             )
             middleware.append(self._memory_middleware)

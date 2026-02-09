@@ -5,11 +5,12 @@ import json
 import os
 import sqlite3
 import uuid
+from collections.abc import AsyncGenerator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, AsyncGenerator
+from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -32,6 +33,7 @@ LOCAL_WORKSPACE_ROOT = Path.cwd().resolve()
 
 # --- Request models ---
 
+
 class CreateThreadRequest(BaseModel):
     sandbox: str = "local"
 
@@ -45,6 +47,7 @@ class SteerRequest(BaseModel):
 
 
 # --- Agent pool ---
+
 
 def _available_sandbox_types() -> list[dict[str, Any]]:
     """Scan ~/.leon/sandboxes/ for configured providers."""
@@ -99,6 +102,7 @@ def _resolve_thread_sandbox(app_obj: FastAPI, thread_id: str) -> str:
 
 # --- Sandbox provider helpers (for management endpoints) ---
 
+
 def _init_providers_and_managers() -> tuple[dict, dict]:
     """Load sandbox providers and managers from config files."""
     providers: dict[str, Any] = {}
@@ -111,33 +115,43 @@ def _init_providers_and_managers() -> tuple[dict, dict]:
             config = SandboxConfig.load(name)
             if config.provider == "agentbay":
                 from sandbox.providers.agentbay import AgentBayProvider
+
                 key = config.agentbay.api_key or os.getenv("AGENTBAY_API_KEY")
                 if key:
                     providers["agentbay"] = AgentBayProvider(
-                        api_key=key, region_id=config.agentbay.region_id,
+                        api_key=key,
+                        region_id=config.agentbay.region_id,
                         default_context_path=config.agentbay.context_path,
                         image_id=config.agentbay.image_id,
                     )
             elif config.provider == "docker":
                 from sandbox.providers.docker import DockerProvider
+
                 providers["docker"] = DockerProvider(
-                    image=config.docker.image, mount_path=config.docker.mount_path,
+                    image=config.docker.image,
+                    mount_path=config.docker.mount_path,
                 )
             elif config.provider == "e2b":
                 from sandbox.providers.e2b import E2BProvider
+
                 key = config.e2b.api_key or os.getenv("E2B_API_KEY")
                 if key:
                     providers["e2b"] = E2BProvider(
-                        api_key=key, template=config.e2b.template,
-                        default_cwd=config.e2b.cwd, timeout=config.e2b.timeout,
+                        api_key=key,
+                        template=config.e2b.template,
+                        default_cwd=config.e2b.cwd,
+                        timeout=config.e2b.timeout,
                     )
             elif config.provider == "daytona":
                 from sandbox.providers.daytona import DaytonaProvider
+
                 key = config.daytona.api_key or os.getenv("DAYTONA_API_KEY")
                 if key:
                     providers["daytona"] = DaytonaProvider(
-                        api_key=key, api_url=config.daytona.api_url,
-                        target=config.daytona.target, default_cwd=config.daytona.cwd,
+                        api_key=key,
+                        api_url=config.daytona.api_url,
+                        target=config.daytona.target,
+                        default_cwd=config.daytona.cwd,
                     )
         except Exception as e:
             print(f"[sandbox] Failed to load {name}: {e}")
@@ -155,25 +169,26 @@ def _load_all_sessions(managers: dict) -> list[dict]:
 
     with ThreadPoolExecutor(max_workers=len(managers)) as pool:
         futures = {
-            pool.submit(manager.list_sessions): (provider_name, manager)
-            for provider_name, manager in managers.items()
+            pool.submit(manager.list_sessions): (provider_name, manager) for provider_name, manager in managers.items()
         }
         for future in as_completed(futures):
             provider_name, _manager = futures[future]
             rows = future.result()
             for row in rows:
-                sessions.append({
-                    "session_id": row["session_id"],
-                    "thread_id": row["thread_id"],
-                    "provider": row.get("provider", provider_name),
-                    "status": row.get("status", "running"),
-                    "created_at": row.get("created_at"),
-                    "last_active": row.get("last_active"),
-                    "lease_id": row.get("lease_id"),
-                    "instance_id": row.get("instance_id"),
-                    "chat_session_id": row.get("chat_session_id"),
-                    "source": row.get("source", "unknown"),
-                })
+                sessions.append(
+                    {
+                        "session_id": row["session_id"],
+                        "thread_id": row["thread_id"],
+                        "provider": row.get("provider", provider_name),
+                        "status": row.get("status", "running"),
+                        "created_at": row.get("created_at"),
+                        "last_active": row.get("last_active"),
+                        "lease_id": row.get("lease_id"),
+                        "instance_id": row.get("instance_id"),
+                        "chat_session_id": row.get("chat_session_id"),
+                        "source": row.get("source", "unknown"),
+                    }
+                )
 
     # @@@stable-session-order - Keep deterministic ordering across refreshes/providers.
     def _to_ts(value: Any) -> float:
@@ -219,9 +234,7 @@ def _find_session_and_manager(
     if len(exact) == 1:
         chosen = exact[0]
         return chosen, managers.get(chosen["provider"])
-    raise RuntimeError(
-        f"Ambiguous session_id '{session_id}'. Specify provider query param."
-    )
+    raise RuntimeError(f"Ambiguous session_id '{session_id}'. Specify provider query param.")
 
 
 def _is_virtual_thread_id(thread_id: str | None) -> bool:
@@ -229,6 +242,7 @@ def _is_virtual_thread_id(thread_id: str | None) -> bool:
 
 
 # --- Lifespan + App ---
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -272,6 +286,7 @@ async def _get_thread_lock(app_obj: FastAPI, thread_id: str) -> asyncio.Lock:
 
 # --- Helpers ---
 
+
 def _extract_text_content(raw_content: Any) -> str:
     if isinstance(raw_content, str):
         return raw_content
@@ -303,9 +318,7 @@ def _list_threads_from_db() -> list[dict[str, str]]:
             conn.row_factory = sqlite3.Row
             existing = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
             if "checkpoints" in existing:
-                rows = conn.execute(
-                    "SELECT DISTINCT thread_id FROM checkpoints WHERE thread_id IS NOT NULL"
-                ).fetchall()
+                rows = conn.execute("SELECT DISTINCT thread_id FROM checkpoints WHERE thread_id IS NOT NULL").fetchall()
                 thread_ids.update(row["thread_id"] for row in rows if row["thread_id"])
 
     if SANDBOX_DB_PATH.exists():
@@ -395,6 +408,7 @@ def _resolve_local_workspace_path(raw_path: str | None) -> Path:
 
 
 # --- Sandbox endpoints ---
+
 
 @app.get("/api/sandbox/types")
 async def list_sandbox_types() -> dict[str, Any]:
@@ -638,6 +652,7 @@ async def destroy_thread_sandbox(thread_id: str) -> dict[str, Any]:
 
 # --- New architecture endpoints: session/terminal/lease status ---
 
+
 @app.get("/api/threads/{thread_id}/session")
 async def get_thread_session_status(thread_id: str) -> dict[str, Any]:
     """Get ChatSession status for a thread."""
@@ -722,7 +737,9 @@ async def get_thread_lease_status(thread_id: str) -> dict[str, Any]:
             "instance_id": instance.instance_id if instance else None,
             "state": instance.status if instance else None,
             "started_at": instance.created_at.isoformat() if instance and instance.created_at else None,
-        } if instance else None,
+        }
+        if instance
+        else None,
         "created_at": created_at,
         "updated_at": updated_at,
     }
@@ -803,6 +820,7 @@ async def read_workspace_file(thread_id: str, path: str = Query(...)) -> dict[st
 
 # --- Thread endpoints ---
 
+
 @app.post("/api/threads")
 async def create_thread(payload: CreateThreadRequest | None = None) -> dict[str, Any]:
     sandbox_type = payload.sandbox if payload else "local"
@@ -880,6 +898,7 @@ async def steer_thread(thread_id: str, payload: SteerRequest) -> dict[str, Any]:
 
 # --- Run endpoint (SSE streaming) ---
 
+
 @app.post("/api/threads/{thread_id}/runs")
 async def run_thread(thread_id: str, payload: RunRequest) -> EventSourceResponse:
     if not payload.message.strip():
@@ -900,6 +919,7 @@ async def run_thread(thread_id: str, payload: RunRequest) -> EventSourceResponse
                 # @@@ Streaming parser mirrors TUI runner chunk semantics so web and CLI stay consistent.
                 # Prime session before tool calls so lazy capability wrappers never race thread context propagation.
                 if hasattr(agent, "_sandbox"):
+
                     def _prime_sandbox() -> None:
                         mgr = agent._sandbox.manager
                         session = mgr.session_manager.get(thread_id)
@@ -942,21 +962,27 @@ async def run_thread(thread_id: str, payload: RunRequest) -> EventSourceResponse
                                 for tc in getattr(msg, "tool_calls", []):
                                     yield {
                                         "event": "tool_call",
-                                        "data": json.dumps({
-                                            "id": tc.get("id"),
-                                            "name": tc.get("name", "unknown"),
-                                            "args": tc.get("args", {}),
-                                        }, ensure_ascii=False),
+                                        "data": json.dumps(
+                                            {
+                                                "id": tc.get("id"),
+                                                "name": tc.get("name", "unknown"),
+                                                "args": tc.get("args", {}),
+                                            },
+                                            ensure_ascii=False,
+                                        ),
                                     }
 
                             elif msg_class == "ToolMessage":
                                 yield {
                                     "event": "tool_result",
-                                    "data": json.dumps({
-                                        "tool_call_id": getattr(msg, "tool_call_id", None),
-                                        "name": getattr(msg, "name", "unknown"),
-                                        "content": str(getattr(msg, "content", "")),
-                                    }, ensure_ascii=False),
+                                    "data": json.dumps(
+                                        {
+                                            "tool_call_id": getattr(msg, "tool_call_id", None),
+                                            "name": getattr(msg, "name", "unknown"),
+                                            "content": str(getattr(msg, "content", "")),
+                                        },
+                                        ensure_ascii=False,
+                                    ),
                                 }
 
             yield {"event": "done", "data": json.dumps({"thread_id": thread_id})}

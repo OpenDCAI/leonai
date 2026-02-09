@@ -6,9 +6,8 @@ Simulates all frontend interactions programmatically.
 """
 
 import os
+
 import pytest
-import tempfile
-from pathlib import Path
 
 from agent import create_leon_agent
 from sandbox.thread_context import set_current_thread_id
@@ -32,19 +31,13 @@ def temp_workspace(tmp_path):
 class TestAgentBayE2E:
     """End-to-end tests with AgentBay provider."""
 
-    @pytest.mark.skipif(
-        not os.getenv("AGENTBAY_API_KEY"),
-        reason="AGENTBAY_API_KEY not set"
-    )
+    @pytest.mark.skipif(not os.getenv("AGENTBAY_API_KEY"), reason="AGENTBAY_API_KEY not set")
     def test_agentbay_basic_execution(self, test_db_path):
         """Test basic command execution through agent with AgentBay."""
         thread_id = "test-agentbay-basic"
         set_current_thread_id(thread_id)
 
-        agent = create_leon_agent(
-            sandbox="agentbay",
-            db_path=test_db_path
-        )
+        agent = create_leon_agent(sandbox="agentbay", db_path=test_db_path)
 
         # Execute command through agent
         result = agent.sandbox.shell().execute("echo 'AgentBay Test'")
@@ -53,19 +46,13 @@ class TestAgentBayE2E:
 
         agent.close()
 
-    @pytest.mark.skipif(
-        not os.getenv("AGENTBAY_API_KEY"),
-        reason="AGENTBAY_API_KEY not set"
-    )
+    @pytest.mark.skipif(not os.getenv("AGENTBAY_API_KEY"), reason="AGENTBAY_API_KEY not set")
     def test_agentbay_terminal_state_persistence(self, test_db_path):
         """Test terminal state persists across commands with AgentBay."""
         thread_id = "test-agentbay-state"
         set_current_thread_id(thread_id)
 
-        agent = create_leon_agent(
-            sandbox="agentbay",
-            db_path=test_db_path
-        )
+        agent = create_leon_agent(sandbox="agentbay", db_path=test_db_path)
 
         # Change directory
         agent.sandbox.shell().execute("cd /tmp")
@@ -79,19 +66,13 @@ class TestAgentBayE2E:
 
         agent.close()
 
-    @pytest.mark.skipif(
-        not os.getenv("AGENTBAY_API_KEY"),
-        reason="AGENTBAY_API_KEY not set"
-    )
+    @pytest.mark.skipif(not os.getenv("AGENTBAY_API_KEY"), reason="AGENTBAY_API_KEY not set")
     def test_agentbay_file_operations(self, test_db_path):
         """Test file operations with AgentBay."""
         thread_id = "test-agentbay-files"
         set_current_thread_id(thread_id)
 
-        agent = create_leon_agent(
-            sandbox="agentbay",
-            db_path=test_db_path
-        )
+        agent = create_leon_agent(sandbox="agentbay", db_path=test_db_path)
 
         # Create file
         test_content = "AgentBay file test"
@@ -108,10 +89,7 @@ class TestAgentBayE2E:
         agent.close()
 
 
-@pytest.mark.skipif(
-    not os.getenv("E2B_API_KEY"),
-    reason="E2B_API_KEY not set"
-)
+@pytest.mark.skipif(not os.getenv("E2B_API_KEY"), reason="E2B_API_KEY not set")
 class TestE2BE2E:
     """End-to-end tests with E2B provider."""
 
@@ -120,10 +98,7 @@ class TestE2BE2E:
         thread_id = "test-e2b-basic"
         set_current_thread_id(thread_id)
 
-        agent = create_leon_agent(
-            sandbox="e2b",
-            db_path=test_db_path
-        )
+        agent = create_leon_agent(sandbox="e2b", db_path=test_db_path)
 
         result = agent.sandbox.shell().execute("echo 'E2B Test'")
         assert result.exit_code == 0
@@ -136,10 +111,7 @@ class TestE2BE2E:
         thread_id = "test-e2b-state"
         set_current_thread_id(thread_id)
 
-        agent = create_leon_agent(
-            sandbox="e2b",
-            db_path=test_db_path
-        )
+        agent = create_leon_agent(sandbox="e2b", db_path=test_db_path)
 
         # Change directory
         agent.sandbox.shell().execute("cd /tmp")
@@ -158,10 +130,7 @@ class TestE2BE2E:
         thread_id = "test-e2b-files"
         set_current_thread_id(thread_id)
 
-        agent = create_leon_agent(
-            sandbox="e2b",
-            db_path=test_db_path
-        )
+        agent = create_leon_agent(sandbox="e2b", db_path=test_db_path)
 
         # Create file
         test_content = "E2B file test"
@@ -178,10 +147,7 @@ class TestE2BE2E:
         thread_id = "test-e2b-pause"
         set_current_thread_id(thread_id)
 
-        agent = create_leon_agent(
-            sandbox="e2b",
-            db_path=test_db_path
-        )
+        agent = create_leon_agent(sandbox="e2b", db_path=test_db_path)
 
         # Set state
         agent.sandbox.shell().execute("cd /tmp")
@@ -200,10 +166,7 @@ class TestE2BE2E:
         agent.close()
 
 
-@pytest.mark.skipif(
-    not os.getenv("DAYTONA_API_KEY"),
-    reason="DAYTONA_API_KEY not set"
-)
+@pytest.mark.skipif(not os.getenv("DAYTONA_API_KEY"), reason="DAYTONA_API_KEY not set")
 class TestDaytonaE2E:
     """End-to-end tests with Daytona provider."""
 
@@ -212,10 +175,7 @@ class TestDaytonaE2E:
         thread_id = "test-daytona-basic"
         set_current_thread_id(thread_id)
 
-        agent = create_leon_agent(
-            sandbox="daytona",
-            db_path=test_db_path
-        )
+        agent = create_leon_agent(sandbox="daytona", db_path=test_db_path)
 
         result = agent.sandbox.shell().execute("echo 'Daytona Test'")
         assert result.exit_code == 0
@@ -228,10 +188,7 @@ class TestDaytonaE2E:
         thread_id = "test-daytona-state"
         set_current_thread_id(thread_id)
 
-        agent = create_leon_agent(
-            sandbox="daytona",
-            db_path=test_db_path
-        )
+        agent = create_leon_agent(sandbox="daytona", db_path=test_db_path)
 
         # Change directory
         agent.sandbox.shell().execute("cd /tmp")
@@ -244,8 +201,6 @@ class TestDaytonaE2E:
         assert "test456" in result.stdout
 
         agent.close()
-
-
 
 
 if __name__ == "__main__":

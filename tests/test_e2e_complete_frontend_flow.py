@@ -12,11 +12,10 @@ This test simulates the complete frontend user journey:
 NO MOCKS - Real HTTP API calls exactly as frontend does.
 """
 
-import os
-import pytest
-import httpx
 import asyncio
-import json
+
+import httpx
+import pytest
 
 
 @pytest.fixture
@@ -42,7 +41,6 @@ class TestCompleteFrontendFlow:
         6. User pauses/resumes → pauseThreadSandbox/resumeThreadSandbox
         """
         async with httpx.AsyncClient(timeout=60.0) as client:
-
             # ===== STEP 1: App Mount =====
             # App.tsx line 52-53: listSandboxTypes()
             print("\n[STEP 1] App mount - List sandbox types")
@@ -62,10 +60,7 @@ class TestCompleteFrontendFlow:
             # ===== STEP 2: Create Thread =====
             # App.tsx line 102-107: handleCreateThread("e2b")
             print("\n[STEP 2] User creates new thread with E2B sandbox")
-            response = await client.post(
-                f"{api_base_url}/api/threads",
-                json={"sandbox": "e2b"}
-            )
+            response = await client.post(f"{api_base_url}/api/threads", json={"sandbox": "e2b"})
             assert response.status_code == 200
             thread = response.json()
             thread_id = thread["thread_id"]
@@ -93,7 +88,7 @@ class TestCompleteFrontendFlow:
                 client.get(f"{api_base_url}/api/threads/{thread_id}/session"),
                 client.get(f"{api_base_url}/api/threads/{thread_id}/terminal"),
                 client.get(f"{api_base_url}/api/threads/{thread_id}/lease"),
-                return_exceptions=True
+                return_exceptions=True,
             )
 
             session_response, terminal_response, lease_response = results
@@ -122,7 +117,9 @@ class TestCompleteFrontendFlow:
             if isinstance(lease_response, httpx.Response):
                 if lease_response.status_code == 200:
                     lease = lease_response.json()
-                    print(f"✓ Lease: provider={lease.get('provider_name')} instance={lease.get('instance', {}).get('state')}")
+                    print(
+                        f"✓ Lease: provider={lease.get('provider_name')} instance={lease.get('instance', {}).get('state')}"
+                    )
                 else:
                     print(f"⚠ Lease endpoint returned {lease_response.status_code}")
             else:
@@ -173,10 +170,7 @@ class TestCompleteFrontendFlow:
         """
         async with httpx.AsyncClient(timeout=60.0) as client:
             # Create thread
-            response = await client.post(
-                f"{api_base_url}/api/threads",
-                json={"sandbox": "e2b"}
-            )
+            response = await client.post(f"{api_base_url}/api/threads", json={"sandbox": "e2b"})
             thread_id = response.json()["thread_id"]
 
             # SessionStatusPanel.tsx line 30-34: Parallel fetch with Promise.all
@@ -189,7 +183,7 @@ class TestCompleteFrontendFlow:
                 client.get(f"{api_base_url}/api/threads/{thread_id}/session"),
                 client.get(f"{api_base_url}/api/threads/{thread_id}/terminal"),
                 client.get(f"{api_base_url}/api/threads/{thread_id}/lease"),
-                return_exceptions=True
+                return_exceptions=True,
             )
 
             elapsed = asyncio.get_event_loop().time() - start_time
@@ -210,17 +204,13 @@ class TestCompleteFrontendFlow:
         """
         async with httpx.AsyncClient(timeout=30.0) as client:
             # Create thread
-            response = await client.post(
-                f"{api_base_url}/api/threads",
-                json={"sandbox": "e2b"}
-            )
+            response = await client.post(f"{api_base_url}/api/threads", json={"sandbox": "e2b"})
             thread_id = response.json()["thread_id"]
 
             # api.ts line 129-134: steer(threadId, message)
             print("\n[TEST] Send steering message")
             response = await client.post(
-                f"{api_base_url}/api/threads/{thread_id}/steer",
-                json={"message": "Test steering message"}
+                f"{api_base_url}/api/threads/{thread_id}/steer", json={"message": "Test steering message"}
             )
             assert response.status_code == 200
             result = response.json()

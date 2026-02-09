@@ -8,8 +8,6 @@ from pathlib import Path
 import pytest
 
 from sandbox.terminal import (
-    AbstractTerminal,
-    SQLiteTerminal,
     TerminalState,
     TerminalStore,
 )
@@ -67,11 +65,13 @@ class TestTerminalState:
 
     def test_from_json(self):
         """Test deserialization from JSON."""
-        json_str = json.dumps({
-            "cwd": "/home/user",
-            "env_delta": {"FOO": "bar"},
-            "state_version": 3,
-        })
+        json_str = json.dumps(
+            {
+                "cwd": "/home/user",
+                "env_delta": {"FOO": "bar"},
+                "state_version": 3,
+            }
+        )
         state = TerminalState.from_json(json_str)
 
         assert state.cwd == "/home/user"
@@ -97,9 +97,7 @@ class TestTerminalStore:
 
         # Verify table exists
         with sqlite3.connect(str(temp_db)) as conn:
-            cursor = conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='abstract_terminals'"
-            )
+            cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='abstract_terminals'")
             assert cursor.fetchone() is not None
 
     def test_create_terminal(self, store):
