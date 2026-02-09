@@ -2,7 +2,7 @@ import { Check, ChevronDown, ChevronRight, Copy } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AssistantTurn, ChatEntry, StreamStatus, ToolSegment, UserMessage } from "../api";
 import MarkdownContent from "./MarkdownContent";
-import { getDisclosureLevel, getToolRenderer } from "./tool-renderers";
+import { getToolRenderer } from "./tool-renderers";
 
 interface ChatAreaProps {
   entries: ChatEntry[];
@@ -66,20 +66,8 @@ function UserBubble({ entry }: { entry: UserMessage }) {
   );
 }
 
-/** Inline disclosure: single grey line with shimmer while calling */
-function InlineToolStep({ seg }: { seg: ToolSegment }) {
-  const Renderer = getToolRenderer(seg.step);
-  const isCalling = seg.step.status === "calling";
-
-  return (
-    <div className={`py-0.5 animate-fade-in ${isCalling ? "tool-shimmer" : ""}`}>
-      <Renderer step={seg.step} expanded={false} />
-    </div>
-  );
-}
-
-/** Card disclosure: bordered expandable card with pulse while calling */
-function CardToolStep({ seg }: { seg: ToolSegment }) {
+/** Every tool gets the same expandable card — collapsed shows the key info, expand shows details */
+function ToolStepBlock({ seg }: { seg: ToolSegment }) {
   const [expanded, setExpanded] = useState(false);
   const Renderer = getToolRenderer(seg.step);
   const isCalling = seg.step.status === "calling";
@@ -112,24 +100,15 @@ function CardToolStep({ seg }: { seg: ToolSegment }) {
   );
 }
 
-function ToolStepBlock({ seg }: { seg: ToolSegment }) {
-  const level = getDisclosureLevel(seg.step);
-  if (level === "silent") return null;
-  if (level === "inline") return <InlineToolStep seg={seg} />;
-  return <CardToolStep seg={seg} />;
-}
-
 function AssistantBlock({ entry }: { entry: AssistantTurn }) {
   const fullText = entry.segments
     .filter((s) => s.type === "text")
     .map((s) => s.content)
     .join("\n");
 
-  // Check if there are any visible segments
   const hasVisible = entry.segments.some((s) => {
     if (s.type === "text") return s.content.trim().length > 0;
-    if (s.type === "tool") return getDisclosureLevel(s.step) !== "silent";
-    return false;
+    return s.type === "tool";
   });
 
   if (!hasVisible) return null;
