@@ -77,12 +77,12 @@ export default function Sidebar({
       <div className="h-px mx-3 bg-[#e5e5e5]" />
 
       {/* Thread list */}
-      <div className="flex-1 min-h-0 px-3 pt-3">
-        <div className="flex items-center justify-between px-2 mb-2">
+      <div className="flex-1 min-h-0 px-3 pt-3 flex flex-col">
+        <div className="flex items-center justify-between px-2 mb-2 flex-shrink-0">
           <span className="text-[11px] font-medium tracking-wider uppercase text-[#a3a3a3]">对话</span>
           <span className="text-[11px] text-[#d4d4d4]">{threads.length}</span>
         </div>
-        <div className="h-full overflow-y-auto space-y-0.5 custom-scrollbar">
+        <div className="flex-1 min-h-0 overflow-y-auto space-y-0.5 custom-scrollbar">
           {threads.map((thread) => {
             const isActive = activeThreadId === thread.thread_id;
             return (

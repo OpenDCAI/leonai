@@ -1,4 +1,4 @@
-import { Copy, Monitor, PanelLeft, Pause, Play, Server, Share2 } from "lucide-react";
+import { Copy, Monitor, PanelLeft, Pause, Play, Share2 } from "lucide-react";
 import type { SandboxInfo } from "../api";
 
 const sandboxTypeLabels: Record<string, string> = {
@@ -15,7 +15,6 @@ interface HeaderProps {
   sandboxInfo: SandboxInfo | null;
   onToggleSidebar: () => void;
   onToggleComputer: () => void;
-  onOpenSandboxSessions: () => void;
   onPauseSandbox: () => void;
   onResumeSandbox: () => void;
   computerOpen: boolean;
@@ -27,14 +26,14 @@ export default function Header({
   sandboxInfo,
   onToggleSidebar,
   onToggleComputer,
-  onOpenSandboxSessions,
   onPauseSandbox,
   onResumeSandbox,
   computerOpen,
 }: HeaderProps) {
   const hasRemote = sandboxInfo && sandboxInfo.type !== "local";
   const sandboxLabel = sandboxTypeLabels[sandboxInfo?.type ?? "local"] ?? sandboxInfo?.type ?? "本地";
-  const statusText = sandboxInfo?.status === "running" ? "运行中" : sandboxInfo?.status === "paused" ? "已暂停" : sandboxInfo?.status ?? "";
+  const hasKnownStatus = sandboxInfo?.status === "running" || sandboxInfo?.status === "paused";
+  const statusText = sandboxInfo?.status === "running" ? "运行中" : sandboxInfo?.status === "paused" ? "已暂停" : "";
   const statusDotColor = sandboxInfo?.status === "running"
     ? "#22c55e"
     : sandboxInfo?.status === "paused"
@@ -59,22 +58,26 @@ export default function Header({
               {threadPreview || (activeThreadId ? "新对话" : "无对话")}
             </span>
           </div>
-          <div className="w-px h-6 bg-[#e5e5e5]" />
-          <div className="flex items-center gap-2 px-3 py-1.5 bg-[#fafafa]">
-            <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: statusDotColor }} />
-            <span className="text-sm text-[#525252]">{sandboxLabel}</span>
-            {hasRemote && statusText && (
-              <span
-                className="text-[10px] px-1.5 py-0.5 rounded font-medium"
-                style={{
-                  background: sandboxInfo?.status === "running" ? "rgba(34,197,94,0.1)" : "rgba(234,179,8,0.1)",
-                  color: sandboxInfo?.status === "running" ? "#16a34a" : "#ca8a04",
-                }}
-              >
-                {statusText}
-              </span>
-            )}
-          </div>
+          {hasKnownStatus && (
+            <>
+              <div className="w-px h-6 bg-[#e5e5e5]" />
+              <div className="flex items-center gap-2 px-3 py-1.5 bg-[#fafafa]">
+                <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: statusDotColor }} />
+                <span className="text-sm text-[#525252]">{sandboxLabel}</span>
+                {hasRemote && statusText && (
+                  <span
+                    className="text-[10px] px-1.5 py-0.5 rounded font-medium"
+                    style={{
+                      background: sandboxInfo?.status === "running" ? "rgba(34,197,94,0.1)" : "rgba(234,179,8,0.1)",
+                      color: sandboxInfo?.status === "running" ? "#16a34a" : "#ca8a04",
+                    }}
+                  >
+                    {statusText}
+                  </span>
+                )}
+              </div>
+            </>
+          )}
         </div>
       </div>
 
@@ -97,13 +100,6 @@ export default function Header({
             恢复
           </button>
         )}
-        <button
-          className="px-3 py-1.5 rounded-lg text-xs flex items-center gap-2 border border-[#e5e5e5] text-[#525252] hover:bg-[#f5f5f5] hover:text-[#171717]"
-          onClick={onOpenSandboxSessions}
-        >
-          <Server className="w-3.5 h-3.5" />
-          会话管理
-        </button>
         <button
           className="w-8 h-8 rounded-lg flex items-center justify-center text-[#737373] hover:bg-[#f5f5f5] hover:text-[#171717]"
           title="分享"
