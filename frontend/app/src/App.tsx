@@ -4,6 +4,7 @@ import ChatArea from "./components/ChatArea";
 import ComputerPanel from "./components/ComputerPanel";
 import Header from "./components/Header";
 import InputBox from "./components/InputBox";
+import NewThreadModal from "./components/NewThreadModal";
 import SandboxSessionsModal from "./components/SandboxSessionsModal";
 import SearchModal from "./components/SearchModal";
 import Sidebar from "./components/Sidebar";
@@ -33,6 +34,7 @@ export default function App() {
   const [computerOpen, setComputerOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [sessionsOpen, setSessionsOpen] = useState(false);
+  const [newThreadOpen, setNewThreadOpen] = useState(false);
 
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
   const [sandboxTypes, setSandboxTypes] = useState<SandboxType[]>([{ name: "local", available: true }]);
@@ -45,9 +47,22 @@ export default function App() {
 
   const refreshThreads = useCallback(async () => {
     const rows = await listThreads();
-    setThreads(rows);
-    if (!activeThreadId && rows.length > 0) {
-      setActiveThreadId(rows[0].thread_id);
+    const enriched = await Promise.all(
+      rows.map(async (t) => {
+        try {
+          const detail = await getThread(t.thread_id);
+          const msgs = Array.isArray(detail.messages) ? detail.messages : [];
+          const firstUser = msgs.find((m: { type?: string }) => m.type === "HumanMessage");
+          const preview = firstUser ? String((firstUser as { content?: string }).content ?? "").slice(0, 40) : "";
+          return { ...t, preview };
+        } catch {
+          return t;
+        }
+      }),
+    );
+    setThreads(enriched);
+    if (!activeThreadId && enriched.length > 0) {
+      setActiveThreadId(enriched[0].thread_id);
     }
   }, [activeThreadId]);
 
@@ -79,10 +94,12 @@ export default function App() {
     void loadThread(activeThreadId);
   }, [activeThreadId, loadThread]);
 
-  const handleCreateThread = useCallback(async () => {
-    const thread = await createThread(selectedSandbox);
+  const handleCreateThread = useCallback(async (sandbox?: string) => {
+    const type = sandbox ?? selectedSandbox;
+    const thread = await createThread(type);
     setThreads((prev) => [thread, ...prev]);
     setActiveThreadId(thread.thread_id);
+    setSelectedSandbox(type);
     setMessages([]);
   }, [selectedSandbox]);
 
@@ -109,9 +126,9 @@ export default function App() {
       }
       if (!threadId) return;
 
-      const user: ChatMessage = { id: makeId("user"), role: "user", content: message };
+      const user: ChatMessage = { id: makeId("user"), role: "user", content: message, timestamp: Date.now() };
       const assistantId = makeId("assistant");
-      setMessages((prev) => [...prev, user, { id: assistantId, role: "assistant", content: "" }]);
+      setMessages((prev) => [...prev, user, { id: assistantId, role: "assistant", content: "", timestamp: Date.now() }]);
       setIsStreaming(true);
 
       try {
@@ -132,6 +149,7 @@ export default function App() {
                 content: "",
                 name: payload.name ?? "tool",
                 args: payload.args ?? {},
+                timestamp: Date.now(),
               },
             ]);
             return;
@@ -145,6 +163,7 @@ export default function App() {
                 role: "tool_result",
                 content: typeof payload.content === "string" ? payload.content : JSON.stringify(payload, null, 2),
                 toolCallId: payload.tool_call_id ?? null,
+                timestamp: Date.now(),
               },
             ]);
             return;
@@ -186,23 +205,21 @@ export default function App() {
   }, [activeThreadId, loadThread]);
 
   return (
-    <div className="h-screen w-screen bg-[#1a1a1a] flex overflow-hidden">
+    <div className="h-screen w-screen bg-white flex overflow-hidden">
       <Sidebar
         threads={threads}
         activeThreadId={activeThreadId}
-        sandboxTypes={sandboxTypes}
-        selectedSandbox={selectedSandbox}
         collapsed={sidebarCollapsed}
         onSelectThread={setActiveThreadId}
-        onCreateThread={() => void handleCreateThread()}
+        onCreateThread={() => setNewThreadOpen(true)}
         onDeleteThread={(id) => void handleDeleteThread(id)}
-        onSelectSandboxType={setSelectedSandbox}
         onSearchClick={() => setSearchOpen(true)}
       />
 
       <div className="flex-1 flex flex-col min-w-0">
         <Header
           activeThreadId={activeThreadId}
+          threadPreview={threads.find((t) => t.thread_id === activeThreadId)?.preview ?? null}
           sandboxInfo={activeSandbox}
           onToggleSidebar={() => setSidebarCollapsed((v) => !v)}
           onToggleComputer={() => setComputerOpen((v) => !v)}
@@ -215,8 +232,8 @@ export default function App() {
         <div className="flex-1 flex min-h-0">
           <div className={`flex flex-col transition-all duration-300 ${computerOpen ? "w-1/2" : "flex-1"}`}>
             {sandboxActionError && (
-              <div className="px-3 py-2 text-xs bg-red-900/30 text-red-300 border-b border-red-800/40">
-                Sandbox action failed: {sandboxActionError}
+              <div className="px-3 py-2 text-xs bg-red-50 text-red-600 border-b border-red-200">
+                {sandboxActionError}
               </div>
             )}
             <ChatArea messages={messages} isStreaming={isStreaming} />
@@ -228,7 +245,7 @@ export default function App() {
             />
             <InputBox
               disabled={isStreaming}
-              placeholder={activeThreadId ? "发送消息给 Leon" : "先创建一个会话"}
+              placeholder={activeThreadId ? "告诉 Leon 你需要什么帮助..." : "新建会话后开始对话"}
               onSendMessage={handleSendMessage}
             />
           </div>
@@ -243,6 +260,16 @@ export default function App() {
           )}
         </div>
       </div>
+
+      <NewThreadModal
+        open={newThreadOpen}
+        sandboxTypes={sandboxTypes}
+        onClose={() => setNewThreadOpen(false)}
+        onCreate={(sandbox) => {
+          setNewThreadOpen(false);
+          void handleCreateThread(sandbox);
+        }}
+      />
 
       <SearchModal
         isOpen={searchOpen}

@@ -10,6 +10,8 @@ export interface ThreadSummary {
   sandbox?: string;
   messages?: BackendMessage[];
   sandbox_info?: SandboxInfo;
+  preview?: string;
+  updated_at?: string;
 }
 
 export interface SandboxType {
@@ -54,6 +56,7 @@ export interface ChatMessage {
   name?: string;
   args?: unknown;
   toolCallId?: string | null;
+  timestamp?: number;
 }
 
 export interface SessionStatus {
@@ -138,20 +141,21 @@ function toThreads(payload: unknown): ThreadSummary[] {
 export function mapBackendMessages(payload: unknown): ChatMessage[] {
   if (!Array.isArray(payload)) return [];
   const out: ChatMessage[] = [];
+  const now = Date.now();
   for (let i = 0; i < payload.length; i += 1) {
     const msg = payload[i] as BackendMessage | undefined;
     if (!msg || typeof msg !== "object") continue;
     const rawContent = typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content ?? "", null, 2);
     if (msg.type === "HumanMessage") {
-      out.push({ id: `hist-user-${i}`, role: "user", content: rawContent });
+      out.push({ id: `hist-user-${i}`, role: "user", content: rawContent, timestamp: now });
       continue;
     }
     if (msg.type === "AIMessage") {
-      out.push({ id: `hist-ai-${i}`, role: "assistant", content: rawContent });
+      out.push({ id: `hist-ai-${i}`, role: "assistant", content: rawContent, timestamp: now });
       continue;
     }
     if (msg.type === "ToolMessage") {
-      out.push({ id: `hist-tool-${i}`, role: "tool_result", content: rawContent, toolCallId: msg.tool_call_id ?? null });
+      out.push({ id: `hist-tool-${i}`, role: "tool_result", content: rawContent, toolCallId: msg.tool_call_id ?? null, timestamp: now });
     }
   }
   return out;
