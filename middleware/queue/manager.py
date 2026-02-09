@@ -7,12 +7,7 @@ from .types import QueueMessage, QueueMode
 
 
 class MessageQueueManager:
-    """
-    Manages message queues for different queue modes.
-
-    Thread-safe singleton that coordinates between TUI (producer) and
-    SteeringMiddleware (consumer).
-    """
+    """Thread-safe message queue manager for TUI and SteeringMiddleware coordination"""
 
     def __init__(self):
         self._lock = threading.Lock()
@@ -32,13 +27,7 @@ class MessageQueueManager:
             return self._current_mode
 
     def enqueue(self, content: str, mode: QueueMode | None = None) -> None:
-        """
-        Enqueue a message with the specified mode.
-
-        Args:
-            content: Message content
-            mode: Queue mode (defaults to current mode)
-        """
+        """Enqueue a message with the specified mode (defaults to current mode)"""
         if mode is None:
             mode = self._current_mode
 
@@ -52,47 +41,24 @@ class MessageQueueManager:
             elif mode == QueueMode.COLLECT:
                 self._collect_buffer.append(msg)
             elif mode == QueueMode.STEER_BACKLOG:
-                # Both steer and followup
                 self._steer_queue.append(msg)
                 self._followup_queue.append(msg)
-            # INTERRUPT is handled directly by TUI, not queued
 
     def get_steer(self) -> str | None:
-        """
-        Get and remove the next steer message.
-
-        Called by SteeringMiddleware in before_model hook.
-        Returns None if no steer message is queued.
-        """
+        """Get and remove the next steer message"""
         with self._lock:
-            if self._steer_queue:
-                msg = self._steer_queue.popleft()
-                return msg.content
-            return None
+            return self._steer_queue.popleft().content if self._steer_queue else None
 
     def get_followup(self) -> str | None:
-        """
-        Get and remove the next followup message.
-
-        Called by TUI after agent run completes.
-        """
+        """Get and remove the next followup message"""
         with self._lock:
-            if self._followup_queue:
-                msg = self._followup_queue.popleft()
-                return msg.content
-            return None
+            return self._followup_queue.popleft().content if self._followup_queue else None
 
     def flush_collect(self) -> str | None:
-        """
-        Flush collect buffer and return merged content.
-
-        Called when switching out of collect mode or on timeout.
-        """
+        """Flush collect buffer and return merged content"""
         with self._lock:
             if not self._collect_buffer:
                 return None
-
-            # Merge all collected messages
             contents = [msg.content for msg in self._collect_buffer]
             self._collect_buffer.clear()
             return "\n\n".join(contents)
@@ -100,12 +66,12 @@ class MessageQueueManager:
     def has_steer(self) -> bool:
         """Check if there are pending steer messages"""
         with self._lock:
-            return len(self._steer_queue) > 0
+            return bool(self._steer_queue)
 
     def has_followup(self) -> bool:
         """Check if there are pending followup messages"""
         with self._lock:
-            return len(self._followup_queue) > 0
+            return bool(self._followup_queue)
 
     def clear_all(self) -> None:
         """Clear all queues"""
@@ -124,7 +90,6 @@ class MessageQueueManager:
             }
 
 
-# Global singleton
 _queue_manager: MessageQueueManager | None = None
 _manager_lock = threading.Lock()
 
@@ -132,10 +97,11 @@ _manager_lock = threading.Lock()
 def get_queue_manager() -> MessageQueueManager:
     """Get the global MessageQueueManager singleton"""
     global _queue_manager
-    with _manager_lock:
-        if _queue_manager is None:
-            _queue_manager = MessageQueueManager()
-        return _queue_manager
+    if _queue_manager is None:
+        with _manager_lock:
+            if _queue_manager is None:
+                _queue_manager = MessageQueueManager()
+    return _queue_manager
 
 
 def reset_queue_manager() -> None:
