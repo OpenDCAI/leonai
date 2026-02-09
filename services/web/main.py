@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
@@ -22,8 +22,10 @@ from middleware.monitor import AgentState
 from middleware.queue import QueueMode, get_queue_manager
 from sandbox.config import SandboxConfig
 from sandbox.db import DEFAULT_DB_PATH as SANDBOX_DB_PATH
+from sandbox.lease import LeaseStore
 from sandbox.manager import SandboxManager, lookup_sandbox_for_thread
 from sandbox.thread_context import set_current_thread_id
+from sandbox.webhook import parse_provider_webhook
 from tui.config import ConfigManager
 
 DB_PATH = Path.home() / ".leon" / "leon.db"
@@ -240,6 +242,26 @@ def _find_session_and_manager(
 
 def _is_virtual_thread_id(thread_id: str | None) -> bool:
     return bool(thread_id) and thread_id.startswith("(") and thread_id.endswith(")")
+
+
+def _ingest_provider_webhook(provider_name: str, payload: dict[str, Any]) -> dict[str, Any]:
+    observation = parse_provider_webhook(provider_name, payload)
+    store = LeaseStore(db_path=SANDBOX_DB_PATH)
+    updated = store.apply_provider_observation(
+        provider_name=observation.provider_name,
+        provider_instance_id=observation.provider_instance_id,
+        status=observation.status,
+        observed_at=observation.observed_at,
+        refresh_error=None,
+    )
+    return {
+        "ok": True,
+        "provider": observation.provider_name,
+        "event_type": observation.event_type,
+        "instance_id": observation.provider_instance_id,
+        "status": observation.status,
+        "updated": updated,
+    }
 
 
 def _run_idle_reaper_once(app_obj: FastAPI) -> int:
@@ -468,6 +490,20 @@ async def list_sandbox_sessions() -> dict[str, Any]:
     _, managers = await asyncio.to_thread(_init_providers_and_managers)
     sessions = await asyncio.to_thread(_load_all_sessions, managers)
     return {"sessions": sessions}
+
+
+@app.post("/api/webhooks/{provider_name}")
+async def receive_provider_webhook(provider_name: str, request: Request) -> dict[str, Any]:
+    try:
+        payload = await request.json()
+    except Exception as e:
+        raise HTTPException(400, f"Invalid webhook JSON: {e}") from e
+    if not isinstance(payload, dict):
+        raise HTTPException(400, "Webhook payload must be a JSON object")
+    try:
+        return await asyncio.to_thread(_ingest_provider_webhook, provider_name, payload)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
 
 
 @app.get("/api/sandbox/sessions/{session_id}/metrics")

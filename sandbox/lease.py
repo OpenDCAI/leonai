@@ -582,6 +582,134 @@ class LeaseStore:
             )
             conn.commit()
 
+    def apply_provider_observation(
+        self,
+        provider_name: str,
+        provider_instance_id: str,
+        status: str,
+        observed_at: datetime | None = None,
+        refresh_error: str | None = None,
+    ) -> bool:
+        """Apply provider state observation to matching lease by instance ID.
+
+        Returns True when a managed lease was updated, False when no managed lease matched.
+        """
+        normalized = status.strip().lower()
+        if normalized not in {"running", "paused", "detached", "unknown"}:
+            raise ValueError(f"Unsupported lease observation status: {status}")
+        if not provider_instance_id.strip():
+            raise ValueError("provider_instance_id is required")
+
+        now = datetime.now()
+        observed = observed_at or now
+        observed_iso = observed.isoformat()
+        now_iso = now.isoformat()
+
+        with _connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            lease_row = conn.execute(
+                """
+                SELECT lease_id, current_instance_id
+                FROM sandbox_leases
+                WHERE provider_name = ? AND current_instance_id = ?
+                LIMIT 1
+                """,
+                (provider_name, provider_instance_id),
+            ).fetchone()
+
+            promote_from_history = False
+            instance_row: sqlite3.Row | None = None
+
+            if not lease_row:
+                instance_row = conn.execute(
+                    """
+                    SELECT sl.lease_id, sl.current_instance_id, si.instance_id, si.created_at
+                    FROM sandbox_instances si
+                    JOIN sandbox_leases sl ON si.lease_id = sl.lease_id
+                    WHERE sl.provider_name = ?
+                      AND (si.provider_session_id = ? OR si.instance_id = ?)
+                    ORDER BY si.last_seen_at DESC
+                    LIMIT 1
+                    """,
+                    (provider_name, provider_instance_id, provider_instance_id),
+                ).fetchone()
+                if not instance_row:
+                    return False
+                # @@@stale-event-guard - Ignore old webhook events when lease already points at a newer instance.
+                if instance_row["current_instance_id"] and instance_row["current_instance_id"] != instance_row["instance_id"]:
+                    return False
+                lease_row = instance_row
+                promote_from_history = True
+
+            lease_id = str(lease_row["lease_id"])
+            safe_error = refresh_error[:500] if refresh_error else None
+
+            if normalized in {"running", "paused", "unknown"}:
+                if promote_from_history and instance_row:
+                    conn.execute(
+                        """
+                        UPDATE sandbox_leases
+                        SET current_instance_id = ?, instance_status = ?, instance_created_at = ?,
+                            observed_at = ?, refresh_error = ?, status = 'active', updated_at = ?
+                        WHERE lease_id = ?
+                        """,
+                        (
+                            instance_row["instance_id"],
+                            normalized,
+                            instance_row["created_at"],
+                            observed_iso,
+                            safe_error,
+                            now_iso,
+                            lease_id,
+                        ),
+                    )
+                else:
+                    conn.execute(
+                        """
+                        UPDATE sandbox_leases
+                        SET instance_status = ?, observed_at = ?, refresh_error = ?, status = 'active', updated_at = ?
+                        WHERE lease_id = ?
+                        """,
+                        (
+                            normalized,
+                            observed_iso,
+                            safe_error,
+                            now_iso,
+                            lease_id,
+                        ),
+                    )
+                conn.execute(
+                    """
+                    UPDATE sandbox_instances
+                    SET status = ?, last_seen_at = ?
+                    WHERE instance_id = ? OR provider_session_id = ?
+                    """,
+                    (normalized, now_iso, provider_instance_id, provider_instance_id),
+                )
+                conn.commit()
+                return True
+
+            # detached
+            conn.execute(
+                """
+                UPDATE sandbox_leases
+                SET current_instance_id = NULL, instance_status = NULL, instance_created_at = NULL,
+                    observed_at = ?, refresh_error = ?, status = 'expired', updated_at = ?
+                WHERE lease_id = ?
+                """,
+                (observed_iso, safe_error, now_iso, lease_id),
+            )
+            conn.execute(
+                """
+                UPDATE sandbox_instances
+                SET status = 'stopped', last_seen_at = ?
+                WHERE instance_id = ? OR provider_session_id = ?
+                """,
+                (now_iso, provider_instance_id, provider_instance_id),
+            )
+            conn.commit()
+            return True
+
     def list_all(self) -> list[dict]:
         """List all leases."""
         with _connect(self.db_path) as conn:
