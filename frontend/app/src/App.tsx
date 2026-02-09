@@ -41,6 +41,7 @@ export default function App() {
   const [activeSandbox, setActiveSandbox] = useState<SandboxInfo | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
+  const [sandboxActionError, setSandboxActionError] = useState<string | null>(null);
 
   const refreshThreads = useCallback(async () => {
     const rows = await listThreads();
@@ -164,14 +165,24 @@ export default function App() {
 
   const handlePauseSandbox = useCallback(async () => {
     if (!activeThreadId) return;
-    await pauseThreadSandbox(activeThreadId);
-    await loadThread(activeThreadId);
+    setSandboxActionError(null);
+    try {
+      await pauseThreadSandbox(activeThreadId);
+      await loadThread(activeThreadId);
+    } catch (e) {
+      setSandboxActionError(e instanceof Error ? e.message : String(e));
+    }
   }, [activeThreadId, loadThread]);
 
   const handleResumeSandbox = useCallback(async () => {
     if (!activeThreadId) return;
-    await resumeThreadSandbox(activeThreadId);
-    await loadThread(activeThreadId);
+    setSandboxActionError(null);
+    try {
+      await resumeThreadSandbox(activeThreadId);
+      await loadThread(activeThreadId);
+    } catch (e) {
+      setSandboxActionError(e instanceof Error ? e.message : String(e));
+    }
   }, [activeThreadId, loadThread]);
 
   return (
@@ -203,6 +214,11 @@ export default function App() {
 
         <div className="flex-1 flex min-h-0">
           <div className={`flex flex-col transition-all duration-300 ${computerOpen ? "w-1/2" : "flex-1"}`}>
+            {sandboxActionError && (
+              <div className="px-3 py-2 text-xs bg-red-900/30 text-red-300 border-b border-red-800/40">
+                Sandbox action failed: {sandboxActionError}
+              </div>
+            )}
             <ChatArea messages={messages} isStreaming={isStreaming} />
             <TaskProgress
               isStreaming={isStreaming}

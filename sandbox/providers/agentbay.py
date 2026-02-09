@@ -78,16 +78,21 @@ class AgentBayProvider(SandboxProvider):
     def pause_session(self, session_id: str) -> bool:
         session = self._get_session(session_id)
         result = self.client.pause(session)
-        return result.success
+        if result.success:
+            return True
+        message = str(getattr(result, "error_message", "") or getattr(result, "message", "") or "unknown error")
+        raise RuntimeError(f"AgentBay pause failed for {session_id}: {message}")
 
     def resume_session(self, session_id: str) -> bool:
         session = self._get_session(session_id)
         result = self.client.resume(session)
-        if result.success:
-            get_result = self.client.get(session_id)
-            if get_result.success:
-                self._sessions[session_id] = get_result.session
-        return result.success
+        if not result.success:
+            message = str(getattr(result, "error_message", "") or getattr(result, "message", "") or "unknown error")
+            raise RuntimeError(f"AgentBay resume failed for {session_id}: {message}")
+        get_result = self.client.get(session_id)
+        if get_result.success:
+            self._sessions[session_id] = get_result.session
+        return True
 
     def get_session_status(self, session_id: str) -> str:
         try:

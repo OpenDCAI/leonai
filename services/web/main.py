@@ -23,6 +23,7 @@ from sandbox.config import SandboxConfig
 from sandbox.db import DEFAULT_DB_PATH as SANDBOX_DB_PATH
 from sandbox.lease import LeaseStore
 from sandbox.manager import SandboxManager, lookup_sandbox_for_thread
+from sandbox.provider_events import ProviderEventStore
 from sandbox.thread_context import set_current_thread_id
 from tui.config import ConfigManager
 
@@ -500,23 +501,22 @@ def _mutate_sandbox_session(
     action: str,
     provider_hint: str | None = None,
 ) -> dict[str, Any]:
-    providers, managers = _init_providers_and_managers()
+    _, managers = _init_providers_and_managers()
     sessions = _load_all_sessions(managers)
     session, manager = _find_session_and_manager(sessions, managers, session_id, provider_name=provider_hint)
     if not session:
         raise RuntimeError(f"Session not found: {session_id}")
 
     provider_name = str(session.get("provider") or "")
-    provider = providers.get(provider_name)
-    if not provider:
-        raise RuntimeError(f"Provider unavailable: {provider_name}")
+    if not manager:
+        raise RuntimeError(f"Provider manager unavailable: {provider_name}")
 
     thread_id = str(session.get("thread_id") or "")
     lease_id = session.get("lease_id")
     target_session_id = str(session.get("session_id") or session_id)
 
     ok = False
-    mode = "provider"
+    mode = "lease_enforced"
 
     if manager and thread_id and not _is_virtual_thread_id(thread_id):
         mode = "manager_thread"
@@ -529,28 +529,28 @@ def _mutate_sandbox_session(
         else:
             raise RuntimeError(f"Unknown action: {action}")
     else:
-        lease = manager.lease_store.get(lease_id) if manager and lease_id else None
-        if lease:
-            mode = "manager_lease"
-            if action == "pause":
-                ok = lease.pause_instance(provider)
-            elif action == "resume":
-                ok = lease.resume_instance(provider)
-            elif action == "destroy":
-                lease.destroy_instance(provider)
-                ok = True
-            else:
-                raise RuntimeError(f"Unknown action: {action}")
+        lease = manager.lease_store.get(lease_id) if lease_id else None
+        if not lease:
+            adopt_lease_id = str(lease_id or f"lease-adopt-{uuid.uuid4().hex[:12]}")
+            adopt_status = str(session.get("status") or "unknown")
+            lease = manager.lease_store.adopt_instance(
+                lease_id=adopt_lease_id,
+                provider_name=provider_name,
+                instance_id=target_session_id,
+                status=adopt_status,
+            )
+            lease_id = lease.lease_id
+
+        mode = "manager_lease"
+        if action == "pause":
+            ok = lease.pause_instance(manager.provider)
+        elif action == "resume":
+            ok = lease.resume_instance(manager.provider)
+        elif action == "destroy":
+            lease.destroy_instance(manager.provider)
+            ok = True
         else:
-            mode = "provider_direct"
-            if action == "pause":
-                ok = provider.pause_session(target_session_id)
-            elif action == "resume":
-                ok = provider.resume_session(target_session_id)
-            elif action == "destroy":
-                ok = provider.destroy_session(target_session_id)
-            else:
-                raise RuntimeError(f"Unknown action: {action}")
+            raise RuntimeError(f"Unknown action: {action}")
 
     if not ok:
         raise RuntimeError(f"Failed to {action} session {target_session_id}")
@@ -680,18 +680,33 @@ async def destroy_sandbox_session(session_id: str, provider: str | None = Query(
 
 @app.post("/api/webhooks/{provider_name}")
 async def ingest_provider_webhook(provider_name: str, payload: dict[str, Any]) -> dict[str, Any]:
-    """Ingest provider webhook and mark lease snapshot as invalidated."""
+    """Ingest provider webhook: persist event and invalidate matched lease snapshot."""
     instance_id = _extract_webhook_instance_id(payload)
     if not instance_id:
         raise HTTPException(400, "Webhook payload missing instance/session id")
 
+    event_type = str(payload.get("event") or payload.get("type") or "unknown")
     store = LeaseStore(db_path=SANDBOX_DB_PATH)
+    event_store = ProviderEventStore(db_path=SANDBOX_DB_PATH)
     lease = await asyncio.to_thread(store.find_by_instance, provider_name=provider_name, instance_id=instance_id)
+    matched_lease_id = lease.lease_id if lease else None
+
+    # @@@webhook-invalidation-only - Webhook is optimization only: persist event + mark lease stale.
+    await asyncio.to_thread(
+        event_store.record,
+        provider_name=provider_name,
+        instance_id=instance_id,
+        event_type=event_type,
+        payload=payload,
+        matched_lease_id=matched_lease_id,
+    )
+
     if not lease:
         return {
             "ok": True,
             "provider": provider_name,
             "instance_id": instance_id,
+            "event_type": event_type,
             "matched": False,
         }
 
@@ -700,9 +715,17 @@ async def ingest_provider_webhook(provider_name: str, payload: dict[str, Any]) -
         "ok": True,
         "provider": provider_name,
         "instance_id": instance_id,
+        "event_type": event_type,
         "matched": True,
         "lease_id": lease.lease_id,
     }
+
+
+@app.get("/api/webhooks/events")
+async def list_provider_events(limit: int = Query(default=100, ge=1, le=1000)) -> dict[str, Any]:
+    store = ProviderEventStore(db_path=SANDBOX_DB_PATH)
+    items = await asyncio.to_thread(store.list_recent, limit)
+    return {"items": items, "count": len(items)}
 
 
 # @@@ Thread-level sandbox control — routes through the agent's own sandbox so cache stays consistent

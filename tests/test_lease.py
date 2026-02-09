@@ -370,6 +370,26 @@ class TestSQLiteLease:
         assert lease.get_instance().status == "running"
         mock_provider.resume_session.assert_called_once_with("inst-123")
 
+    def test_pause_instance_raises_with_provider_error(self, store, mock_provider):
+        """Pause should fail loudly and persist refresh_error."""
+        lease = store.create("lease-1", "test-provider")
+
+        mock_provider.create_session.return_value = SessionInfo(
+            session_id="inst-123",
+            provider="test-provider",
+            status="running",
+        )
+        lease.ensure_active_instance(mock_provider)
+
+        mock_provider.pause_session.side_effect = RuntimeError("BenefitLevel.NotSupport")
+        with pytest.raises(RuntimeError, match="Failed to pause lease lease-1"):
+            lease.pause_instance(mock_provider)
+
+        reloaded = store.get("lease-1")
+        assert reloaded is not None
+        assert reloaded.refresh_error is not None
+        assert "BenefitLevel.NotSupport" in reloaded.refresh_error
+
     def test_instance_persists_to_db(self, store, mock_provider, temp_db):
         """Test that instance state persists to database."""
         lease = store.create("lease-1", "test-provider")

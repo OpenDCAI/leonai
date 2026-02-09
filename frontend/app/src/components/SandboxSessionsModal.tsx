@@ -61,6 +61,8 @@ export default function SandboxSessionsModal({ isOpen, onClose, onSessionMutated
         onSessionMutated?.(row.thread_id);
       }
       await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(null);
     }
@@ -100,7 +102,8 @@ export default function SandboxSessionsModal({ isOpen, onClose, onSessionMutated
                 </tr>
               </thead>
               <tbody>
-                {sessions.map((row) => (
+                {sessions.map((row) => {
+                  return (
                   <tr key={row.session_id} className="border-b border-[#2a2a2a] text-gray-200">
                     <td className="py-2 font-mono text-xs">{row.thread_id.slice(0, 16)}</td>
                     <td className="py-2 font-mono text-xs">{row.session_id.slice(0, 16)}</td>
@@ -138,7 +141,8 @@ export default function SandboxSessionsModal({ isOpen, onClose, onSessionMutated
                       </div>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           )}

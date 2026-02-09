@@ -99,7 +99,8 @@ class SandboxManager:
     def _default_terminal_cwd(self) -> str:
         """Resolve provider-appropriate initial cwd for terminal state."""
         if self.provider.name == "local":
-            return os.path.expanduser("~")
+            # @@@local-cwd-alignment - Local terminal cwd must align with workspace root to keep fs/command semantics consistent.
+            return str(Path.cwd().resolve())
         if hasattr(self.provider, "default_cwd"):
             value = getattr(self.provider, "default_cwd")
             if isinstance(value, str) and value:
