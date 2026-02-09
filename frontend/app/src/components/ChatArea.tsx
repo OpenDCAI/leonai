@@ -1,6 +1,6 @@
-import { ChevronDown, ChevronRight } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
-import type { AssistantTurn, ChatEntry, StreamStatus, UserMessage } from "../api";
+import { Check, ChevronDown, ChevronRight, Copy } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { AssistantTurn, ChatEntry, StreamStatus, ToolSegment, UserMessage } from "../api";
 import MarkdownContent from "./MarkdownContent";
 import { getToolRenderer } from "./tool-renderers";
 
@@ -14,6 +14,37 @@ function formatTime(ts?: number): string {
   if (!ts) return "";
   const d = new Date(ts);
   return d.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+}
+
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = useCallback(() => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }, [text]);
+
+  return (
+    <button
+      onClick={handleCopy}
+      className="flex items-center gap-1 text-[10px] text-[#a3a3a3] hover:text-[#525252] transition-colors px-1.5 py-0.5 rounded hover:bg-[#f5f5f5]"
+      title="复制"
+    >
+      {copied ? (
+        <>
+          <Check className="w-3 h-3" />
+          <span>已复制</span>
+        </>
+      ) : (
+        <>
+          <Copy className="w-3 h-3" />
+          <span>复制</span>
+        </>
+      )}
+    </button>
+  );
 }
 
 function UserBubble({ entry }: { entry: UserMessage }) {
@@ -35,9 +66,9 @@ function UserBubble({ entry }: { entry: UserMessage }) {
   );
 }
 
-function ToolStepBlock({ step }: { step: AssistantTurn["toolSteps"][number] }) {
+function ToolStepBlock({ seg }: { seg: ToolSegment }) {
   const [expanded, setExpanded] = useState(false);
-  const Renderer = getToolRenderer(step);
+  const Renderer = getToolRenderer(seg.step);
 
   return (
     <div className="ml-0.5 animate-fade-in">
@@ -47,12 +78,12 @@ function ToolStepBlock({ step }: { step: AssistantTurn["toolSteps"][number] }) {
       >
         {expanded ? <ChevronDown className="w-3 h-3 text-[#a3a3a3] flex-shrink-0" /> : <ChevronRight className="w-3 h-3 text-[#a3a3a3] flex-shrink-0" />}
         <div className="flex-1 min-w-0">
-          <Renderer step={step} expanded={false} />
+          <Renderer step={seg.step} expanded={false} />
         </div>
       </button>
       {expanded && (
         <div className="ml-4 mt-1 animate-scale-in">
-          <Renderer step={step} expanded={true} />
+          <Renderer step={seg.step} expanded={true} />
         </div>
       )}
     </div>
@@ -60,8 +91,11 @@ function ToolStepBlock({ step }: { step: AssistantTurn["toolSteps"][number] }) {
 }
 
 function AssistantBlock({ entry }: { entry: AssistantTurn }) {
-  const hasTools = entry.toolSteps.length > 0;
-  const hasContent = entry.content.trim().length > 0;
+  // Collect all text content for the copy button
+  const fullText = entry.segments
+    .filter((s) => s.type === "text")
+    .map((s) => s.content)
+    .join("\n");
 
   return (
     <div className="flex gap-3.5 animate-fade-in">
@@ -76,13 +110,25 @@ function AssistantBlock({ entry }: { entry: AssistantTurn }) {
           )}
         </div>
 
-        {hasContent && <MarkdownContent content={entry.content} />}
+        {/* Render segments in order */}
+        {entry.segments.map((seg, i) => {
+          if (seg.type === "text" && seg.content.trim()) {
+            return <MarkdownContent key={`seg-${i}`} content={seg.content} />;
+          }
+          if (seg.type === "tool") {
+            return (
+              <div key={seg.step.id} className="border-l-2 border-[#e5e5e5] pl-3">
+                <ToolStepBlock seg={seg} />
+              </div>
+            );
+          }
+          return null;
+        })}
 
-        {hasTools && (
-          <div className="space-y-0.5 border-l-2 border-[#e5e5e5] pl-3 mt-2">
-            {entry.toolSteps.map((step) => (
-              <ToolStepBlock key={step.id} step={step} />
-            ))}
+        {/* Copy button */}
+        {fullText.trim() && (
+          <div className="flex justify-start mt-1">
+            <CopyButton text={fullText} />
           </div>
         )}
       </div>

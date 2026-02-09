@@ -24,8 +24,9 @@ import {
   type SandboxInfo,
   type SandboxType,
   type StreamStatus,
+  type TextSegment,
   type ThreadSummary,
-  type ToolStep,
+  type ToolSegment,
 } from "./api";
 
 function makeId(prefix: string): string {
@@ -138,8 +139,7 @@ export default function App() {
       const assistantTurn: AssistantTurn = {
         id: turnId,
         role: "assistant",
-        content: "",
-        toolSteps: [],
+        segments: [],
         timestamp: Date.now(),
       };
       setEntries((prev) => [...prev, userEntry, assistantTurn]);
@@ -153,28 +153,38 @@ export default function App() {
             const payload = event.data as { content?: string } | string | undefined;
             const chunk = typeof payload === "string" ? payload : payload?.content ?? "";
             setEntries((prev) =>
-              prev.map((e) =>
-                e.id === turnId && e.role === "assistant"
-                  ? { ...e, content: `${e.content}${chunk}` }
-                  : e,
-              ),
+              prev.map((e) => {
+                if (e.id !== turnId || e.role !== "assistant") return e;
+                const turn = e as AssistantTurn;
+                const segs = [...turn.segments];
+                const last = segs[segs.length - 1];
+                if (last && last.type === "text") {
+                  segs[segs.length - 1] = { type: "text", content: last.content + chunk };
+                } else {
+                  segs.push({ type: "text", content: chunk });
+                }
+                return { ...turn, segments: segs };
+              }),
             );
             return;
           }
 
           if (event.type === "tool_call") {
             const payload = (event.data ?? {}) as { id?: string; name?: string; args?: unknown };
-            const step: ToolStep = {
-              id: payload.id ?? makeId("tc"),
-              name: payload.name ?? "tool",
-              args: payload.args ?? {},
-              status: "calling",
-              timestamp: Date.now(),
+            const seg: ToolSegment = {
+              type: "tool",
+              step: {
+                id: payload.id ?? makeId("tc"),
+                name: payload.name ?? "tool",
+                args: payload.args ?? {},
+                status: "calling",
+                timestamp: Date.now(),
+              },
             };
             setEntries((prev) =>
               prev.map((e) =>
                 e.id === turnId && e.role === "assistant"
-                  ? { ...e, toolSteps: [...(e as AssistantTurn).toolSteps, step] }
+                  ? { ...e, segments: [...(e as AssistantTurn).segments, seg] }
                   : e,
               ),
             );
@@ -187,12 +197,11 @@ export default function App() {
               prev.map((e) => {
                 if (e.id !== turnId || e.role !== "assistant") return e;
                 const turn = e as AssistantTurn;
-                const updatedSteps = turn.toolSteps.map((s) =>
-                  s.id === payload.tool_call_id
-                    ? { ...s, result: payload.content ?? "", status: "done" as const }
-                    : s,
-                );
-                return { ...turn, toolSteps: updatedSteps };
+                const updatedSegs = turn.segments.map((s) => {
+                  if (s.type !== "tool" || s.step.id !== payload.tool_call_id) return s;
+                  return { ...s, step: { ...s.step, result: payload.content ?? "", status: "done" as const } };
+                });
+                return { ...turn, segments: updatedSegs };
               }),
             );
             return;
@@ -207,11 +216,13 @@ export default function App() {
           if (event.type === "error") {
             const text = typeof event.data === "string" ? event.data : JSON.stringify(event.data ?? "Unknown error");
             setEntries((prev) =>
-              prev.map((e) =>
-                e.id === turnId && e.role === "assistant"
-                  ? { ...e, content: `${e.content}\n\nError: ${text}` }
-                  : e,
-              ),
+              prev.map((e) => {
+                if (e.id !== turnId || e.role !== "assistant") return e;
+                const turn = e as AssistantTurn;
+                const segs = [...turn.segments];
+                segs.push({ type: "text", content: `\n\nError: ${text}` });
+                return { ...turn, segments: segs };
+              }),
             );
           }
         });

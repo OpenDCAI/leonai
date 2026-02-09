@@ -72,13 +72,23 @@ export interface ToolStep {
   timestamp: number;
 }
 
+export interface TextSegment {
+  type: "text";
+  content: string;
+}
+
+export interface ToolSegment {
+  type: "tool";
+  step: ToolStep;
+}
+
+export type TurnSegment = TextSegment | ToolSegment;
+
 export interface AssistantTurn {
   id: string;
   role: "assistant";
-  content: string;
-  toolSteps: ToolStep[];
+  segments: TurnSegment[];
   timestamp: number;
-  merged?: boolean;
 }
 
 export interface UserMessage {
@@ -228,40 +238,43 @@ export function mapBackendEntries(payload: unknown): ChatEntry[] {
       const toolCalls = Array.isArray(msg.tool_calls) ? msg.tool_calls : [];
 
       if (toolCalls.length > 0) {
-        // AIMessage with tool_calls → new AssistantTurn with toolSteps
-        const turn: AssistantTurn = {
-          id: `hist-turn-${i}`,
-          role: "assistant",
-          content: textContent,
-          toolSteps: toolCalls.map((tc: unknown, j: number) => {
-            const call = tc as { id?: string; name?: string; args?: unknown };
-            return {
+        // AIMessage with tool_calls → new turn with text segment then tool segments
+        const segments: TurnSegment[] = [];
+        if (textContent) {
+          segments.push({ type: "text", content: textContent });
+        }
+        for (let j = 0; j < toolCalls.length; j++) {
+          const call = toolCalls[j] as { id?: string; name?: string; args?: unknown };
+          segments.push({
+            type: "tool",
+            step: {
               id: call.id ?? `hist-tc-${i}-${j}`,
               name: call.name ?? "unknown",
               args: call.args ?? {},
-              status: "done" as const,
+              status: "done",
               timestamp: now,
-            };
-          }),
+            },
+          });
+        }
+        const turn: AssistantTurn = {
+          id: `hist-turn-${i}`,
+          role: "assistant",
+          segments,
           timestamp: now,
-          merged: currentTurn !== null,
         };
         currentTurn = turn;
         entries.push(turn);
       } else if (currentTurn) {
-        // AIMessage without tool_calls after a tool turn → append text to current turn
+        // AIMessage without tool_calls after a tool turn → append text segment
         if (textContent) {
-          currentTurn.content = currentTurn.content
-            ? `${currentTurn.content}\n${textContent}`
-            : textContent;
+          currentTurn.segments.push({ type: "text", content: textContent });
         }
       } else {
         // Standalone AIMessage
         const turn: AssistantTurn = {
           id: `hist-turn-${i}`,
           role: "assistant",
-          content: textContent,
-          toolSteps: [],
+          segments: textContent ? [{ type: "text", content: textContent }] : [],
           timestamp: now,
         };
         currentTurn = turn;
@@ -271,13 +284,15 @@ export function mapBackendEntries(payload: unknown): ChatEntry[] {
     }
 
     if (msg.type === "ToolMessage") {
-      // Find matching ToolStep in current turn
+      // Find matching ToolStep in current turn's segments
       if (currentTurn) {
         const toolCallId = msg.tool_call_id;
-        const step = currentTurn.toolSteps.find((s) => s.id === toolCallId);
-        if (step) {
-          step.result = extractTextContent(msg.content);
-          step.status = "done";
+        const seg = currentTurn.segments.find(
+          (s): s is ToolSegment => s.type === "tool" && s.step.id === toolCallId,
+        );
+        if (seg) {
+          seg.step.result = extractTextContent(msg.content);
+          seg.step.status = "done";
         }
       }
     }
