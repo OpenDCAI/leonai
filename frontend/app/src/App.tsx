@@ -15,14 +15,17 @@ import {
   getThread,
   listSandboxTypes,
   listThreads,
-  mapBackendMessages,
+  mapBackendEntries,
   pauseThreadSandbox,
   resumeThreadSandbox,
   startRun,
-  type ChatMessage,
+  type AssistantTurn,
+  type ChatEntry,
   type SandboxInfo,
   type SandboxType,
+  type StreamStatus,
   type ThreadSummary,
+  type ToolStep,
 } from "./api";
 
 function makeId(prefix: string): string {
@@ -41,9 +44,13 @@ export default function App() {
   const [selectedSandbox, setSelectedSandbox] = useState("local");
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   const [activeSandbox, setActiveSandbox] = useState<SandboxInfo | null>(null);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [entries, setEntries] = useState<ChatEntry[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
+  const [runtimeStatus, setRuntimeStatus] = useState<StreamStatus | null>(null);
   const [sandboxActionError, setSandboxActionError] = useState<string | null>(null);
+
+  // Track the current streaming assistant turn id for appending
+  const [streamTurnId, setStreamTurnId] = useState<string | null>(null);
 
   const refreshThreads = useCallback(async () => {
     const rows = await listThreads();
@@ -68,7 +75,7 @@ export default function App() {
 
   const loadThread = useCallback(async (threadId: string) => {
     const thread = await getThread(threadId);
-    setMessages(mapBackendMessages(thread.messages));
+    setEntries(mapBackendEntries(thread.messages));
     setActiveSandbox(thread.sandbox);
   }, []);
 
@@ -87,7 +94,7 @@ export default function App() {
 
   useEffect(() => {
     if (!activeThreadId) {
-      setMessages([]);
+      setEntries([]);
       setActiveSandbox(null);
       return;
     }
@@ -100,7 +107,7 @@ export default function App() {
     setThreads((prev) => [thread, ...prev]);
     setActiveThreadId(thread.thread_id);
     setSelectedSandbox(type);
-    setMessages([]);
+    setEntries([]);
   }, [selectedSandbox]);
 
   const handleDeleteThread = useCallback(
@@ -126,55 +133,91 @@ export default function App() {
       }
       if (!threadId) return;
 
-      const user: ChatMessage = { id: makeId("user"), role: "user", content: message, timestamp: Date.now() };
-      const assistantId = makeId("assistant");
-      setMessages((prev) => [...prev, user, { id: assistantId, role: "assistant", content: "", timestamp: Date.now() }]);
+      const userEntry: ChatEntry = { id: makeId("user"), role: "user", content: message, timestamp: Date.now() };
+      const turnId = makeId("turn");
+      const assistantTurn: AssistantTurn = {
+        id: turnId,
+        role: "assistant",
+        content: "",
+        toolSteps: [],
+        timestamp: Date.now(),
+      };
+      setEntries((prev) => [...prev, userEntry, assistantTurn]);
+      setStreamTurnId(turnId);
       setIsStreaming(true);
+      setRuntimeStatus(null);
 
       try {
         await startRun(threadId, message, (event) => {
           if (event.type === "text") {
             const payload = event.data as { content?: string } | string | undefined;
             const chunk = typeof payload === "string" ? payload : payload?.content ?? "";
-            setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, content: `${m.content}${chunk}` } : m)));
+            setEntries((prev) =>
+              prev.map((e) =>
+                e.id === turnId && e.role === "assistant"
+                  ? { ...e, content: `${e.content}${chunk}` }
+                  : e,
+              ),
+            );
             return;
           }
+
           if (event.type === "tool_call") {
             const payload = (event.data ?? {}) as { id?: string; name?: string; args?: unknown };
-            setMessages((prev) => [
-              ...prev,
-              {
-                id: payload.id ?? makeId("tool-call"),
-                role: "tool_call",
-                content: "",
-                name: payload.name ?? "tool",
-                args: payload.args ?? {},
-                timestamp: Date.now(),
-              },
-            ]);
+            const step: ToolStep = {
+              id: payload.id ?? makeId("tc"),
+              name: payload.name ?? "tool",
+              args: payload.args ?? {},
+              status: "calling",
+              timestamp: Date.now(),
+            };
+            setEntries((prev) =>
+              prev.map((e) =>
+                e.id === turnId && e.role === "assistant"
+                  ? { ...e, toolSteps: [...(e as AssistantTurn).toolSteps, step] }
+                  : e,
+              ),
+            );
             return;
           }
+
           if (event.type === "tool_result") {
-            const payload = (event.data ?? {}) as { content?: string; tool_call_id?: string };
-            setMessages((prev) => [
-              ...prev,
-              {
-                id: makeId("tool-result"),
-                role: "tool_result",
-                content: typeof payload.content === "string" ? payload.content : JSON.stringify(payload, null, 2),
-                toolCallId: payload.tool_call_id ?? null,
-                timestamp: Date.now(),
-              },
-            ]);
+            const payload = (event.data ?? {}) as { content?: string; tool_call_id?: string; name?: string };
+            setEntries((prev) =>
+              prev.map((e) => {
+                if (e.id !== turnId || e.role !== "assistant") return e;
+                const turn = e as AssistantTurn;
+                const updatedSteps = turn.toolSteps.map((s) =>
+                  s.id === payload.tool_call_id
+                    ? { ...s, result: payload.content ?? "", status: "done" as const }
+                    : s,
+                );
+                return { ...turn, toolSteps: updatedSteps };
+              }),
+            );
             return;
           }
+
+          if (event.type === "status") {
+            const status = event.data as StreamStatus | undefined;
+            if (status) setRuntimeStatus(status);
+            return;
+          }
+
           if (event.type === "error") {
             const text = typeof event.data === "string" ? event.data : JSON.stringify(event.data ?? "Unknown error");
-            setMessages((prev) => [...prev, { id: makeId("run-error"), role: "assistant", content: `Error: ${text}` }]);
+            setEntries((prev) =>
+              prev.map((e) =>
+                e.id === turnId && e.role === "assistant"
+                  ? { ...e, content: `${e.content}\n\nError: ${text}` }
+                  : e,
+              ),
+            );
           }
         });
       } finally {
         setIsStreaming(false);
+        setStreamTurnId(null);
         await loadThread(threadId);
         await refreshThreads();
       }
@@ -223,7 +266,6 @@ export default function App() {
           sandboxInfo={activeSandbox}
           onToggleSidebar={() => setSidebarCollapsed((v) => !v)}
           onToggleComputer={() => setComputerOpen((v) => !v)}
-          onOpenSandboxSessions={() => setSessionsOpen(true)}
           onPauseSandbox={() => void handlePauseSandbox()}
           onResumeSandbox={() => void handleResumeSandbox()}
           computerOpen={computerOpen}
@@ -236,9 +278,10 @@ export default function App() {
                 {sandboxActionError}
               </div>
             )}
-            <ChatArea messages={messages} isStreaming={isStreaming} />
+            <ChatArea entries={entries} isStreaming={isStreaming} runtimeStatus={runtimeStatus} />
             <TaskProgress
               isStreaming={isStreaming}
+              runtimeStatus={runtimeStatus}
               sandboxType={activeSandbox?.type ?? "local"}
               sandboxStatus={activeSandbox?.status ?? (activeSandbox?.type === "local" ? "running" : null)}
               onOpenComputer={() => setComputerOpen(true)}
