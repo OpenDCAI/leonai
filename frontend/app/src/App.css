@@ -1,4 +1,4 @@
-/* App-specific styles */
+/* App-specific styles — Vercel / OpenAI light aesthetic */
 
 /* Ensure full height */
 html, body, #root {
@@ -7,21 +7,21 @@ html, body, #root {
   overflow: hidden;
 }
 
-/* Selection color */
+/* Selection */
 ::selection {
-  background: rgba(74, 158, 255, 0.3);
-  color: white;
+  background: rgba(0, 0, 0, 0.08);
+  color: #171717;
 }
 
 /* Focus outline */
 *:focus-visible {
-  outline: 2px solid #4a9eff;
-  outline-offset: -2px;
+  outline: 2px solid #171717;
+  outline-offset: 2px;
 }
 
-/* Smooth transitions for all interactive elements */
+/* Smooth transitions */
 button, input, textarea {
-  transition: all 0.2s ease;
+  transition: all 0.15s ease;
 }
 
 /* Prevent text selection on UI elements */
@@ -29,7 +29,7 @@ button, input, textarea {
   user-select: none;
 }
 
-/* Line clamp utility */
+/* Line clamp */
 .line-clamp-1 {
   display: -webkit-box;
   -webkit-line-clamp: 1;
@@ -44,37 +44,14 @@ button, input, textarea {
   overflow: hidden;
 }
 
-.line-clamp-3 {
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-/* Shimmer animation for progress bar */
-@keyframes shimmer {
-  0% {
-    transform: translateX(-100%);
-  }
-  100% {
-    transform: translateX(100%);
-  }
-}
-
-/* Thinking dots animation */
+/* Thinking dots */
 @keyframes thinking-dot {
-  0%, 100% {
-    transform: scale(1);
-    opacity: 1;
-  }
-  50% {
-    transform: scale(1.5);
-    opacity: 0.7;
-  }
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
 }
 
 .thinking-dot {
-  animation: thinking-dot 0.6s ease-in-out infinite;
+  animation: thinking-dot 1.4s ease-in-out infinite;
 }
 
 .thinking-dot:nth-child(2) {
@@ -85,64 +62,7 @@ button, input, textarea {
   animation-delay: 0.4s;
 }
 
-/* Glass effect */
-.glass {
-  background: rgba(36, 36, 36, 0.8);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-}
-
-/* Hover lift effect */
-.hover-lift {
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
-}
-
-.hover-lift:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-}
-
-/* Active press effect */
-.active-press:active {
-  transform: scale(0.98);
-}
-
-/* Gradient text */
-.gradient-text {
-  background: linear-gradient(135deg, #4a9eff, #a855f7);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-}
-
-/* Glow effect */
-.glow {
-  box-shadow: 0 0 20px rgba(74, 158, 255, 0.3);
-}
-
-.glow-strong {
-  box-shadow: 0 0 30px rgba(74, 158, 255, 0.5);
-}
-
-/* Border gradient */
-.border-gradient {
-  position: relative;
-}
-
-.border-gradient::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  padding: 1px;
-  border-radius: inherit;
-  background: linear-gradient(135deg, #4a9eff, #a855f7);
-  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-  -webkit-mask-composite: xor;
-  mask-composite: exclude;
-}
-
-/* Custom scrollbar for webkit browsers */
+/* Custom scrollbar */
 .custom-scrollbar::-webkit-scrollbar {
   width: 4px;
 }
@@ -152,12 +72,12 @@ button, input, textarea {
 }
 
 .custom-scrollbar::-webkit-scrollbar-thumb {
-  background: #333;
+  background: #d4d4d4;
   border-radius: 2px;
 }
 
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: #444;
+  background: #a3a3a3;
 }
 
 /* Hide scrollbar but keep functionality */
@@ -170,69 +90,14 @@ button, input, textarea {
   display: none;
 }
 
-/* Tooltip styles */
-.tooltip {
-  position: relative;
-}
-
-.tooltip::after {
-  content: attr(data-tooltip);
-  position: absolute;
-  bottom: 100%;
-  left: 50%;
-  transform: translateX(-50%) translateY(-8px);
-  padding: 4px 8px;
-  background: #333;
-  color: white;
-  font-size: 12px;
-  border-radius: 4px;
-  white-space: nowrap;
-  opacity: 0;
-  visibility: hidden;
-  transition: opacity 0.2s, visibility 0.2s;
-}
-
-.tooltip:hover::after {
-  opacity: 1;
-  visibility: visible;
-}
-
 /* Loading spinner */
 .spinner {
   border: 2px solid transparent;
-  border-top-color: currentColor;
+  border-top-color: #171717;
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
 
 @keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-/* Pulse animation for status indicators */
-.pulse-ring {
-  position: relative;
-}
-
-.pulse-ring::before {
-  content: '';
-  position: absolute;
-  inset: -4px;
-  border-radius: 50%;
-  border: 2px solid currentColor;
-  opacity: 0;
-  animation: pulse-ring 2s ease-out infinite;
-}
-
-@keyframes pulse-ring {
-  0% {
-    transform: scale(0.8);
-    opacity: 1;
-  }
-  100% {
-    transform: scale(1.5);
-    opacity: 0;
-  }
+  to { transform: rotate(360deg); }
 }
