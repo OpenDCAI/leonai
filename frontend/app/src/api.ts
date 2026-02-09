@@ -1,4 +1,4 @@
-export type StreamEventType = "text" | "tool_call" | "tool_result" | "done" | "error";
+export type StreamEventType = "text" | "tool_call" | "tool_result" | "status" | "done" | "error";
 
 export interface StreamEvent {
   type: StreamEventType;
@@ -47,6 +47,8 @@ export interface BackendMessage {
   tool_call_id?: string | null;
 }
 
+// --- Legacy types (kept for compatibility during migration) ---
+
 export type ChatRole = "user" | "assistant" | "tool_call" | "tool_result";
 
 export interface ChatMessage {
@@ -58,6 +60,50 @@ export interface ChatMessage {
   toolCallId?: string | null;
   timestamp?: number;
 }
+
+// --- New grouped message types ---
+
+export interface ToolStep {
+  id: string;
+  name: string;
+  args: unknown;
+  result?: string;
+  status: "calling" | "done" | "error";
+  timestamp: number;
+}
+
+export interface AssistantTurn {
+  id: string;
+  role: "assistant";
+  content: string;
+  toolSteps: ToolStep[];
+  timestamp: number;
+  merged?: boolean;
+}
+
+export interface UserMessage {
+  id: string;
+  role: "user";
+  content: string;
+  timestamp: number;
+}
+
+export type ChatEntry = UserMessage | AssistantTurn;
+
+export interface StreamStatus {
+  state: { state: string; flags: Record<string, boolean> };
+  tokens: { total_tokens: number; input_tokens: number; output_tokens: number; cost: number };
+  context: { message_count: number; estimated_tokens: number; usage_percent: number; near_limit: boolean };
+  current_tool?: string;
+}
+
+export interface ChatSettings {
+  turnGrouping: "merged" | "separate";
+}
+
+export const DEFAULT_CHAT_SETTINGS: ChatSettings = { turnGrouping: "merged" };
+
+// --- Existing infra types ---
 
 export interface SessionStatus {
   thread_id: string;
@@ -138,6 +184,109 @@ function toThreads(payload: unknown): ThreadSummary[] {
   throw new Error("Unexpected /api/threads response shape");
 }
 
+// --- New: mapBackendEntries for grouped ChatEntry[] ---
+
+function extractTextContent(raw: unknown): string {
+  if (typeof raw === "string") return raw;
+  if (Array.isArray(raw)) {
+    return raw
+      .map((block) => {
+        if (typeof block === "string") return block;
+        if (block && typeof block === "object" && (block as { type?: string }).type === "text") {
+          return (block as { text?: string }).text ?? "";
+        }
+        return "";
+      })
+      .join("");
+  }
+  return String(raw ?? "");
+}
+
+export function mapBackendEntries(payload: unknown): ChatEntry[] {
+  if (!Array.isArray(payload)) return [];
+  const entries: ChatEntry[] = [];
+  const now = Date.now();
+  let currentTurn: AssistantTurn | null = null;
+
+  for (let i = 0; i < payload.length; i += 1) {
+    const msg = payload[i] as BackendMessage | undefined;
+    if (!msg || typeof msg !== "object") continue;
+
+    if (msg.type === "HumanMessage") {
+      currentTurn = null;
+      entries.push({
+        id: `hist-user-${i}`,
+        role: "user",
+        content: extractTextContent(msg.content),
+        timestamp: now,
+      });
+      continue;
+    }
+
+    if (msg.type === "AIMessage") {
+      const textContent = extractTextContent(msg.content);
+      const toolCalls = Array.isArray(msg.tool_calls) ? msg.tool_calls : [];
+
+      if (toolCalls.length > 0) {
+        // AIMessage with tool_calls → new AssistantTurn with toolSteps
+        const turn: AssistantTurn = {
+          id: `hist-turn-${i}`,
+          role: "assistant",
+          content: textContent,
+          toolSteps: toolCalls.map((tc: unknown, j: number) => {
+            const call = tc as { id?: string; name?: string; args?: unknown };
+            return {
+              id: call.id ?? `hist-tc-${i}-${j}`,
+              name: call.name ?? "unknown",
+              args: call.args ?? {},
+              status: "done" as const,
+              timestamp: now,
+            };
+          }),
+          timestamp: now,
+          merged: currentTurn !== null,
+        };
+        currentTurn = turn;
+        entries.push(turn);
+      } else if (currentTurn) {
+        // AIMessage without tool_calls after a tool turn → append text to current turn
+        if (textContent) {
+          currentTurn.content = currentTurn.content
+            ? `${currentTurn.content}\n${textContent}`
+            : textContent;
+        }
+      } else {
+        // Standalone AIMessage
+        const turn: AssistantTurn = {
+          id: `hist-turn-${i}`,
+          role: "assistant",
+          content: textContent,
+          toolSteps: [],
+          timestamp: now,
+        };
+        currentTurn = turn;
+        entries.push(turn);
+      }
+      continue;
+    }
+
+    if (msg.type === "ToolMessage") {
+      // Find matching ToolStep in current turn
+      if (currentTurn) {
+        const toolCallId = msg.tool_call_id;
+        const step = currentTurn.toolSteps.find((s) => s.id === toolCallId);
+        if (step) {
+          step.result = extractTextContent(msg.content);
+          step.status = "done";
+        }
+      }
+    }
+  }
+
+  return entries;
+}
+
+// Legacy — kept for reference, use mapBackendEntries instead
 export function mapBackendMessages(payload: unknown): ChatMessage[] {
   if (!Array.isArray(payload)) return [];
   const out: ChatMessage[] = [];
@@ -160,6 +309,8 @@ export function mapBackendMessages(payload: unknown): ChatMessage[] {
   }
   return out;
 }
+
+// --- API functions ---
 
 export async function listThreads(): Promise<ThreadSummary[]> {
   const payload = await request<unknown>("/api/threads");
@@ -257,8 +408,12 @@ export async function readWorkspaceFile(threadId: string, path: string): Promise
   return request(`/api/threads/${encodeURIComponent(threadId)}/workspace/read?path=${encodeURIComponent(path)}`);
 }
 
+export async function getThreadRuntime(threadId: string): Promise<StreamStatus> {
+  return request(`/api/threads/${encodeURIComponent(threadId)}/runtime`);
+}
+
 function normalizeStreamType(raw: string): StreamEventType {
-  if (raw === "text" || raw === "tool_call" || raw === "tool_result" || raw === "done" || raw === "error") {
+  if (raw === "text" || raw === "tool_call" || raw === "tool_result" || raw === "status" || raw === "done" || raw === "error") {
     return raw;
   }
   return "text";
