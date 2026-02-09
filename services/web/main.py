@@ -513,11 +513,69 @@ def _mutate_sandbox_session(
     }
 
 
+def _find_sandbox_session_record(session_id: str, provider_hint: str | None = None) -> dict[str, Any] | None:
+    """Resolve a session record from inspect list (ground-truth view)."""
+    _, managers = _init_providers_and_managers()
+    sessions = _load_all_sessions(managers)
+    session, _ = _find_session_and_manager(sessions, managers, session_id, provider_name=provider_hint)
+    return session
+
+
+async def _mutate_sandbox_session_with_live_thread_manager(
+    session_id: str,
+    action: str,
+    provider_hint: str | None = None,
+) -> dict[str, Any]:
+    """Mutate session using live thread agent first; fallback to provider/lease direct path."""
+    session = await asyncio.to_thread(_find_sandbox_session_record, session_id, provider_hint)
+    if not session:
+        raise RuntimeError(f"Session not found: {session_id}")
+
+    thread_id = str(session.get("thread_id") or "")
+    provider_name = str(session.get("provider") or "")
+    target_session_id = str(session.get("session_id") or session_id)
+    lease_id = session.get("lease_id")
+
+    if thread_id and not _is_virtual_thread_id(thread_id):
+        try:
+            agent = await _get_thread_agent(thread_id)
+            if hasattr(agent, "_sandbox") and agent._sandbox.name == provider_name:
+                if action == "pause":
+                    ok = await asyncio.to_thread(agent._sandbox.pause_thread, thread_id)
+                elif action == "resume":
+                    ok = await asyncio.to_thread(agent._sandbox.resume_thread, thread_id)
+                elif action == "destroy":
+                    ok = await asyncio.to_thread(agent._sandbox.manager.destroy_session, thread_id)
+                    agent._sandbox._capability_cache.pop(thread_id, None)
+                else:
+                    raise RuntimeError(f"Unknown action: {action}")
+                if not ok:
+                    raise RuntimeError(f"Failed to {action} session {target_session_id}")
+                return {
+                    "ok": True,
+                    "action": action,
+                    "session_id": target_session_id,
+                    "provider": provider_name,
+                    "thread_id": thread_id,
+                    "lease_id": lease_id,
+                    "mode": "manager_thread_live",
+                }
+        except HTTPException:
+            pass
+
+    return await asyncio.to_thread(
+        _mutate_sandbox_session,
+        session_id=session_id,
+        action=action,
+        provider_hint=provider_hint,
+    )
+
+
 @app.post("/api/sandbox/sessions/{session_id}/pause")
 async def pause_sandbox_session(session_id: str, provider: str | None = Query(default=None)) -> dict[str, Any]:
     try:
-        return await asyncio.to_thread(
-            _mutate_sandbox_session, session_id=session_id, action="pause", provider_hint=provider
+        return await _mutate_sandbox_session_with_live_thread_manager(
+            session_id=session_id, action="pause", provider_hint=provider
         )
     except RuntimeError as e:
         message = str(e)
@@ -528,8 +586,8 @@ async def pause_sandbox_session(session_id: str, provider: str | None = Query(de
 @app.post("/api/sandbox/sessions/{session_id}/resume")
 async def resume_sandbox_session(session_id: str, provider: str | None = Query(default=None)) -> dict[str, Any]:
     try:
-        return await asyncio.to_thread(
-            _mutate_sandbox_session, session_id=session_id, action="resume", provider_hint=provider
+        return await _mutate_sandbox_session_with_live_thread_manager(
+            session_id=session_id, action="resume", provider_hint=provider
         )
     except RuntimeError as e:
         message = str(e)
@@ -540,8 +598,8 @@ async def resume_sandbox_session(session_id: str, provider: str | None = Query(d
 @app.delete("/api/sandbox/sessions/{session_id}")
 async def destroy_sandbox_session(session_id: str, provider: str | None = Query(default=None)) -> dict[str, Any]:
     try:
-        return await asyncio.to_thread(
-            _mutate_sandbox_session, session_id=session_id, action="destroy", provider_hint=provider
+        return await _mutate_sandbox_session_with_live_thread_manager(
+            session_id=session_id, action="destroy", provider_hint=provider
         )
     except RuntimeError as e:
         message = str(e)
