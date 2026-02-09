@@ -111,28 +111,23 @@ class AgentRuntime:
         """返回单行状态，用于 TUI 状态栏"""
         parts = [f"[{self.current_state.value.upper()}]"]
 
-        # 标志位
-        if self.flags.isStreaming:
-            parts.append("streaming")
-        if self.flags.isCompacting:
-            parts.append("compacting")
-        if self.flags.isWaiting:
-            parts.append("waiting")
-        if self.flags.isBlocked:
-            parts.append("blocked")
-        if self.flags.hasError:
-            parts.append("error")
+        flag_names = [
+            ("isStreaming", "streaming"),
+            ("isCompacting", "compacting"),
+            ("isWaiting", "waiting"),
+            ("isBlocked", "blocked"),
+            ("hasError", "error"),
+        ]
+        for flag_attr, label in flag_names:
+            if getattr(self.flags, flag_attr):
+                parts.append(label)
 
-        # Token 使用
         if self.total_tokens > 0:
             parts.append(f"tokens:{self.total_tokens}")
 
-        # 成本
-        cost = self.cost
-        if cost > 0:
-            parts.append(f"${cost:.2f}")
+        if self.cost > 0:
+            parts.append(f"${self.cost:.2f}")
 
-        # 上下文
         ctx = self.context.get_metrics()
         if ctx["usage_percent"] > 0:
             parts.append(f"ctx:{ctx['usage_percent']:.0f}%")

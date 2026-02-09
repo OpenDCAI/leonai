@@ -45,25 +45,24 @@ class ContextMonitor(BaseMonitor):
         简单估算：每 4 个字符约 1 个 token（英文）
         中文每个字符约 1-2 个 token
         """
-        total_chars = 0
-        for msg in messages:
-            content = ""
-            if hasattr(msg, "content"):
-                content = msg.content
-            elif isinstance(msg, dict):
-                content = msg.get("content", "")
-
-            if isinstance(content, str):
-                total_chars += len(content)
-            elif isinstance(content, list):
-                for block in content:
-                    if isinstance(block, dict):
-                        total_chars += len(block.get("text", ""))
-                    elif isinstance(block, str):
-                        total_chars += len(block)
-
-        # 粗略估算：中英混合，平均每 2 个字符 1 个 token
+        total_chars = sum(self._extract_content_length(msg) for msg in messages)
         return total_chars // 2
+
+    def _extract_content_length(self, msg) -> int:
+        """提取消息内容长度"""
+        content = msg.content if hasattr(msg, "content") else msg.get("content", "") if isinstance(msg, dict) else ""
+
+        if isinstance(content, str):
+            return len(content)
+
+        if isinstance(content, list):
+            return sum(
+                len(block.get("text", "")) if isinstance(block, dict) else len(block)
+                for block in content
+                if isinstance(block, (dict, str))
+            )
+
+        return 0
 
     def is_near_limit(self, threshold: float = 0.8) -> bool:
         """是否接近上下文限制"""

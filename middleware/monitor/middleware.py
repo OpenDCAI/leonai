@@ -73,6 +73,15 @@ class MonitorMiddleware(AgentMiddleware):
         """标记错误状态"""
         self._state_monitor.mark_error(error)
 
+    def _dispatch_monitors(self, method_name: str, *args) -> None:
+        """统一调度 monitors 方法"""
+        for monitor in self._monitors:
+            try:
+                getattr(monitor, method_name)(*args)
+            except Exception as e:
+                if self.verbose:
+                    print(f"[MonitorMiddleware] {method_name} error: {e}")
+
     # ========== AgentMiddleware 接口 ==========
 
     async def awrap_model_call(
@@ -81,42 +90,20 @@ class MonitorMiddleware(AgentMiddleware):
         handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
     ) -> ModelCallResult:
         """异步包装 LLM 调用，在前后调度所有 monitors"""
-        # 构造请求字典供 monitors 使用
         req_dict = {"messages": request.messages}
 
-        # 请求前
-        for monitor in self._monitors:
-            try:
-                monitor.on_request(req_dict)
-            except Exception as e:
-                if self.verbose:
-                    print(f"[MonitorMiddleware] on_request error: {e}")
+        self._dispatch_monitors("on_request", req_dict)
 
-        # 调用 LLM
         try:
             response = await handler(request)
         except Exception as e:
             self._state_monitor.mark_error(e)
             raise
 
-        # 构造响应字典供 monitors 使用
-        # ModelResponse.result 是消息列表
-        messages = []
-        if hasattr(response, "result"):
-            messages = response.result
-        elif hasattr(response, "response_metadata"):
-            # 直接是 AIMessage
-            messages = [response]
-
+        messages = response.result if hasattr(response, "result") else [response]
         resp_dict = {"messages": messages}
 
-        # 响应后
-        for monitor in self._monitors:
-            try:
-                monitor.on_response(req_dict, resp_dict)
-            except Exception as e:
-                if self.verbose:
-                    print(f"[MonitorMiddleware] on_response error: {e}")
+        self._dispatch_monitors("on_response", req_dict, resp_dict)
 
         return response
 

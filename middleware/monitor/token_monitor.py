@@ -55,7 +55,6 @@ class TokenMonitor(BaseMonitor):
         output_total = usage.get("output_tokens", 0) or 0
         total = usage.get("total_tokens", input_total + output_total) or 0
 
-        # 详细分项
         input_details = usage.get("input_token_details", {}) or {}
         output_details = usage.get("output_token_details", {}) or {}
 
@@ -63,7 +62,6 @@ class TokenMonitor(BaseMonitor):
         cache_write = input_details.get("cache_creation", 0) or 0
         reasoning = output_details.get("reasoning", 0) or 0
 
-        # 累加
         self.input_tokens += input_total - cache_read - cache_write
         self.output_tokens += output_total - reasoning
         self.reasoning_tokens += reasoning
@@ -74,11 +72,7 @@ class TokenMonitor(BaseMonitor):
 
     def _extract_from_response_metadata(self, metadata: dict) -> None:
         """回退：从 response_metadata 提取（仅 input/output/total）"""
-        # OpenAI 格式: token_usage
-        usage = metadata.get("token_usage", {})
-        # Anthropic 格式: usage
-        if not usage:
-            usage = metadata.get("usage", {})
+        usage = metadata.get("token_usage") or metadata.get("usage")
         if not usage:
             return
 
