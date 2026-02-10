@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import sqlite3
 import uuid
 from collections.abc import AsyncGenerator
@@ -381,15 +382,26 @@ def _list_threads_from_db() -> list[dict[str, str]]:
 
 
 def _delete_thread_in_db(thread_id: str) -> None:
+    ident_re = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+    def _sqlite_ident(name: str) -> str:
+        if not ident_re.match(name):
+            raise RuntimeError(f"Invalid sqlite identifier: {name}")
+        return f'"{name}"'
+
     for db_path in (DB_PATH, SANDBOX_DB_PATH):
         if not db_path.exists():
             continue
         with sqlite3.connect(str(db_path)) as conn:
             existing = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
             for table in existing:
-                cols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+                try:
+                    table_ident = _sqlite_ident(table)
+                except RuntimeError:
+                    continue
+                cols = {r[1] for r in conn.execute("PRAGMA table_info(" + table_ident + ")").fetchall()}
                 if "thread_id" in cols:
-                    conn.execute(f"DELETE FROM {table} WHERE thread_id = ?", (thread_id,))
+                    conn.execute("DELETE FROM " + table_ident + " WHERE thread_id = ?", (thread_id,))
             conn.commit()
 
 

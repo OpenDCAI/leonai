@@ -175,20 +175,8 @@ class SandboxManager:
         return count
 
     def get_or_create_session(self, thread_id: str):
-        from sandbox.provider import SessionInfo
-        from sandbox.runtime import RemoteWrappedRuntime
-
         capability = self.get_sandbox(thread_id)
-        instance = capability._session.lease.get_instance()
-
-        if not instance and isinstance(capability._session.runtime, RemoteWrappedRuntime):
-            instance = capability._session.lease.ensure_active_instance(capability._session.runtime.provider)
-
-        return SessionInfo(
-            session_id=instance.instance_id if instance else "local",
-            provider=self.provider.name,
-            status="running",
-        )
+        return capability.resolve_session_info(self.provider.name)
 
     def pause_session(self, thread_id: str) -> bool:
         """Pause session for thread."""

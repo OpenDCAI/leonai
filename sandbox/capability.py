@@ -50,6 +50,20 @@ class SandboxCapability:
         """Update session activity timestamp."""
         self._session.touch()
 
+    def resolve_session_info(self, provider_name: str):
+        """Resolve current session info without exposing internal session object."""
+        from sandbox.provider import SessionInfo
+        from sandbox.runtime import RemoteWrappedRuntime
+
+        instance = self._session.lease.get_instance()
+        if not instance and isinstance(self._session.runtime, RemoteWrappedRuntime):
+            instance = self._session.lease.ensure_active_instance(self._session.runtime.provider)
+        return SessionInfo(
+            session_id=instance.instance_id if instance else "local",
+            provider=provider_name,
+            status="running",
+        )
+
 
 class _CommandWrapper(BaseExecutor):
     """Wrapper that delegates to runtime's execute method."""
