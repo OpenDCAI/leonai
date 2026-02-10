@@ -14,7 +14,7 @@ class MessageQueueManager:
         self._steer_queue: deque[QueueMessage] = deque()
         self._followup_queue: deque[QueueMessage] = deque()
         self._collect_buffer: list[QueueMessage] = []
-        self._current_mode: QueueMode = QueueMode.FOLLOWUP
+        self._current_mode: QueueMode = QueueMode.STEER
 
     def set_mode(self, mode: QueueMode) -> None:
         """Set the current queue mode"""
