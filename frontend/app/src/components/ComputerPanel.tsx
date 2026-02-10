@@ -490,12 +490,7 @@ function AgentsView({
                   )}
                 </div>
               ) : focused.status === "calling" ? (
-                <div className="flex items-center gap-2 py-8 justify-center">
-                  <div className="flex gap-1">
-                    <span className="w-1.5 h-1.5 rounded-full bg-[#525252] animate-bounce" style={{ animationDelay: "0ms" }} />
-                    <span className="w-1.5 h-1.5 rounded-full bg-[#525252] animate-bounce" style={{ animationDelay: "150ms" }} />
-                    <span className="w-1.5 h-1.5 rounded-full bg-[#525252] animate-bounce" style={{ animationDelay: "300ms" }} />
-                  </div>
+                <div className="flex items-center justify-center py-8">
                   <span className="text-[11px] text-[#525252]">助手启动中...</span>
                 </div>
               ) : focused.result ? (
