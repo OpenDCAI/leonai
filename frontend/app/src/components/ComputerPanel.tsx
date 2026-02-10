@@ -1,4 +1,4 @@
-import { ChevronRight, FileText, Folder, Loader2, Pause, Play, Terminal } from "lucide-react";
+import { Bot, ChevronDown, ChevronRight, FileText, Folder, FolderOpen, Loader2, Pause, Play, Terminal } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   getThreadLease,
@@ -15,6 +15,7 @@ import {
   type ToolStep,
   type WorkspaceEntry,
 } from "../api";
+import MarkdownContent from "./MarkdownContent";
 
 interface ComputerPanelProps {
   isOpen: boolean;
@@ -23,6 +24,10 @@ interface ComputerPanelProps {
   sandboxType: string | null;
   chatEntries: ChatEntry[];
   width?: number;
+  activeTab?: "terminal" | "files" | "agents";
+  onTabChange?: (tab: "terminal" | "files" | "agents") => void;
+  focusedAgentStepId?: string | null;
+  onFocusAgent?: (stepId: string | null) => void;
 }
 
 function joinPath(base: string, name: string): string {
@@ -182,10 +187,338 @@ function useResizable(initialWidth: number, minWidth: number, maxWidth: number) 
   return { width, onMouseDown };
 }
 
+/* ── File tree types & component ────────────────────────────── */
+
+interface TreeNode {
+  name: string;
+  fullPath: string;
+  is_dir: boolean;
+  size: number;
+  children_count?: number | null;
+  children?: TreeNode[];
+  expanded?: boolean;
+  loading?: boolean;
+}
+
+function buildTreeNodes(entries: WorkspaceEntry[], parentPath: string): TreeNode[] {
+  return entries.map((e) => ({
+    ...e,
+    fullPath: joinPath(parentPath, e.name),
+    children: e.is_dir ? undefined : undefined,
+    expanded: false,
+    loading: false,
+  }));
+}
+
+function updateNodeAtPath(
+  nodes: TreeNode[],
+  targetPath: string,
+  updater: (node: TreeNode) => TreeNode,
+): TreeNode[] {
+  return nodes.map((node) => {
+    if (node.fullPath === targetPath) return updater(node);
+    if (node.children && targetPath.startsWith(node.fullPath + "/")) {
+      return { ...node, children: updateNodeAtPath(node.children, targetPath, updater) };
+    }
+    return node;
+  });
+}
+
+function FileTreeNode({
+  node,
+  depth,
+  onToggle,
+  onSelectFile,
+  selectedFilePath,
+}: {
+  node: TreeNode;
+  depth: number;
+  onToggle: (fullPath: string) => void;
+  onSelectFile: (fullPath: string) => void;
+  selectedFilePath: string | null;
+}) {
+  const isSelected = !node.is_dir && node.fullPath === selectedFilePath;
+
+  return (
+    <>
+      <button
+        className={`w-full text-left py-1 pr-2 rounded text-[13px] flex items-center gap-1 transition-colors ${
+          isSelected
+            ? "bg-blue-50 text-blue-700"
+            : "text-[#171717] hover:bg-[#f5f5f5]"
+        }`}
+        style={{ paddingLeft: `${8 + depth * 16}px` }}
+        onClick={() => {
+          if (node.is_dir) {
+            onToggle(node.fullPath);
+          } else {
+            onSelectFile(node.fullPath);
+          }
+        }}
+      >
+        {node.is_dir ? (
+          node.loading ? (
+            <Loader2 className="w-3.5 h-3.5 animate-spin text-[#a3a3a3] flex-shrink-0" />
+          ) : node.expanded ? (
+            <ChevronDown className="w-3.5 h-3.5 text-[#a3a3a3] flex-shrink-0" />
+          ) : (
+            <ChevronRight className="w-3.5 h-3.5 text-[#a3a3a3] flex-shrink-0" />
+          )
+        ) : (
+          <span className="w-3.5 flex-shrink-0" />
+        )}
+        {node.is_dir ? (
+          node.expanded ? (
+            <FolderOpen className="w-4 h-4 text-[#525252] flex-shrink-0" />
+          ) : (
+            <Folder className="w-4 h-4 text-[#525252] flex-shrink-0" />
+          )
+        ) : (
+          <FileText className="w-4 h-4 text-[#a3a3a3] flex-shrink-0" />
+        )}
+        <span className="flex-1 truncate">{node.name}</span>
+        {!node.is_dir && <span className="text-[10px] text-[#d4d4d4] flex-shrink-0">{node.size}</span>}
+      </button>
+      {node.is_dir && node.expanded && node.children && (
+        node.children.map((child) => (
+          <FileTreeNode
+            key={child.fullPath}
+            node={child}
+            depth={depth + 1}
+            onToggle={onToggle}
+            onSelectFile={onSelectFile}
+            selectedFilePath={selectedFilePath}
+          />
+        ))
+      )}
+    </>
+  );
+}
+
+/* ── Extract Task agent steps ──────────────────────────────── */
+
+function extractAgentSteps(entries: ChatEntry[]): ToolStep[] {
+  const steps: ToolStep[] = [];
+  for (const entry of entries) {
+    if (entry.role !== "assistant") continue;
+    for (const seg of entry.segments) {
+      if (seg.type === "tool" && seg.step.name === "Task") {
+        steps.push(seg.step);
+      }
+    }
+  }
+  return steps;
+}
+
+function parseAgentArgs(args: unknown): { description?: string; prompt?: string; subagent_type?: string } {
+  if (args && typeof args === "object") return args as { description?: string; prompt?: string; subagent_type?: string };
+  return {};
+}
+
+/* ── Agents view ──────────────────────────────────────────── */
+
+function AgentsView({
+  steps,
+  focusedStepId,
+  onFocusStep,
+}: {
+  steps: ToolStep[];
+  focusedStepId: string | null;
+  onFocusStep: (id: string | null) => void;
+}) {
+  const outputRef = useRef<HTMLDivElement>(null);
+  const [leftWidth, setLeftWidth] = useState(280);
+  const [isDragging, setIsDragging] = useState(false);
+  const dragStartX = useRef(0);
+  const dragStartWidth = useRef(0);
+
+  const focused = steps.find((s) => s.id === focusedStepId) ?? null;
+  const stream = focused?.subagent_stream;
+
+  // Auto-scroll output when streaming
+  useEffect(() => {
+    if (outputRef.current) {
+      outputRef.current.scrollTop = outputRef.current.scrollHeight;
+    }
+  }, [focusedStepId, stream?.text, stream?.tool_calls.length]);
+
+  // Drag handlers for resizable panel
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+    dragStartX.current = e.clientX;
+    dragStartWidth.current = leftWidth;
+  }, [leftWidth]);
+
+  useEffect(() => {
+    if (!isDragging) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const delta = e.clientX - dragStartX.current;
+      const newWidth = Math.max(200, Math.min(600, dragStartWidth.current + delta));
+      setLeftWidth(newWidth);
+    };
+
+    const handleMouseUp = () => {
+      setIsDragging(false);
+    };
+
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
+
+    return () => {
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [isDragging]);
+
+  if (steps.length === 0) {
+    return (
+      <div className="h-full flex items-center justify-center text-sm text-[#a3a3a3]">
+        暂无助手任务
+      </div>
+    );
+  }
+
+  return (
+    <div className="h-full flex bg-white">
+      {/* Left sidebar - agent list */}
+      <div className="flex-shrink-0 border-r border-[#e5e5e5] flex flex-col" style={{ width: `${leftWidth}px` }}>
+        <div className="px-3 py-2 border-b border-[#e5e5e5]">
+          <div className="text-xs text-[#737373] font-medium">运行中的助手</div>
+        </div>
+        <div className="flex-1 overflow-y-auto">
+          {steps.map((step) => {
+            const args = parseAgentArgs(step.args);
+            const agentType = args.subagent_type || "通用助手";
+            const prompt = args.prompt || args.description || "";
+            const promptPreview = prompt.slice(0, 80) + (prompt.length > 80 ? "..." : "");
+            const ss = step.subagent_stream;
+            const isRunning = step.status === "calling" && ss?.status === "running";
+            const isError = step.status === "error" || ss?.status === "error";
+            const isSelected = step.id === focusedStepId;
+            const statusDot = isRunning ? "bg-green-400 animate-pulse" : isError ? "bg-red-400" : "bg-[#a3a3a3]";
+
+            return (
+              <button
+                key={step.id}
+                className={`w-full text-left px-3 py-2.5 border-b border-[#f5f5f5] transition-colors ${
+                  isSelected ? "bg-blue-50" : "hover:bg-[#f5f5f5]"
+                }`}
+                onClick={() => onFocusStep(step.id)}
+              >
+                <div className="flex items-center gap-2 mb-1.5">
+                  <span className={`w-2 h-2 rounded-full flex-shrink-0 ${statusDot}`} />
+                  <div className="text-[11px] font-semibold text-[#171717] truncate">{agentType}</div>
+                </div>
+                {promptPreview && (
+                  <div className="text-[10px] text-[#737373] line-clamp-3 leading-relaxed">{promptPreview}</div>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Resizable divider */}
+      <div
+        className={`w-1 flex-shrink-0 cursor-col-resize hover:bg-blue-400 transition-colors ${
+          isDragging ? "bg-blue-500" : "bg-transparent"
+        }`}
+        onMouseDown={handleMouseDown}
+      />
+
+      {/* Right detail - real-time streaming output */}
+      <div className="flex-1 flex flex-col min-w-0">
+        {!focused ? (
+          <div className="h-full flex items-center justify-center text-sm text-[#a3a3a3]">
+            选择一个助手查看详情
+          </div>
+        ) : (
+          <>
+            {/* Header */}
+            <div className="flex items-center gap-2 px-4 py-2.5 border-b border-[#e5e5e5] bg-[#fafafa] flex-shrink-0">
+              <div className="flex-1">
+                <div className="text-sm font-medium text-[#171717]">
+                  {parseAgentArgs(focused.args).subagent_type || "通用助手"}
+                </div>
+                <div className="text-[10px] text-[#737373] line-clamp-1">
+                  {parseAgentArgs(focused.args).prompt || parseAgentArgs(focused.args).description || ""}
+                </div>
+              </div>
+              <span
+                className={`w-2 h-2 rounded-full ${
+                  stream?.status === "running"
+                    ? "bg-green-400 animate-pulse"
+                    : stream?.status === "error"
+                    ? "bg-red-400"
+                    : focused.status === "calling"
+                    ? "bg-yellow-400 animate-pulse"
+                    : "bg-[#a3a3a3]"
+                }`}
+              />
+              <span className="text-[10px] text-[#a3a3a3]">
+                {stream?.status === "running" ? "运行中" : stream?.status === "error" ? "出错" : focused.status === "calling" ? "启动中" : "已完成"}
+              </span>
+            </div>
+
+            {/* Output - render streaming data */}
+            <div ref={outputRef} className="flex-1 overflow-y-auto px-4 py-3">
+              {stream ? (
+                <div className="space-y-3">
+                  {/* Streaming text */}
+                  {stream.text && (
+                    <div className="text-sm text-[#171717]">
+                      <MarkdownContent content={stream.text} />
+                    </div>
+                  )}
+
+                  {/* Tool calls */}
+                  {stream.tool_calls.length > 0 && (
+                    <div className="space-y-2">
+                      {stream.tool_calls.map((tc, idx) => (
+                        <div key={tc.id || idx} className="border-l-2 border-blue-400 pl-3 py-1">
+                          <div className="text-[11px] font-medium text-[#525252] font-mono">{tc.name}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Error */}
+                  {stream.error && (
+                    <div className="text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2">{stream.error}</div>
+                  )}
+                </div>
+              ) : focused.status === "calling" ? (
+                <div className="flex items-center gap-2 py-8 justify-center">
+                  <div className="flex gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-[#525252] animate-bounce" style={{ animationDelay: "0ms" }} />
+                    <span className="w-1.5 h-1.5 rounded-full bg-[#525252] animate-bounce" style={{ animationDelay: "150ms" }} />
+                    <span className="w-1.5 h-1.5 rounded-full bg-[#525252] animate-bounce" style={{ animationDelay: "300ms" }} />
+                  </div>
+                  <span className="text-[11px] text-[#525252]">助手启动中...</span>
+                </div>
+              ) : focused.result ? (
+                <div className="text-sm text-[#171717]">
+                  <MarkdownContent content={focused.result} />
+                </div>
+              ) : (
+                <div className="text-xs text-[#525252] text-center py-8">(无输出)</div>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ── Main panel ────────────────────────────────────────────── */
 
-export default function ComputerPanel({ isOpen, onClose, threadId, sandboxType, chatEntries, width = 600 }: ComputerPanelProps) {
-  const [activeTab, setActiveTab] = useState<"terminal" | "files">("terminal");
+export default function ComputerPanel({ isOpen, onClose, threadId, sandboxType, chatEntries, width = 600, activeTab: controlledTab, onTabChange, focusedAgentStepId = null, onFocusAgent }: ComputerPanelProps) {
+  const [internalTab, setInternalTab] = useState<"terminal" | "files" | "agents">("terminal");
+  const activeTab = controlledTab ?? internalTab;
+  const setActiveTab = onTabChange ?? setInternalTab;
   const [session, setSession] = useState<SessionStatus | null>(null);
   const [terminal, setTerminal] = useState<TerminalStatus | null>(null);
   const [lease, setLease] = useState<LeaseStatus | null>(null);
@@ -193,7 +526,7 @@ export default function ComputerPanel({ isOpen, onClose, threadId, sandboxType, 
 
   const [currentPath, setCurrentPath] = useState<string>("");
   const [workspaceRoot, setWorkspaceRoot] = useState<string>("");
-  const [fileEntries, setFileEntries] = useState<WorkspaceEntry[]>([]);
+  const [treeNodes, setTreeNodes] = useState<TreeNode[]>([]);
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
   const [selectedFileContent, setSelectedFileContent] = useState<string>("");
   const [loadingWorkspace, setLoadingWorkspace] = useState(false);
@@ -201,6 +534,7 @@ export default function ComputerPanel({ isOpen, onClose, threadId, sandboxType, 
 
   const isRemote = sandboxType !== null && sandboxType !== "local";
   const commandSteps = useMemo(() => extractCommandSteps(chatEntries), [chatEntries]);
+  const agentSteps = useMemo(() => extractAgentSteps(chatEntries), [chatEntries]);
   const { width: treeWidth, onMouseDown: onDragStart } = useResizable(288, 160, 500);
 
   async function refreshStatus() {
@@ -236,13 +570,66 @@ export default function ComputerPanel({ isOpen, onClose, threadId, sandboxType, 
       const data = await listWorkspace(threadId, target || undefined);
       setCurrentPath(data.path);
       if (!workspaceRoot) setWorkspaceRoot(data.path);
-      setFileEntries(data.entries);
+      setTreeNodes(buildTreeNodes(data.entries, data.path));
     } catch (e) {
       setWorkspaceError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoadingWorkspace(false);
     }
   }
+
+  const handleToggleFolder = useCallback(async (fullPath: string) => {
+    if (!threadId) return;
+    // Find the node to check if already expanded
+    const findNode = (nodes: TreeNode[]): TreeNode | undefined => {
+      for (const n of nodes) {
+        if (n.fullPath === fullPath) return n;
+        if (n.children) {
+          const found = findNode(n.children);
+          if (found) return found;
+        }
+      }
+      return undefined;
+    };
+
+    const target = findNode(treeNodes);
+    if (!target) return;
+
+    if (target.expanded) {
+      // Collapse
+      setTreeNodes((prev) => updateNodeAtPath(prev, fullPath, (n) => ({ ...n, expanded: false })));
+      return;
+    }
+
+    if (target.children) {
+      // Already loaded, just expand
+      setTreeNodes((prev) => updateNodeAtPath(prev, fullPath, (n) => ({ ...n, expanded: true })));
+      return;
+    }
+
+    // Lazy load children
+    setTreeNodes((prev) => updateNodeAtPath(prev, fullPath, (n) => ({ ...n, loading: true })));
+    try {
+      const data = await listWorkspace(threadId, fullPath);
+      const children = buildTreeNodes(data.entries, fullPath);
+      setTreeNodes((prev) =>
+        updateNodeAtPath(prev, fullPath, (n) => ({ ...n, children, expanded: true, loading: false })),
+      );
+    } catch {
+      setTreeNodes((prev) => updateNodeAtPath(prev, fullPath, (n) => ({ ...n, loading: false })));
+    }
+  }, [threadId, treeNodes]);
+
+  const handleSelectFile = useCallback(async (fullPath: string) => {
+    if (!threadId) return;
+    setSelectedFilePath(fullPath);
+    try {
+      const file = await readWorkspaceFile(threadId, fullPath);
+      setSelectedFileContent(file.content);
+    } catch {
+      setSelectedFileContent("(无法读取文件)");
+    }
+  }, [threadId]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -253,15 +640,6 @@ export default function ComputerPanel({ isOpen, onClose, threadId, sandboxType, 
     if (!isOpen || !threadId || activeTab !== "files") return;
     void refreshWorkspace();
   }, [isOpen, threadId, activeTab]);
-
-  const relativePath = useMemo(() => {
-    if (!workspaceRoot || !currentPath) return "";
-    if (currentPath === workspaceRoot) return "";
-    const prefix = workspaceRoot.endsWith("/") ? workspaceRoot : workspaceRoot + "/";
-    return currentPath.startsWith(prefix) ? currentPath.slice(prefix.length) : "";
-  }, [currentPath, workspaceRoot]);
-
-  const pathParts = useMemo(() => relativePath.split("/").filter(Boolean), [relativePath]);
 
   if (!isOpen) return null;
 
@@ -329,6 +707,20 @@ export default function ComputerPanel({ isOpen, onClose, threadId, sandboxType, 
           <FileText className="w-4 h-4" />
           <span>文件</span>
         </button>
+        <button
+          onClick={() => setActiveTab("agents")}
+          className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-colors ${
+            activeTab === "agents"
+              ? "bg-[#f5f5f5] text-[#171717] font-medium"
+              : "text-[#737373] hover:text-[#171717]"
+          }`}
+        >
+          <Bot className="w-4 h-4" />
+          <span>助手</span>
+          {agentSteps.some((s) => s.status === "calling") && (
+            <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
+          )}
+        </button>
       </div>
 
       {/* Content */}
@@ -337,31 +729,24 @@ export default function ComputerPanel({ isOpen, onClose, threadId, sandboxType, 
           <TerminalView steps={commandSteps} />
         )}
 
+        {activeTab === "agents" && (
+          <AgentsView
+            steps={agentSteps}
+            focusedStepId={focusedAgentStepId}
+            onFocusStep={(id) => onFocusAgent?.(id)}
+          />
+        )}
+
         {activeTab === "files" && (
           <div className="h-full flex bg-white">
             {/* File tree — resizable */}
             <div className="flex flex-col border-r border-[#e5e5e5] flex-shrink-0" style={{ width: treeWidth }}>
               <div className="px-3 py-2 border-b border-[#e5e5e5]">
-                <div className="flex items-center flex-wrap gap-1 text-xs text-[#737373]">
-                  <button
-                    className="hover:text-[#171717] transition-colors font-medium"
-                    onClick={() => void refreshWorkspace(workspaceRoot || "")}
-                  >{workspaceRoot ? workspaceRoot.split("/").pop() || "/" : "/"}</button>
-                  {pathParts.map((part, index) => {
-                    const partial = workspaceRoot + "/" + pathParts.slice(0, index + 1).join("/");
-                    return (
-                      <span key={partial} className="flex items-center gap-1">
-                        <ChevronRight className="w-3 h-3" />
-                        <button
-                          className="hover:text-[#171717] transition-colors"
-                          onClick={() => void refreshWorkspace(partial)}
-                        >{part}</button>
-                      </span>
-                    );
-                  })}
+                <div className="text-xs text-[#737373] font-medium truncate">
+                  {workspaceRoot ? workspaceRoot.split("/").pop() || "/" : "/"}
                 </div>
               </div>
-              <div className="flex-1 overflow-auto p-2 space-y-0.5">
+              <div className="flex-1 overflow-auto py-1">
                 {loadingWorkspace && (
                   <div className="text-xs flex items-center gap-2 px-2 py-2 text-[#737373]">
                     <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -369,30 +754,15 @@ export default function ComputerPanel({ isOpen, onClose, threadId, sandboxType, 
                   </div>
                 )}
                 {workspaceError && <p className="text-xs px-2 py-2 text-red-500">{workspaceError}</p>}
-                {!loadingWorkspace && !workspaceError && fileEntries.map((entry) => (
-                  <button
-                    key={`${currentPath}-${entry.name}`}
-                    className="w-full text-left px-2 py-1.5 rounded-lg text-sm flex items-center gap-2 text-[#171717] hover:bg-[#f5f5f5] transition-colors"
-                    onClick={async () => {
-                      const full = joinPath(currentPath || "/", entry.name);
-                      if (entry.is_dir) {
-                        setSelectedFilePath(null);
-                        setSelectedFileContent("");
-                        await refreshWorkspace(full);
-                        return;
-                      }
-                      setSelectedFilePath(full);
-                      const file = await readWorkspaceFile(threadId!, full);
-                      setSelectedFileContent(file.content);
-                    }}
-                  >
-                    {entry.is_dir
-                      ? <Folder className="w-4 h-4 text-[#525252]" />
-                      : <FileText className="w-4 h-4 text-[#a3a3a3]" />
-                    }
-                    <span className="flex-1 truncate">{entry.name}</span>
-                    {!entry.is_dir && <span className="text-[10px] text-[#d4d4d4]">{entry.size}</span>}
-                  </button>
+                {!loadingWorkspace && !workspaceError && treeNodes.map((node) => (
+                  <FileTreeNode
+                    key={node.fullPath}
+                    node={node}
+                    depth={0}
+                    onToggle={handleToggleFolder}
+                    onSelectFile={handleSelectFile}
+                    selectedFilePath={selectedFilePath}
+                  />
                 ))}
               </div>
             </div>
