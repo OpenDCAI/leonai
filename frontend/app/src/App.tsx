@@ -1,5 +1,51 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
+
+/** Horizontal drag-to-resize hook. Set invert=true for right-side panels. */
+function useResizableX(initial: number, min: number, max: number, invert = false) {
+  const [width, setWidth] = useState(initial);
+  const dragging = useRef(false);
+  const startX = useRef(0);
+  const startW = useRef(0);
+
+  const onMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      dragging.current = true;
+      startX.current = e.clientX;
+      startW.current = width;
+
+      const onMove = (ev: MouseEvent) => {
+        if (!dragging.current) return;
+        const delta = ev.clientX - startX.current;
+        setWidth(Math.min(max, Math.max(min, startW.current + (invert ? -delta : delta))));
+      };
+      const onUp = () => {
+        dragging.current = false;
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+      };
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+    },
+    [width, min, max, invert],
+  );
+
+  return { width, onMouseDown };
+}
+
+function DragHandle({ onMouseDown }: { onMouseDown: (e: React.MouseEvent) => void }) {
+  return (
+    <div
+      className="w-1 flex-shrink-0 cursor-col-resize hover:bg-blue-400 active:bg-blue-500 transition-colors"
+      onMouseDown={onMouseDown}
+    />
+  );
+}
 import "./App.css";
 import ChatArea from "./components/ChatArea";
 import ComputerPanel from "./components/ComputerPanel";
@@ -41,6 +87,9 @@ export default function App() {
   const [sessionsOpen, setSessionsOpen] = useState(false);
   const [newThreadOpen, setNewThreadOpen] = useState(false);
 
+  const sidebarResize = useResizableX(272, 200, 420);
+  const computerResize = useResizableX(600, 360, 1200, true);
+
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
   const [sandboxTypes, setSandboxTypes] = useState<SandboxType[]>([{ name: "local", available: true }]);
   const [selectedSandbox, setSelectedSandbox] = useState("local");
@@ -50,28 +99,16 @@ export default function App() {
   const [isStreaming, setIsStreaming] = useState(false);
   const [runtimeStatus, setRuntimeStatus] = useState<StreamStatus | null>(null);
   const [sandboxActionError, setSandboxActionError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
   // Track the current streaming assistant turn id for appending
   const [streamTurnId, setStreamTurnId] = useState<string | null>(null);
 
   const refreshThreads = useCallback(async () => {
     const rows = await listThreads();
-    const enriched = await Promise.all(
-      rows.map(async (t) => {
-        try {
-          const detail = await getThread(t.thread_id);
-          const msgs = Array.isArray(detail.messages) ? detail.messages : [];
-          const firstUser = msgs.find((m: { type?: string }) => m.type === "HumanMessage");
-          const preview = firstUser ? String((firstUser as { content?: string }).content ?? "").slice(0, 40) : "";
-          return { ...t, preview };
-        } catch {
-          return t;
-        }
-      }),
-    );
-    setThreads(enriched);
-    if (!activeThreadId && enriched.length > 0) {
-      setActiveThreadId(enriched[0].thread_id);
+    setThreads(rows);
+    if (!activeThreadId && rows.length > 0) {
+      setActiveThreadId(rows[0].thread_id);
     }
   }, [activeThreadId]);
 
@@ -90,6 +127,8 @@ export default function App() {
         setSelectedSandbox(preferred);
       } catch {
         // ignore bootstrap errors in UI; user can retry by action
+      } finally {
+        setLoading(false);
       }
     })();
   }, [refreshThreads]);
@@ -103,9 +142,9 @@ export default function App() {
     void loadThread(activeThreadId);
   }, [activeThreadId, loadThread]);
 
-  const handleCreateThread = useCallback(async (sandbox?: string) => {
+  const handleCreateThread = useCallback(async (sandbox?: string, cwd?: string) => {
     const type = sandbox ?? selectedSandbox;
-    const thread = await createThread(type);
+    const thread = await createThread(type, cwd);
     setThreads((prev) => [thread, ...prev]);
     setActiveThreadId(thread.thread_id);
     setSelectedSandbox(type);
@@ -267,11 +306,14 @@ export default function App() {
         threads={threads}
         activeThreadId={activeThreadId}
         collapsed={sidebarCollapsed}
+        loading={loading}
+        width={sidebarResize.width}
         onSelectThread={setActiveThreadId}
         onCreateThread={() => setNewThreadOpen(true)}
         onDeleteThread={(id) => void handleDeleteThread(id)}
         onSearchClick={() => setSearchOpen(true)}
       />
+      {!sidebarCollapsed && <DragHandle onMouseDown={sidebarResize.onMouseDown} />}
 
       <div className="flex-1 flex flex-col min-w-0">
         <Header
@@ -279,27 +321,26 @@ export default function App() {
           threadPreview={threads.find((t) => t.thread_id === activeThreadId)?.preview ?? null}
           sandboxInfo={activeSandbox}
           onToggleSidebar={() => setSidebarCollapsed((v) => !v)}
-          onToggleComputer={() => setComputerOpen((v) => !v)}
           onPauseSandbox={() => void handlePauseSandbox()}
           onResumeSandbox={() => void handleResumeSandbox()}
-          computerOpen={computerOpen}
         />
 
         <div className="flex-1 flex min-h-0">
-          <div className={`flex flex-col transition-all duration-300 ${computerOpen ? "w-1/2" : "flex-1"}`}>
+          <div className="flex-1 flex flex-col min-w-0">
             {sandboxActionError && (
               <div className="px-3 py-2 text-xs bg-red-50 text-red-600 border-b border-red-200">
                 {sandboxActionError}
               </div>
             )}
-            <ChatArea entries={entries} isStreaming={isStreaming} streamTurnId={streamTurnId} runtimeStatus={runtimeStatus} />
-            {(isStreaming || activeSandbox?.status === "running" || activeSandbox?.status === "paused") && (
+            <ChatArea entries={entries} isStreaming={isStreaming} streamTurnId={streamTurnId} runtimeStatus={runtimeStatus} loading={loading} />
+            {activeThreadId && (
               <TaskProgress
                 isStreaming={isStreaming}
                 runtimeStatus={runtimeStatus}
                 sandboxType={activeSandbox?.type ?? "local"}
                 sandboxStatus={activeSandbox?.status ?? (activeSandbox?.type === "local" ? "running" : null)}
-                onOpenComputer={() => setComputerOpen(true)}
+                computerOpen={computerOpen}
+                onToggleComputer={() => setComputerOpen((v) => !v)}
               />
             )}
             <InputBox
@@ -310,12 +351,17 @@ export default function App() {
           </div>
 
           {computerOpen && (
-            <ComputerPanel
-              isOpen={computerOpen}
-              onClose={() => setComputerOpen(false)}
-              threadId={activeThreadId}
-              sandboxType={activeSandbox?.type ?? null}
-            />
+            <>
+              <DragHandle onMouseDown={computerResize.onMouseDown} />
+              <ComputerPanel
+                isOpen={computerOpen}
+                onClose={() => setComputerOpen(false)}
+                threadId={activeThreadId}
+                sandboxType={activeSandbox?.type ?? null}
+                chatEntries={entries}
+                width={computerResize.width}
+              />
+            </>
           )}
         </div>
       </div>
@@ -324,9 +370,9 @@ export default function App() {
         open={newThreadOpen}
         sandboxTypes={sandboxTypes}
         onClose={() => setNewThreadOpen(false)}
-        onCreate={(sandbox) => {
+        onCreate={(sandbox, cwd) => {
           setNewThreadOpen(false);
-          void handleCreateThread(sandbox);
+          void handleCreateThread(sandbox, cwd);
         }}
       />
 
