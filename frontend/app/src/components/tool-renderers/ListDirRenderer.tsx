@@ -1,4 +1,4 @@
-import { FolderOpen } from "lucide-react";
+import { memo } from "react";
 import type { ToolRendererProps } from "./types";
 
 function parseArgs(args: unknown): { path?: string; dir_path?: string } {
@@ -6,17 +6,17 @@ function parseArgs(args: unknown): { path?: string; dir_path?: string } {
   return {};
 }
 
-export default function ListDirRenderer({ step, expanded }: ToolRendererProps) {
+export default memo(function ListDirRenderer({ step, expanded }: ToolRendererProps) {
   const { path, dir_path } = parseArgs(step.args);
   const dirPath = path || dir_path || ".";
   const shortPath = dirPath.split("/").filter(Boolean).pop() || dirPath;
 
   if (!expanded) {
     return (
-      <div className="flex items-center gap-2 text-xs text-[#a3a3a3]">
-        <FolderOpen className="w-3 h-3 text-[#d4d4d4] flex-shrink-0" />
-        <span>浏览目录 {shortPath}</span>
-        {step.status === "calling" && <span>...</span>}
+      <div className="flex items-center gap-2 text-xs text-[#737373]">
+        <span className="text-[#525252]">浏览</span>
+        <code className="font-mono text-[#737373] truncate max-w-[280px]">{dirPath}</code>
+        {step.status === "calling" && <span className="text-[#a3a3a3]">...</span>}
       </div>
     );
   }
@@ -30,4 +30,4 @@ export default function ListDirRenderer({ step, expanded }: ToolRendererProps) {
       )}
     </div>
   );
-}
+});

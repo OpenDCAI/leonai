@@ -1,4 +1,4 @@
-import { Pencil } from "lucide-react";
+import { memo } from "react";
 import type { ToolRendererProps } from "./types";
 
 function parseArgs(args: unknown): { file_path?: string; old_string?: string; new_string?: string } {
@@ -6,16 +6,15 @@ function parseArgs(args: unknown): { file_path?: string; old_string?: string; ne
   return {};
 }
 
-export default function EditFileRenderer({ step, expanded }: ToolRendererProps) {
+export default memo(function EditFileRenderer({ step, expanded }: ToolRendererProps) {
   const { file_path, old_string, new_string } = parseArgs(step.args);
   const shortPath = file_path?.split("/").filter(Boolean).pop() ?? "file";
 
   if (!expanded) {
     return (
       <div className="flex items-center gap-2 text-xs text-[#737373]">
-        <Pencil className="w-3 h-3 text-amber-500 flex-shrink-0" />
-        <span className="font-medium text-[#525252]">编辑文件</span>
-        <span className="text-[#a3a3a3] truncate max-w-[200px]">{shortPath}</span>
+        <span className="text-[#525252]">编辑</span>
+        <code className="font-mono text-[#737373] truncate max-w-[280px]">{file_path ?? shortPath}</code>
         {step.status === "calling" && <span className="text-[#a3a3a3]">...</span>}
       </div>
     );
@@ -46,4 +45,4 @@ export default function EditFileRenderer({ step, expanded }: ToolRendererProps) 
       )}
     </div>
   );
-}
+});

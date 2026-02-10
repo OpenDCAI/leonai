@@ -1,4 +1,4 @@
-import { Globe } from "lucide-react";
+import { memo } from "react";
 import type { ToolRendererProps } from "./types";
 
 function parseArgs(args: unknown): { url?: string; query?: string; prompt?: string } {
@@ -6,7 +6,7 @@ function parseArgs(args: unknown): { url?: string; query?: string; prompt?: stri
   return {};
 }
 
-export default function WebRenderer({ step, expanded }: ToolRendererProps) {
+export default memo(function WebRenderer({ step, expanded }: ToolRendererProps) {
   const { url, query, prompt } = parseArgs(step.args);
   let label = url || query || prompt || "";
   if (url) {
@@ -15,10 +15,10 @@ export default function WebRenderer({ step, expanded }: ToolRendererProps) {
 
   if (!expanded) {
     return (
-      <div className="flex items-center gap-2 text-xs text-[#a3a3a3]">
-        <Globe className="w-3 h-3 text-[#d4d4d4] flex-shrink-0" />
-        <span className="truncate max-w-[280px]">访问 {label}</span>
-        {step.status === "calling" && <span>...</span>}
+      <div className="flex items-center gap-2 text-xs text-[#737373]">
+        <span className="text-[#525252]">访问</span>
+        <span className="truncate max-w-[280px]">{label}</span>
+        {step.status === "calling" && <span className="text-[#a3a3a3]">...</span>}
       </div>
     );
   }
@@ -32,4 +32,4 @@ export default function WebRenderer({ step, expanded }: ToolRendererProps) {
       )}
     </div>
   );
-}
+});
