@@ -1080,7 +1080,7 @@ async def create_thread(payload: CreateThreadRequest | None = None) -> dict[str,
 
 @app.get("/api/threads")
 async def list_threads() -> dict[str, Any]:
-    threads = _list_threads_from_db()
+    threads = await asyncio.to_thread(_list_threads_from_db)
     # Enrich with sandbox info
     for t in threads:
         t["sandbox"] = _resolve_thread_sandbox(app, t["thread_id"])
@@ -1091,11 +1091,9 @@ async def list_threads() -> dict[str, Any]:
 async def get_thread_messages(thread_id: str) -> dict[str, Any]:
     sandbox_type = _resolve_thread_sandbox(app, thread_id)
     agent = await _get_or_create_agent(app, sandbox_type, thread_id=thread_id)
-    lock = await _get_thread_lock(app, thread_id)
-    async with lock:
-        set_current_thread_id(thread_id)  # Set thread_id before accessing agent state
-        config = {"configurable": {"thread_id": thread_id}}
-        state = await agent.agent.aget_state(config)
+    set_current_thread_id(thread_id)  # Set thread_id before accessing agent state
+    config = {"configurable": {"thread_id": thread_id}}
+    state = await agent.agent.aget_state(config)
 
     values = getattr(state, "values", {}) if state else {}
     messages = values.get("messages", []) if isinstance(values, dict) else []
