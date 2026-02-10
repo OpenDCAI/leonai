@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from sandbox.interfaces.executor import BaseExecutor
     from sandbox.interfaces.filesystem import FileSystemBackend
 
+
 @dataclass
 class LocalSessionProvider(SandboxProvider):
     name: str = "local"

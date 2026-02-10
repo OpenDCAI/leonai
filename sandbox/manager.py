@@ -163,7 +163,9 @@ class SandboxManager:
                     try:
                         paused = lease.pause_instance(self.provider)
                     except Exception as exc:
-                        print(f"[idle-reaper] failed to pause expired lease {lease.lease_id} for thread {thread_id}: {exc}")
+                        print(
+                            f"[idle-reaper] failed to pause expired lease {lease.lease_id} for thread {thread_id}: {exc}"
+                        )
                         continue
                     if not paused:
                         print(f"[idle-reaper] failed to pause expired lease {lease.lease_id} for thread {thread_id}")

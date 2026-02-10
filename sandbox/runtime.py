@@ -159,7 +159,9 @@ class LocalPersistentShellRuntime(PhysicalTerminalRuntime):
         async with self._session_lock:
             try:
                 if self.lease.observed_state == "paused":
-                    raise RuntimeError(f"Sandbox lease {self.lease.lease_id} is paused. Resume before executing commands.")
+                    raise RuntimeError(
+                        f"Sandbox lease {self.lease.lease_id} is paused. Resume before executing commands."
+                    )
                 proc = await self._ensure_session()
 
                 stdout, stderr, exit_code = await asyncio.wait_for(
