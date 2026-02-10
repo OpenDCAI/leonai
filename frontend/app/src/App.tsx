@@ -58,6 +58,7 @@ import SearchModal from "./components/SearchModal";
 import Sidebar from "./components/Sidebar";
 import TaskProgress from "./components/TaskProgress";
 import {
+  cancelRun,
   createThread,
   deleteThread,
   getThread,
@@ -281,6 +282,19 @@ export default function App() {
             );
           }
 
+          if (event.type === "cancelled") {
+            setIsStreaming(false);
+            setEntries((prev) =>
+              prev.map((e) => {
+                if (e.id !== turnId || e.role !== "assistant") return e;
+                const turn = e as AssistantTurn;
+                const segs = [...turn.segments];
+                segs.push({ type: "text", content: "\n\n_[已取消]_" });
+                return { ...turn, segments: segs };
+              }),
+            );
+          }
+
           // Handle sub-agent events
           if (event.type.startsWith("subagent_")) {
             const data = event.data as any;
@@ -363,11 +377,23 @@ export default function App() {
     [activeThreadId, loadThread, refreshThreads, selectedSandbox],
   );
 
-  const handleStopStreaming = useCallback(() => {
+  const handleStopStreaming = useCallback(async () => {
+    // 1. Abort the HTTP connection
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
     }
-  }, []);
+
+    // 2. Notify backend to cancel the run
+    if (activeThreadId) {
+      try {
+        await cancelRun(activeThreadId);
+      } catch (e) {
+        console.error("Failed to cancel run:", e);
+      }
+    }
+
+    setIsStreaming(false);
+  }, [activeThreadId]);
 
   const handlePauseSandbox = useCallback(async () => {
     if (!activeThreadId) return;

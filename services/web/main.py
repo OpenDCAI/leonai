@@ -308,6 +308,7 @@ async def lifespan(app: FastAPI):
     app.state.thread_cwd: dict[str, str] = {}
     app.state.thread_locks: dict[str, asyncio.Lock] = {}
     app.state.thread_locks_guard = asyncio.Lock()
+    app.state.thread_tasks: dict[str, asyncio.Task] = {}
     app.state.idle_reaper_task: asyncio.Task | None = None
 
     try:
@@ -1235,6 +1236,7 @@ async def run_thread(thread_id: str, payload: RunRequest) -> EventSourceResponse
             raise HTTPException(status_code=409, detail="Thread is already running")
 
     async def event_stream() -> AsyncGenerator[dict[str, str], None]:
+        task = None
         try:
             config = {"configurable": {"thread_id": thread_id}}
             set_current_thread_id(thread_id)
@@ -1263,11 +1265,29 @@ async def run_thread(thread_id: str, payload: RunRequest) -> EventSourceResponse
 
             emitted_tool_call_ids: set[str] = set()
 
-            async for chunk in agent.agent.astream(
-                {"messages": [{"role": "user", "content": payload.message}]},
-                config=config,
-                stream_mode=["messages", "updates"],
-            ):
+            # Wrap astream in a task for cancellation support
+            async def run_agent_stream():
+                async for chunk in agent.agent.astream(
+                    {"messages": [{"role": "user", "content": payload.message}]},
+                    config=config,
+                    stream_mode=["messages", "updates"],
+                ):
+                    yield chunk
+
+            # Create and track the task
+            stream_gen = run_agent_stream()
+            task = asyncio.create_task(stream_gen.__anext__())
+            app.state.thread_tasks[thread_id] = task
+
+            # Iterate through the stream
+            while True:
+                try:
+                    chunk = await task
+                    # Create next task immediately
+                    task = asyncio.create_task(stream_gen.__anext__())
+                    app.state.thread_tasks[thread_id] = task
+                except StopAsyncIteration:
+                    break
                 if not chunk:
                     continue
 
@@ -1364,16 +1384,30 @@ async def run_thread(thread_id: str, payload: RunRequest) -> EventSourceResponse
                     "data": json.dumps(agent.runtime.get_status_dict(), ensure_ascii=False),
                 }
             yield {"event": "done", "data": json.dumps({"thread_id": thread_id})}
+        except asyncio.CancelledError:
+            yield {"event": "cancelled", "data": json.dumps({"message": "Run cancelled by user"})}
         except Exception as e:
             import traceback
 
             traceback.print_exc()
             yield {"event": "error", "data": json.dumps({"error": str(e)}, ensure_ascii=False)}
         finally:
+            # Clean up task tracking
+            app.state.thread_tasks.pop(thread_id, None)
             if agent and hasattr(agent, "runtime") and agent.runtime.current_state == AgentState.ACTIVE:
                 agent.runtime.transition(AgentState.IDLE)
 
     return EventSourceResponse(event_stream())
+
+
+@app.post("/api/threads/{thread_id}/runs/cancel")
+async def cancel_run(thread_id: str):
+    """Cancel an active run for the given thread."""
+    task = app.state.thread_tasks.get(thread_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="No active run found")
+    task.cancel()
+    return {"ok": True, "message": "Run cancellation requested"}
 
 
 class TaskAgentRequest(BaseModel):

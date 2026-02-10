@@ -608,6 +608,15 @@ export async function startRun(threadId: string, message: string, onEvent: (even
   }
 }
 
+export async function cancelRun(threadId: string): Promise<void> {
+  const response = await fetch(`/api/threads/${encodeURIComponent(threadId)}/runs/cancel`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    throw new Error(`Failed to cancel run: ${response.statusText}`);
+  }
+}
+
 export interface TaskAgentRequest {
   subagent_type: string;
   prompt: string;
