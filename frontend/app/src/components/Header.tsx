@@ -1,4 +1,4 @@
-import { Copy, Monitor, PanelLeft, Pause, Play, Share2 } from "lucide-react";
+import { Monitor, PanelLeft, Pause, Play } from "lucide-react";
 import type { SandboxInfo } from "../api";
 
 const sandboxTypeLabels: Record<string, string> = {
@@ -14,10 +14,8 @@ interface HeaderProps {
   threadPreview: string | null;
   sandboxInfo: SandboxInfo | null;
   onToggleSidebar: () => void;
-  onToggleComputer: () => void;
   onPauseSandbox: () => void;
   onResumeSandbox: () => void;
-  computerOpen: boolean;
 }
 
 export default function Header({
@@ -25,10 +23,8 @@ export default function Header({
   threadPreview,
   sandboxInfo,
   onToggleSidebar,
-  onToggleComputer,
   onPauseSandbox,
   onResumeSandbox,
-  computerOpen,
 }: HeaderProps) {
   const hasRemote = sandboxInfo && sandboxInfo.type !== "local";
   const sandboxLabel = sandboxTypeLabels[sandboxInfo?.type ?? "local"] ?? sandboxInfo?.type ?? "本地";
@@ -100,23 +96,6 @@ export default function Header({
             恢复
           </button>
         )}
-        <button
-          className="w-8 h-8 rounded-lg flex items-center justify-center text-[#737373] hover:bg-[#f5f5f5] hover:text-[#171717]"
-          title="分享"
-        >
-          <Share2 className="w-4 h-4" />
-        </button>
-        <button
-          onClick={onToggleComputer}
-          title="工作区"
-          className={`w-8 h-8 rounded-lg flex items-center justify-center ${
-            computerOpen
-              ? "bg-[#171717] text-white"
-              : "text-[#737373] hover:bg-[#f5f5f5] hover:text-[#171717]"
-          }`}
-        >
-          <Copy className="w-4 h-4" />
-        </button>
       </div>
     </header>
   );
