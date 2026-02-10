@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import sqlite3
 import uuid
 from collections.abc import AsyncGenerator
@@ -108,9 +109,14 @@ def _resolve_thread_sandbox(app_obj: FastAPI, thread_id: str) -> str:
 
 def _init_providers_and_managers() -> tuple[dict, dict]:
     """Load sandbox providers and managers from config files."""
-    providers: dict[str, Any] = {}
+    from sandbox.local import LocalSessionProvider
+
+    providers: dict[str, Any] = {
+        "local": LocalSessionProvider(default_cwd=str(LOCAL_WORKSPACE_ROOT)),
+    }
     if not SANDBOXES_DIR.exists():
-        return {}, {}
+        managers = {name: SandboxManager(provider=p, db_path=SANDBOX_DB_PATH) for name, p in providers.items()}
+        return providers, managers
 
     for config_file in SANDBOXES_DIR.glob("*.json"):
         name = config_file.stem
@@ -159,7 +165,7 @@ def _init_providers_and_managers() -> tuple[dict, dict]:
         except Exception as e:
             print(f"[sandbox] Failed to load {name}: {e}")
 
-    managers = {name: SandboxManager(provider=p) for name, p in providers.items()}
+    managers = {name: SandboxManager(provider=p, db_path=SANDBOX_DB_PATH) for name, p in providers.items()}
     return providers, managers
 
 
@@ -183,6 +189,7 @@ def _load_all_sessions(managers: dict) -> list[dict]:
                     "instance_id": row.get("instance_id"),
                     "chat_session_id": row.get("chat_session_id"),
                     "source": row.get("source", "unknown"),
+                    "inspect_visible": row.get("inspect_visible", True),
                 }
             )
 
@@ -422,15 +429,26 @@ def _list_threads_from_db() -> list[dict[str, Any]]:
 
 
 def _delete_thread_in_db(thread_id: str) -> None:
+    ident_re = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+    def _sqlite_ident(name: str) -> str:
+        if not ident_re.match(name):
+            raise RuntimeError(f"Invalid sqlite identifier: {name}")
+        return f'"{name}"'
+
     for db_path in (DB_PATH, SANDBOX_DB_PATH):
         if not db_path.exists():
             continue
         with sqlite3.connect(str(db_path)) as conn:
             existing = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
             for table in existing:
-                cols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+                try:
+                    table_ident = _sqlite_ident(table)
+                except RuntimeError:
+                    continue
+                cols = {r[1] for r in conn.execute("PRAGMA table_info(" + table_ident + ")").fetchall()}
                 if "thread_id" in cols:
-                    conn.execute(f"DELETE FROM {table} WHERE thread_id = ?", (thread_id,))
+                    conn.execute("DELETE FROM " + table_ident + " WHERE thread_id = ?", (thread_id,))
             conn.commit()
 
 
@@ -853,7 +871,6 @@ async def get_thread_lease_status(thread_id: str) -> dict[str, Any]:
         lease = mgr.lease_store.get(terminal.lease_id)
         if not lease:
             return None
-        lease.refresh_instance_status(mgr.provider)
         return lease
 
     lease = await asyncio.to_thread(_get_lease)
@@ -992,19 +1009,22 @@ async def get_thread_messages(thread_id: str) -> dict[str, Any]:
 
     # Get sandbox session info (new architecture)
     sandbox_info: dict[str, Any] = {"type": sandbox_type, "status": None, "session_id": None}
-    if sandbox_type != "local" and hasattr(agent, "_sandbox"):
+    if hasattr(agent, "_sandbox"):
         try:
             mgr = agent._sandbox.manager
             session = mgr.session_manager.get(thread_id)
             terminal = mgr.terminal_store.get(thread_id)
+            if session:
+                sandbox_info["session_id"] = session.session_id
             if terminal:
                 lease = mgr.lease_store.get(terminal.lease_id)
                 if lease:
                     instance = lease.get_instance()
-                    sandbox_info["status"] = instance.status if instance else "detached"
+                    if instance:
+                        sandbox_info["status"] = lease.observed_state or instance.status
+                    else:
+                        sandbox_info["status"] = "detached"
                 sandbox_info["terminal_id"] = terminal.terminal_id
-            if session:
-                sandbox_info["session_id"] = session.session_id
         except Exception as exc:
             sandbox_info["status"] = "error"
             sandbox_info["error"] = str(exc)
@@ -1080,9 +1100,9 @@ async def run_thread(thread_id: str, payload: RunRequest) -> EventSourceResponse
                         agent._sandbox.ensure_session(thread_id)
                         terminal = mgr.terminal_store.get(thread_id)
                         lease = mgr.lease_store.get(terminal.lease_id) if terminal else None
-                        if lease and mgr.provider.name != "local":
+                        if lease:
                             lease_status = lease.refresh_instance_status(mgr.provider)
-                            if lease_status == "paused":
+                            if lease_status == "paused" and mgr.provider_capability.can_resume:
                                 if not agent._sandbox.resume_thread(thread_id):
                                     raise RuntimeError(f"Failed to auto-resume paused sandbox for thread {thread_id}")
 

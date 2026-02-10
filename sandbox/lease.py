@@ -426,6 +426,11 @@ class SQLiteLease(SandboxLease):
         self.needs_refresh = other.needs_refresh
         self.refresh_hint_at = other.refresh_hint_at
 
+    def _no_probe_instance_or_raise(self) -> SandboxInstance:
+        if self.observed_state == "paused":
+            raise RuntimeError(f"Sandbox lease {self.lease_id} is paused. Resume before executing commands.")
+        return self._current_instance  # type: ignore[return-value]
+
     def apply(
         self,
         provider: SandboxProvider,
@@ -552,10 +557,13 @@ class SQLiteLease(SandboxLease):
             return self._snapshot()
 
     def ensure_active_instance(self, provider: SandboxProvider) -> SandboxInstance:
+        capability = provider.get_capability()
         if self._current_instance and self.observed_state == "running" and self._is_fresh() and not self.needs_refresh:
             return self._current_instance
 
         if self._current_instance:
+            if not capability.supports_status_probe:
+                return self._no_probe_instance_or_raise()
             try:
                 status = provider.get_session_status(self._current_instance.instance_id)
                 self.apply(
@@ -579,6 +587,8 @@ class SQLiteLease(SandboxLease):
                 self._sync_from(refreshed)
 
             if self._current_instance:
+                if not capability.supports_status_probe:
+                    return self._no_probe_instance_or_raise()
                 try:
                     status = provider.get_session_status(self._current_instance.instance_id)
                     self.apply(
@@ -635,11 +645,15 @@ class SQLiteLease(SandboxLease):
         force: bool = False,
         max_age_sec: float = LEASE_FRESHNESS_TTL_SEC,
     ) -> str:
+        capability = provider.get_capability()
         if self.needs_refresh:
             force = True
 
         if not self._current_instance:
             return "detached"
+
+        if not capability.supports_status_probe:
+            return self.observed_state
 
         if not force and self._is_fresh(max_age_sec):
             return self.observed_state
@@ -987,6 +1001,8 @@ class LeaseStore:
         with _connect(self.db_path) as conn:
             conn.execute("DELETE FROM sandbox_leases WHERE lease_id = ?", (lease_id,))
             conn.commit()
+        with SQLiteLease._lock_guard:
+            SQLiteLease._lease_locks.pop(lease_id, None)
 
     def list_all(self) -> list[dict]:
         with _connect(self.db_path) as conn:

@@ -51,7 +51,6 @@ class PhysicalTerminalRuntime(ABC):
     ):
         self.terminal = terminal
         self.lease = lease
-        self._hydrated = False
         self.runtime_id = f"runtime-{uuid.uuid4().hex[:12]}"
 
     @abstractmethod
@@ -93,6 +92,17 @@ class LocalPersistentShellRuntime(PhysicalTerminalRuntime):
         self.shell_command = shell_command
         self._session: asyncio.subprocess.Process | None = None
         self._session_lock = asyncio.Lock()
+        self._baseline_env: dict[str, str] | None = None
+
+    @staticmethod
+    def _parse_env_output(raw: str) -> dict[str, str]:
+        env_map: dict[str, str] = {}
+        for line in raw.splitlines():
+            if "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            env_map[key] = value
+        return env_map
 
     async def _ensure_session(self) -> asyncio.subprocess.Process:
         """Ensure persistent shell session exists."""
@@ -102,20 +112,17 @@ class LocalPersistentShellRuntime(PhysicalTerminalRuntime):
                 *self.shell_command,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
                 cwd=state.cwd,
             )
-            # Disable PS1 prompt
             self._session.stdin.write(b"export PS1=''\n")
             await self._session.stdin.drain()
-
-            # Hydrate env_delta
+            baseline_stdout, _, _ = await self._send_command(self._session, "env")
+            self._baseline_env = self._parse_env_output(baseline_stdout)
             if state.env_delta:
                 for key, value in state.env_delta.items():
                     self._session.stdin.write(f"export {key}={shlex.quote(value)}\n".encode())
                 await self._session.stdin.drain()
-
-            self._hydrated = True
 
         return self._session
 
@@ -151,6 +158,8 @@ class LocalPersistentShellRuntime(PhysicalTerminalRuntime):
         """Execute command in local shell."""
         async with self._session_lock:
             try:
+                if self.lease.observed_state == "paused":
+                    raise RuntimeError(f"Sandbox lease {self.lease.lease_id} is paused. Resume before executing commands.")
                 proc = await self._ensure_session()
 
                 stdout, stderr, exit_code = await asyncio.wait_for(
@@ -162,19 +171,17 @@ class LocalPersistentShellRuntime(PhysicalTerminalRuntime):
                 pwd_stdout, _, _ = await self._send_command(proc, "pwd")
                 env_stdout, _, _ = await self._send_command(proc, "env")
                 new_cwd = pwd_stdout.strip() or self.terminal.get_state().cwd
-                env_map: dict[str, str] = {}
-                for line in env_stdout.splitlines():
-                    if "=" not in line:
-                        continue
-                    key, value = line.split("=", 1)
-                    env_map[key] = value
+                env_map = self._parse_env_output(env_stdout)
+                baseline_env = self._baseline_env or {}
+                persisted_keys = set(self.terminal.get_state().env_delta.keys())
+                env_delta = {k: v for k, v in env_map.items() if baseline_env.get(k) != v or k in persisted_keys}
 
                 if new_cwd:
                     from sandbox.terminal import TerminalState
 
                     new_state = TerminalState(
                         cwd=new_cwd,
-                        env_delta=env_map,
+                        env_delta=env_delta,
                     )
                     self.update_terminal_state(new_state)
 

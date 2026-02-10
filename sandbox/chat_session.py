@@ -239,7 +239,8 @@ class ChatSessionManager:
     def _build_runtime(self, terminal: AbstractTerminal, lease: SandboxLease) -> PhysicalTerminalRuntime:
         from sandbox.runtime import LocalPersistentShellRuntime, RemoteWrappedRuntime
 
-        if self.provider.name == "local":
+        capability = self.provider.get_capability()
+        if capability.runtime_kind == "local":
             return LocalPersistentShellRuntime(terminal, lease)
         return RemoteWrappedRuntime(terminal, lease, self.provider)
 
@@ -479,6 +480,27 @@ class ChatSessionManager:
                 WHERE chat_session_id = ? AND status IN ('active', 'idle', 'paused')
                 """,
                 (datetime.now().isoformat(), reason, session_id),
+            )
+            conn.commit()
+
+    def close(self, reason: str = "manager_close") -> None:
+        for thread_id, session in list(self._live_sessions.items()):
+            assert_chat_session_transition(
+                parse_chat_session_state(session.status),
+                ChatSessionState.CLOSED,
+                reason=reason,
+            )
+            self._close_runtime(session, reason=reason)
+            self._live_sessions.pop(thread_id, None)
+
+        with _connect(self.db_path) as conn:
+            conn.execute(
+                """
+                UPDATE chat_sessions
+                SET status = 'closed', ended_at = ?, close_reason = ?
+                WHERE status IN ('active', 'idle', 'paused')
+                """,
+                (datetime.now().isoformat(), reason),
             )
             conn.commit()
 

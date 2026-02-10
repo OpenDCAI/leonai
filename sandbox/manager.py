@@ -46,11 +46,10 @@ class SandboxManager:
         self,
         provider: SandboxProvider,
         db_path: Path | None = None,
-        default_context_id: str | None = None,
         on_session_ready: Callable[[str, str], None] | None = None,
     ):
         self.provider = provider
-        self.default_context_id = default_context_id
+        self.provider_capability = provider.get_capability()
         self._on_session_ready = on_session_ready
 
         self.db_path = db_path or DEFAULT_DB_PATH
@@ -62,15 +61,7 @@ class SandboxManager:
             default_policy=ChatSessionPolicy(),
         )
 
-    def _build_context_id(self, thread_id: str) -> str | None:
-        if self.provider.name in ("agentbay", "docker"):
-            return f"leon-{thread_id}"
-        return None
-
     def _default_terminal_cwd(self) -> str:
-        if self.provider.name == "local":
-            # @@@local-cwd-alignment - Local terminal cwd must align with workspace root to keep fs/command semantics consistent.
-            return str(Path.cwd().resolve())
         for attr in ("default_cwd", "default_context_path", "mount_path"):
             if hasattr(self.provider, attr):
                 value = getattr(self.provider, attr)
@@ -82,8 +73,12 @@ class SandboxManager:
         if self._on_session_ready:
             self._on_session_ready(session_id, reason)
 
+    def _ensure_bound_instance(self, lease) -> None:
+        if self.provider_capability.eager_instance_binding and not lease.get_instance():
+            lease.ensure_active_instance(self.provider)
+
     def close(self):
-        return None
+        self.session_manager.close(reason="manager_close")
 
     def get_sandbox(self, thread_id: str) -> SandboxCapability:
         session = self.session_manager.get(thread_id)
@@ -95,6 +90,7 @@ class SandboxManager:
                 session = self.session_manager.get(thread_id)
                 if not session:
                     raise RuntimeError(f"Session disappeared after resume for thread {thread_id}")
+            self._ensure_bound_instance(session.lease)
             return SandboxCapability(session)
 
         terminal = self.terminal_store.get(thread_id)
@@ -113,6 +109,8 @@ class SandboxManager:
             lease = self.lease_store.get(terminal.lease_id)
             if not lease:
                 lease = self.lease_store.create(terminal.lease_id, self.provider.name)
+
+        self._ensure_bound_instance(lease)
 
         session_id = f"sess-{uuid.uuid4().hex[:12]}"
         session = self.session_manager.create(
@@ -159,10 +157,17 @@ class SandboxManager:
 
             terminal = self.terminal_store.get(thread_id)
             lease = self.lease_store.get(terminal.lease_id) if terminal else None
-            if lease and self.provider.name != "local":
+            if lease:
                 status = lease.refresh_instance_status(self.provider)
-                if status == "running" and not lease.pause_instance(self.provider):
-                    raise RuntimeError(f"Failed to pause expired lease {lease.lease_id} for thread {thread_id}")
+                if status == "running":
+                    try:
+                        paused = lease.pause_instance(self.provider)
+                    except Exception as exc:
+                        print(f"[idle-reaper] failed to pause expired lease {lease.lease_id} for thread {thread_id}: {exc}")
+                        continue
+                    if not paused:
+                        print(f"[idle-reaper] failed to pause expired lease {lease.lease_id} for thread {thread_id}")
+                        continue
 
             self.session_manager.delete(session_id, reason="idle_timeout")
             count += 1
@@ -170,20 +175,8 @@ class SandboxManager:
         return count
 
     def get_or_create_session(self, thread_id: str):
-        from sandbox.provider import SessionInfo
-        from sandbox.runtime import RemoteWrappedRuntime
-
         capability = self.get_sandbox(thread_id)
-        instance = capability._session.lease.get_instance()
-
-        if not instance and isinstance(capability._session.runtime, RemoteWrappedRuntime):
-            instance = capability._session.lease.ensure_active_instance(capability._session.runtime.provider)
-
-        return SessionInfo(
-            session_id=instance.instance_id if instance else "local",
-            provider=self.provider.name,
-            status="running",
-        )
+        return capability.resolve_session_info(self.provider.name)
 
     def pause_session(self, thread_id: str) -> bool:
         """Pause session for thread."""
@@ -195,9 +188,8 @@ class SandboxManager:
         if not lease:
             return False
 
-        if self.provider.name != "local":
-            if not lease.pause_instance(self.provider):
-                return False
+        if not lease.pause_instance(self.provider):
+            return False
 
         session = self.session_manager.get(thread_id)
         if session and session.status != "paused":
@@ -220,7 +212,7 @@ class SandboxManager:
         if not lease:
             return False
 
-        if self.provider.name != "local" and not lease.resume_instance(self.provider):
+        if not lease.resume_instance(self.provider):
             return False
 
         session = self.session_manager.get(thread_id)
@@ -251,8 +243,7 @@ class SandboxManager:
         if not lease:
             return False
 
-        if self.provider.name != "local":
-            lease.destroy_instance(self.provider)
+        lease.destroy_instance(self.provider)
         return True
 
     def list_sessions(self) -> list[dict]:
@@ -269,24 +260,7 @@ class SandboxManager:
         rows = self.session_manager.list_all()
         active_rows = [r for r in rows if r.get("status") in {"active", "idle", "paused"}]
         chat_by_thread: dict[str, dict] = {row["thread_id"]: row for row in active_rows if row.get("thread_id")}
-
-        if self.provider.name == "local":
-            for row in active_rows:
-                sessions.append(
-                    {
-                        "session_id": row["session_id"],
-                        "thread_id": row["thread_id"],
-                        "provider": self.provider.name,
-                        "status": row["status"],
-                        "created_at": row.get("started_at"),
-                        "last_active": row.get("last_active_at"),
-                        "lease_id": row.get("lease_id"),
-                        "instance_id": None,
-                        "chat_session_id": row.get("session_id"),
-                        "source": "chat_session",
-                    }
-                )
-            return sessions
+        inspect_visible = self.provider_capability.inspect_visible
 
         seen_instance_ids: set[str] = set()
 
@@ -321,6 +295,7 @@ class SandboxManager:
                         "instance_id": refreshed_instance.instance_id,
                         "chat_session_id": None,
                         "source": "lease",
+                        "inspect_visible": inspect_visible,
                     }
                 )
                 continue
@@ -339,6 +314,7 @@ class SandboxManager:
                         "instance_id": refreshed_instance.instance_id,
                         "chat_session_id": (chat or {}).get("session_id"),
                         "source": "lease",
+                        "inspect_visible": inspect_visible,
                     }
                 )
 
@@ -366,6 +342,7 @@ class SandboxManager:
                         "instance_id": instance_id,
                         "chat_session_id": None,
                         "source": "provider_orphan",
+                        "inspect_visible": inspect_visible,
                     }
                 )
 
