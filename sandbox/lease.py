@@ -1016,6 +1016,8 @@ class LeaseStore:
         with _connect(self.db_path) as conn:
             conn.execute("DELETE FROM sandbox_leases WHERE lease_id = ?", (lease_id,))
             conn.commit()
+        with SQLiteLease._lock_guard:
+            SQLiteLease._lease_locks.pop(lease_id, None)
 
     def list_all(self) -> list[dict]:
         with _connect(self.db_path) as conn:

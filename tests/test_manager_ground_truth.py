@@ -8,7 +8,7 @@ import uuid
 from pathlib import Path
 
 from sandbox.manager import SandboxManager
-from sandbox.provider import Metrics, ProviderExecResult, SandboxProvider, SessionInfo
+from sandbox.provider import Metrics, ProviderCapability, ProviderExecResult, SandboxProvider, SessionInfo
 
 
 class FakeProvider(SandboxProvider):
@@ -16,6 +16,15 @@ class FakeProvider(SandboxProvider):
 
     def __init__(self):
         self._statuses: dict[str, str] = {}
+        self.fail_pause = False
+
+    def get_capability(self) -> ProviderCapability:
+        return ProviderCapability(
+            can_pause=True,
+            can_resume=True,
+            can_destroy=True,
+            supports_webhook=False,
+        )
 
     def create_session(self, context_id: str | None = None) -> SessionInfo:
         sid = f"s-{uuid.uuid4().hex[:8]}"
@@ -27,6 +36,8 @@ class FakeProvider(SandboxProvider):
         return True
 
     def pause_session(self, session_id: str) -> bool:
+        if self.fail_pause:
+            return False
         if session_id in self._statuses:
             self._statuses[session_id] = "paused"
             return True
@@ -131,5 +142,34 @@ def test_enforce_idle_timeouts_pauses_lease_and_closes_session() -> None:
         assert count == 1
         assert provider.get_session_status(instance_id) == "paused"
         assert mgr.session_manager.get("thread-1") is None
+    finally:
+        db.unlink(missing_ok=True)
+
+
+def test_enforce_idle_timeouts_continues_on_pause_failure() -> None:
+    db = _temp_db()
+    try:
+        provider = FakeProvider()
+        mgr = SandboxManager(provider=provider, db_path=db)
+
+        capability = mgr.get_sandbox("thread-1")
+        asyncio.run(capability.command.execute("echo hi"))
+        session_id = capability._session.session_id
+
+        with sqlite3.connect(str(db)) as conn:
+            conn.execute(
+                """
+                UPDATE chat_sessions
+                SET idle_ttl_sec = 1, last_active_at = ?
+                WHERE chat_session_id = ?
+                """,
+                ((datetime.now() - timedelta(seconds=5)).isoformat(), session_id),
+            )
+            conn.commit()
+
+        provider.fail_pause = True
+        count = mgr.enforce_idle_timeouts()
+        assert count == 0
+        assert mgr.session_manager.get("thread-1") is not None
     finally:
         db.unlink(missing_ok=True)

@@ -7,10 +7,12 @@ while maintaining the same interface as before.
 
 from __future__ import annotations
 
+import asyncio
 import shlex
+import uuid
 from typing import TYPE_CHECKING
 
-from sandbox.interfaces.executor import BaseExecutor
+from sandbox.interfaces.executor import AsyncCommand, BaseExecutor, ExecuteResult
 from sandbox.interfaces.filesystem import FileSystemBackend
 
 if TYPE_CHECKING:
@@ -57,6 +59,18 @@ class _CommandWrapper(BaseExecutor):
     def __init__(self, session: ChatSession):
         super().__init__(default_cwd=session.terminal.get_state().cwd)
         self._session = session
+        self._commands: dict[str, AsyncCommand] = {}
+        self._tasks: dict[str, asyncio.Task[ExecuteResult]] = {}
+
+    def _wrap_command(self, command: str, cwd: str | None, env: dict[str, str] | None) -> tuple[str, str]:
+        wrapped = command
+        if env:
+            exports = "\n".join(f"export {k}={shlex.quote(v)}" for k, v in env.items())
+            wrapped = f"{exports}\n{wrapped}"
+        work_dir = cwd or self.default_cwd or self._session.terminal.get_state().cwd
+        if work_dir:
+            wrapped = f"cd {shlex.quote(work_dir)}\n{wrapped}"
+        return wrapped, work_dir
 
     async def execute(
         self, command: str, cwd: str | None = None, timeout: float | None = None, env: dict[str, str] | None = None
@@ -64,29 +78,78 @@ class _CommandWrapper(BaseExecutor):
         """Execute command via runtime."""
         self._session.touch()
         # @@@command-context - CommandMiddleware passes Cwd/env; preserve that context for remote runtimes.
-        wrapped = command
-        if env:
-            exports = "\n".join(f"export {k}={shlex.quote(v)}" for k, v in env.items())
-            wrapped = f"{exports}\n{wrapped}"
-        if cwd:
-            wrapped = f"cd {shlex.quote(cwd)}\n{wrapped}"
+        wrapped, _ = self._wrap_command(command, cwd, env)
         return await self._session.runtime.execute(wrapped, timeout)
 
     async def execute_async(self, command: str, cwd: str | None = None, env: dict[str, str] | None = None):
-        """Not implemented for capability wrapper."""
-        raise NotImplementedError("execute_async not supported in capability wrapper")
+        """Execute command asynchronously via runtime and return command handle."""
+        self._session.touch()
+        wrapped, work_dir = self._wrap_command(command, cwd, env)
+        command_id = f"cmd_{uuid.uuid4().hex[:12]}"
+        async_cmd = AsyncCommand(
+            command_id=command_id,
+            command_line=command,
+            cwd=work_dir,
+        )
+        self._commands[command_id] = async_cmd
+
+        async def _run() -> ExecuteResult:
+            try:
+                result = await self._session.runtime.execute(wrapped, timeout=None)
+            except Exception as exc:
+                result = ExecuteResult(exit_code=1, stdout="", stderr=f"Error: {exc}")
+            async_cmd.stdout_buffer = [result.stdout]
+            async_cmd.stderr_buffer = [result.stderr]
+            async_cmd.exit_code = result.exit_code
+            async_cmd.done = True
+            return result
+
+        self._tasks[command_id] = asyncio.create_task(_run())
+        return async_cmd
 
     async def get_status(self, command_id: str):
-        """Not implemented for capability wrapper."""
-        raise NotImplementedError("get_status not supported in capability wrapper")
+        """Get status for an async command."""
+        return self._commands.get(command_id)
 
     async def wait_for(self, command_id: str, timeout: float | None = None):
-        """Not implemented for capability wrapper."""
-        raise NotImplementedError("wait_for not supported in capability wrapper")
+        """Wait for async command completion."""
+        async_cmd = self._commands.get(command_id)
+        task = self._tasks.get(command_id)
+        if async_cmd is None:
+            return None
+        if task is not None and not task.done():
+            try:
+                if timeout is None:
+                    await task
+                else:
+                    await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
+            except TimeoutError:
+                return ExecuteResult(
+                    exit_code=-1,
+                    stdout="".join(async_cmd.stdout_buffer),
+                    stderr="".join(async_cmd.stderr_buffer),
+                    timed_out=True,
+                    command_id=command_id,
+                )
+        return ExecuteResult(
+            exit_code=async_cmd.exit_code or 0,
+            stdout="".join(async_cmd.stdout_buffer),
+            stderr="".join(async_cmd.stderr_buffer),
+            timed_out=False,
+            command_id=command_id,
+        )
 
     def store_completed_result(self, command_id: str, command_line: str, cwd: str, result):
-        """Not implemented for capability wrapper."""
-        raise NotImplementedError("store_completed_result not supported in capability wrapper")
+        """Store completed result for command_status lookup."""
+        self._commands[command_id] = AsyncCommand(
+            command_id=command_id,
+            command_line=command_line,
+            cwd=cwd,
+            stdout_buffer=[result.stdout],
+            stderr_buffer=[result.stderr],
+            exit_code=result.exit_code,
+            done=True,
+        )
 
 
 class _FileSystemWrapper(FileSystemBackend):

@@ -159,8 +159,15 @@ class SandboxManager:
             lease = self.lease_store.get(terminal.lease_id) if terminal else None
             if lease:
                 status = lease.refresh_instance_status(self.provider)
-                if status == "running" and not lease.pause_instance(self.provider):
-                    raise RuntimeError(f"Failed to pause expired lease {lease.lease_id} for thread {thread_id}")
+                if status == "running":
+                    try:
+                        paused = lease.pause_instance(self.provider)
+                    except Exception as exc:
+                        print(f"[idle-reaper] failed to pause expired lease {lease.lease_id} for thread {thread_id}: {exc}")
+                        continue
+                    if not paused:
+                        print(f"[idle-reaper] failed to pause expired lease {lease.lease_id} for thread {thread_id}")
+                        continue
 
             self.session_manager.delete(session_id, reason="idle_timeout")
             count += 1
