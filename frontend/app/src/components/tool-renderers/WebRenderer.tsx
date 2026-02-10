@@ -8,7 +8,10 @@ function parseArgs(args: unknown): { url?: string; query?: string; prompt?: stri
 
 export default function WebRenderer({ step, expanded }: ToolRendererProps) {
   const { url, query, prompt } = parseArgs(step.args);
-  const label = url || query || prompt || "";
+  let label = url || query || prompt || "";
+  if (url) {
+    try { label = new URL(url).hostname; } catch { /* keep raw */ }
+  }
 
   if (!expanded) {
     return (
