@@ -179,6 +179,9 @@ class LeonAgent:
         # Get runtime from MonitorMiddleware
         self.runtime = self._monitor_middleware.runtime
 
+        # Set agent reference in TaskMiddleware for runtime access
+        self._task_middleware.set_agent(self)
+
         # Inject runtime/model into MemoryMiddleware
         if hasattr(self, "_memory_middleware"):
             self._memory_middleware.set_runtime(self.runtime)
