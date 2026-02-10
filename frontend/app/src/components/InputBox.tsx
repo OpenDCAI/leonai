@@ -4,10 +4,20 @@ import { useCallback, useEffect, useRef, useState } from "react";
 interface InputBoxProps {
   disabled?: boolean;
   placeholder?: string;
+  queueEnabled?: boolean;
+  isStreaming?: boolean;
   onSendMessage: (message: string) => Promise<void> | void;
+  onSendQueueMessage?: (message: string) => Promise<void> | void;
 }
 
-export default function InputBox({ disabled = false, placeholder = "告诉 Leon 你需要什么帮助...", onSendMessage }: InputBoxProps) {
+export default function InputBox({
+  disabled = false,
+  placeholder = "告诉 Leon 你需要什么帮助...",
+  queueEnabled = false,
+  isStreaming = false,
+  onSendMessage,
+  onSendQueueMessage,
+}: InputBoxProps) {
   const [value, setValue] = useState("");
   const [focused, setFocused] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -23,28 +33,46 @@ export default function InputBox({ disabled = false, placeholder = "告诉 Leon 
     autoResize();
   }, [value, autoResize]);
 
+  // During streaming, input is enabled for queue messages
+  const canSendQueue = isStreaming && !!onSendQueueMessage;
+  const inputDisabled = disabled && !canSendQueue;
+  const canSend = !!value.trim() && !inputDisabled;
+
   async function handleSend() {
     const text = value.trim();
-    if (!text || disabled) return;
-    setValue("");
-    await onSendMessage(text);
+    if (!text) return;
+    if (canSendQueue) {
+      setValue("");
+      await onSendQueueMessage!(text);
+    } else if (!disabled) {
+      setValue("");
+      await onSendMessage(text);
+    }
     inputRef.current?.focus();
   }
 
   return (
     <div className="bg-white pb-4">
       <div className="max-w-3xl mx-auto px-4">
+        {isStreaming && canSendQueue && (
+          <div className="flex items-center gap-2 mb-1.5 px-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+            <span className="text-[11px] text-[#a3a3a3]">
+              AI 回复中 — 消息将{queueEnabled ? "排队等待执行" : "立即插入对话"}
+            </span>
+          </div>
+        )}
         <div
           onClick={() => inputRef.current?.focus()}
           className={`flex items-end gap-2 rounded-2xl border transition-all cursor-text ${
             focused ? "border-[#e5e5e5] shadow-sm" : "border-transparent"
-          } bg-[#fafafa]`}
+          } ${canSendQueue ? "bg-amber-50/50" : "bg-[#fafafa]"}`}
         >
           <div className="flex-1 py-4 pl-4">
             <textarea
               ref={inputRef}
               value={value}
-              disabled={disabled}
+              disabled={inputDisabled}
               onChange={(e) => setValue(e.target.value)}
               onFocus={() => setFocused(true)}
               onBlur={() => setFocused(false)}
@@ -54,7 +82,7 @@ export default function InputBox({ disabled = false, placeholder = "告诉 Leon 
                   void handleSend();
                 }
               }}
-              placeholder={placeholder}
+              placeholder={canSendQueue ? (queueEnabled ? "输入消息，将在当前任务完成后执行..." : "输入消息，将立即插入对话...") : placeholder}
               className="w-full bg-transparent text-sm resize-none outline-none border-none text-[#171717] placeholder:text-[#a3a3a3] disabled:opacity-50"
               rows={1}
               style={{ boxShadow: "none", overflow: "hidden" }}
@@ -63,10 +91,12 @@ export default function InputBox({ disabled = false, placeholder = "告诉 Leon 
           <div className="flex items-center pr-3 py-4">
             <button
               onClick={(e) => { e.stopPropagation(); void handleSend(); }}
-              disabled={disabled || !value.trim()}
+              disabled={!canSend}
               className={`w-8 h-8 rounded-full flex items-center justify-center transition-all ${
-                !disabled && value.trim()
-                  ? "bg-[#171717] text-white hover:bg-[#404040]"
+                canSend
+                  ? canSendQueue
+                    ? "bg-amber-500 text-white hover:bg-amber-600"
+                    : "bg-[#171717] text-white hover:bg-[#404040]"
                   : "bg-[#f5f5f5] text-[#d4d4d4]"
               }`}
             >

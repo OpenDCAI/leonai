@@ -1,5 +1,5 @@
 import { Check, ChevronDown, ChevronRight, Copy } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import type { AssistantTurn, ChatEntry, StreamStatus, ToolSegment, UserMessage } from "../api";
 import MarkdownContent from "./MarkdownContent";
 import { getToolRenderer } from "./tool-renderers";
@@ -11,6 +11,7 @@ interface ChatAreaProps {
   streamTurnId?: string | null;
   runtimeStatus: StreamStatus | null;
   loading?: boolean;
+  onFocusAgent?: (stepId: string) => void;
 }
 
 function formatTime(ts?: number): string {
@@ -50,7 +51,7 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
-function UserBubble({ entry }: { entry: UserMessage }) {
+const UserBubble = memo(function UserBubble({ entry }: { entry: UserMessage }) {
   return (
     <div className="flex justify-end animate-fade-in">
       <div className="max-w-[78%]">
@@ -67,13 +68,67 @@ function UserBubble({ entry }: { entry: UserMessage }) {
       </div>
     </div>
   );
-}
+});
 
 /** Every tool gets the same expandable card — collapsed shows the key info, expand shows details */
-function ToolStepBlock({ seg }: { seg: ToolSegment }) {
+const TOOL_BADGE_STYLES: Record<string, { bg: string; text: string; label: string }> = {
+  Bash: { bg: "bg-blue-50", text: "text-blue-600", label: "Bash" },
+  run_command: { bg: "bg-blue-50", text: "text-blue-600", label: "Bash" },
+  execute_command: { bg: "bg-blue-50", text: "text-blue-600", label: "Bash" },
+  Read: { bg: "bg-emerald-50", text: "text-emerald-600", label: "Read" },
+  read_file: { bg: "bg-emerald-50", text: "text-emerald-600", label: "Read" },
+  Edit: { bg: "bg-amber-50", text: "text-amber-600", label: "Edit" },
+  edit_file: { bg: "bg-amber-50", text: "text-amber-600", label: "Edit" },
+  Write: { bg: "bg-amber-50", text: "text-amber-600", label: "Write" },
+  write_file: { bg: "bg-amber-50", text: "text-amber-600", label: "Write" },
+  Grep: { bg: "bg-purple-50", text: "text-purple-600", label: "Grep" },
+  Glob: { bg: "bg-purple-50", text: "text-purple-600", label: "Glob" },
+  search: { bg: "bg-purple-50", text: "text-purple-600", label: "Search" },
+  find_files: { bg: "bg-purple-50", text: "text-purple-600", label: "Search" },
+  ListDir: { bg: "bg-emerald-50", text: "text-emerald-600", label: "ListDir" },
+  list_directory: { bg: "bg-emerald-50", text: "text-emerald-600", label: "ListDir" },
+  list_dir: { bg: "bg-emerald-50", text: "text-emerald-600", label: "ListDir" },
+  WebFetch: { bg: "bg-cyan-50", text: "text-cyan-600", label: "Web" },
+  web_search: { bg: "bg-cyan-50", text: "text-cyan-600", label: "Web" },
+  WebSearch: { bg: "bg-cyan-50", text: "text-cyan-600", label: "Web" },
+  Task: { bg: "bg-violet-50", text: "text-violet-600", label: "Task" },
+  TaskCreate: { bg: "bg-violet-50", text: "text-violet-600", label: "Task" },
+  TaskUpdate: { bg: "bg-violet-50", text: "text-violet-600", label: "Task" },
+  TaskList: { bg: "bg-violet-50", text: "text-violet-600", label: "Task" },
+  TaskGet: { bg: "bg-violet-50", text: "text-violet-600", label: "Task" },
+};
+
+const DEFAULT_BADGE = { bg: "bg-gray-50", text: "text-gray-500", label: "" };
+
+const ToolStepBlock = memo(function ToolStepBlock({ seg, onFocusAgent }: { seg: ToolSegment; onFocusAgent?: (stepId: string) => void }) {
   const [expanded, setExpanded] = useState(false);
   const Renderer = getToolRenderer(seg.step);
   const isCalling = seg.step.status === "calling";
+  const badge = TOOL_BADGE_STYLES[seg.step.name] ?? { ...DEFAULT_BADGE, label: seg.step.name };
+
+  // Task (sub-agent) gets a clickable card that opens the Agents panel
+  if (seg.step.name === "Task") {
+    return (
+      <div
+        className={`rounded-lg border bg-white animate-fade-in cursor-pointer hover:border-[#a3a3a3] transition-colors ${
+          isCalling ? "tool-card-calling border-[#d4d4d4]" : "border-[#e5e5e5]"
+        }`}
+        onClick={() => onFocusAgent?.(seg.step.id)}
+      >
+        <div className="flex items-center gap-1.5 w-full text-left px-2.5 py-1.5">
+          <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium flex-shrink-0 ${badge.bg} ${badge.text}`}>
+            {badge.label}
+          </span>
+          <div className={`flex-1 min-w-0 ${isCalling ? "tool-shimmer" : ""}`}>
+            <Renderer step={seg.step} expanded={false} />
+          </div>
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 text-[#a3a3a3] flex-shrink-0">
+            <polyline points="6,3 11,8 6,13" />
+          </svg>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -90,6 +145,9 @@ function ToolStepBlock({ seg }: { seg: ToolSegment }) {
         ) : (
           <ChevronRight className="w-3 h-3 text-[#a3a3a3] flex-shrink-0" />
         )}
+        <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium flex-shrink-0 ${badge.bg} ${badge.text}`}>
+          {badge.label}
+        </span>
         <div className={`flex-1 min-w-0 ${isCalling ? "tool-shimmer" : ""}`}>
           <Renderer step={seg.step} expanded={false} />
         </div>
@@ -101,9 +159,9 @@ function ToolStepBlock({ seg }: { seg: ToolSegment }) {
       )}
     </div>
   );
-}
+});
 
-function AssistantBlock({ entry, isStreamingThis }: { entry: AssistantTurn; isStreamingThis?: boolean }) {
+const AssistantBlock = memo(function AssistantBlock({ entry, isStreamingThis, onFocusAgent }: { entry: AssistantTurn; isStreamingThis?: boolean; onFocusAgent?: (stepId: string) => void }) {
   const fullText = entry.segments
     .filter((s) => s.type === "text")
     .map((s) => s.content)
@@ -141,7 +199,7 @@ function AssistantBlock({ entry, isStreamingThis }: { entry: AssistantTurn; isSt
             return <MarkdownContent key={`seg-${i}`} content={seg.content} />;
           }
           if (seg.type === "tool") {
-            return <ToolStepBlock key={seg.step.id} seg={seg} />;
+            return <ToolStepBlock key={seg.step.id} seg={seg} onFocusAgent={onFocusAgent} />;
           }
           return null;
         })}
@@ -154,7 +212,7 @@ function AssistantBlock({ entry, isStreamingThis }: { entry: AssistantTurn; isSt
       </div>
     </div>
   );
-}
+});
 
 function ChatSkeleton() {
   return (
@@ -190,12 +248,12 @@ function ChatSkeleton() {
   );
 }
 
-export default function ChatArea({ entries, isStreaming, streamTurnId, runtimeStatus, loading }: ChatAreaProps) {
+export default function ChatArea({ entries, isStreaming, streamTurnId, runtimeStatus, loading, onFocusAgent }: ChatAreaProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [entries, isStreaming]);
+  }, [entries.length, isStreaming]);
 
   return (
     <div className="flex-1 overflow-y-auto py-5 bg-white">
@@ -207,7 +265,7 @@ export default function ChatArea({ entries, isStreaming, streamTurnId, runtimeSt
           if (entry.role === "user") {
             return <UserBubble key={entry.id} entry={entry} />;
           }
-          return <AssistantBlock key={entry.id} entry={entry} isStreamingThis={isStreaming && entry.id === streamTurnId} />;
+          return <AssistantBlock key={entry.id} entry={entry} isStreamingThis={isStreaming && entry.id === streamTurnId} onFocusAgent={onFocusAgent} />;
         })}
 
         {isStreaming && (

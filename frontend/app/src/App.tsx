@@ -52,6 +52,7 @@ import ComputerPanel from "./components/ComputerPanel";
 import Header from "./components/Header";
 import InputBox from "./components/InputBox";
 import NewThreadModal from "./components/NewThreadModal";
+
 import SandboxSessionsModal from "./components/SandboxSessionsModal";
 import SearchModal from "./components/SearchModal";
 import Sidebar from "./components/Sidebar";
@@ -65,7 +66,9 @@ import {
   mapBackendEntries,
   pauseThreadSandbox,
   resumeThreadSandbox,
+  setQueueMode,
   startRun,
+  steerThread,
   type AssistantTurn,
   type ChatEntry,
   type SandboxInfo,
@@ -83,9 +86,12 @@ function makeId(prefix: string): string {
 export default function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [computerOpen, setComputerOpen] = useState(false);
+  const [computerTab, setComputerTab] = useState<"terminal" | "files" | "agents">("terminal");
+  const [focusedAgentStepId, setFocusedAgentStepId] = useState<string | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [sessionsOpen, setSessionsOpen] = useState(false);
   const [newThreadOpen, setNewThreadOpen] = useState(false);
+  const [queueEnabled, setQueueEnabled] = useState(false);
 
   const sidebarResize = useResizableX(272, 200, 420);
   const computerResize = useResizableX(600, 360, 1200, true);
@@ -267,6 +273,62 @@ export default function App() {
               }),
             );
           }
+
+          // Handle sub-agent events
+          if (event.type.startsWith("subagent_")) {
+            const data = event.data as any;
+            const parentToolCallId = data?.parent_tool_call_id;
+
+            if (!parentToolCallId) return;
+
+            // Find the parent tool call and update its streaming state
+            setEntries((prev) =>
+              prev.map((e) => {
+                if (e.id !== turnId || e.role !== "assistant") return e;
+                const turn = e as AssistantTurn;
+                const updatedSegs = turn.segments.map((s) => {
+                  if (s.type !== "tool" || s.step.id !== parentToolCallId) return s;
+
+                  // Initialize subagent_stream if not present
+                  const step = s.step;
+                  if (!step.subagent_stream) {
+                    step.subagent_stream = {
+                      task_id: "",
+                      thread_id: "",
+                      text: "",
+                      tool_calls: [],
+                      status: "running",
+                    };
+                  }
+
+                  const stream = step.subagent_stream;
+
+                  // Handle different sub-agent event types
+                  if (event.type === "subagent_task_start") {
+                    stream.task_id = data.task_id || "";
+                    stream.thread_id = data.thread_id || "";
+                    stream.status = "running";
+                  } else if (event.type === "subagent_task_text") {
+                    stream.text += data.content || "";
+                  } else if (event.type === "subagent_task_tool_call") {
+                    stream.tool_calls.push({
+                      id: data.tool_call_id || "",
+                      name: data.name || "",
+                      args: data.args || {},
+                    });
+                  } else if (event.type === "subagent_task_done") {
+                    stream.status = "completed";
+                  } else if (event.type === "subagent_task_error") {
+                    stream.status = "error";
+                    stream.error = data.error || "Unknown error";
+                  }
+
+                  return { ...s, step: { ...step } };
+                });
+                return { ...turn, segments: updatedSegs };
+              }),
+            );
+          }
         });
       } finally {
         setIsStreaming(false);
@@ -300,6 +362,35 @@ export default function App() {
     }
   }, [activeThreadId, loadThread]);
 
+  const handleFocusAgent = useCallback((stepId: string) => {
+    setFocusedAgentStepId(stepId);
+    setComputerTab("agents");
+    setComputerOpen(true);
+  }, []);
+
+  const handleSendQueueMessage = useCallback(
+    async (message: string) => {
+      if (!activeThreadId) return;
+      // Add user message to UI so it's visible
+      const userEntry: ChatEntry = { id: makeId("user"), role: "user", content: message, timestamp: Date.now() };
+      setEntries((prev) => [...prev, userEntry]);
+      await steerThread(activeThreadId, message);
+    },
+    [activeThreadId],
+  );
+
+  const handleToggleQueue = useCallback(async () => {
+    const next = !queueEnabled;
+    setQueueEnabled(next);
+    if (activeThreadId) {
+      try {
+        await setQueueMode(activeThreadId, next ? "followup" : "steer");
+      } catch {
+        // ignore — backend may not support this yet
+      }
+    }
+  }, [activeThreadId, queueEnabled]);
+
   return (
     <div className="h-screen w-screen bg-white flex overflow-hidden">
       <Sidebar
@@ -320,9 +411,11 @@ export default function App() {
           activeThreadId={activeThreadId}
           threadPreview={threads.find((t) => t.thread_id === activeThreadId)?.preview ?? null}
           sandboxInfo={activeSandbox}
+          queueEnabled={queueEnabled}
           onToggleSidebar={() => setSidebarCollapsed((v) => !v)}
           onPauseSandbox={() => void handlePauseSandbox()}
           onResumeSandbox={() => void handleResumeSandbox()}
+          onToggleQueue={() => void handleToggleQueue()}
         />
 
         <div className="flex-1 flex min-h-0">
@@ -332,7 +425,7 @@ export default function App() {
                 {sandboxActionError}
               </div>
             )}
-            <ChatArea entries={entries} isStreaming={isStreaming} streamTurnId={streamTurnId} runtimeStatus={runtimeStatus} loading={loading} />
+            <ChatArea entries={entries} isStreaming={isStreaming} streamTurnId={streamTurnId} runtimeStatus={runtimeStatus} loading={loading} onFocusAgent={handleFocusAgent} />
             {activeThreadId && (
               <TaskProgress
                 isStreaming={isStreaming}
@@ -345,8 +438,11 @@ export default function App() {
             )}
             <InputBox
               disabled={isStreaming}
+              isStreaming={isStreaming}
+              queueEnabled={queueEnabled}
               placeholder={activeThreadId ? "告诉 Leon 你需要什么帮助..." : "新建会话后开始对话"}
               onSendMessage={handleSendMessage}
+              onSendQueueMessage={activeThreadId ? handleSendQueueMessage : undefined}
             />
           </div>
 
@@ -360,6 +456,10 @@ export default function App() {
                 sandboxType={activeSandbox?.type ?? null}
                 chatEntries={entries}
                 width={computerResize.width}
+                activeTab={computerTab}
+                onTabChange={setComputerTab}
+                focusedAgentStepId={focusedAgentStepId}
+                onFocusAgent={setFocusedAgentStepId}
               />
             </>
           )}
