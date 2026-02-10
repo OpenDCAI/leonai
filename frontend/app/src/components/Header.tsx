@@ -46,6 +46,7 @@ export default function Header({
           <PanelLeft className="w-4 h-4" />
         </button>
 
+        {/* Context indicator */}
         <div className="flex items-center rounded-lg border border-[#e5e5e5] overflow-hidden">
           <div className="flex items-center gap-2 px-3 py-1.5 bg-[#fafafa]">
             <Monitor className="w-3.5 h-3.5 text-[#a3a3a3]" />

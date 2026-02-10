@@ -206,6 +206,12 @@ export default function ComputerPanel({ isOpen, onClose, threadId, sandboxType, 
   async function refreshStatus() {
     if (!threadId) return;
     setStatusError(null);
+    if (!isRemote) {
+      setSession(null);
+      setLease(null);
+      setTerminal(null);
+      return;
+    }
     try {
       const [s, t, l] = await Promise.all([
         getThreadSession(threadId),

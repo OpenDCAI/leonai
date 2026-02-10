@@ -91,8 +91,6 @@ export default function SandboxSessionsModal({ isOpen, onClose, onSessionMutated
     );
   }
 
-  const visibleSessions = sessions.filter((row) => row.inspect_visible !== false);
-
   return (
     <div
       className="fixed inset-0 z-[120] flex items-center justify-center bg-black/40 backdrop-blur-sm"
@@ -102,10 +100,13 @@ export default function SandboxSessionsModal({ isOpen, onClose, onSessionMutated
         className="w-[860px] max-w-[95vw] max-h-[85vh] rounded-2xl overflow-hidden bg-white border border-[#e5e5e5] shadow-xl animate-scale-in"
         onClick={(e) => e.stopPropagation()}
       >
+        {/* Header */}
         <div className="h-12 px-5 flex items-center justify-between border-b border-[#e5e5e5]">
           <div className="flex items-center gap-3">
             <h3 className="text-sm font-semibold text-[#171717]">运行环境会话</h3>
-            {refreshing && <Loader2 className="w-3.5 h-3.5 animate-spin text-[#a3a3a3]" />}
+            {refreshing && (
+              <Loader2 className="w-3.5 h-3.5 animate-spin text-[#a3a3a3]" />
+            )}
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -123,6 +124,7 @@ export default function SandboxSessionsModal({ isOpen, onClose, onSessionMutated
           </div>
         </div>
 
+        {/* Content */}
         <div className="p-5 overflow-auto max-h-[calc(85vh-48px)] custom-scrollbar">
           {loading && sessions.length === 0 && (
             <div className="flex items-center gap-2 py-8 justify-center">
@@ -132,12 +134,12 @@ export default function SandboxSessionsModal({ isOpen, onClose, onSessionMutated
           )}
           {error && sessions.length === 0 && <p className="text-sm py-8 text-center text-red-500">{error}</p>}
           {error && sessions.length > 0 && <p className="text-xs mb-3 text-red-500">刷新失败: {error}</p>}
-          {!loading && visibleSessions.length === 0 && !error && (
+          {!loading && sessions.length === 0 && !error && (
             <p className="text-sm py-8 text-center text-[#a3a3a3]">暂无活跃会话</p>
           )}
-          {visibleSessions.length > 0 && (
+          {sessions.length > 0 && (
             <div className="space-y-2">
-              {visibleSessions.map((row) => (
+              {sessions.map((row) => (
                 <div
                   key={row.session_id}
                   className="flex items-center gap-4 p-3 rounded-xl bg-[#fafafa] border border-[#e5e5e5]"
