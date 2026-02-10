@@ -1135,7 +1135,10 @@ async def delete_thread(thread_id: str) -> dict[str, Any]:
 
     lock = await _get_thread_lock(app, thread_id)
     async with lock:
-        _delete_thread_in_db(thread_id)
+        agent = app.state.agent_pool.get(pool_key)
+        if agent and hasattr(agent, "runtime") and agent.runtime.current_state == AgentState.ACTIVE:
+            raise HTTPException(status_code=409, detail="Cannot delete thread while run is in progress")
+        await asyncio.to_thread(_delete_thread_in_db, thread_id)
 
     # Clean up thread-specific state
     app.state.thread_sandbox.pop(thread_id, None)
@@ -1199,137 +1202,135 @@ async def run_thread(thread_id: str, payload: RunRequest) -> EventSourceResponse
         raise HTTPException(status_code=400, detail="message cannot be empty")
 
     sandbox_type = _resolve_thread_sandbox(app, thread_id)
+    set_current_thread_id(thread_id)
+    agent = await _get_or_create_agent(app, sandbox_type, thread_id=thread_id)
+    lock = await _get_thread_lock(app, thread_id)
+    async with lock:
+        if hasattr(agent, "runtime") and not agent.runtime.transition(AgentState.ACTIVE):
+            raise HTTPException(status_code=409, detail="Thread is already running")
 
     async def event_stream() -> AsyncGenerator[dict[str, str], None]:
-        agent = None
         try:
+            config = {"configurable": {"thread_id": thread_id}}
             set_current_thread_id(thread_id)
-            agent = await _get_or_create_agent(app, sandbox_type, thread_id=thread_id)
-            lock = await _get_thread_lock(app, thread_id)
-            async with lock:
-                config = {"configurable": {"thread_id": thread_id}}
-                set_current_thread_id(thread_id)
 
-                # @@@ Streaming parser mirrors TUI runner chunk semantics so web and CLI stay consistent.
-                # Prime session before tool calls so lazy capability wrappers never race thread context propagation.
-                if hasattr(agent, "_sandbox"):
+            # @@@ Streaming parser mirrors TUI runner chunk semantics so web and CLI stay consistent.
+            # Prime session before tool calls so lazy capability wrappers never race thread context propagation.
+            if hasattr(agent, "_sandbox"):
 
-                    def _prime_sandbox() -> None:
-                        mgr = agent._sandbox.manager
-                        mgr.enforce_idle_timeouts()
-                        existing = mgr.session_manager.get(thread_id)
-                        if existing and existing.status == "paused":
+                def _prime_sandbox() -> None:
+                    mgr = agent._sandbox.manager
+                    mgr.enforce_idle_timeouts()
+                    existing = mgr.session_manager.get(thread_id)
+                    if existing and existing.status == "paused":
+                        if not agent._sandbox.resume_thread(thread_id):
+                            raise RuntimeError(f"Failed to resume paused session for thread {thread_id}")
+                    agent._sandbox.ensure_session(thread_id)
+                    terminal = mgr.terminal_store.get(thread_id)
+                    lease = mgr.lease_store.get(terminal.lease_id) if terminal else None
+                    if lease:
+                        lease_status = lease.refresh_instance_status(mgr.provider)
+                        if lease_status == "paused" and mgr.provider_capability.can_resume:
                             if not agent._sandbox.resume_thread(thread_id):
-                                raise RuntimeError(f"Failed to resume paused session for thread {thread_id}")
-                        agent._sandbox.ensure_session(thread_id)
-                        terminal = mgr.terminal_store.get(thread_id)
-                        lease = mgr.lease_store.get(terminal.lease_id) if terminal else None
-                        if lease:
-                            lease_status = lease.refresh_instance_status(mgr.provider)
-                            if lease_status == "paused" and mgr.provider_capability.can_resume:
-                                if not agent._sandbox.resume_thread(thread_id):
-                                    raise RuntimeError(f"Failed to auto-resume paused sandbox for thread {thread_id}")
+                                raise RuntimeError(f"Failed to auto-resume paused sandbox for thread {thread_id}")
 
-                    await asyncio.to_thread(_prime_sandbox)
+                await asyncio.to_thread(_prime_sandbox)
 
-                if hasattr(agent, "runtime"):
-                    agent.runtime.transition(AgentState.ACTIVE)
+            emitted_tool_call_ids: set[str] = set()
 
-                emitted_tool_call_ids: set[str] = set()
+            async for chunk in agent.agent.astream(
+                {"messages": [{"role": "user", "content": payload.message}]},
+                config=config,
+                stream_mode=["messages", "updates"],
+            ):
+                if not chunk:
+                    continue
 
-                async for chunk in agent.agent.astream(
-                    {"messages": [{"role": "user", "content": payload.message}]},
-                    config=config,
-                    stream_mode=["messages", "updates"],
-                ):
-                    if not chunk:
+                # stream_mode=["messages", "updates"] yields tuples: (mode, data)
+                if not isinstance(chunk, tuple) or len(chunk) != 2:
+                    continue
+                mode, data = chunk
+
+                # --- Token-level streaming from "messages" mode ---
+                if mode == "messages":
+                    msg_chunk, metadata = data
+                    msg_class = msg_chunk.__class__.__name__
+                    # Only stream AIMessageChunk tokens (not ToolMessage, HumanMessage, etc.)
+                    if msg_class == "AIMessageChunk":
+                        content = _extract_text_content(getattr(msg_chunk, "content", ""))
+                        if content:
+                            yield {
+                                "event": "text",
+                                "data": json.dumps({"content": content}, ensure_ascii=False),
+                            }
+
+                # --- Node-level updates from "updates" mode ---
+                elif mode == "updates":
+                    if not isinstance(data, dict):
                         continue
-
-                    # stream_mode=["messages", "updates"] yields tuples: (mode, data)
-                    if not isinstance(chunk, tuple) or len(chunk) != 2:
-                        continue
-                    mode, data = chunk
-
-                    # --- Token-level streaming from "messages" mode ---
-                    if mode == "messages":
-                        msg_chunk, metadata = data
-                        msg_class = msg_chunk.__class__.__name__
-                        # Only stream AIMessageChunk tokens (not ToolMessage, HumanMessage, etc.)
-                        if msg_class == "AIMessageChunk":
-                            content = _extract_text_content(getattr(msg_chunk, "content", ""))
-                            if content:
-                                yield {
-                                    "event": "text",
-                                    "data": json.dumps({"content": content}, ensure_ascii=False),
-                                }
-
-                    # --- Node-level updates from "updates" mode ---
-                    elif mode == "updates":
-                        if not isinstance(data, dict):
+                    for _node_name, node_update in data.items():
+                        if not isinstance(node_update, dict):
                             continue
-                        for _node_name, node_update in data.items():
-                            if not isinstance(node_update, dict):
-                                continue
-                            messages = node_update.get("messages", [])
-                            if not isinstance(messages, list):
-                                messages = [messages]
-                            for msg in messages:
-                                msg_class = msg.__class__.__name__
-                                # Skip AIMessage text — already streamed token-by-token via "messages" mode
-                                # But still emit tool_calls from updates as a fallback
-                                if msg_class == "AIMessage":
-                                    for tc in getattr(msg, "tool_calls", []):
-                                        tc_id = tc.get("id")
-                                        if tc_id and tc_id in emitted_tool_call_ids:
-                                            continue
-                                        if tc_id:
-                                            emitted_tool_call_ids.add(tc_id)
-                                        yield {
-                                            "event": "tool_call",
-                                            "data": json.dumps(
-                                                {
-                                                    "id": tc.get("id"),
-                                                    "name": tc.get("name", "unknown"),
-                                                    "args": tc.get("args", {}),
-                                                },
-                                                ensure_ascii=False,
-                                            ),
-                                        }
-                                elif msg_class == "ToolMessage":
+                        messages = node_update.get("messages", [])
+                        if not isinstance(messages, list):
+                            messages = [messages]
+                        for msg in messages:
+                            msg_class = msg.__class__.__name__
+                            # Skip AIMessage text — already streamed token-by-token via "messages" mode
+                            # But still emit tool_calls from updates as a fallback
+                            if msg_class == "AIMessage":
+                                for tc in getattr(msg, "tool_calls", []):
+                                    tc_id = tc.get("id")
+                                    if tc_id and tc_id in emitted_tool_call_ids:
+                                        continue
+                                    if tc_id:
+                                        emitted_tool_call_ids.add(tc_id)
                                     yield {
-                                        "event": "tool_result",
+                                        "event": "tool_call",
                                         "data": json.dumps(
                                             {
-                                                "tool_call_id": getattr(msg, "tool_call_id", None),
-                                                "name": getattr(msg, "name", "unknown"),
-                                                "content": str(getattr(msg, "content", "")),
+                                                "id": tc.get("id"),
+                                                "name": tc.get("name", "unknown"),
+                                                "args": tc.get("args", {}),
                                             },
                                             ensure_ascii=False,
                                         ),
                                     }
-                                    # Emit runtime status after each tool result
-                                    if hasattr(agent, "runtime"):
-                                        status = agent.runtime.get_status_dict()
-                                        status["current_tool"] = getattr(msg, "name", None)
-                                        yield {
-                                            "event": "status",
-                                            "data": json.dumps(status, ensure_ascii=False),
-                                        }
+                            elif msg_class == "ToolMessage":
+                                yield {
+                                    "event": "tool_result",
+                                    "data": json.dumps(
+                                        {
+                                            "tool_call_id": getattr(msg, "tool_call_id", None),
+                                            "name": getattr(msg, "name", "unknown"),
+                                            "content": str(getattr(msg, "content", "")),
+                                        },
+                                        ensure_ascii=False,
+                                    ),
+                                }
+                                # Emit runtime status after each tool result
+                                if hasattr(agent, "runtime"):
+                                    status = agent.runtime.get_status_dict()
+                                    status["current_tool"] = getattr(msg, "name", None)
+                                    yield {
+                                        "event": "status",
+                                        "data": json.dumps(status, ensure_ascii=False),
+                                    }
 
-                # --- Forward sub-agent events ---
-                if hasattr(agent, "runtime"):
-                    for tool_call_id, events in agent.runtime.get_pending_subagent_events():
-                        for event in events:
-                            # Parse event data and add parent_tool_call_id
-                            event_type = event.get("event", "")
-                            event_data = json.loads(event.get("data", "{}"))
-                            event_data["parent_tool_call_id"] = tool_call_id
+            # --- Forward sub-agent events ---
+            if hasattr(agent, "runtime"):
+                for tool_call_id, events in agent.runtime.get_pending_subagent_events():
+                    for event in events:
+                        # Parse event data and add parent_tool_call_id
+                        event_type = event.get("event", "")
+                        event_data = json.loads(event.get("data", "{}"))
+                        event_data["parent_tool_call_id"] = tool_call_id
 
-                            # Emit with subagent_ prefix
-                            yield {
-                                "event": f"subagent_{event_type}",
-                                "data": json.dumps(event_data, ensure_ascii=False),
-                            }
+                        # Emit with subagent_ prefix
+                        yield {
+                            "event": f"subagent_{event_type}",
+                            "data": json.dumps(event_data, ensure_ascii=False),
+                        }
 
             # Final status before done
             if hasattr(agent, "runtime"):
