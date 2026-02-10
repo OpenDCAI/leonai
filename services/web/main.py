@@ -68,27 +68,42 @@ def _available_sandbox_types() -> list[dict[str, Any]]:
     return types
 
 
-def _create_agent_sync(sandbox_name: str) -> Any:
+def _create_agent_sync(sandbox_name: str, workspace_root: Path | None = None) -> Any:
     """Create a LeonAgent with the given sandbox. Runs in a thread."""
     # @@@ model_name=None lets the profile.yaml value take effect instead of the factory default
     return create_leon_agent(
         model_name=None,
-        workspace_root=Path.cwd(),
+        workspace_root=workspace_root or Path.cwd(),
         sandbox=sandbox_name if sandbox_name != "local" else None,
         verbose=True,
     )
 
 
 async def _get_or_create_agent(app_obj: FastAPI, sandbox_type: str, thread_id: str | None = None) -> Any:
-    """Lazy agent pool — one agent per sandbox type, created on demand."""
+    """Lazy agent pool — one agent per thread, created on demand."""
     if thread_id:
         set_current_thread_id(thread_id)
+
+    # Per-thread Agent instance: pool key = thread_id:sandbox_type
+    # This ensures complete isolation of middleware state (memory, todo, runtime, filesystem, etc.)
+    if not thread_id:
+        raise ValueError("thread_id is required for agent creation")
+
+    pool_key = f"{thread_id}:{sandbox_type}"
     pool = app_obj.state.agent_pool
-    if sandbox_type in pool:
-        return pool[sandbox_type]
+    if pool_key in pool:
+        return pool[pool_key]
+
+    # For local sandbox, check if thread has custom cwd
+    workspace_root = None
+    if sandbox_type == "local":
+        cwd = app_obj.state.thread_cwd.get(thread_id)
+        if cwd:
+            workspace_root = Path(cwd).resolve()
+
     # @@@ agent-init-thread - LeonAgent.__init__ uses run_until_complete, must run in thread
-    agent = await asyncio.to_thread(_create_agent_sync, sandbox_type)
-    pool[sandbox_type] = agent
+    agent = await asyncio.to_thread(_create_agent_sync, sandbox_type, workspace_root)
+    pool[pool_key] = agent
     return agent
 
 
@@ -415,6 +430,9 @@ def _list_threads_from_db() -> list[dict[str, Any]]:
 
     results = []
     for tid in sorted(thread_ids):
+        # Filter out sub-agent threads (they start with "subagent_")
+        if tid.startswith("subagent_"):
+            continue
         meta = thread_meta.get(tid, {})
         results.append(
             {
@@ -519,6 +537,81 @@ def _resolve_local_workspace_path(raw_path: str | None) -> Path:
 async def list_sandbox_types() -> dict[str, Any]:
     types = await asyncio.to_thread(_available_sandbox_types)
     return {"types": types}
+
+
+@app.get("/api/sandbox/pick-folder")
+async def pick_folder() -> dict[str, Any]:
+    """Open system folder picker dialog and return selected path."""
+    import subprocess
+    import sys
+
+    try:
+        if sys.platform == "darwin":  # macOS
+            result = subprocess.run(
+                [
+                    "osascript",
+                    "-e",
+                    'POSIX path of (choose folder with prompt "选择工作目录")',
+                ],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            if result.returncode == 0:
+                path = result.stdout.strip()
+                return {"path": path}
+            else:
+                raise HTTPException(400, "User cancelled folder selection")
+        elif sys.platform == "win32":  # Windows
+            # Use PowerShell folder browser
+            ps_script = """
+            Add-Type -AssemblyName System.Windows.Forms
+            $dialog = New-Object System.Windows.Forms.FolderBrowserDialog
+            $dialog.Description = "选择工作目录"
+            $dialog.ShowNewFolderButton = $true
+            if ($dialog.ShowDialog() -eq 'OK') {
+                Write-Output $dialog.SelectedPath
+            }
+            """
+            result = subprocess.run(
+                ["powershell", "-Command", ps_script],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                path = result.stdout.strip()
+                return {"path": path}
+            else:
+                raise HTTPException(400, "User cancelled folder selection")
+        else:  # Linux
+            # Try zenity first, fallback to kdialog
+            try:
+                result = subprocess.run(
+                    ["zenity", "--file-selection", "--directory", "--title=选择工作目录"],
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                )
+                if result.returncode == 0:
+                    path = result.stdout.strip()
+                    return {"path": path}
+            except FileNotFoundError:
+                # Try kdialog
+                result = subprocess.run(
+                    ["kdialog", "--getexistingdirectory", ".", "--title", "选择工作目录"],
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                )
+                if result.returncode == 0:
+                    path = result.stdout.strip()
+                    return {"path": path}
+            raise HTTPException(400, "User cancelled folder selection")
+    except subprocess.TimeoutExpired:
+        raise HTTPException(408, "Folder selection timed out")
+    except Exception as e:
+        raise HTTPException(500, f"Failed to open folder picker: {str(e)}")
 
 
 @app.get("/api/sandbox/sessions")
@@ -1038,10 +1131,21 @@ async def get_thread_messages(thread_id: str) -> dict[str, Any]:
 
 @app.delete("/api/threads/{thread_id}")
 async def delete_thread(thread_id: str) -> dict[str, Any]:
+    # Get sandbox_type before cleaning up state
+    sandbox_type = _resolve_thread_sandbox(app, thread_id)
+    pool_key = f"{thread_id}:{sandbox_type}"
+
     lock = await _get_thread_lock(app, thread_id)
     async with lock:
         _delete_thread_in_db(thread_id)
+
+    # Clean up thread-specific state
     app.state.thread_sandbox.pop(thread_id, None)
+    app.state.thread_cwd.pop(thread_id, None)
+
+    # Remove per-thread Agent from pool
+    app.state.agent_pool.pop(pool_key, None)
+
     return {"ok": True, "thread_id": thread_id}
 
 
@@ -1050,8 +1154,30 @@ async def steer_thread(thread_id: str, payload: SteerRequest) -> dict[str, Any]:
     if not payload.message.strip():
         raise HTTPException(status_code=400, detail="message cannot be empty")
     queue_manager = get_queue_manager()
-    queue_manager.enqueue(payload.message, mode=QueueMode.STEER)
-    return {"ok": True, "thread_id": thread_id, "mode": QueueMode.STEER.value}
+    # Use the current default mode set by the user
+    queue_manager.enqueue(payload.message)
+    return {"ok": True, "thread_id": thread_id, "mode": queue_manager.get_mode().value}
+
+
+class QueueModeRequest(BaseModel):
+    mode: str
+
+
+@app.post("/api/threads/{thread_id}/queue-mode")
+async def set_thread_queue_mode(thread_id: str, payload: QueueModeRequest) -> dict[str, Any]:
+    try:
+        mode = QueueMode(payload.mode)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Invalid queue mode: {payload.mode}")
+    queue_manager = get_queue_manager()
+    queue_manager.set_mode(mode)
+    return {"ok": True, "thread_id": thread_id, "mode": mode.value}
+
+
+@app.get("/api/threads/{thread_id}/queue-mode")
+async def get_thread_queue_mode(thread_id: str) -> dict[str, Any]:
+    queue_manager = get_queue_manager()
+    return {"mode": queue_manager.get_mode().value}
 
 
 # --- Runtime status endpoint ---
@@ -1192,6 +1318,21 @@ async def run_thread(thread_id: str, payload: RunRequest) -> EventSourceResponse
                                             "data": json.dumps(status, ensure_ascii=False),
                                         }
 
+                # --- Forward sub-agent events ---
+                if hasattr(agent, "runtime"):
+                    for tool_call_id, events in agent.runtime.get_pending_subagent_events():
+                        for event in events:
+                            # Parse event data and add parent_tool_call_id
+                            event_type = event.get("event", "")
+                            event_data = json.loads(event.get("data", "{}"))
+                            event_data["parent_tool_call_id"] = tool_call_id
+
+                            # Emit with subagent_ prefix
+                            yield {
+                                "event": f"subagent_{event_type}",
+                                "data": json.dumps(event_data, ensure_ascii=False),
+                            }
+
             # Final status before done
             if hasattr(agent, "runtime"):
                 yield {
@@ -1207,6 +1348,73 @@ async def run_thread(thread_id: str, payload: RunRequest) -> EventSourceResponse
         finally:
             if agent and hasattr(agent, "runtime") and agent.runtime.current_state == AgentState.ACTIVE:
                 agent.runtime.transition(AgentState.IDLE)
+
+    return EventSourceResponse(event_stream())
+
+
+class TaskAgentRequest(BaseModel):
+    subagent_type: str
+    prompt: str
+    description: str | None = None
+    model: str | None = None
+    max_turns: int | None = None
+
+
+@app.post("/api/threads/{thread_id}/task-agent/stream")
+async def stream_task_agent(thread_id: str, payload: TaskAgentRequest) -> EventSourceResponse:
+    """Stream Task agent execution with real-time progress updates."""
+    if not payload.prompt.strip():
+        raise HTTPException(status_code=400, detail="prompt cannot be empty")
+
+    sandbox_type = _resolve_thread_sandbox(app, thread_id)
+
+    async def event_stream() -> AsyncGenerator[dict[str, str], None]:
+        agent = None
+        try:
+            set_current_thread_id(thread_id)
+            agent = await _get_or_create_agent(app, sandbox_type, thread_id=thread_id)
+
+            # Get TaskMiddleware from agent
+            task_middleware = None
+            if hasattr(agent, "middleware"):
+                for mw in agent.middleware:
+                    if mw.__class__.__name__ == "TaskMiddleware":
+                        task_middleware = mw
+                        break
+
+            if not task_middleware:
+                yield {
+                    "event": "task_error",
+                    "data": json.dumps({"error": "TaskMiddleware not available"}, ensure_ascii=False),
+                }
+                return
+
+            # Build task params
+            from middleware.task.types import TaskParams
+
+            params: TaskParams = {
+                "SubagentType": payload.subagent_type,
+                "Prompt": payload.prompt,
+            }
+            if payload.description:
+                params["Description"] = payload.description
+            if payload.model:
+                params["Model"] = payload.model
+            if payload.max_turns:
+                params["MaxTurns"] = payload.max_turns
+
+            # Stream task execution
+            async for event in task_middleware.run_task_streaming(params):
+                yield event
+
+        except Exception as e:
+            import traceback
+
+            traceback.print_exc()
+            yield {
+                "event": "task_error",
+                "data": json.dumps({"error": str(e)}, ensure_ascii=False),
+            }
 
     return EventSourceResponse(event_stream())
 
