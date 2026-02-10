@@ -268,14 +268,21 @@ export default function ChatArea({ entries, isStreaming, streamTurnId, runtimeSt
           return <AssistantBlock key={entry.id} entry={entry} isStreamingThis={isStreaming && entry.id === streamTurnId} onFocusAgent={onFocusAgent} />;
         })}
 
-        {isStreaming && (
-          <div className="flex items-center animate-fade-in">
-            <span className="text-sm text-[#a3a3a3]">
-              {runtimeStatus?.current_tool
-                ? `Leon 正在使用 ${runtimeStatus.current_tool}...`
-                : "Leon 正在思考..."}
-            </span>
-          </div>
+        {isStreaming && entries.length > 0 && entries[entries.length - 1].role === "assistant" && (
+          (() => {
+            const lastEntry = entries[entries.length - 1] as AssistantTurn;
+            const hasContent = lastEntry.text_segments?.some(s => s.text.trim()) || lastEntry.tool_segments?.length > 0;
+            if (hasContent) return null;
+            return (
+              <div className="flex items-center animate-fade-in">
+                <span className="text-sm text-[#a3a3a3]">
+                  {runtimeStatus?.current_tool
+                    ? `Leon 正在使用 ${runtimeStatus.current_tool}...`
+                    : "Leon 正在思考..."}
+                </span>
+              </div>
+            );
+          })()
         )}
 
         {!isStreaming && entries.length === 0 && (
