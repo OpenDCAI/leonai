@@ -159,7 +159,8 @@ class SandboxManager:
             lease = self.lease_store.get(terminal.lease_id) if terminal else None
             if lease:
                 status = lease.refresh_instance_status(self.provider)
-                if status == "running":
+                # Only pause remote providers (local sandbox doesn't need pause)
+                if status == "running" and self.provider.name != "local":
                     try:
                         paused = lease.pause_instance(self.provider)
                     except Exception as exc:
