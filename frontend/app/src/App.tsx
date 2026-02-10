@@ -110,6 +110,9 @@ export default function App() {
   // Track the current streaming assistant turn id for appending
   const [streamTurnId, setStreamTurnId] = useState<string | null>(null);
 
+  // AbortController for stopping streaming
+  const abortControllerRef = useRef<AbortController | null>(null);
+
   const refreshThreads = useCallback(async () => {
     const rows = await listThreads();
     setThreads(rows);
@@ -192,6 +195,10 @@ export default function App() {
       setStreamTurnId(turnId);
       setIsStreaming(true);
       setRuntimeStatus(null);
+
+      // Create new AbortController for this request
+      const abortController = new AbortController();
+      abortControllerRef.current = abortController;
 
       try {
         await startRun(threadId, message, (event) => {
@@ -329,8 +336,24 @@ export default function App() {
               }),
             );
           }
-        });
+        }, abortController.signal);
+      } catch (error) {
+        // Handle abort
+        if (error instanceof Error && error.name === "AbortError") {
+          setEntries((prev) =>
+            prev.map((e) => {
+              if (e.id !== turnId || e.role !== "assistant") return e;
+              const turn = e as AssistantTurn;
+              const segs = [...turn.segments];
+              segs.push({ type: "text", content: "\n\n_[已停止]_" });
+              return { ...turn, segments: segs };
+            }),
+          );
+        } else {
+          throw error;
+        }
       } finally {
+        abortControllerRef.current = null;
         setIsStreaming(false);
         setStreamTurnId(null);
         await loadThread(threadId);
@@ -339,6 +362,12 @@ export default function App() {
     },
     [activeThreadId, loadThread, refreshThreads, selectedSandbox],
   );
+
+  const handleStopStreaming = useCallback(() => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+  }, []);
 
   const handlePauseSandbox = useCallback(async () => {
     if (!activeThreadId) return;
@@ -443,6 +472,7 @@ export default function App() {
               placeholder={activeThreadId ? "告诉 Leon 你需要什么帮助..." : "新建会话后开始对话"}
               onSendMessage={handleSendMessage}
               onSendQueueMessage={activeThreadId ? handleSendQueueMessage : undefined}
+              onStop={handleStopStreaming}
             />
           </div>
 

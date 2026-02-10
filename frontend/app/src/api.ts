@@ -564,11 +564,12 @@ function tryParse(value: string): unknown {
   }
 }
 
-export async function startRun(threadId: string, message: string, onEvent: (event: StreamEvent) => void): Promise<void> {
+export async function startRun(threadId: string, message: string, onEvent: (event: StreamEvent) => void, signal?: AbortSignal): Promise<void> {
   const response = await fetch(`/api/threads/${encodeURIComponent(threadId)}/runs`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ message }),
+    signal,
   });
   if (!response.ok) {
     const body = await response.text();
