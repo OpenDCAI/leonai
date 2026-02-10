@@ -269,12 +269,7 @@ export default function ChatArea({ entries, isStreaming, streamTurnId, runtimeSt
         })}
 
         {isStreaming && (
-          <div className="flex items-center gap-3 animate-fade-in">
-            <div className="flex items-center gap-1.5">
-              <span className="w-1.5 h-1.5 rounded-full bg-[#171717] thinking-dot" />
-              <span className="w-1.5 h-1.5 rounded-full bg-[#171717] thinking-dot" />
-              <span className="w-1.5 h-1.5 rounded-full bg-[#171717] thinking-dot" />
-            </div>
+          <div className="flex items-center animate-fade-in">
             <span className="text-sm text-[#a3a3a3]">
               {runtimeStatus?.current_tool
                 ? `Leon 正在使用 ${runtimeStatus.current_tool}...`
