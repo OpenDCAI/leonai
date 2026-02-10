@@ -1,20 +1,38 @@
 import { MoreHorizontal, Plus, Search, Trash2 } from "lucide-react";
 import type { ThreadSummary } from "../api";
+import { Skeleton } from "./ui/skeleton";
 
 interface SidebarProps {
   threads: ThreadSummary[];
   activeThreadId: string | null;
   collapsed?: boolean;
+  loading?: boolean;
+  width?: number;
   onSelectThread: (threadId: string) => void;
   onCreateThread: () => void;
   onDeleteThread: (threadId: string) => void;
   onSearchClick: () => void;
 }
 
+function ThreadSkeleton() {
+  return (
+    <div className="space-y-0.5">
+      {[...Array(5)].map((_, i) => (
+        <div key={i} className="px-3 py-2.5 rounded-lg" style={{ animationDelay: `${i * 0.08}s` }}>
+          <Skeleton className="h-4 w-[70%] mb-1.5" />
+          <Skeleton className="h-3 w-[40%]" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function Sidebar({
   threads,
   activeThreadId,
   collapsed = false,
+  loading = false,
+  width = 272,
   onSelectThread,
   onCreateThread,
   onDeleteThread,
@@ -45,7 +63,7 @@ export default function Sidebar({
   }
 
   return (
-    <div className="w-[272px] h-full flex flex-col bg-[#fafafa] border-r border-[#e5e5e5] animate-slide-in">
+    <div className="h-full flex flex-col bg-[#fafafa] border-r border-[#e5e5e5] animate-slide-in flex-shrink-0" style={{ width }}>
       {/* Brand */}
       <div className="px-4 py-4 flex items-center gap-2.5">
         <div className="w-7 h-7 rounded-lg bg-[#171717] flex items-center justify-center">
@@ -83,48 +101,54 @@ export default function Sidebar({
           <span className="text-[11px] text-[#d4d4d4]">{threads.length}</span>
         </div>
         <div className="flex-1 min-h-0 overflow-y-auto space-y-0.5 custom-scrollbar">
-          {threads.map((thread) => {
-            const isActive = activeThreadId === thread.thread_id;
-            return (
-              <div key={thread.thread_id} className="group relative">
-                <button
-                  className={`w-full text-left px-3 py-2.5 rounded-lg transition-colors ${
-                    isActive
-                      ? "bg-white border-l-2 border-l-[#171717] shadow-sm"
-                      : "border-l-2 border-l-transparent hover:bg-[#f0f0f0]"
-                  }`}
-                  onClick={() => onSelectThread(thread.thread_id)}
-                >
-                  <div className={`text-sm truncate ${isActive ? "text-[#171717] font-medium" : "text-[#525252]"}`}>
-                    {thread.preview || thread.thread_id.slice(0, 14)}
+          {loading ? (
+            <ThreadSkeleton />
+          ) : (
+            <>
+              {threads.map((thread) => {
+                const isActive = activeThreadId === thread.thread_id;
+                return (
+                  <div key={thread.thread_id} className="group relative">
+                    <button
+                      className={`w-full text-left px-3 py-2.5 rounded-lg transition-colors ${
+                        isActive
+                          ? "bg-white border-l-2 border-l-[#171717] shadow-sm"
+                          : "border-l-2 border-l-transparent hover:bg-[#f0f0f0]"
+                      }`}
+                      onClick={() => onSelectThread(thread.thread_id)}
+                    >
+                      <div className={`text-sm truncate ${isActive ? "text-[#171717] font-medium" : "text-[#525252]"}`}>
+                        {thread.preview || thread.thread_id.slice(0, 14)}
+                      </div>
+                      <div className="text-[11px] mt-0.5 text-[#a3a3a3]">
+                        {thread.sandbox ?? "local"}
+                      </div>
+                    </button>
+                    <div className="absolute right-2 top-2.5 hidden group-hover:flex items-center gap-0.5">
+                      <button
+                        className="w-6 h-6 rounded flex items-center justify-center text-[#a3a3a3] hover:bg-[#e5e5e5] hover:text-[#525252]"
+                        onClick={() => onSelectThread(thread.thread_id)}
+                        title="详情"
+                      >
+                        <MoreHorizontal className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        className="w-6 h-6 rounded flex items-center justify-center text-[#a3a3a3] hover:bg-[#fee2e2] hover:text-[#dc2626]"
+                        onClick={() => onDeleteThread(thread.thread_id)}
+                        title="删除"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   </div>
-                  <div className="text-[11px] mt-0.5 text-[#a3a3a3]">
-                    {thread.sandbox ?? "local"}
-                  </div>
-                </button>
-                <div className="absolute right-2 top-2.5 hidden group-hover:flex items-center gap-0.5">
-                  <button
-                    className="w-6 h-6 rounded flex items-center justify-center text-[#a3a3a3] hover:bg-[#e5e5e5] hover:text-[#525252]"
-                    onClick={() => onSelectThread(thread.thread_id)}
-                    title="详情"
-                  >
-                    <MoreHorizontal className="w-3.5 h-3.5" />
-                  </button>
-                  <button
-                    className="w-6 h-6 rounded flex items-center justify-center text-[#a3a3a3] hover:bg-[#fee2e2] hover:text-[#dc2626]"
-                    onClick={() => onDeleteThread(thread.thread_id)}
-                    title="删除"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-          {threads.length === 0 && (
-            <p className="text-xs px-3 py-6 text-center text-[#a3a3a3]">
-              暂无对话，点击"新建会话"开始。
-            </p>
+                );
+              })}
+              {threads.length === 0 && (
+                <p className="text-xs px-3 py-6 text-center text-[#a3a3a3]">
+                  暂无对话，点击"新建会话"开始。
+                </p>
+              )}
+            </>
           )}
         </div>
       </div>
