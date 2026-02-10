@@ -1,10 +1,10 @@
 """Tests for SandboxManager inspect ground-truth behavior."""
 
 import asyncio
-from datetime import datetime, timedelta
 import sqlite3
 import tempfile
 import uuid
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from sandbox.manager import SandboxManager

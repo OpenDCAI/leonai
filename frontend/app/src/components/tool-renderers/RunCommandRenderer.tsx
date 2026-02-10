@@ -1,0 +1,82 @@
+import { Check, Copy, TerminalSquare } from "lucide-react";
+import { useCallback, useState } from "react";
+import type { ToolRendererProps } from "./types";
+
+function parseArgs(args: unknown): { command?: string; cwd?: string; description?: string } {
+  if (args && typeof args === "object") {
+    const a = args as Record<string, unknown>;
+    return {
+      command: (a.CommandLine ?? a.command ?? a.cmd) as string | undefined,
+      cwd: (a.Cwd ?? a.cwd) as string | undefined,
+      description: a.description as string | undefined,
+    };
+  }
+  return {};
+}
+
+function CopyInline({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  }, [text]);
+
+  return (
+    <button
+      onClick={handleCopy}
+      className="flex-shrink-0 p-0.5 rounded text-[#a3a3a3] hover:text-[#525252] hover:bg-[#f0f0f0] transition-colors"
+      title="复制命令"
+    >
+      {copied ? <Check className="w-3 h-3 text-green-500" /> : <Copy className="w-3 h-3" />}
+    </button>
+  );
+}
+
+export default function RunCommandRenderer({ step, expanded }: ToolRendererProps) {
+  const { command, description } = parseArgs(step.args);
+
+  if (!expanded) {
+    return (
+      <div className="group flex items-center gap-2 text-xs text-[#737373]">
+        <TerminalSquare className="w-3 h-3 text-blue-500 flex-shrink-0" />
+        <span className="font-medium text-[#525252]">执行命令</span>
+        {command && (
+          <code className="font-mono text-[#737373] truncate max-w-[280px]">{command}</code>
+        )}
+        {!command && description && (
+          <span className="text-[#a3a3a3] truncate max-w-[200px]">{description}</span>
+        )}
+        {step.status === "calling" && <span className="text-[#a3a3a3]">...</span>}
+        {command && (
+          <span className="opacity-0 group-hover:opacity-100 transition-opacity">
+            <CopyInline text={command} />
+          </span>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-1.5">
+      {command && (
+        <div className="relative group/cmd">
+          <pre className="p-3 rounded-lg text-xs overflow-x-auto font-mono bg-[#171717] text-green-400 border border-[#333]">
+            <span className="text-[#555]">$ </span>{command}
+          </pre>
+          <div className="absolute top-2 right-2 opacity-0 group-hover/cmd:opacity-100 transition-opacity">
+            <CopyInline text={command} />
+          </div>
+        </div>
+      )}
+      {step.result && (
+        <pre className="p-3 rounded-lg text-xs overflow-x-auto max-h-[200px] overflow-y-auto font-mono bg-[#fafafa] border border-[#e5e5e5] text-[#525252]">
+          {step.result}
+        </pre>
+      )}
+    </div>
+  );
+}

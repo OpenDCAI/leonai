@@ -39,6 +39,7 @@ IDLE_REAPER_INTERVAL_SEC = 30
 
 class CreateThreadRequest(BaseModel):
     sandbox: str = "local"
+    cwd: str | None = None
 
 
 class RunRequest(BaseModel):
@@ -289,6 +290,7 @@ async def lifespan(app: FastAPI):
 
     app.state.agent_pool: dict[str, Any] = {}
     app.state.thread_sandbox: dict[str, str] = {}
+    app.state.thread_cwd: dict[str, str] = {}
     app.state.thread_locks: dict[str, asyncio.Lock] = {}
     app.state.thread_locks_guard = asyncio.Lock()
     app.state.idle_reaper_task: asyncio.Task | None = None
@@ -357,8 +359,10 @@ def _serialize_message(msg: Any) -> dict[str, Any]:
     }
 
 
-def _list_threads_from_db() -> list[dict[str, str]]:
+def _list_threads_from_db() -> list[dict[str, Any]]:
+    """List threads with preview and updated_at extracted from checkpoint blobs."""
     thread_ids: set[str] = set()
+    thread_meta: dict[str, dict[str, Any]] = {}  # thread_id -> {preview, updated_at}
 
     if DB_PATH.exists():
         with sqlite3.connect(str(DB_PATH)) as conn:
@@ -367,6 +371,37 @@ def _list_threads_from_db() -> list[dict[str, str]]:
             if "checkpoints" in existing:
                 rows = conn.execute("SELECT DISTINCT thread_id FROM checkpoints WHERE thread_id IS NOT NULL").fetchall()
                 thread_ids.update(row["thread_id"] for row in rows if row["thread_id"])
+
+                # Extract preview + updated_at from latest checkpoint per thread
+                try:
+                    from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
+
+                    serde = JsonPlusSerializer()
+                    ckpt_rows = conn.execute("""
+                        SELECT c.thread_id, c.type, c.checkpoint
+                        FROM checkpoints c
+                        INNER JOIN (
+                            SELECT thread_id, MAX(checkpoint_id) as max_ckpt
+                            FROM checkpoints WHERE checkpoint_ns = ''
+                            GROUP BY thread_id
+                        ) latest ON c.thread_id = latest.thread_id AND c.checkpoint_id = latest.max_ckpt
+                        WHERE c.checkpoint_ns = ''
+                    """).fetchall()
+                    for tid, typ, blob in ckpt_rows:
+                        try:
+                            data = serde.loads_typed((typ, blob))
+                            ts = data.get("ts", "")
+                            msgs = data.get("channel_values", {}).get("messages", [])
+                            preview = ""
+                            for m in msgs:
+                                if getattr(m, "type", "") == "human":
+                                    preview = str(getattr(m, "content", ""))[:40]
+                                    break
+                            thread_meta[tid] = {"preview": preview, "updated_at": ts}
+                        except Exception:
+                            pass
+                except ImportError:
+                    pass
 
     if SANDBOX_DB_PATH.exists():
         with sqlite3.connect(str(SANDBOX_DB_PATH)) as conn:
@@ -378,7 +413,19 @@ def _list_threads_from_db() -> list[dict[str, str]]:
                 ).fetchall()
                 thread_ids.update(row["thread_id"] for row in rows if row["thread_id"])
 
-    return [{"thread_id": thread_id} for thread_id in sorted(thread_ids)]
+    results = []
+    for tid in sorted(thread_ids):
+        meta = thread_meta.get(tid, {})
+        results.append(
+            {
+                "thread_id": tid,
+                "preview": meta.get("preview", ""),
+                "updated_at": meta.get("updated_at", ""),
+            }
+        )
+    # Sort by updated_at descending (newest first)
+    results.sort(key=lambda r: r.get("updated_at", ""), reverse=True)
+    return results
 
 
 def _delete_thread_in_db(thread_id: str) -> None:
@@ -933,6 +980,8 @@ async def create_thread(payload: CreateThreadRequest | None = None) -> dict[str,
     sandbox_type = payload.sandbox if payload else "local"
     thread_id = str(uuid.uuid4())
     app.state.thread_sandbox[thread_id] = sandbox_type
+    if payload and payload.cwd:
+        app.state.thread_cwd[thread_id] = payload.cwd
     return {"thread_id": thread_id, "sandbox": sandbox_type}
 
 
@@ -1005,6 +1054,18 @@ async def steer_thread(thread_id: str, payload: SteerRequest) -> dict[str, Any]:
     return {"ok": True, "thread_id": thread_id, "mode": QueueMode.STEER.value}
 
 
+# --- Runtime status endpoint ---
+
+
+@app.get("/api/threads/{thread_id}/runtime")
+async def get_thread_runtime(thread_id: str) -> dict[str, Any]:
+    sandbox_type = _resolve_thread_sandbox(app, thread_id)
+    agent = await _get_or_create_agent(app, sandbox_type, thread_id=thread_id)
+    if not hasattr(agent, "runtime"):
+        raise HTTPException(status_code=404, detail="Agent has no runtime monitor")
+    return agent.runtime.get_status_dict()
+
+
 # --- Run endpoint (SSE streaming) ---
 
 
@@ -1050,60 +1111,98 @@ async def run_thread(thread_id: str, payload: RunRequest) -> EventSourceResponse
                 if hasattr(agent, "runtime"):
                     agent.runtime.transition(AgentState.ACTIVE)
 
+                emitted_tool_call_ids: set[str] = set()
+
                 async for chunk in agent.agent.astream(
                     {"messages": [{"role": "user", "content": payload.message}]},
                     config=config,
-                    stream_mode="updates",
+                    stream_mode=["messages", "updates"],
                 ):
                     if not chunk:
                         continue
 
-                    for _node_name, node_update in chunk.items():
-                        if not isinstance(node_update, dict):
+                    # stream_mode=["messages", "updates"] yields tuples: (mode, data)
+                    if not isinstance(chunk, tuple) or len(chunk) != 2:
+                        continue
+                    mode, data = chunk
+
+                    # --- Token-level streaming from "messages" mode ---
+                    if mode == "messages":
+                        msg_chunk, metadata = data
+                        msg_class = msg_chunk.__class__.__name__
+                        # Only stream AIMessageChunk tokens (not ToolMessage, HumanMessage, etc.)
+                        if msg_class == "AIMessageChunk":
+                            content = _extract_text_content(getattr(msg_chunk, "content", ""))
+                            if content:
+                                yield {
+                                    "event": "text",
+                                    "data": json.dumps({"content": content}, ensure_ascii=False),
+                                }
+
+                    # --- Node-level updates from "updates" mode ---
+                    elif mode == "updates":
+                        if not isinstance(data, dict):
                             continue
-
-                        messages = node_update.get("messages", [])
-                        if not isinstance(messages, list):
-                            messages = [messages]
-
-                        for msg in messages:
-                            msg_class = msg.__class__.__name__
-
-                            if msg_class == "AIMessage":
-                                content = _extract_text_content(getattr(msg, "content", ""))
-                                if content:
+                        for _node_name, node_update in data.items():
+                            if not isinstance(node_update, dict):
+                                continue
+                            messages = node_update.get("messages", [])
+                            if not isinstance(messages, list):
+                                messages = [messages]
+                            for msg in messages:
+                                msg_class = msg.__class__.__name__
+                                # Skip AIMessage text — already streamed token-by-token via "messages" mode
+                                # But still emit tool_calls from updates as a fallback
+                                if msg_class == "AIMessage":
+                                    for tc in getattr(msg, "tool_calls", []):
+                                        tc_id = tc.get("id")
+                                        if tc_id and tc_id in emitted_tool_call_ids:
+                                            continue
+                                        if tc_id:
+                                            emitted_tool_call_ids.add(tc_id)
+                                        yield {
+                                            "event": "tool_call",
+                                            "data": json.dumps(
+                                                {
+                                                    "id": tc.get("id"),
+                                                    "name": tc.get("name", "unknown"),
+                                                    "args": tc.get("args", {}),
+                                                },
+                                                ensure_ascii=False,
+                                            ),
+                                        }
+                                elif msg_class == "ToolMessage":
                                     yield {
-                                        "event": "text",
-                                        "data": json.dumps({"content": content}, ensure_ascii=False),
-                                    }
-                                for tc in getattr(msg, "tool_calls", []):
-                                    yield {
-                                        "event": "tool_call",
+                                        "event": "tool_result",
                                         "data": json.dumps(
                                             {
-                                                "id": tc.get("id"),
-                                                "name": tc.get("name", "unknown"),
-                                                "args": tc.get("args", {}),
+                                                "tool_call_id": getattr(msg, "tool_call_id", None),
+                                                "name": getattr(msg, "name", "unknown"),
+                                                "content": str(getattr(msg, "content", "")),
                                             },
                                             ensure_ascii=False,
                                         ),
                                     }
+                                    # Emit runtime status after each tool result
+                                    if hasattr(agent, "runtime"):
+                                        status = agent.runtime.get_status_dict()
+                                        status["current_tool"] = getattr(msg, "name", None)
+                                        yield {
+                                            "event": "status",
+                                            "data": json.dumps(status, ensure_ascii=False),
+                                        }
 
-                            elif msg_class == "ToolMessage":
-                                yield {
-                                    "event": "tool_result",
-                                    "data": json.dumps(
-                                        {
-                                            "tool_call_id": getattr(msg, "tool_call_id", None),
-                                            "name": getattr(msg, "name", "unknown"),
-                                            "content": str(getattr(msg, "content", "")),
-                                        },
-                                        ensure_ascii=False,
-                                    ),
-                                }
-
+            # Final status before done
+            if hasattr(agent, "runtime"):
+                yield {
+                    "event": "status",
+                    "data": json.dumps(agent.runtime.get_status_dict(), ensure_ascii=False),
+                }
             yield {"event": "done", "data": json.dumps({"thread_id": thread_id})}
         except Exception as e:
+            import traceback
+
+            traceback.print_exc()
             yield {"event": "error", "data": json.dumps({"error": str(e)}, ensure_ascii=False)}
         finally:
             if agent and hasattr(agent, "runtime") and agent.runtime.current_state == AgentState.ACTIVE:

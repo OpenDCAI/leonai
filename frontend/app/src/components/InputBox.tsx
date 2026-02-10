@@ -1,5 +1,5 @@
-import { Mic, Send } from "lucide-react";
-import { useRef, useState } from "react";
+import { Send } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 interface InputBoxProps {
   disabled?: boolean;
@@ -7,10 +7,21 @@ interface InputBoxProps {
   onSendMessage: (message: string) => Promise<void> | void;
 }
 
-export default function InputBox({ disabled = false, placeholder = "发送消息给 Leon", onSendMessage }: InputBoxProps) {
+export default function InputBox({ disabled = false, placeholder = "告诉 Leon 你需要什么帮助...", onSendMessage }: InputBoxProps) {
   const [value, setValue] = useState("");
   const [focused, setFocused] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  const autoResize = useCallback(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+  }, []);
+
+  useEffect(() => {
+    autoResize();
+  }, [value, autoResize]);
 
   async function handleSend() {
     const text = value.trim();
@@ -21,10 +32,15 @@ export default function InputBox({ disabled = false, placeholder = "发送消息
   }
 
   return (
-    <div className="bg-[#1a1a1a] pb-4">
+    <div className="bg-white pb-4">
       <div className="max-w-3xl mx-auto px-4">
-        <div className={`flex items-end gap-2 bg-[#2a2a2a] rounded-3xl border transition-all duration-200 ${focused ? "border-blue-500" : "border-[#333]"}`}>
-          <div className="flex-1 py-3 pl-4">
+        <div
+          onClick={() => inputRef.current?.focus()}
+          className={`flex items-end gap-2 rounded-2xl border transition-all cursor-text ${
+            focused ? "border-[#e5e5e5] shadow-sm" : "border-transparent"
+          } bg-[#fafafa]`}
+        >
+          <div className="flex-1 py-4 pl-4">
             <textarea
               ref={inputRef}
               value={value}
@@ -39,19 +55,19 @@ export default function InputBox({ disabled = false, placeholder = "发送消息
                 }
               }}
               placeholder={placeholder}
-              className="w-full bg-transparent text-white text-sm placeholder-gray-500 resize-none outline-none min-h-[20px] max-h-[120px] disabled:opacity-60"
+              className="w-full bg-transparent text-sm resize-none outline-none border-none text-[#171717] placeholder:text-[#a3a3a3] disabled:opacity-50"
               rows={1}
+              style={{ boxShadow: "none", overflow: "hidden" }}
             />
           </div>
-          <div className="flex items-center gap-1 pr-3 py-3">
-            <button className="w-8 h-8 rounded-lg hover:bg-[#333] flex items-center justify-center transition-colors">
-              <Mic className="w-5 h-5 text-gray-400" />
-            </button>
+          <div className="flex items-center pr-3 py-4">
             <button
-              onClick={() => void handleSend()}
+              onClick={(e) => { e.stopPropagation(); void handleSend(); }}
               disabled={disabled || !value.trim()}
               className={`w-8 h-8 rounded-full flex items-center justify-center transition-all ${
-                !disabled && value.trim() ? "bg-blue-600 hover:bg-blue-700 text-white" : "bg-[#333] text-gray-500"
+                !disabled && value.trim()
+                  ? "bg-[#171717] text-white hover:bg-[#404040]"
+                  : "bg-[#f5f5f5] text-[#d4d4d4]"
               }`}
             >
               <Send className="w-4 h-4" />

@@ -91,4 +91,3 @@ class ProviderEventStore:
                 payload_raw = item.get("payload_json")
                 item["payload"] = json.loads(payload_raw) if payload_raw else {}
             return items
-

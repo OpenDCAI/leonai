@@ -14,6 +14,16 @@ export default defineConfig({
       "/api": {
         target: "http://127.0.0.1:8001",
         changeOrigin: true,
+        configure: (proxy) => {
+          // Disable buffering for SSE responses
+          proxy.on("proxyRes", (proxyRes, _req, res) => {
+            if (proxyRes.headers["content-type"]?.includes("text/event-stream")) {
+              // Ensure no compression/buffering on the proxy side
+              proxyRes.headers["cache-control"] = "no-cache";
+              proxyRes.headers["x-accel-buffering"] = "no";
+            }
+          });
+        },
       },
     },
   },

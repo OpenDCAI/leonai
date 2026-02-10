@@ -37,4 +37,3 @@ def test_lease_transition_rejects_detached_to_paused():
             LeaseInstanceState.PAUSED,
             reason="test",
         )
-
