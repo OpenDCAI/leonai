@@ -8,8 +8,8 @@ function parseArgs(args: unknown): { file_path?: string; limit?: number; offset?
 
 export default function ReadFileRenderer({ step, expanded }: ToolRendererProps) {
   const { file_path, limit, offset } = parseArgs(step.args);
-  const shortPath = file_path?.split("/").slice(-2).join("/") ?? "file";
-  const rangeHint = limit ? ` L${offset ?? 1}-${(offset ?? 1) + limit}` : "";
+  const shortPath = file_path?.split("/").filter(Boolean).pop() ?? "file";
+  const rangeHint = offset && limit ? ` L${offset}-${offset + limit}` : limit ? ` L1-${limit}` : "";
 
   if (!expanded) {
     return (

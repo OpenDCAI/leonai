@@ -9,7 +9,7 @@ function parseArgs(args: unknown): { pattern?: string; path?: string; glob?: str
 export default function SearchRenderer({ step, expanded }: ToolRendererProps) {
   const { pattern, path, glob: globPattern } = parseArgs(step.args);
   const query = pattern || globPattern || "";
-  const shortPath = path?.split("/").slice(-2).join("/") ?? "";
+  const shortPath = path?.split("/").filter(Boolean).pop() ?? "";
 
   if (!expanded) {
     return (

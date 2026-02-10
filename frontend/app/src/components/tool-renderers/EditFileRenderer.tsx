@@ -8,7 +8,7 @@ function parseArgs(args: unknown): { file_path?: string; old_string?: string; ne
 
 export default function EditFileRenderer({ step, expanded }: ToolRendererProps) {
   const { file_path, old_string, new_string } = parseArgs(step.args);
-  const shortPath = file_path?.split("/").slice(-2).join("/") ?? "file";
+  const shortPath = file_path?.split("/").filter(Boolean).pop() ?? "file";
 
   if (!expanded) {
     return (
