@@ -3,12 +3,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { AssistantTurn, ChatEntry, StreamStatus, ToolSegment, UserMessage } from "../api";
 import MarkdownContent from "./MarkdownContent";
 import { getToolRenderer } from "./tool-renderers";
+import { Skeleton } from "./ui/skeleton";
 
 interface ChatAreaProps {
   entries: ChatEntry[];
   isStreaming: boolean;
   streamTurnId?: string | null;
   runtimeStatus: StreamStatus | null;
+  loading?: boolean;
 }
 
 function formatTime(ts?: number): string {
@@ -52,13 +54,13 @@ function UserBubble({ entry }: { entry: UserMessage }) {
   return (
     <div className="flex justify-end animate-fade-in">
       <div className="max-w-[78%]">
-        <div className="rounded-2xl rounded-br-md px-4 py-3 bg-[#f5f5f5] border border-[#e5e5e5]">
-          <p className="text-sm whitespace-pre-wrap leading-relaxed text-[#171717]">
+        <div className="rounded-xl rounded-br-sm px-3.5 py-2 bg-[#f5f5f5] border border-[#e5e5e5]">
+          <p className="text-[13px] whitespace-pre-wrap leading-[1.55] text-[#171717]">
             {entry.content}
           </p>
         </div>
         {entry.timestamp && (
-          <div className="text-[10px] text-right mt-1.5 pr-1 text-[#d4d4d4]">
+          <div className="text-[10px] text-right mt-1 pr-1 text-[#d4d4d4]">
             {formatTime(entry.timestamp)}
           </div>
         )}
@@ -80,7 +82,7 @@ function ToolStepBlock({ seg }: { seg: ToolSegment }) {
       }`}
     >
       <button
-        className="flex items-center gap-1.5 w-full text-left px-3 py-2 hover:bg-[#fafafa] rounded-lg transition-colors"
+        className="flex items-center gap-1.5 w-full text-left px-2.5 py-1.5 hover:bg-[#fafafa] rounded-lg transition-colors"
         onClick={() => setExpanded((v) => !v)}
       >
         {expanded ? (
@@ -93,7 +95,7 @@ function ToolStepBlock({ seg }: { seg: ToolSegment }) {
         </div>
       </button>
       {expanded && (
-        <div className="px-3 pb-3 pt-0 animate-scale-in">
+        <div className="px-2.5 pb-2.5 pt-0 animate-scale-in">
           <Renderer step={seg.step} expanded={true} />
         </div>
       )}
@@ -115,13 +117,13 @@ function AssistantBlock({ entry, isStreamingThis }: { entry: AssistantTurn; isSt
   if (!hasVisible) return null;
 
   return (
-    <div className="flex gap-3.5 animate-fade-in">
-      <div className="w-7 h-7 rounded-full bg-[#171717] flex items-center justify-center flex-shrink-0 mt-0.5">
-        <span className="text-xs font-semibold text-white">L</span>
+    <div className="flex gap-2.5 animate-fade-in">
+      <div className="w-6 h-6 rounded-full bg-[#171717] flex items-center justify-center flex-shrink-0 mt-0.5">
+        <span className="text-[11px] font-semibold text-white">L</span>
       </div>
-      <div className="flex-1 max-w-[calc(100%-44px)] space-y-2">
-        <div className="flex items-center gap-2 mb-1">
-          <span className="text-sm font-medium text-[#171717]">Leon</span>
+      <div className="flex-1 max-w-[calc(100%-36px)] space-y-1.5">
+        <div className="flex items-center gap-2">
+          <span className="text-[13px] font-medium text-[#171717]">Leon</span>
           {entry.timestamp && (
             <span className="text-[10px] text-[#d4d4d4]">{formatTime(entry.timestamp)}</span>
           )}
@@ -131,7 +133,7 @@ function AssistantBlock({ entry, isStreamingThis }: { entry: AssistantTurn; isSt
           if (seg.type === "text" && seg.content.trim()) {
             if (isStreamingThis) {
               return (
-                <div key={`seg-${i}`} className="text-sm leading-relaxed text-[#404040] whitespace-pre-wrap">
+                <div key={`seg-${i}`} className="text-[13px] leading-[1.55] text-[#404040] whitespace-pre-wrap">
                   {seg.content}
                 </div>
               );
@@ -144,8 +146,8 @@ function AssistantBlock({ entry, isStreamingThis }: { entry: AssistantTurn; isSt
           return null;
         })}
 
-        {fullText.trim() && (
-          <div className="flex justify-start mt-1">
+        {!isStreamingThis && fullText.trim() && (
+          <div className="flex justify-start mt-0.5">
             <CopyButton text={fullText} />
           </div>
         )}
@@ -154,7 +156,41 @@ function AssistantBlock({ entry, isStreamingThis }: { entry: AssistantTurn; isSt
   );
 }
 
-export default function ChatArea({ entries, isStreaming, streamTurnId, runtimeStatus }: ChatAreaProps) {
+function ChatSkeleton() {
+  return (
+    <div className="max-w-3xl mx-auto px-5 space-y-3.5 py-5 animate-fade-in">
+      {/* Simulated user message */}
+      <div className="flex justify-end">
+        <Skeleton className="h-9 w-[45%] rounded-xl" />
+      </div>
+      {/* Simulated assistant response */}
+      <div className="flex gap-2.5">
+        <Skeleton className="w-6 h-6 rounded-full flex-shrink-0" />
+        <div className="flex-1 space-y-2">
+          <Skeleton className="h-3.5 w-[20%]" />
+          <Skeleton className="h-3.5 w-[90%]" />
+          <Skeleton className="h-3.5 w-[75%]" />
+          <Skeleton className="h-3.5 w-[60%]" />
+        </div>
+      </div>
+      {/* Simulated user message */}
+      <div className="flex justify-end">
+        <Skeleton className="h-9 w-[35%] rounded-xl" />
+      </div>
+      {/* Simulated assistant response */}
+      <div className="flex gap-2.5">
+        <Skeleton className="w-6 h-6 rounded-full flex-shrink-0" />
+        <div className="flex-1 space-y-2">
+          <Skeleton className="h-3.5 w-[15%]" />
+          <Skeleton className="h-3.5 w-[85%]" />
+          <Skeleton className="h-3.5 w-[50%]" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default function ChatArea({ entries, isStreaming, streamTurnId, runtimeStatus, loading }: ChatAreaProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -162,8 +198,11 @@ export default function ChatArea({ entries, isStreaming, streamTurnId, runtimeSt
   }, [entries, isStreaming]);
 
   return (
-    <div className="flex-1 overflow-y-auto py-8 bg-white">
-      <div className="max-w-3xl mx-auto px-6 space-y-6">
+    <div className="flex-1 overflow-y-auto py-5 bg-white">
+      {loading ? (
+        <ChatSkeleton />
+      ) : (
+      <div className="max-w-3xl mx-auto px-5 space-y-3.5">
         {entries.map((entry) => {
           if (entry.role === "user") {
             return <UserBubble key={entry.id} entry={entry} />;
@@ -221,6 +260,7 @@ export default function ChatArea({ entries, isStreaming, streamTurnId, runtimeSt
 
         <div ref={bottomRef} />
       </div>
+      )}
     </div>
   );
 }

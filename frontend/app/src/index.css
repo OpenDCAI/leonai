@@ -135,7 +135,7 @@
 .markdown-content h3,
 .markdown-content h4 {
   font-weight: 600;
-  margin: 1em 0 0.5em;
+  margin: 0.7em 0 0.3em;
   color: #171717;
 }
 
@@ -144,18 +144,18 @@
 .markdown-content h3 { font-size: 1rem; }
 
 .markdown-content p {
-  margin: 0.5em 0;
-  line-height: 1.7;
+  margin: 0.3em 0;
+  line-height: 1.55;
 }
 
 .markdown-content ul,
 .markdown-content ol {
-  margin: 0.5em 0;
+  margin: 0.3em 0;
   padding-left: 1.5em;
 }
 
 .markdown-content li {
-  margin: 0.25em 0;
+  margin: 0.15em 0;
 }
 
 .markdown-content code {
@@ -169,11 +169,11 @@
 
 .markdown-content pre {
   background: #fafafa;
-  padding: 1em;
+  padding: 0.75em;
   border-radius: 8px;
   border: 1px solid #e5e5e5;
   overflow-x: auto;
-  margin: 0.5em 0;
+  margin: 0.3em 0;
 }
 
 .markdown-content pre code {
@@ -185,15 +185,15 @@
 
 .markdown-content blockquote {
   border-left: 2px solid #e5e5e5;
-  padding-left: 1em;
-  margin: 0.5em 0;
+  padding-left: 0.75em;
+  margin: 0.3em 0;
   color: #737373;
 }
 
 .markdown-content table {
   width: 100%;
   border-collapse: collapse;
-  margin: 0.5em 0;
+  margin: 0.3em 0;
 }
 
 .markdown-content th,
