@@ -32,6 +32,7 @@ class TaskResult(BaseModel):
     """Result from task execution."""
 
     task_id: str
+    thread_id: str | None = None  # Sub-agent thread_id
     status: str  # completed/running/error
     result: str | None = None
     error: str | None = None

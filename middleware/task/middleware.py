@@ -71,6 +71,7 @@ class TaskMiddleware(AgentMiddleware):
         self.parent_middleware = parent_middleware or []
         self.checkpointer = checkpointer
         self.verbose = verbose
+        self.agent = None  # Will be set by parent agent
 
         # Load agents from all sources
         self.loader = AgentLoader(self.workspace_root)
@@ -246,7 +247,7 @@ The agent will work independently and return results when complete.""",
         args = tool_call.get("args", {})
 
         if tool_name == self.TOOL_TASK:
-            result = await self._handle_task(args)
+            result = await self._handle_task(args, tool_id)
         elif tool_name == self.TOOL_TASK_OUTPUT:
             result = await self._handle_task_output(args)
         else:
@@ -258,8 +259,8 @@ The agent will work independently and return results when complete.""",
 
         return self._make_tool_message(result, tool_id)
 
-    async def _handle_task(self, args: dict) -> TaskResult:
-        """Handle task tool call."""
+    async def _handle_task(self, args: dict, tool_id: str) -> TaskResult:
+        """Handle task tool call with streaming support."""
         params: TaskParams = {
             "SubagentType": args.get("SubagentType", ""),
             "Prompt": args.get("Prompt", ""),
@@ -274,10 +275,57 @@ The agent will work independently and return results when complete.""",
         if "MaxTurns" in args:
             params["MaxTurns"] = args["MaxTurns"]
 
-        return await self.runner.run(
+        # Use streaming mode to capture sub-agent events
+        task_id = None
+        thread_id = None
+        final_result = None
+        final_status = "completed"
+        final_error = None
+        turns_used = 0
+
+        async for event in self.runner.run_streaming(
             params=params,
             all_middleware=self.parent_middleware,
             checkpointer=self.checkpointer,
+        ):
+            # Extract task_id and thread_id from task_start
+            if event["event"] == "task_start":
+                import json
+
+                data = json.loads(event["data"])
+                task_id = data["task_id"]
+                thread_id = data.get("thread_id", f"subagent_{task_id}")
+
+            # Forward all sub-agent events to agent runtime
+            if hasattr(self, "agent") and hasattr(self.agent, "runtime"):
+                self.agent.runtime.emit_subagent_event(tool_id, event)
+
+            # Capture final result
+            if event["event"] == "task_done":
+                import json
+
+                data = json.loads(event["data"])
+                final_status = data.get("status", "completed")
+            elif event["event"] == "task_error":
+                import json
+
+                data = json.loads(event["data"])
+                final_error = data.get("error", "Unknown error")
+                final_status = "error"
+
+        # Get the final result from the runner's task results
+        if task_id:
+            result = self.runner.get_task_status(task_id)
+            return result
+
+        # Fallback if task_id was not captured
+        return TaskResult(
+            task_id=task_id or "",
+            thread_id=thread_id,
+            status=final_status,
+            result=final_result,
+            error=final_error,
+            turns_used=turns_used,
         )
 
     def _handle_task_status(self, args: dict) -> TaskResult:
@@ -334,3 +382,15 @@ The agent will work independently and return results when complete.""",
     def set_checkpointer(self, checkpointer: Any) -> None:
         """Set checkpointer after initialization."""
         self.checkpointer = checkpointer
+
+    def set_agent(self, agent: Any) -> None:
+        """Set parent agent reference for runtime access."""
+        self.agent = agent
+
+    async def run_task_streaming(self, params: TaskParams):
+        """Run a task with streaming output. Returns async generator for SSE."""
+        return self.runner.run_streaming(
+            params=params,
+            all_middleware=self.parent_middleware,
+            checkpointer=self.checkpointer,
+        )

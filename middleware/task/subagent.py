@@ -1,7 +1,9 @@
 """Subagent runner for executing task agents."""
 
 import asyncio
+import json
 import uuid
+from collections.abc import AsyncGenerator
 from pathlib import Path
 from typing import Any
 
@@ -210,6 +212,174 @@ class SubagentRunner:
             # Synchronous execution
             return await self._execute_agent(agent, prompt, subagent_thread_id, max_turns, task_id)
 
+    async def run_streaming(
+        self,
+        params: TaskParams,
+        all_middleware: list[Any],
+        checkpointer: Any,
+    ) -> AsyncGenerator[dict[str, Any], None]:
+        """Run a subagent task with streaming output."""
+        task_id = str(uuid.uuid4())[:8]
+        subagent_type = params["SubagentType"]
+
+        config = self.agents.get(subagent_type)
+        if not config:
+            available = ", ".join(sorted(self.agents.keys()))
+            yield {
+                "event": "task_error",
+                "data": json.dumps(
+                    {
+                        "task_id": task_id,
+                        "error": f"Unknown agent: {subagent_type}. Available: {available}",
+                    }
+                ),
+            }
+            return
+
+        # Emit task start event
+        yield {
+            "event": "task_start",
+            "data": json.dumps(
+                {
+                    "task_id": task_id,
+                    "thread_id": f"subagent_{task_id}",
+                    "subagent_type": subagent_type,
+                    "description": params.get("Description", ""),
+                }
+            ),
+        }
+
+        # Determine model
+        model_name = params.get("Model") or config.model or self.parent_model
+
+        # Build model
+        model = init_chat_model(model_name, api_key=self.api_key, **self.model_kwargs)
+
+        # Build filtered middleware
+        middleware = self._build_subagent_middleware(config, all_middleware)
+
+        # Build system prompt
+        system_prompt = self._build_system_prompt(config)
+
+        # Create subagent with unique thread_id
+        subagent_thread_id = f"subagent_{task_id}"
+        max_turns = params.get("MaxTurns") or config.max_turns
+
+        # Check if any middleware has self.tools
+        middleware_has_tools = any(getattr(m, "tools", None) for m in middleware)
+        tools = [] if middleware_has_tools else [_placeholder_tool]
+
+        agent = create_agent(
+            model=model,
+            tools=tools,
+            system_prompt=system_prompt,
+            middleware=middleware,
+            checkpointer=checkpointer,
+        )
+
+        # Execute with streaming
+        prompt = params["Prompt"]
+        turns_used = 0
+        emitted_tool_call_ids: set[str] = set()
+
+        try:
+            async for chunk in agent.astream(
+                {"messages": [{"role": "user", "content": prompt}]},
+                config={"configurable": {"thread_id": subagent_thread_id}},
+                stream_mode=["messages", "updates"],
+            ):
+                if not chunk or not isinstance(chunk, tuple) or len(chunk) != 2:
+                    continue
+
+                mode, data = chunk
+
+                # Token-level streaming from "messages" mode
+                if mode == "messages":
+                    msg_chunk, metadata = data
+                    msg_class = msg_chunk.__class__.__name__
+                    if msg_class == "AIMessageChunk":
+                        content = self._extract_text_content(getattr(msg_chunk, "content", ""))
+                        if content:
+                            yield {
+                                "event": "task_text",
+                                "data": json.dumps({"task_id": task_id, "content": content}),
+                            }
+
+                # Node-level updates from "updates" mode
+                elif mode == "updates":
+                    if not isinstance(data, dict):
+                        continue
+                    for _node_name, node_update in data.items():
+                        if not isinstance(node_update, dict):
+                            continue
+                        messages = node_update.get("messages", [])
+                        if not isinstance(messages, list):
+                            messages = [messages]
+                        for msg in messages:
+                            msg_class = msg.__class__.__name__
+                            if msg_class == "AIMessage":
+                                for tc in getattr(msg, "tool_calls", []):
+                                    tc_id = tc.get("id")
+                                    if tc_id and tc_id in emitted_tool_call_ids:
+                                        continue
+                                    if tc_id:
+                                        emitted_tool_call_ids.add(tc_id)
+                                    yield {
+                                        "event": "task_tool_call",
+                                        "data": json.dumps(
+                                            {
+                                                "task_id": task_id,
+                                                "id": tc.get("id"),
+                                                "name": tc.get("name", "unknown"),
+                                                "args": tc.get("args", {}),
+                                            }
+                                        ),
+                                    }
+                            elif msg_class == "ToolMessage":
+                                yield {
+                                    "event": "task_tool_result",
+                                    "data": json.dumps(
+                                        {
+                                            "task_id": task_id,
+                                            "tool_call_id": getattr(msg, "tool_call_id", None),
+                                            "name": getattr(msg, "name", "unknown"),
+                                            "content": str(getattr(msg, "content", "")),
+                                        }
+                                    ),
+                                }
+
+            # Task completed
+            yield {
+                "event": "task_done",
+                "data": json.dumps(
+                    {
+                        "task_id": task_id,
+                        "thread_id": subagent_thread_id,
+                        "status": "completed",
+                    }
+                ),
+            }
+
+        except Exception as e:
+            yield {
+                "event": "task_error",
+                "data": json.dumps({"task_id": task_id, "error": str(e)}),
+            }
+
+    def _extract_text_content(self, raw_content: Any) -> str:
+        """Extract text content from message content."""
+        if isinstance(raw_content, str):
+            return raw_content
+        if isinstance(raw_content, list):
+            parts: list[str] = []
+            for block in raw_content:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    parts.append(block.get("text", ""))
+                elif isinstance(block, str):
+                    parts.append(block)
+            return "".join(parts)
+        return str(raw_content)
+
     async def _execute_agent(
         self,
         agent: Any,
@@ -238,6 +408,7 @@ class SubagentRunner:
 
             task_result = TaskResult(
                 task_id=task_id,
+                thread_id=thread_id,
                 status="completed",
                 result=content,
                 turns_used=turns_used,
@@ -246,6 +417,7 @@ class SubagentRunner:
         except Exception as e:
             task_result = TaskResult(
                 task_id=task_id,
+                thread_id=thread_id,
                 status="error",
                 error=str(e),
                 turns_used=turns_used,

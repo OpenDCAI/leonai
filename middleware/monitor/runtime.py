@@ -19,6 +19,7 @@ class AgentRuntime:
         self.token = token_monitor
         self.context = context_monitor
         self.state = state_monitor
+        self._subagent_event_buffer: dict[str, list[dict[str, Any]]] = {}  # tool_call_id -> events
 
     # ========== 状态代理 ==========
 
@@ -133,3 +134,17 @@ class AgentRuntime:
             parts.append(f"ctx:{ctx['usage_percent']:.0f}%")
 
         return " | ".join(parts)
+
+    # ========== Sub-agent event buffering ==========
+
+    def emit_subagent_event(self, parent_tool_call_id: str, event: dict[str, Any]) -> None:
+        """Buffer sub-agent event for streaming."""
+        if parent_tool_call_id not in self._subagent_event_buffer:
+            self._subagent_event_buffer[parent_tool_call_id] = []
+        self._subagent_event_buffer[parent_tool_call_id].append(event)
+
+    def get_pending_subagent_events(self) -> list[tuple[str, list[dict[str, Any]]]]:
+        """Get and clear pending sub-agent events."""
+        events = list(self._subagent_event_buffer.items())
+        self._subagent_event_buffer.clear()
+        return events
