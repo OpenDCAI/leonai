@@ -254,6 +254,31 @@ class SandboxManager:
         lease.destroy_instance(self.provider)
         return True
 
+    def destroy_thread_resources(self, thread_id: str) -> bool:
+        """Destroy physical resources and detach thread from terminal/lease records."""
+        terminal = self.terminal_store.get(thread_id)
+        if not terminal:
+            session = self.session_manager.get(thread_id)
+            if session:
+                self.session_manager.delete(session.session_id, reason="thread_deleted")
+            return False
+
+        lease = self.lease_store.get(terminal.lease_id)
+        if not lease:
+            raise RuntimeError(f"Missing lease {terminal.lease_id} for thread {thread_id}")
+
+        session = self.session_manager.get(thread_id)
+        if session:
+            self.session_manager.delete(session.session_id, reason="thread_deleted")
+
+        lease.destroy_instance(self.provider)
+        self.terminal_store.delete(terminal.terminal_id)
+
+        lease_in_use = any(row.get("lease_id") == terminal.lease_id for row in self.terminal_store.list_all())
+        if not lease_in_use:
+            self.lease_store.delete(terminal.lease_id)
+        return True
+
     def list_sessions(self) -> list[dict]:
         sessions: list[dict] = []
 

@@ -470,6 +470,19 @@ def _delete_thread_in_db(thread_id: str) -> None:
             conn.commit()
 
 
+def _destroy_thread_resources_sync(thread_id: str, sandbox_type: str) -> bool:
+    pool_key = f"{thread_id}:{sandbox_type}"
+    pooled_agent = app.state.agent_pool.get(pool_key)
+    if pooled_agent and hasattr(pooled_agent, "_sandbox"):
+        manager = pooled_agent._sandbox.manager
+    else:
+        _, managers = _init_providers_and_managers()
+        manager = managers.get(sandbox_type)
+    if not manager:
+        raise RuntimeError(f"No sandbox manager found for provider {sandbox_type}")
+    return manager.destroy_thread_resources(thread_id)
+
+
 def _get_terminal_timestamps(terminal_id: str) -> tuple[str | None, str | None]:
     if not SANDBOX_DB_PATH.exists():
         return None, None
@@ -1138,7 +1151,6 @@ async def get_thread_messages(thread_id: str) -> dict[str, Any]:
 
 @app.delete("/api/threads/{thread_id}")
 async def delete_thread(thread_id: str) -> dict[str, Any]:
-    # Get sandbox_type before cleaning up state
     sandbox_type = _resolve_thread_sandbox(app, thread_id)
     pool_key = f"{thread_id}:{sandbox_type}"
 
@@ -1147,6 +1159,10 @@ async def delete_thread(thread_id: str) -> dict[str, Any]:
         agent = app.state.agent_pool.get(pool_key)
         if agent and hasattr(agent, "runtime") and agent.runtime.current_state == AgentState.ACTIVE:
             raise HTTPException(status_code=409, detail="Cannot delete thread while run is in progress")
+        try:
+            await asyncio.to_thread(_destroy_thread_resources_sync, thread_id, sandbox_type)
+        except Exception as exc:
+            raise HTTPException(status_code=409, detail=f"Failed to destroy sandbox resources: {exc}") from exc
         await asyncio.to_thread(_delete_thread_in_db, thread_id)
 
     # Clean up thread-specific state
