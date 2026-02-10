@@ -514,8 +514,17 @@ async def _get_thread_agent(thread_id: str, *, require_remote: bool = False) -> 
     return agent
 
 
-def _resolve_local_workspace_path(raw_path: str | None) -> Path:
-    base = LOCAL_WORKSPACE_ROOT
+def _resolve_local_workspace_path(raw_path: str | None, thread_id: str | None = None) -> Path:
+    # Use thread-specific workspace root if available
+    if thread_id:
+        thread_cwd = app.state.thread_cwd.get(thread_id)
+        if thread_cwd:
+            base = Path(thread_cwd).resolve()
+        else:
+            base = LOCAL_WORKSPACE_ROOT
+    else:
+        base = LOCAL_WORKSPACE_ROOT
+
     if not raw_path:
         return base
     requested = Path(raw_path).expanduser()
@@ -999,7 +1008,7 @@ async def list_workspace_path(thread_id: str, path: str | None = Query(default=N
         from middleware.filesystem.local_backend import LocalBackend
 
         backend = LocalBackend()
-        target = _resolve_local_workspace_path(path)
+        target = _resolve_local_workspace_path(path, thread_id=thread_id)
         result = backend.list_dir(str(target))
         if result.error:
             raise HTTPException(400, result.error)
@@ -1043,7 +1052,7 @@ async def read_workspace_file(thread_id: str, path: str = Query(...)) -> dict[st
         from middleware.filesystem.local_backend import LocalBackend
 
         backend = LocalBackend()
-        target = _resolve_local_workspace_path(path)
+        target = _resolve_local_workspace_path(path, thread_id=thread_id)
         try:
             data = backend.read_file(str(target))
         except Exception as e:

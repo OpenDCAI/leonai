@@ -133,7 +133,12 @@ class SandboxManager:
         - If a chat session is idle past idle_ttl_sec, or older than max_duration_sec:
           1) pause physical lease instance (remote providers)
           2) close chat session runtime + mark session closed
+        - Local sandbox is exempt from idle timeout (no cost to keep running)
         """
+        # Skip idle timeout for local sandbox
+        if self.provider.name == "local":
+            return 0
+
         now = datetime.now()
         count = 0
 
@@ -159,11 +164,14 @@ class SandboxManager:
             lease = self.lease_store.get(terminal.lease_id) if terminal else None
             if lease:
                 status = lease.refresh_instance_status(self.provider)
-                if status == "running":
+                # Only pause remote providers (local sandbox doesn't need pause)
+                if status == "running" and self.provider.name != "local":
                     try:
                         paused = lease.pause_instance(self.provider)
                     except Exception as exc:
-                        print(f"[idle-reaper] failed to pause expired lease {lease.lease_id} for thread {thread_id}: {exc}")
+                        print(
+                            f"[idle-reaper] failed to pause expired lease {lease.lease_id} for thread {thread_id}: {exc}"
+                        )
                         continue
                     if not paused:
                         print(f"[idle-reaper] failed to pause expired lease {lease.lease_id} for thread {thread_id}")

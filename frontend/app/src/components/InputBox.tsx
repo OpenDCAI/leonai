@@ -1,4 +1,4 @@
-import { Send } from "lucide-react";
+import { Send, Square } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 interface InputBoxProps {
@@ -8,6 +8,7 @@ interface InputBoxProps {
   isStreaming?: boolean;
   onSendMessage: (message: string) => Promise<void> | void;
   onSendQueueMessage?: (message: string) => Promise<void> | void;
+  onStop?: () => void;
 }
 
 export default function InputBox({
@@ -17,6 +18,7 @@ export default function InputBox({
   isStreaming = false,
   onSendMessage,
   onSendQueueMessage,
+  onStop,
 }: InputBoxProps) {
   const [value, setValue] = useState("");
   const [focused, setFocused] = useState(false);
@@ -37,6 +39,7 @@ export default function InputBox({
   const canSendQueue = isStreaming && !!onSendQueueMessage;
   const inputDisabled = disabled && !canSendQueue;
   const canSend = !!value.trim() && !inputDisabled;
+  const showStopButton = isStreaming && !value.trim() && !!onStop;
 
   async function handleSend() {
     const text = value.trim();
@@ -49,6 +52,12 @@ export default function InputBox({
       await onSendMessage(text);
     }
     inputRef.current?.focus();
+  }
+
+  function handleStop() {
+    if (onStop) {
+      onStop();
+    }
   }
 
   return (
@@ -90,17 +99,26 @@ export default function InputBox({
           </div>
           <div className="flex items-center pr-3 py-4">
             <button
-              onClick={(e) => { e.stopPropagation(); void handleSend(); }}
-              disabled={!canSend}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (showStopButton) {
+                  handleStop();
+                } else {
+                  void handleSend();
+                }
+              }}
+              disabled={!canSend && !showStopButton}
               className={`w-8 h-8 rounded-full flex items-center justify-center transition-all ${
-                canSend
-                  ? canSendQueue
-                    ? "bg-amber-500 text-white hover:bg-amber-600"
-                    : "bg-[#171717] text-white hover:bg-[#404040]"
-                  : "bg-[#f5f5f5] text-[#d4d4d4]"
+                showStopButton
+                  ? "bg-red-500 text-white hover:bg-red-600"
+                  : canSend
+                    ? canSendQueue
+                      ? "bg-amber-500 text-white hover:bg-amber-600"
+                      : "bg-[#171717] text-white hover:bg-[#404040]"
+                    : "bg-[#f5f5f5] text-[#d4d4d4]"
               }`}
             >
-              <Send className="w-4 h-4" />
+              {showStopButton ? <Square className="w-4 h-4" fill="currentColor" /> : <Send className="w-4 h-4" />}
             </button>
           </div>
         </div>
