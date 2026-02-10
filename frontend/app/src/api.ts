@@ -337,8 +337,10 @@ export async function listThreads(): Promise<ThreadSummary[]> {
   return toThreads(payload);
 }
 
-export async function createThread(sandbox: string): Promise<ThreadSummary> {
-  return request<ThreadSummary>("/api/threads", { method: "POST", body: JSON.stringify({ sandbox }) });
+export async function createThread(sandbox: string, cwd?: string): Promise<ThreadSummary> {
+  const body: Record<string, string> = { sandbox };
+  if (cwd) body.cwd = cwd;
+  return request<ThreadSummary>("/api/threads", { method: "POST", body: JSON.stringify(body) });
 }
 
 export async function deleteThread(threadId: string): Promise<void> {
