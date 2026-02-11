@@ -53,11 +53,11 @@ class SandboxCapability:
     def resolve_session_info(self, provider_name: str):
         """Resolve current session info without exposing internal session object."""
         from sandbox.provider import SessionInfo
-        from sandbox.runtime import RemoteWrappedRuntime
 
         instance = self._session.lease.get_instance()
-        if not instance and isinstance(self._session.runtime, RemoteWrappedRuntime):
-            instance = self._session.lease.ensure_active_instance(self._session.runtime.provider)
+        provider = getattr(self._session.runtime, "provider", None)
+        if not instance and provider is not None:
+            instance = self._session.lease.ensure_active_instance(provider)
         return SessionInfo(
             session_id=instance.instance_id if instance else "local",
             provider=provider_name,
@@ -176,20 +176,17 @@ class _FileSystemWrapper(FileSystemBackend):
 
     def _get_provider(self):
         """Get provider from session's lease."""
-        # Provider is passed to runtime, we need to access it
-        from sandbox.runtime import RemoteWrappedRuntime
-
-        if isinstance(self._session.runtime, RemoteWrappedRuntime):
-            return self._session.runtime.provider
-        raise RuntimeError("FileSystem operations only supported for remote runtimes")
+        provider = getattr(self._session.runtime, "provider", None)
+        if provider is None:
+            raise RuntimeError("FileSystem operations only supported for remote runtimes")
+        return provider
 
     def _get_instance_id(self) -> str:
         """Get active instance ID."""
         # @@@lease-convergence - File operations can also wake paused instances; always converge through lease.
-        from sandbox.runtime import RemoteWrappedRuntime
-
-        if isinstance(self._session.runtime, RemoteWrappedRuntime):
-            instance = self._session.lease.ensure_active_instance(self._session.runtime.provider)
+        provider = getattr(self._session.runtime, "provider", None)
+        if provider is not None:
+            instance = self._session.lease.ensure_active_instance(provider)
         else:
             instance = self._session.lease.get_instance()
             if not instance:

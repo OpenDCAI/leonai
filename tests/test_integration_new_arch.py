@@ -12,7 +12,7 @@ import pytest
 from sandbox.chat_session import ChatSessionManager
 from sandbox.lease import LeaseStore
 from sandbox.manager import SandboxManager
-from sandbox.provider import SessionInfo
+from sandbox.provider import ProviderCapability, SessionInfo
 from sandbox.terminal import TerminalStore
 
 
@@ -30,6 +30,26 @@ def mock_provider():
     """Create mock SandboxProvider for local testing."""
     provider = MagicMock()
     provider.name = "local"
+    provider.default_cwd = "/tmp"
+    provider.get_capability.return_value = ProviderCapability(
+        can_pause=True,
+        can_resume=True,
+        can_destroy=True,
+        supports_webhook=False,
+        supports_status_probe=False,
+        eager_instance_binding=True,
+        inspect_visible=True,
+        runtime_kind="local",
+    )
+    provider.create_session.return_value = SessionInfo(
+        session_id="local-inst-1",
+        provider="local",
+        status="running",
+    )
+    provider.get_session_status.return_value = "running"
+    provider.pause_session.return_value = True
+    provider.resume_session.return_value = True
+    provider.destroy_session.return_value = True
 
     # Mock execute to return proper results
     def mock_execute(instance_id, command, timeout_ms=None, cwd=None):
@@ -57,6 +77,13 @@ def mock_remote_provider():
     """Create mock remote provider that supports lease lifecycle + fs ops."""
     provider = MagicMock()
     provider.name = "e2b"
+    provider.get_capability.return_value = ProviderCapability(
+        can_pause=True,
+        can_resume=True,
+        can_destroy=True,
+        supports_webhook=False,
+        runtime_kind="remote",
+    )
     provider.create_session.return_value = SessionInfo(
         session_id="inst-remote-1",
         provider="e2b",
