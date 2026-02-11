@@ -220,10 +220,9 @@ class ChatSessionManager:
                 ON chat_sessions(thread_id, status, started_at DESC)
                 """
             )
-            conn.execute("DROP INDEX IF EXISTS uq_chat_sessions_active_thread")
             conn.execute(
                 """
-                CREATE UNIQUE INDEX uq_chat_sessions_active_thread
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_chat_sessions_active_thread
                 ON chat_sessions(thread_id)
                 WHERE status IN ('active', 'idle', 'paused')
                 """

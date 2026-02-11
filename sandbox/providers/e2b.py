@@ -34,7 +34,7 @@ class E2BProvider(SandboxProvider):
             can_pause=True,
             can_resume=True,
             can_destroy=True,
-            supports_webhook=False,
+            supports_webhook=True,
         )
 
     def __init__(

@@ -42,8 +42,8 @@ def test_webhook_marks_lease_needs_refresh(tmp_path, monkeypatch):
 
     reloaded = LeaseStore(db_path=db_path).get("lease-1")
     assert reloaded is not None
-    assert reloaded.needs_refresh is True
-    assert reloaded.refresh_hint_at is not None
+    assert reloaded.needs_refresh is False
+    assert reloaded.observed_state == "paused"
 
     events = ProviderEventStore(db_path=db_path).list_recent(limit=10)
     assert len(events) == 1

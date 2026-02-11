@@ -12,9 +12,9 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
 from agent import create_leon_agent
@@ -26,6 +26,13 @@ from sandbox.lease import LeaseStore
 from sandbox.manager import SandboxManager, lookup_sandbox_for_thread
 from sandbox.provider_events import ProviderEventStore
 from sandbox.thread_context import set_current_thread_id
+from sandbox.webhook_integration import (
+    DaytonaWebhookClient,
+    E2BWebhookClient,
+    WebhookIntegrationStore,
+    generate_e2b_signature_secret,
+    verify_e2b_signature,
+)
 from tui.config import ConfigManager
 
 DB_PATH = Path.home() / ".leon" / "leon.db"
@@ -48,6 +55,25 @@ class RunRequest(BaseModel):
 
 class SteerRequest(BaseModel):
     message: str
+
+
+class EnsureE2BWebhookRequest(BaseModel):
+    public_base_url: str
+    webhook_name: str = "leon-e2b-lifecycle"
+    enabled: bool = True
+    signature_secret: str | None = None
+    events: list[str] | None = None
+
+
+class DaytonaWebhookPortalRequest(BaseModel):
+    organization_id: str
+    public_base_url: str | None = None
+
+
+class DaytonaWebhookSendRequest(BaseModel):
+    organization_id: str
+    event_type: str
+    payload: dict[str, Any] = Field(default_factory=dict)
 
 
 # --- Agent pool ---
@@ -748,20 +774,56 @@ def _mutate_sandbox_session(
 
 def _extract_webhook_instance_id(payload: dict[str, Any]) -> str | None:
     """Extract provider instance/session id from webhook payload."""
-    direct_keys = ("session_id", "sandbox_id", "instance_id", "id")
-    for key in direct_keys:
-        value = payload.get(key)
-        if isinstance(value, str) and value:
-            return value
+    direct_keys = (
+        "session_id",
+        "sessionId",
+        "sandbox_id",
+        "sandboxId",
+        "instance_id",
+        "instanceId",
+        "id",
+    )
+    containers: list[dict[str, Any]] = [payload]
+    for key in ("data", "eventData", "payload"):
+        nested = payload.get(key)
+        if isinstance(nested, dict):
+            containers.append(nested)
 
-    nested = payload.get("data")
-    if isinstance(nested, dict):
+    for container in containers:
         for key in direct_keys:
-            value = nested.get(key)
+            value = container.get(key)
             if isinstance(value, str) and value:
                 return value
 
     return None
+
+
+def _infer_observed_state_from_webhook(payload: dict[str, Any]) -> str:
+    raw_hint = str(payload.get("status") or payload.get("state") or payload.get("event") or payload.get("type") or "")
+    hint = raw_hint.lower()
+    if any(token in hint for token in ("pause", "stopped")):
+        return "paused"
+    if any(token in hint for token in ("resume", "start", "running", "created")):
+        return "running"
+    if any(token in hint for token in ("destroy", "delete", "stop", "killed", "terminated", "archive")):
+        return "detached"
+    return "unknown"
+
+
+def _verify_webhook_signature_if_required(
+    provider_name: str,
+    payload_raw: bytes,
+    headers: dict[str, str],
+    db_path: Path,
+) -> None:
+    if provider_name != "e2b":
+        return
+    record = WebhookIntegrationStore(db_path=db_path).get("e2b")
+    if not record or not record.signature_secret:
+        return
+    signature = headers.get("e2b-signature")
+    if not verify_e2b_signature(record.signature_secret, payload_raw, signature):
+        raise HTTPException(401, "Invalid E2B webhook signature")
 
 
 @app.post("/api/sandbox/sessions/{session_id}/pause")
@@ -810,8 +872,24 @@ async def destroy_sandbox_session(session_id: str, provider: str | None = Query(
 
 
 @app.post("/api/webhooks/{provider_name}")
-async def ingest_provider_webhook(provider_name: str, payload: dict[str, Any]) -> dict[str, Any]:
+async def ingest_provider_webhook(provider_name: str, request: Request) -> dict[str, Any]:
     """Ingest provider webhook: persist provider event and converge lease observed state."""
+    payload_raw = await request.body()
+    try:
+        payload = json.loads(payload_raw.decode("utf-8")) if payload_raw else {}
+    except Exception as exc:
+        raise HTTPException(400, f"Invalid JSON payload: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(400, "Webhook payload must be a JSON object")
+
+    await asyncio.to_thread(
+        _verify_webhook_signature_if_required,
+        provider_name,
+        payload_raw,
+        {k.lower(): v for k, v in request.headers.items()},
+        SANDBOX_DB_PATH,
+    )
+
     instance_id = _extract_webhook_instance_id(payload)
     if not instance_id:
         raise HTTPException(400, "Webhook payload missing instance/session id")
@@ -840,15 +918,7 @@ async def ingest_provider_webhook(provider_name: str, payload: dict[str, Any]) -
             "event_type": event_type,
             "matched": False,
         }
-    status_hint = str(payload.get("status") or payload.get("state") or payload.get("event") or "unknown").lower()
-    if "pause" in status_hint:
-        status_hint = "paused"
-    elif "resume" in status_hint or "start" in status_hint or "running" in status_hint:
-        status_hint = "running"
-    elif "destroy" in status_hint or "delete" in status_hint or "stop" in status_hint:
-        status_hint = "detached"
-    else:
-        status_hint = "unknown"
+    status_hint = _infer_observed_state_from_webhook(payload)
 
     _, managers = await asyncio.to_thread(_init_providers_and_managers)
     manager = managers.get(provider_name)
@@ -868,6 +938,278 @@ async def ingest_provider_webhook(provider_name: str, payload: dict[str, Any]) -
         "event_type": event_type,
         "matched": True,
         "lease_id": lease.lease_id,
+    }
+
+
+@app.post("/api/webhooks/integration/e2b/ensure")
+async def ensure_e2b_webhook(payload: EnsureE2BWebhookRequest) -> dict[str, Any]:
+    providers, _ = await asyncio.to_thread(_init_providers_and_managers)
+    provider = providers.get("e2b")
+    if not provider:
+        raise HTTPException(404, "E2B provider is not configured")
+    api_key = getattr(provider, "api_key", None) or os.getenv("E2B_API_KEY")
+    if not api_key:
+        raise HTTPException(503, "E2B API key is missing")
+
+    callback_url = f"{payload.public_base_url.rstrip('/')}/api/webhooks/e2b"
+    events = payload.events or [
+        "sandbox.lifecycle.created",
+        "sandbox.lifecycle.updated",
+        "sandbox.lifecycle.killed",
+        "sandbox.lifecycle.paused",
+        "sandbox.lifecycle.resumed",
+    ]
+    store = WebhookIntegrationStore(db_path=SANDBOX_DB_PATH)
+    existing_record = await asyncio.to_thread(store.get, "e2b")
+    requested_secret = payload.signature_secret
+    if requested_secret:
+        signature_secret = requested_secret
+    elif existing_record and existing_record.signature_secret:
+        signature_secret = existing_record.signature_secret
+    else:
+        signature_secret = generate_e2b_signature_secret()
+    client = E2BWebhookClient(api_key=api_key)
+    try:
+        result = await asyncio.to_thread(
+            client.ensure_webhook,
+            name=payload.webhook_name,
+            url=callback_url,
+            events=events,
+            signature_secret=signature_secret,
+            enabled=payload.enabled,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+    action = str(result.get("action") or "unknown")
+    if action in {"noop", "updated"} and requested_secret and existing_record and requested_secret != (
+        existing_record.signature_secret or ""
+    ):
+        raise HTTPException(
+            409,
+            "E2B webhook secret rotation is not supported in-place. Delete integration first, then ensure again.",
+        )
+    if action in {"noop", "updated"} and not existing_record and not requested_secret:
+        raise HTTPException(
+            409,
+            "E2B webhook already exists but local signature secret is unknown. "
+            "Provide signature_secret or recreate the webhook integration.",
+        )
+
+    webhook = result.get("webhook") if isinstance(result, dict) else {}
+    webhook_id = str((webhook or {}).get("id") or "")
+    persisted_secret = signature_secret
+    if action in {"noop", "updated"} and existing_record and existing_record.signature_secret:
+        persisted_secret = existing_record.signature_secret
+    await asyncio.to_thread(
+        store.upsert,
+        provider_name="e2b",
+        webhook_id=webhook_id or None,
+        callback_url=callback_url,
+        signature_secret=persisted_secret,
+        status="active",
+        last_error=None,
+        metadata={
+            "events": events,
+            "enabled": payload.enabled,
+            "webhook_name": payload.webhook_name,
+            "action": action,
+        },
+    )
+    return {
+        "ok": True,
+        "provider": "e2b",
+        "action": action,
+        "webhook_id": webhook_id or None,
+        "callback_url": callback_url,
+        "events": events,
+        "enabled": payload.enabled,
+    }
+
+
+@app.get("/api/webhooks/integration/e2b")
+async def get_e2b_webhook_integration() -> dict[str, Any]:
+    providers, _ = await asyncio.to_thread(_init_providers_and_managers)
+    provider = providers.get("e2b")
+    if not provider:
+        raise HTTPException(404, "E2B provider is not configured")
+    api_key = getattr(provider, "api_key", None) or os.getenv("E2B_API_KEY")
+    if not api_key:
+        raise HTTPException(503, "E2B API key is missing")
+    client = E2BWebhookClient(api_key=api_key)
+    try:
+        remote = await asyncio.to_thread(client.list_webhooks)
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    record = await asyncio.to_thread(WebhookIntegrationStore(db_path=SANDBOX_DB_PATH).get, "e2b")
+    return {
+        "provider": "e2b",
+        "remote_webhooks": remote,
+        "integration": (
+            {
+                "provider_name": record.provider_name,
+                "webhook_id": record.webhook_id,
+                "callback_url": record.callback_url,
+                "status": record.status,
+                "last_error": record.last_error,
+                "metadata": record.metadata,
+                "created_at": record.created_at,
+                "updated_at": record.updated_at,
+            }
+            if record
+            else None
+        ),
+    }
+
+
+@app.delete("/api/webhooks/integration/e2b")
+async def delete_e2b_webhook_integration() -> dict[str, Any]:
+    providers, _ = await asyncio.to_thread(_init_providers_and_managers)
+    provider = providers.get("e2b")
+    if not provider:
+        raise HTTPException(404, "E2B provider is not configured")
+    api_key = getattr(provider, "api_key", None) or os.getenv("E2B_API_KEY")
+    if not api_key:
+        raise HTTPException(503, "E2B API key is missing")
+    store = WebhookIntegrationStore(db_path=SANDBOX_DB_PATH)
+    record = await asyncio.to_thread(store.get, "e2b")
+    if not record:
+        return {"ok": True, "provider": "e2b", "deleted": False}
+    if record.webhook_id:
+        try:
+            await asyncio.to_thread(E2BWebhookClient(api_key=api_key).delete_webhook, record.webhook_id)
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc)) from exc
+    await asyncio.to_thread(store.delete, "e2b")
+    return {"ok": True, "provider": "e2b", "deleted": True}
+
+
+@app.post("/api/webhooks/integration/daytona/portal")
+async def get_daytona_webhook_portal(payload: DaytonaWebhookPortalRequest) -> dict[str, Any]:
+    providers, _ = await asyncio.to_thread(_init_providers_and_managers)
+    provider = providers.get("daytona")
+    if not provider:
+        raise HTTPException(404, "Daytona provider is not configured")
+    api_key = getattr(provider, "api_key", None) or os.getenv("DAYTONA_API_KEY")
+    api_url = getattr(provider, "api_url", None) or "https://app.daytona.io/api"
+    if not api_key:
+        raise HTTPException(503, "Daytona API key is missing")
+    client = DaytonaWebhookClient(api_key=api_key, api_url=api_url)
+    try:
+        await asyncio.to_thread(client.initialize, payload.organization_id)
+        init_status = await asyncio.to_thread(client.get_initialization_status, payload.organization_id)
+        portal = await asyncio.to_thread(client.get_app_portal_access, payload.organization_id)
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    callback_url = (
+        f"{payload.public_base_url.rstrip('/')}/api/webhooks/daytona" if payload.public_base_url else "(set-in-portal)"
+    )
+    await asyncio.to_thread(
+        WebhookIntegrationStore(db_path=SANDBOX_DB_PATH).upsert,
+        provider_name="daytona",
+        webhook_id=None,
+        callback_url=callback_url,
+        signature_secret=None,
+        status="initialized",
+        last_error=None,
+        metadata={
+            "organization_id": payload.organization_id,
+            "portal": portal,
+            "initialization_status": init_status,
+        },
+    )
+    return {
+        "ok": True,
+        "provider": "daytona",
+        "organization_id": payload.organization_id,
+        "callback_url": callback_url,
+        "portal": portal,
+        "initialization_status": init_status,
+    }
+
+
+@app.get("/api/webhooks/integration/daytona/status")
+async def get_daytona_webhook_status() -> dict[str, Any]:
+    providers, _ = await asyncio.to_thread(_init_providers_and_managers)
+    provider = providers.get("daytona")
+    if not provider:
+        raise HTTPException(404, "Daytona provider is not configured")
+    api_key = getattr(provider, "api_key", None) or os.getenv("DAYTONA_API_KEY")
+    api_url = getattr(provider, "api_url", None) or "https://app.daytona.io/api"
+    if not api_key:
+        raise HTTPException(503, "Daytona API key is missing")
+    client = DaytonaWebhookClient(api_key=api_key, api_url=api_url)
+    try:
+        status = await asyncio.to_thread(client.get_status)
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    record = await asyncio.to_thread(WebhookIntegrationStore(db_path=SANDBOX_DB_PATH).get, "daytona")
+    return {
+        "provider": "daytona",
+        "status": status,
+        "integration": (
+            {
+                "provider_name": record.provider_name,
+                "webhook_id": record.webhook_id,
+                "callback_url": record.callback_url,
+                "status": record.status,
+                "last_error": record.last_error,
+                "metadata": record.metadata,
+                "created_at": record.created_at,
+                "updated_at": record.updated_at,
+            }
+            if record
+            else None
+        ),
+    }
+
+
+@app.post("/api/webhooks/integration/daytona/send")
+async def send_daytona_webhook_test(payload: DaytonaWebhookSendRequest) -> dict[str, Any]:
+    providers, _ = await asyncio.to_thread(_init_providers_and_managers)
+    provider = providers.get("daytona")
+    if not provider:
+        raise HTTPException(404, "Daytona provider is not configured")
+    api_key = getattr(provider, "api_key", None) or os.getenv("DAYTONA_API_KEY")
+    api_url = getattr(provider, "api_url", None) or "https://app.daytona.io/api"
+    if not api_key:
+        raise HTTPException(503, "Daytona API key is missing")
+    client = DaytonaWebhookClient(api_key=api_key, api_url=api_url)
+    try:
+        await asyncio.to_thread(
+            client.send_test_event,
+            organization_id=payload.organization_id,
+            event_type=payload.event_type,
+            payload=payload.payload,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {
+        "ok": True,
+        "provider": "daytona",
+        "organization_id": payload.organization_id,
+        "event_type": payload.event_type,
+    }
+
+
+@app.get("/api/webhooks/integration")
+async def list_webhook_integrations() -> dict[str, Any]:
+    rows = await asyncio.to_thread(WebhookIntegrationStore(db_path=SANDBOX_DB_PATH).list_all)
+    return {
+        "items": [
+            {
+                "provider_name": row.provider_name,
+                "webhook_id": row.webhook_id,
+                "callback_url": row.callback_url,
+                "status": row.status,
+                "last_error": row.last_error,
+                "metadata": row.metadata,
+                "created_at": row.created_at,
+                "updated_at": row.updated_at,
+            }
+            for row in rows
+        ],
+        "count": len(rows),
     }
 
 
