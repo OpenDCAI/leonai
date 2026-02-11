@@ -280,6 +280,10 @@ class TerminalStore:
         """Delete terminal."""
         with _connect(self.db_path) as conn:
             conn.execute(
+                "DELETE FROM terminal_commands WHERE terminal_id = ?",
+                (terminal_id,),
+            )
+            conn.execute(
                 "DELETE FROM abstract_terminals WHERE terminal_id = ?",
                 (terminal_id,),
             )

@@ -30,7 +30,7 @@ from sandbox.lifecycle import (
 if TYPE_CHECKING:
     from sandbox.provider import SandboxProvider
 
-LEASE_FRESHNESS_TTL_SEC = 3.0
+LEASE_FRESHNESS_TTL_SEC = 60.0
 
 REQUIRED_LEASE_COLUMNS = {
     "lease_id",
