@@ -35,6 +35,7 @@ class DaytonaProvider(SandboxProvider):
             can_resume=True,
             can_destroy=True,
             supports_webhook=True,
+            runtime_kind="daytona_session",
         )
 
     def __init__(
@@ -183,3 +184,7 @@ class DaytonaProvider(SandboxProvider):
         if session_id not in self._sandboxes:
             self._sandboxes[session_id] = self.client.find_one(session_id)
         return self._sandboxes[session_id]
+
+    def get_runtime_sandbox(self, session_id: str):
+        """Expose native SDK sandbox for runtime-level persistent terminal handling."""
+        return self._get_sandbox(session_id)
