@@ -61,6 +61,7 @@ import {
   createThread,
   deleteThread,
   getThread,
+  getThreadLease,
   listSandboxTypes,
   listThreads,
   mapBackendEntries,
@@ -150,6 +151,38 @@ export default function App() {
     }
     void loadThread(activeThreadId);
   }, [activeThreadId, loadThread]);
+
+  useEffect(() => {
+    if (!isStreaming || !activeThreadId) return;
+    let cancelled = false;
+    const threadId = activeThreadId;
+
+    const refreshSandboxStatus = async () => {
+      try {
+        const lease = await getThreadLease(threadId);
+        if (cancelled) return;
+        const status = lease.instance?.state ?? null;
+        setActiveSandbox((prev) => {
+          if (!prev) return prev;
+          if (prev.type === "local") return prev;
+          if (prev.status === status) return prev;
+          return { ...prev, status };
+        });
+      } catch {
+        // ignore transient polling errors
+      }
+    };
+
+    void refreshSandboxStatus();
+    const timer = window.setInterval(() => {
+      void refreshSandboxStatus();
+    }, 1500);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [isStreaming, activeThreadId]);
 
   const handleCreateThread = useCallback(async (sandbox?: string, cwd?: string) => {
     const type = sandbox ?? selectedSandbox;
