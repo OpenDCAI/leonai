@@ -220,10 +220,35 @@ class ChatSessionManager:
                 ON chat_sessions(thread_id, status, started_at DESC)
                 """
             )
-            conn.execute("DROP INDEX IF EXISTS uq_chat_sessions_active_thread")
             conn.execute(
                 """
-                CREATE UNIQUE INDEX uq_chat_sessions_active_thread
+                CREATE TABLE IF NOT EXISTS terminal_commands (
+                    command_id TEXT PRIMARY KEY,
+                    terminal_id TEXT NOT NULL,
+                    chat_session_id TEXT,
+                    command_line TEXT NOT NULL,
+                    cwd TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    stdout TEXT DEFAULT '',
+                    stderr TEXT DEFAULT '',
+                    exit_code INTEGER,
+                    created_at TIMESTAMP NOT NULL,
+                    updated_at TIMESTAMP NOT NULL,
+                    finished_at TIMESTAMP,
+                    FOREIGN KEY (terminal_id) REFERENCES abstract_terminals(terminal_id),
+                    FOREIGN KEY (chat_session_id) REFERENCES chat_sessions(chat_session_id)
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_terminal_commands_terminal_created
+                ON terminal_commands(terminal_id, created_at DESC)
+                """
+            )
+            conn.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_chat_sessions_active_thread
                 ON chat_sessions(thread_id)
                 WHERE status IN ('active', 'idle', 'paused')
                 """
@@ -310,6 +335,7 @@ class ChatSessionManager:
             ended_at=datetime.fromisoformat(row["ended_at"]) if row["ended_at"] else None,
             close_reason=row["close_reason"],
         )
+        session.runtime.bind_session(session.session_id)
         if session.is_expired():
             self.delete(session.session_id, reason="expired")
             return None
@@ -384,6 +410,7 @@ class ChatSessionManager:
             runtime_id=runtime_id,
             status="active",
         )
+        session.runtime.bind_session(session.session_id)
         self._live_sessions[thread_id] = session
         return session
 

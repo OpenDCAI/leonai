@@ -7,12 +7,10 @@ while maintaining the same interface as before.
 
 from __future__ import annotations
 
-import asyncio
 import shlex
-import uuid
 from typing import TYPE_CHECKING
 
-from sandbox.interfaces.executor import AsyncCommand, BaseExecutor, ExecuteResult
+from sandbox.interfaces.executor import BaseExecutor
 from sandbox.interfaces.filesystem import FileSystemBackend
 
 if TYPE_CHECKING:
@@ -73,8 +71,6 @@ class _CommandWrapper(BaseExecutor):
     def __init__(self, session: ChatSession):
         super().__init__(default_cwd=session.terminal.get_state().cwd)
         self._session = session
-        self._commands: dict[str, AsyncCommand] = {}
-        self._tasks: dict[str, asyncio.Task[ExecuteResult]] = {}
 
     def _wrap_command(self, command: str, cwd: str | None, env: dict[str, str] | None) -> tuple[str, str]:
         wrapped = command
@@ -99,71 +95,19 @@ class _CommandWrapper(BaseExecutor):
         """Execute command asynchronously via runtime and return command handle."""
         self._session.touch()
         wrapped, work_dir = self._wrap_command(command, cwd, env)
-        command_id = f"cmd_{uuid.uuid4().hex[:12]}"
-        async_cmd = AsyncCommand(
-            command_id=command_id,
-            command_line=command,
-            cwd=work_dir,
-        )
-        self._commands[command_id] = async_cmd
-
-        async def _run() -> ExecuteResult:
-            try:
-                result = await self._session.runtime.execute(wrapped, timeout=None)
-            except Exception as exc:
-                result = ExecuteResult(exit_code=1, stdout="", stderr=f"Error: {exc}")
-            async_cmd.stdout_buffer = [result.stdout]
-            async_cmd.stderr_buffer = [result.stderr]
-            async_cmd.exit_code = result.exit_code
-            async_cmd.done = True
-            return result
-
-        self._tasks[command_id] = asyncio.create_task(_run())
-        return async_cmd
+        return await self._session.runtime.start_command(wrapped, work_dir)
 
     async def get_status(self, command_id: str):
         """Get status for an async command."""
-        return self._commands.get(command_id)
+        return await self._session.runtime.get_command(command_id)
 
     async def wait_for(self, command_id: str, timeout: float | None = None):
         """Wait for async command completion."""
-        async_cmd = self._commands.get(command_id)
-        task = self._tasks.get(command_id)
-        if async_cmd is None:
-            return None
-        if task is not None and not task.done():
-            try:
-                if timeout is None:
-                    await task
-                else:
-                    await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
-            except TimeoutError:
-                return ExecuteResult(
-                    exit_code=-1,
-                    stdout="".join(async_cmd.stdout_buffer),
-                    stderr="".join(async_cmd.stderr_buffer),
-                    timed_out=True,
-                    command_id=command_id,
-                )
-        return ExecuteResult(
-            exit_code=async_cmd.exit_code or 0,
-            stdout="".join(async_cmd.stdout_buffer),
-            stderr="".join(async_cmd.stderr_buffer),
-            timed_out=False,
-            command_id=command_id,
-        )
+        return await self._session.runtime.wait_for_command(command_id, timeout=timeout)
 
     def store_completed_result(self, command_id: str, command_line: str, cwd: str, result):
         """Store completed result for command_status lookup."""
-        self._commands[command_id] = AsyncCommand(
-            command_id=command_id,
-            command_line=command_line,
-            cwd=cwd,
-            stdout_buffer=[result.stdout],
-            stderr_buffer=[result.stderr],
-            exit_code=result.exit_code,
-            done=True,
-        )
+        self._session.runtime.store_completed_result(command_id, command_line, cwd, result)
 
 
 class _FileSystemWrapper(FileSystemBackend):
