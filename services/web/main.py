@@ -1264,6 +1264,7 @@ async def run_thread(thread_id: str, payload: RunRequest) -> EventSourceResponse
                 await asyncio.to_thread(_prime_sandbox)
 
             emitted_tool_call_ids: set[str] = set()
+            pending_tool_calls: dict[str, dict] = {}  # Track in-flight tool calls for cancellation
 
             # Wrap astream in a task for cancellation support
             async def run_agent_stream():
@@ -1330,6 +1331,11 @@ async def run_thread(thread_id: str, payload: RunRequest) -> EventSourceResponse
                                         continue
                                     if tc_id:
                                         emitted_tool_call_ids.add(tc_id)
+                                        # Track pending tool call
+                                        pending_tool_calls[tc_id] = {
+                                            "name": tc.get("name", "unknown"),
+                                            "args": tc.get("args", {}),
+                                        }
                                     yield {
                                         "event": "tool_call",
                                         "data": json.dumps(
@@ -1342,11 +1348,15 @@ async def run_thread(thread_id: str, payload: RunRequest) -> EventSourceResponse
                                         ),
                                     }
                             elif msg_class == "ToolMessage":
+                                tc_id = getattr(msg, "tool_call_id", None)
+                                # Remove from pending when tool completes
+                                if tc_id:
+                                    pending_tool_calls.pop(tc_id, None)
                                 yield {
                                     "event": "tool_result",
                                     "data": json.dumps(
                                         {
-                                            "tool_call_id": getattr(msg, "tool_call_id", None),
+                                            "tool_call_id": tc_id,
                                             "name": getattr(msg, "name", "unknown"),
                                             "content": str(getattr(msg, "content", "")),
                                         },
@@ -1385,7 +1395,68 @@ async def run_thread(thread_id: str, payload: RunRequest) -> EventSourceResponse
                 }
             yield {"event": "done", "data": json.dumps({"thread_id": thread_id})}
         except asyncio.CancelledError:
-            yield {"event": "cancelled", "data": json.dumps({"message": "Run cancelled by user"})}
+            # Write cancellation markers to checkpoint for pending tool calls
+            cancelled_tool_call_ids = []
+            if pending_tool_calls and agent:
+                try:
+                    from langchain_core.messages import ToolMessage
+
+                    checkpointer = agent.agent.checkpointer
+                    if checkpointer:
+                        # Get current checkpoint
+                        checkpoint = await checkpointer.aget(config)
+                        if checkpoint:
+                            # Create ToolMessage for each pending tool call
+                            cancel_messages = []
+                            for tc_id, tc_info in pending_tool_calls.items():
+                                cancelled_tool_call_ids.append(tc_id)
+                                cancel_messages.append(
+                                    ToolMessage(
+                                        content="任务被用户取消",
+                                        tool_call_id=tc_id,
+                                        name=tc_info["name"],
+                                    )
+                                )
+
+                            # Update checkpoint with cancellation markers
+                            updated_channel_values = checkpoint["channel_values"].copy()
+                            updated_channel_values["messages"] = list(updated_channel_values.get("messages", []))
+                            updated_channel_values["messages"].extend(cancel_messages)
+
+                            # Prepare new versions for checkpoint
+                            new_versions = {k: v + 1 for k, v in checkpoint["channel_versions"].items()}
+
+                            # Write updated checkpoint
+                            await checkpointer.aput(
+                                config,
+                                {
+                                    "channel_values": updated_channel_values,
+                                    "channel_versions": checkpoint["channel_versions"],
+                                    "versions_seen": checkpoint["versions_seen"],
+                                    "pending_sends": checkpoint.get("pending_sends", []),
+                                },
+                                {
+                                    "source": "update",
+                                    "step": checkpoint["metadata"]["step"],
+                                    "writes": {},
+                                },
+                                new_versions,
+                            )
+                except Exception as e:
+                    import traceback
+
+                    print(f"Failed to write cancellation markers: {e}")
+                    traceback.print_exc()
+
+            yield {
+                "event": "cancelled",
+                "data": json.dumps(
+                    {
+                        "message": "Run cancelled by user",
+                        "cancelled_tool_call_ids": cancelled_tool_call_ids,
+                    }
+                ),
+            }
         except Exception as e:
             import traceback
 

@@ -201,6 +201,7 @@ export default function App() {
       const abortController = new AbortController();
       abortControllerRef.current = abortController;
 
+      let aborted = false;
       try {
         await startRun(threadId, message, (event) => {
           if (event.type === "text") {
@@ -284,13 +285,30 @@ export default function App() {
 
           if (event.type === "cancelled") {
             setIsStreaming(false);
+            // Mark cancelled tool calls
+            const cancelledToolCallIds = (event.data as any)?.cancelled_tool_call_ids || [];
+
             setEntries((prev) =>
               prev.map((e) => {
                 if (e.id !== turnId || e.role !== "assistant") return e;
                 const turn = e as AssistantTurn;
-                const segs = [...turn.segments];
-                segs.push({ type: "text", content: "\n\n_[已取消]_" });
-                return { ...turn, segments: segs };
+                const updatedSegs = turn.segments.map((seg) => {
+                  if (seg.type === "tool") {
+                    const step = seg.step;
+                    if (cancelledToolCallIds.includes(step.id)) {
+                      return {
+                        ...seg,
+                        step: {
+                          ...step,
+                          status: "cancelled" as const,
+                          result: "任务被用户取消",
+                        },
+                      };
+                    }
+                  }
+                  return seg;
+                });
+                return { ...turn, segments: updatedSegs };
               }),
             );
           }
@@ -354,15 +372,8 @@ export default function App() {
       } catch (error) {
         // Handle abort
         if (error instanceof Error && error.name === "AbortError") {
-          setEntries((prev) =>
-            prev.map((e) => {
-              if (e.id !== turnId || e.role !== "assistant") return e;
-              const turn = e as AssistantTurn;
-              const segs = [...turn.segments];
-              segs.push({ type: "text", content: "\n\n_[已停止]_" });
-              return { ...turn, segments: segs };
-            }),
-          );
+          aborted = true;
+          // Just stop streaming, keep existing content as-is
         } else {
           throw error;
         }
@@ -370,7 +381,9 @@ export default function App() {
         abortControllerRef.current = null;
         setIsStreaming(false);
         setStreamTurnId(null);
-        await loadThread(threadId);
+        if (!aborted) {
+          await loadThread(threadId);
+        }
         await refreshThreads();
       }
     },
@@ -378,12 +391,7 @@ export default function App() {
   );
 
   const handleStopStreaming = useCallback(async () => {
-    // 1. Abort the HTTP connection
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-    }
-
-    // 2. Notify backend to cancel the run
+    // 1. Notify backend to cancel the run (do this first so backend stops before we abort)
     if (activeThreadId) {
       try {
         await cancelRun(activeThreadId);
@@ -392,7 +400,10 @@ export default function App() {
       }
     }
 
-    setIsStreaming(false);
+    // 2. Abort the HTTP connection — this triggers AbortError in the catch block
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
   }, [activeThreadId]);
 
   const handlePauseSandbox = useCallback(async () => {

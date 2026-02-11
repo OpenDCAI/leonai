@@ -104,6 +104,7 @@ const ToolStepBlock = memo(function ToolStepBlock({ seg, onFocusAgent }: { seg: 
   const [expanded, setExpanded] = useState(false);
   const Renderer = getToolRenderer(seg.step);
   const isCalling = seg.step.status === "calling";
+  const isCancelled = seg.step.status === "cancelled";
   const badge = TOOL_BADGE_STYLES[seg.step.name] ?? { ...DEFAULT_BADGE, label: seg.step.name };
 
   // Task (sub-agent) gets a clickable card that opens the Agents panel
@@ -111,7 +112,7 @@ const ToolStepBlock = memo(function ToolStepBlock({ seg, onFocusAgent }: { seg: 
     return (
       <div
         className={`rounded-lg border bg-white animate-fade-in cursor-pointer hover:border-[#a3a3a3] transition-colors ${
-          isCalling ? "tool-card-calling border-[#d4d4d4]" : "border-[#e5e5e5]"
+          isCalling ? "tool-card-calling border-[#d4d4d4]" : isCancelled ? "border-gray-300 opacity-60" : "border-[#e5e5e5]"
         }`}
         onClick={() => onFocusAgent?.(seg.step.id)}
       >
@@ -122,6 +123,9 @@ const ToolStepBlock = memo(function ToolStepBlock({ seg, onFocusAgent }: { seg: 
           <div className={`flex-1 min-w-0 ${isCalling ? "tool-shimmer" : ""}`}>
             <Renderer step={seg.step} expanded={false} />
           </div>
+          {isCancelled && (
+            <span className="px-2 py-0.5 bg-gray-200 text-gray-600 rounded text-[10px] font-medium">Cancelled</span>
+          )}
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 text-[#a3a3a3] flex-shrink-0">
             <polyline points="6,3 11,8 6,13" />
           </svg>
@@ -133,7 +137,7 @@ const ToolStepBlock = memo(function ToolStepBlock({ seg, onFocusAgent }: { seg: 
   return (
     <div
       className={`rounded-lg border bg-white animate-fade-in ${
-        isCalling ? "tool-card-calling border-[#d4d4d4]" : "border-[#e5e5e5]"
+        isCalling ? "tool-card-calling border-[#d4d4d4]" : isCancelled ? "border-gray-300 opacity-60" : "border-[#e5e5e5]"
       }`}
     >
       <button
@@ -151,10 +155,18 @@ const ToolStepBlock = memo(function ToolStepBlock({ seg, onFocusAgent }: { seg: 
         <div className={`flex-1 min-w-0 ${isCalling ? "tool-shimmer" : ""}`}>
           <Renderer step={seg.step} expanded={false} />
         </div>
+        {isCancelled && (
+          <span className="px-2 py-0.5 bg-gray-200 text-gray-600 rounded text-[10px] font-medium">Cancelled</span>
+        )}
       </button>
       {expanded && (
         <div className="px-2.5 pb-2.5 pt-0 animate-scale-in">
           <Renderer step={seg.step} expanded={true} />
+          {isCancelled && (
+            <div className="text-xs text-gray-500 mt-2 italic">
+              {seg.step.result || "任务被用户取消"}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -272,7 +284,7 @@ export default function ChatArea({ entries, isStreaming, streamTurnId, runtimeSt
           (() => {
             const lastEntry = entries[entries.length - 1] as AssistantTurn;
             const hasContent = lastEntry.segments?.some(s =>
-              (s.type === 'text' && s.text.trim()) || s.type === 'tool_call' || s.type === 'tool_result'
+              (s.type === 'text' && s.content.trim()) || s.type === 'tool'
             );
             if (hasContent) return null;
             return (

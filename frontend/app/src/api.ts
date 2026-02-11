@@ -131,7 +131,7 @@ export interface ToolStep {
   name: string;
   args: unknown;
   result?: string;
-  status: "calling" | "done" | "error";
+  status: "calling" | "done" | "error" | "cancelled";
   timestamp: number;
   subagent_stream?: {
     task_id: string;
