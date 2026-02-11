@@ -1424,7 +1424,7 @@ async def run_thread(thread_id: str, payload: RunRequest) -> EventSourceResponse
                             updated_channel_values["messages"].extend(cancel_messages)
 
                             # Prepare new versions for checkpoint
-                            new_versions = {k: v + 1 for k, v in checkpoint["channel_versions"].items()}
+                            new_versions = {k: int(v) + 1 for k, v in checkpoint["channel_versions"].items()}
 
                             # Write updated checkpoint
                             await checkpointer.aput(

@@ -27,11 +27,14 @@ async def test_web_cancel():
         received_tool_results = []
         cancelled_ids = []
 
-        async with client.stream(
-            "POST",
+        response = await client.post(
             url,
             json={"message": "请执行以下命令：echo 'step 1' && sleep 2 && echo 'step 2' && sleep 2 && echo 'step 3'"},
-        ) as response:
+            headers={"Accept": "text/event-stream"},
+            timeout=None,
+        )
+
+        async with response as stream:
             # Read a few events then cancel
             event_count = 0
             async for line in response.aiter_lines():
