@@ -12,6 +12,8 @@ Architecture:
 from __future__ import annotations
 
 import asyncio
+import os
+import re
 import shlex
 import uuid
 from abc import ABC, abstractmethod
@@ -91,6 +93,7 @@ class LocalPersistentShellRuntime(PhysicalTerminalRuntime):
         super().__init__(terminal, lease)
         self.shell_command = shell_command
         self._session: asyncio.subprocess.Process | None = None
+        self._master_fd: int | None = None
         self._session_lock = asyncio.Lock()
         self._baseline_env: dict[str, str] | None = None
 
@@ -104,55 +107,90 @@ class LocalPersistentShellRuntime(PhysicalTerminalRuntime):
             env_map[key] = value
         return env_map
 
+    async def _pty_write(self, data: str) -> None:
+        if self._master_fd is None:
+            raise RuntimeError("PTY master fd is not available")
+        payload = data.encode()
+        offset = 0
+        while offset < len(payload):
+            try:
+                written = os.write(self._master_fd, payload[offset:])
+            except BlockingIOError:
+                await asyncio.sleep(0.01)
+                continue
+            offset += written
+
     async def _ensure_session(self) -> asyncio.subprocess.Process:
-        """Ensure persistent shell session exists."""
-        if self._session is None or self._session.returncode is not None:
-            state = self.terminal.get_state()
+        """Ensure persistent PTY shell session exists."""
+        if self._session is not None and self._session.returncode is None and self._master_fd is not None:
+            return self._session
+
+        state = self.terminal.get_state()
+        master_fd, slave_fd = os.openpty()
+        try:
             self._session = await asyncio.create_subprocess_exec(
                 *self.shell_command,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
+                stdin=slave_fd,
+                stdout=slave_fd,
+                stderr=slave_fd,
                 cwd=state.cwd,
+                start_new_session=True,
             )
-            self._session.stdin.write(b"export PS1=''\n")
-            await self._session.stdin.drain()
-            baseline_stdout, _, _ = await self._send_command(self._session, "env")
-            self._baseline_env = self._parse_env_output(baseline_stdout)
-            if state.env_delta:
-                for key, value in state.env_delta.items():
-                    self._session.stdin.write(f"export {key}={shlex.quote(value)}\n".encode())
-                await self._session.stdin.drain()
+        finally:
+            os.close(slave_fd)
+
+        self._master_fd = master_fd
+        os.set_blocking(self._master_fd, False)
+
+        # @@@pty-bootstrap - Disable prompt/echo so marker parsing stays deterministic.
+        await self._pty_write("export PS1=''\nstty -echo\n")
+        baseline_stdout, _, _ = await self._send_command("env")
+        self._baseline_env = self._parse_env_output(baseline_stdout)
+        if state.env_delta:
+            exports = "".join(f"export {key}={shlex.quote(value)}\n" for key, value in state.env_delta.items())
+            await self._pty_write(exports)
 
         return self._session
 
-    async def _send_command(self, proc: asyncio.subprocess.Process, command: str) -> tuple[str, str, int]:
-        """Send command to persistent session and read output."""
-        marker = f"__END_{uuid.uuid4().hex[:8]}__"
-        full_cmd = f"{command}\necho {marker} $?\n"
+    async def _send_command(self, command: str) -> tuple[str, str, int]:
+        """Send command to persistent PTY session and read output until marker."""
+        if self._master_fd is None:
+            raise RuntimeError("PTY session is not initialized")
 
-        proc.stdin.write(full_cmd.encode())
-        await proc.stdin.drain()
+        marker = f"__LEON_END_{uuid.uuid4().hex[:8]}__"
+        marker_pattern = re.compile(rf"{re.escape(marker)}:(-?\d+)")
+        full_cmd = f"{command}\nprintf '\\n{marker}:%s\\n' \"$?\"\n"
+        await self._pty_write(full_cmd)
 
-        stdout_lines = []
+        buffer = ""
         exit_code = 0
 
         while True:
-            line = await proc.stdout.readline()
-            if not line:
-                break
-            line_str = line.decode("utf-8", errors="replace")
-            if marker in line_str:
-                parts = line_str.split()
-                if len(parts) >= 2:
-                    try:
-                        exit_code = int(parts[1])
-                    except ValueError:
-                        pass
-                break
-            stdout_lines.append(line_str)
+            try:
+                chunk = os.read(self._master_fd, 4096)
+            except BlockingIOError:
+                if self._session and self._session.returncode is not None:
+                    break
+                await asyncio.sleep(0.01)
+                continue
+            if not chunk:
+                if self._session and self._session.returncode is not None:
+                    break
+                await asyncio.sleep(0.01)
+                continue
+            buffer += chunk.decode("utf-8", errors="replace")
+            match = marker_pattern.search(buffer)
+            if not match:
+                continue
+            try:
+                exit_code = int(match.group(1))
+            except ValueError:
+                exit_code = 1
+            buffer = buffer[: match.start()]
+            break
 
-        return "".join(stdout_lines), "", exit_code
+        clean_stdout = buffer.replace("\r", "")
+        return clean_stdout, "", exit_code
 
     async def execute(self, command: str, timeout: float | None = None) -> ExecuteResult:
         """Execute command in local shell."""
@@ -162,16 +200,16 @@ class LocalPersistentShellRuntime(PhysicalTerminalRuntime):
                     raise RuntimeError(
                         f"Sandbox lease {self.lease.lease_id} is paused. Resume before executing commands."
                     )
-                proc = await self._ensure_session()
+                await self._ensure_session()
 
                 stdout, stderr, exit_code = await asyncio.wait_for(
-                    self._send_command(proc, command),
+                    self._send_command(command),
                     timeout=timeout,
                 )
 
                 # Capture state snapshot after each command so new ChatSession can hydrate from DB.
-                pwd_stdout, _, _ = await self._send_command(proc, "pwd")
-                env_stdout, _, _ = await self._send_command(proc, "env")
+                pwd_stdout, _, _ = await self._send_command("pwd")
+                env_stdout, _, _ = await self._send_command("env")
                 new_cwd = pwd_stdout.strip() or self.terminal.get_state().cwd
                 env_map = self._parse_env_output(env_stdout)
                 baseline_env = self._baseline_env or {}
@@ -215,6 +253,13 @@ class LocalPersistentShellRuntime(PhysicalTerminalRuntime):
                 await asyncio.wait_for(self._session.wait(), timeout=5.0)
             except Exception:
                 self._session.kill()
+                await self._session.wait()
+        if self._master_fd is not None:
+            try:
+                os.close(self._master_fd)
+            except OSError:
+                pass
+            self._master_fd = None
 
 
 class RemoteWrappedRuntime(PhysicalTerminalRuntime):
@@ -329,16 +374,16 @@ class RemoteWrappedRuntime(PhysicalTerminalRuntime):
     async def execute(self, command: str, timeout: float | None = None) -> ExecuteResult:
         """Execute command via provider."""
         try:
-            first = self._execute_once(command, timeout)
+            first = await asyncio.to_thread(self._execute_once, command, timeout)
         except Exception as e:
             if not self._looks_like_infra_error(str(e)):
                 raise
-            self._recover_infra()
-            return self._execute_once(command, timeout)
+            await asyncio.to_thread(self._recover_infra)
+            return await asyncio.to_thread(self._execute_once, command, timeout)
 
         if first.exit_code != 0 and self._looks_like_infra_error(first.stderr or first.stdout):
-            self._recover_infra()
-            return self._execute_once(command, timeout)
+            await asyncio.to_thread(self._recover_infra)
+            return await asyncio.to_thread(self._execute_once, command, timeout)
 
         return first
 
