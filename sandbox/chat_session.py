@@ -262,12 +262,9 @@ class ChatSessionManager:
             )
 
     def _build_runtime(self, terminal: AbstractTerminal, lease: SandboxLease) -> PhysicalTerminalRuntime:
-        from sandbox.runtime import LocalPersistentShellRuntime, RemoteWrappedRuntime
+        from sandbox.runtime import create_runtime
 
-        capability = self.provider.get_capability()
-        if capability.runtime_kind == "local":
-            return LocalPersistentShellRuntime(terminal, lease)
-        return RemoteWrappedRuntime(terminal, lease, self.provider)
+        return create_runtime(self.provider, terminal, lease)
 
     def _load_status(self, session_id: str) -> str | None:
         with _connect(self.db_path) as conn:
