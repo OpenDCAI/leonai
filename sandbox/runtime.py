@@ -69,6 +69,8 @@ class PhysicalTerminalRuntime(ABC):
         self.chat_session_id: str | None = None
         self._commands: dict[str, AsyncCommand] = {}
         self._tasks: dict[str, asyncio.Task[ExecuteResult]] = {}
+        self._stream_flush_interval_sec = 0.2
+        self._last_stream_flush_at: dict[str, float] = {}
 
     def bind_session(self, session_id: str) -> None:
         self.chat_session_id = session_id
@@ -137,6 +139,24 @@ class PhysicalTerminalRuntime(ABC):
                 )
             conn.commit()
 
+    def _flush_running_output_if_needed(self, command_id: str, *, force: bool = False) -> None:
+        async_cmd = self._commands.get(command_id)
+        if async_cmd is None:
+            return
+        now = time.monotonic()
+        last = self._last_stream_flush_at.get(command_id, 0.0)
+        if not force and now - last < self._stream_flush_interval_sec:
+            return
+        self._last_stream_flush_at[command_id] = now
+        self._upsert_command_row(
+            command_id=command_id,
+            command_line=async_cmd.command_line,
+            cwd=async_cmd.cwd,
+            status="running",
+            stdout="".join(async_cmd.stdout_buffer),
+            stderr="".join(async_cmd.stderr_buffer),
+        )
+
     def _load_command_from_db(self, command_id: str) -> AsyncCommand | None:
         with self._connect() as conn:
             conn.row_factory = sqlite3.Row
@@ -159,21 +179,6 @@ class PhysicalTerminalRuntime(ABC):
             exit_code=row["exit_code"],
             done=row["status"] in {"done", "cancelled", "failed"},
         )
-        if row["status"] == "running":
-            # @@@stale-running-command - Runtime restart loses in-memory task, mark DB row failed instead of hanging forever.
-            msg = "Runtime restarted before command completion"
-            async_cmd.stderr_buffer = [msg]
-            async_cmd.exit_code = 1
-            async_cmd.done = True
-            self._upsert_command_row(
-                command_id=command_id,
-                command_line=async_cmd.command_line,
-                cwd=async_cmd.cwd,
-                status="failed",
-                stdout=async_cmd.stdout_buffer[0],
-                stderr=msg,
-                exit_code=1,
-            )
         self._commands[command_id] = async_cmd
         return async_cmd
 
@@ -196,6 +201,7 @@ class PhysicalTerminalRuntime(ABC):
             def _append_stdout(chunk: str) -> None:
                 if chunk:
                     async_cmd.stdout_buffer.append(chunk)
+                    self._flush_running_output_if_needed(command_id)
 
             try:
                 result = await self._execute_background_command(command, timeout=None, on_stdout_chunk=_append_stdout)
@@ -216,6 +222,7 @@ class PhysicalTerminalRuntime(ABC):
                 stderr=result.stderr,
                 exit_code=result.exit_code,
             )
+            self._last_stream_flush_at.pop(command_id, None)
             return result
 
         self._tasks[command_id] = asyncio.create_task(_run())
@@ -232,6 +239,10 @@ class PhysicalTerminalRuntime(ABC):
     async def get_command(self, command_id: str) -> AsyncCommand | None:
         cmd = self._commands.get(command_id)
         if cmd:
+            if not cmd.done and command_id not in self._tasks:
+                # @@@cross-runtime-status-source - If this runtime didn't start the task, trust DB row instead of stale memory.
+                refreshed = self._load_command_from_db(command_id)
+                return refreshed or cmd
             return cmd
         return self._load_command_from_db(command_id)
 
@@ -240,6 +251,22 @@ class PhysicalTerminalRuntime(ABC):
         if async_cmd is None:
             return None
         task = self._tasks.get(command_id)
+        if task is None and not async_cmd.done:
+            deadline = time.monotonic() + timeout if timeout is not None else None
+            while not async_cmd.done:
+                if deadline is not None and time.monotonic() > deadline:
+                    return ExecuteResult(
+                        exit_code=-1,
+                        stdout="".join(async_cmd.stdout_buffer),
+                        stderr="".join(async_cmd.stderr_buffer),
+                        timed_out=True,
+                        command_id=command_id,
+                    )
+                await asyncio.sleep(0.1)
+                refreshed = self._load_command_from_db(command_id)
+                if refreshed is None:
+                    return None
+                async_cmd = refreshed
         if task is not None and not task.done():
             try:
                 if timeout is None:
@@ -310,6 +337,7 @@ class PhysicalTerminalRuntime(ABC):
             stderr=result.stderr,
             exit_code=result.exit_code,
         )
+        self._last_stream_flush_at.pop(command_id, None)
 
     @abstractmethod
     async def execute(self, command: str, timeout: float | None = None) -> ExecuteResult:

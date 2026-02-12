@@ -479,6 +479,33 @@ async def test_daytona_runtime_streams_running_output(terminal_store, lease_stor
 
 
 @pytest.mark.asyncio
+async def test_running_command_survives_runtime_reload_without_false_failure(terminal_store, lease_store):
+    terminal = terminal_store.create("term-running-db", "thread-running-db", "lease-running-db", "/tmp")
+    lease = lease_store.create("lease-running-db", "local")
+    provider = MagicMock()
+    provider.get_capability.return_value = SimpleNamespace(runtime_kind="local")
+    ChatSessionManager(provider=provider, db_path=terminal_store.db_path)
+
+    runtime1 = create_runtime(provider, terminal, lease)
+    async_cmd = await runtime1.start_command("for i in 1 2 3; do echo tick-$i; sleep 1; done", "/tmp")
+    await asyncio.sleep(0.4)
+
+    # Simulate command_status query from another runtime/session that has no in-memory task.
+    runtime2 = create_runtime(provider, terminal, lease)
+    status_running = await runtime2.get_command(async_cmd.command_id)
+    assert status_running is not None
+    assert not status_running.done
+    assert "Runtime restarted before command completion" not in "".join(status_running.stderr_buffer)
+
+    cross_wait = await runtime2.wait_for_command(async_cmd.command_id, timeout=5.0)
+    assert cross_wait is not None
+    assert cross_wait.exit_code == 0
+    assert "tick-3" in cross_wait.stdout
+
+    await runtime1.close()
+
+
+@pytest.mark.asyncio
 async def test_daytona_runtime_hydrates_once_per_pty_session(terminal_store, lease_store):
     terminal = terminal_store.create("term-3", "thread-3", "lease-3", "/tmp")
     lease = lease_store.create("lease-3", "daytona")

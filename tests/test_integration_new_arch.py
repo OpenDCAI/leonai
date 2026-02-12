@@ -228,6 +228,30 @@ class TestFullArchitectureFlow:
         assert row is not None
         assert row[0] == background_terminal.terminal_id
 
+    @pytest.mark.asyncio
+    async def test_running_async_command_visible_from_new_manager(self, temp_db, mock_provider):
+        thread_id = "test-thread-running-visible"
+        manager1 = SandboxManager(provider=mock_provider, db_path=temp_db)
+        capability1 = manager1.get_sandbox(thread_id)
+
+        async_cmd = await capability1.command.execute_async("for i in 1 2 3; do echo tick-$i; sleep 1; done")
+        await asyncio.sleep(1.2)
+
+        # Simulate command_status query from a fresh API manager/session process.
+        manager2 = SandboxManager(provider=mock_provider, db_path=temp_db)
+        capability2 = manager2.get_sandbox(thread_id)
+
+        running = await capability2.command.get_status(async_cmd.command_id)
+        assert running is not None
+        assert not running.done
+        assert "Runtime restarted before command completion" not in "".join(running.stderr_buffer)
+        assert "tick-1" in "".join(running.stdout_buffer)
+
+        finished = await capability2.command.wait_for(async_cmd.command_id, timeout=5.0)
+        assert finished is not None
+        assert finished.exit_code == 0
+        assert "tick-3" in finished.stdout
+
     def test_terminal_state_persists_across_sessions(self, sandbox_manager, temp_db):
         """Test that terminal state persists when session expires."""
         thread_id = "test-thread-4"

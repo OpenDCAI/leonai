@@ -15,6 +15,7 @@ from langchain.agents.middleware.types import ModelRequest, ModelResponse
 from langchain.tools import ToolRuntime, tool
 from langgraph.runtime import Runtime
 
+from .base import AsyncCommand
 from .base import BaseExecutor
 from .dispatcher import get_executor, get_shell_info
 from sandbox.shell_output import normalize_pty_result
@@ -248,6 +249,14 @@ class CommandMiddleware(AgentMiddleware[CommandState]):
     def _clean_running_output(self, output: str, command_line: str) -> str:
         return normalize_pty_result(output, command_line)
 
+    @staticmethod
+    def _merge_running_output(status: AsyncCommand) -> str:
+        stdout = "".join(status.stdout_buffer)
+        stderr = "".join(status.stderr_buffer)
+        if stdout and stderr:
+            return f"{stdout}\n{stderr}".strip()
+        return (stdout or stderr).strip()
+
     async def _get_command_status(
         self,
         command_id: str,
@@ -263,7 +272,8 @@ class CommandMiddleware(AgentMiddleware[CommandState]):
                     status = await self._executor.get_status(command_id)
                     if status is None:
                         return f"Error: Command {command_id} not found"
-                    cleaned_output = self._clean_running_output("".join(status.stdout_buffer), status.command_line)
+                    combined_output = self._merge_running_output(status)
+                    cleaned_output = self._clean_running_output(combined_output, status.command_line)
                     current_output = self._truncate_output(cleaned_output, max_chars)
                     return f"Status: running\nCommand: {status.command_line}\nOutput so far:\n{current_output}"
                 output = self._truncate_output(result.to_tool_result(), max_chars)
@@ -279,7 +289,8 @@ class CommandMiddleware(AgentMiddleware[CommandState]):
                 output = self._truncate_output(result.to_tool_result(), max_chars)
                 return f"Status: done\nExit code: {result.exit_code}\n{output}"
 
-        cleaned_output = self._clean_running_output("".join(status.stdout_buffer), status.command_line)
+        combined_output = self._merge_running_output(status)
+        cleaned_output = self._clean_running_output(combined_output, status.command_line)
         current_output = self._truncate_output(cleaned_output, max_chars)
         return f"Status: running\nCommand: {status.command_line}\nOutput so far:\n{current_output}"
 

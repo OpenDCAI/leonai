@@ -205,3 +205,22 @@ class TestCommandStatusFormatting:
         assert "Status: running" in out
         assert "tick-1" in out
         assert "ffor i in 1 2 3" not in out
+
+    @pytest.mark.asyncio
+    async def test_running_status_includes_stderr_chunks(self, tmp_path):
+        status = AsyncCommand(
+            command_id="cmd_stderr",
+            command_line="python -c 'import sys,time; print(\"out\"); sys.stderr.write(\"err\\n\"); time.sleep(3)'",
+            cwd=str(tmp_path),
+            stdout_buffer=["out\n"],
+            stderr_buffer=["err\n"],
+            done=False,
+        )
+        executor = _StatusOnlyExecutor(_StatusFixture(status=status))
+        middleware = CommandMiddleware(workspace_root=tmp_path, executor=executor, verbose=False)
+
+        out = await middleware._get_command_status("cmd_stderr", wait_seconds=0, max_chars=10000)
+        assert "Status: running" in out
+        output_block = out.split("Output so far:\n", 1)[1]
+        assert "out" in output_block
+        assert "err" in output_block
