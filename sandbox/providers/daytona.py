@@ -13,7 +13,10 @@ Key differences from E2B:
 from __future__ import annotations
 
 import os
+import uuid
 from typing import Any
+
+import httpx
 
 from sandbox.provider import (
     Metrics,
@@ -35,7 +38,9 @@ class DaytonaProvider(SandboxProvider):
             can_resume=True,
             can_destroy=True,
             supports_webhook=True,
-            runtime_kind="daytona_pty",
+            # @@@daytona-runtime-kind - Self-hosted Daytona toolbox forwarding is more reliable via
+            # command-per-call execution than the PTY integration. RemoteWrappedRuntime uses provider.execute().
+            runtime_kind="remote",
         )
 
     def __init__(
@@ -56,6 +61,21 @@ class DaytonaProvider(SandboxProvider):
         os.environ["DAYTONA_API_URL"] = api_url
         self.client = Daytona()
         self._sandboxes: dict[str, Any] = {}
+
+    def _api_base(self) -> str:
+        return self.api_url.rstrip("/")
+
+    @staticmethod
+    def _flatten_shell_script(command: str) -> str:
+        # Toolbox "session exec" behaves best with a single command line.
+        # Preserve semantics for our usage by converting newlines to statement separators.
+        parts = [line.strip() for line in command.replace("\r", "").split("\n") if line.strip()]
+        return "; ".join(parts)
+
+    @staticmethod
+    def _sh_single_quote(text: str) -> str:
+        # Safe single-quote for POSIX shells: abc'def -> 'abc'"'"'def'
+        return "'" + text.replace("'", "'\"'\"'") + "'"
 
     # ==================== Session Lifecycle ====================
 
@@ -113,15 +133,49 @@ class DaytonaProvider(SandboxProvider):
         timeout_ms: int = 30000,
         cwd: str | None = None,
     ) -> ProviderExecResult:
-        sb = self._get_sandbox(session_id)
+        # Use toolbox session exec directly against the API.
+        #
+        # Why: daytona-sdk's process.exec path relies on a "toolbox proxy URL" indirection that can be
+        # misconfigured in self-hosted setups (runner.proxyUrl), returning HTML/502 instead of JSON.
+        # The API-hosted toolbox endpoints forward to the runner internally and accept a standard Bearer API key.
+        sess = f"leon-exec-{uuid.uuid4().hex[:12]}"
+        base = self._api_base()
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+        timeout_sec = max(1.0, float(timeout_ms) / 1000.0)
+
         try:
-            result = sb.process.exec(command, cwd=cwd or self.default_cwd, timeout=timeout_ms // 1000)
-            return ProviderExecResult(
-                output=result.result or "",
-                exit_code=result.exit_code or 0,
-            )
+            with httpx.Client(timeout=timeout_sec) as client:
+                # Create session
+                create_url = f"{base}/toolbox/{session_id}/toolbox/process/session"
+                r = client.post(create_url, headers=headers, json={"sessionId": sess})
+                r.raise_for_status()
+
+                # Exec command in session (runs via shell, supports multiline scripts, cd/export, &&, etc.)
+                exec_url = f"{base}/toolbox/{session_id}/toolbox/process/session/{sess}/exec"
+                flat = self._flatten_shell_script(command)
+                # Run in a subshell so `exit` doesn't tear down the underlying session plumbing.
+                # Silence locale warnings that can pollute stdout in minimal images.
+                wrapped = f"LANG=C LC_ALL=C bash -lc {self._sh_single_quote(flat)}"
+                r = client.post(exec_url, headers=headers, json={"command": wrapped})
+                r.raise_for_status()
+                data = r.json()
+                output = str(data.get("output") or "")
+                exit_code = int(data.get("exitCode") or 0)
+
+                # Best-effort cleanup: don't mask execution result if delete fails.
+                delete_url = f"{base}/toolbox/{session_id}/toolbox/process/session/{sess}"
+                try:
+                    client.delete(delete_url, headers=headers).raise_for_status()
+                except Exception:
+                    pass
+
+                return ProviderExecResult(output=output, exit_code=exit_code)
+        except httpx.HTTPStatusError as e:
+            body = e.response.text or ""
+            snippet = body[:5000]
+            return ProviderExecResult(output="", exit_code=1, error=f"HTTP {e.response.status_code}: {snippet}")
         except Exception as e:
-            return ProviderExecResult(output="", error=str(e))
+            return ProviderExecResult(output="", exit_code=1, error=str(e))
 
     # ==================== Filesystem ====================
 
