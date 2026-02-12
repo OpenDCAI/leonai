@@ -10,6 +10,7 @@ from typing import Any
 from langchain.agents import create_agent
 from langchain.chat_models import init_chat_model
 from langchain_core.tools import tool
+from model_params import normalize_model_kwargs
 
 from .types import AgentConfig, TaskParams, TaskResult
 
@@ -170,7 +171,8 @@ class SubagentRunner:
         model_name = params.get("Model") or config.model or self.parent_model
 
         # Build model (unified path via init_chat_model)
-        model = init_chat_model(model_name, api_key=self.api_key, **self.model_kwargs)
+        model_kwargs = normalize_model_kwargs(model_name, self.model_kwargs)
+        model = init_chat_model(model_name, api_key=self.api_key, **model_kwargs)
 
         # Build filtered middleware
         middleware = self._build_subagent_middleware(config, all_middleware)
@@ -253,7 +255,8 @@ class SubagentRunner:
         model_name = params.get("Model") or config.model or self.parent_model
 
         # Build model
-        model = init_chat_model(model_name, api_key=self.api_key, **self.model_kwargs)
+        model_kwargs = normalize_model_kwargs(model_name, self.model_kwargs)
+        model = init_chat_model(model_name, api_key=self.api_key, **model_kwargs)
 
         # Build filtered middleware
         middleware = self._build_subagent_middleware(config, all_middleware)

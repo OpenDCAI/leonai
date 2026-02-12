@@ -30,6 +30,7 @@ if _env_file.exists():
 
 from agent_profile import AgentProfile
 from middleware.command import CommandMiddleware
+from model_params import normalize_model_kwargs
 
 # 导入 hooks
 from middleware.command.hooks.dangerous_commands import DangerousCommandsHook
@@ -336,7 +337,7 @@ class LeonAgent:
 
     def _create_model(self):
         """Initialize model with all parameters passed to init_chat_model."""
-        kwargs = self._build_model_kwargs()
+        kwargs = normalize_model_kwargs(self.model_name, self._build_model_kwargs())
         return init_chat_model(self.model_name, api_key=self.api_key, **kwargs)
 
     def _build_model_kwargs(self) -> dict:
