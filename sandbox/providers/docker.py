@@ -31,6 +31,7 @@ class DockerProvider(SandboxProvider):
             can_resume=True,
             can_destroy=True,
             supports_webhook=False,
+            runtime_kind="docker_pty",
         )
 
     def __init__(self, image: str, mount_path: str = "/workspace", command_timeout_sec: float = 20.0):

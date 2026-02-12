@@ -82,6 +82,11 @@ def _get_model_name() -> str:
     return os.getenv("MODEL_NAME") or "claude-sonnet-4-5-20250929"
 
 
+def _set_test_db_env(monkeypatch, tmp_path, prefix: str) -> None:
+    monkeypatch.setenv("LEON_DB_PATH", str(tmp_path / f"{prefix}_leon.db"))
+    monkeypatch.setenv("LEON_SANDBOX_DB_PATH", str(tmp_path / f"{prefix}_sandbox.db"))
+
+
 # ---------------------------------------------------------------------------
 # Docker E2E
 # ---------------------------------------------------------------------------
@@ -89,10 +94,11 @@ def _get_model_name() -> str:
 
 @pytest.mark.skipif(not _can_docker(), reason="Docker not available")
 class TestDockerSandboxE2E:
-    def test_agent_init_and_command(self):
+    def test_agent_init_and_command(self, tmp_path, monkeypatch):
         """Agent initializes with docker sandbox and can run commands."""
         from agent import create_leon_agent
 
+        _set_test_db_env(monkeypatch, tmp_path, "docker_init")
         thread_id = f"test-docker-{uuid.uuid4().hex[:8]}"
         agent = None
         try:
@@ -126,10 +132,11 @@ class TestDockerSandboxE2E:
             if agent:
                 agent.close()
 
-    def test_file_operations(self):
+    def test_file_operations(self, tmp_path, monkeypatch):
         """Agent can read and write files in docker sandbox."""
         from agent import create_leon_agent
 
+        _set_test_db_env(monkeypatch, tmp_path, "docker_fs")
         thread_id = f"test-docker-{uuid.uuid4().hex[:8]}"
         agent = None
         try:
@@ -164,10 +171,11 @@ class TestDockerSandboxE2E:
 
 @pytest.mark.skipif(not _can_e2b(), reason="E2B_API_KEY not set")
 class TestE2BSandboxE2E:
-    def test_agent_init_and_command(self):
+    def test_agent_init_and_command(self, tmp_path, monkeypatch):
         """Agent initializes with e2b sandbox and can run commands."""
         from agent import create_leon_agent
 
+        _set_test_db_env(monkeypatch, tmp_path, "e2b_init")
         thread_id = f"test-e2b-{uuid.uuid4().hex[:8]}"
         agent = None
         try:
@@ -199,10 +207,11 @@ class TestE2BSandboxE2E:
             if agent:
                 agent.close()
 
-    def test_file_operations(self):
+    def test_file_operations(self, tmp_path, monkeypatch):
         """Agent can read and write files in e2b sandbox."""
         from agent import create_leon_agent
 
+        _set_test_db_env(monkeypatch, tmp_path, "e2b_fs")
         thread_id = f"test-e2b-{uuid.uuid4().hex[:8]}"
         agent = None
         try:

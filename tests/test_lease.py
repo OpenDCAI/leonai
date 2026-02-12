@@ -232,7 +232,7 @@ class TestSQLiteLease:
         lease.ensure_active_instance(mock_provider)
 
         # Mock provider to report instance is paused
-        lease.observed_at = datetime.now() - timedelta(seconds=10)
+        lease.observed_at = datetime.now() - timedelta(seconds=61)
         mock_provider.get_session_status.return_value = "paused"
         with pytest.raises(RuntimeError, match="is paused"):
             lease.ensure_active_instance(mock_provider)
@@ -251,7 +251,7 @@ class TestSQLiteLease:
         lease.ensure_active_instance(mock_provider)
 
         # Mock provider to report instance is dead
-        lease.observed_at = datetime.now() - timedelta(seconds=10)
+        lease.observed_at = datetime.now() - timedelta(seconds=61)
         mock_provider.get_session_status.side_effect = Exception("Instance not found")
         mock_provider.create_session.return_value = SessionInfo(
             session_id="inst-456",
@@ -274,7 +274,7 @@ class TestSQLiteLease:
             status="running",
         )
         lease.ensure_active_instance(mock_provider)
-        lease.observed_at = datetime.now() - timedelta(seconds=10)
+        lease.observed_at = datetime.now() - timedelta(seconds=61)
         mock_provider.get_session_status.return_value = "running"
 
         lease.ensure_active_instance(mock_provider)
@@ -387,8 +387,8 @@ class TestSQLiteLease:
 
         reloaded = store.get("lease-1")
         assert reloaded is not None
-        assert reloaded.refresh_error is not None
-        assert "BenefitLevel.NotSupport" in reloaded.refresh_error
+        assert reloaded.last_error is not None
+        assert "BenefitLevel.NotSupport" in reloaded.last_error
 
     def test_instance_persists_to_db(self, store, mock_provider, temp_db):
         """Test that instance state persists to database."""
@@ -406,12 +406,12 @@ class TestSQLiteLease:
         with sqlite3.connect(str(temp_db)) as conn:
             conn.row_factory = sqlite3.Row
             row = conn.execute(
-                "SELECT current_instance_id, instance_status FROM sandbox_leases WHERE lease_id = ?",
+                "SELECT current_instance_id, observed_state FROM sandbox_leases WHERE lease_id = ?",
                 ("lease-1",),
             ).fetchone()
 
             assert row["current_instance_id"] == "inst-123"
-            assert row["instance_status"] == "running"
+            assert row["observed_state"] == "running"
 
     def test_instance_persists_across_retrieval(self, store, mock_provider):
         """Test that instance persists when lease is retrieved again."""

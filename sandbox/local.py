@@ -55,8 +55,6 @@ class LocalSessionProvider(SandboxProvider):
     def pause_session(self, session_id: str) -> bool:
         with self._state_lock:
             state = self._session_states.get(session_id)
-            if state is None and session_id.startswith("leon-lease-"):
-                state = self._session_states[session_id] = "running"
             if state in {None, "detached"}:
                 return False
             if state != "paused":
@@ -66,8 +64,6 @@ class LocalSessionProvider(SandboxProvider):
     def resume_session(self, session_id: str) -> bool:
         with self._state_lock:
             state = self._session_states.get(session_id)
-            if state is None and session_id.startswith("leon-lease-"):
-                state = self._session_states[session_id] = "running"
             if state in {None, "detached"}:
                 return False
             if state != "running":

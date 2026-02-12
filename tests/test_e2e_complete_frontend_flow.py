@@ -1,18 +1,11 @@
 """
-Complete Frontend Flow E2E Test - Traces EXACT user interactions.
-
-This test simulates the complete frontend user journey:
-1. App loads → list sandbox types and threads
-2. User creates new thread with E2B sandbox
-3. Thread loads → get thread data
-4. User sends message → SSE stream with tool calls
-5. Session status panel loads → parallel fetch of session/terminal/lease
-6. User pauses/resumes sandbox
+Complete frontend flow E2E tests with strict assertions.
 
 NO MOCKS - Real HTTP API calls exactly as frontend does.
 """
 
 import asyncio
+import time
 
 import httpx
 import pytest
@@ -24,198 +17,146 @@ def api_base_url():
     return "http://localhost:8001"
 
 
+@pytest.fixture(autouse=True)
+def _require_backend(api_base_url: str):
+    try:
+        response = httpx.get(f"{api_base_url}/api/sandbox/types", timeout=2.0)
+    except Exception:
+        pytest.skip(f"backend not reachable at {api_base_url}")
+    if response.status_code >= 500:
+        pytest.skip(f"backend unhealthy at {api_base_url} (status={response.status_code})")
+
+
+async def _run_until_done(client: httpx.AsyncClient, api_base_url: str, thread_id: str, message: str) -> None:
+    seen_done = False
+    error_payload: str | None = None
+    async with client.stream(
+        "POST",
+        f"{api_base_url}/api/threads/{thread_id}/runs",
+        json={"message": message},
+        timeout=180.0,
+    ) as response:
+        assert response.status_code == 200
+        event_name = ""
+        # @@@sse-event-pairing - Parse SSE event/data pairs to fail on backend error events.
+        async for line in response.aiter_lines():
+            if not line:
+                continue
+            if line.startswith("event:"):
+                event_name = line.split(":", 1)[1].strip()
+                continue
+            if not line.startswith("data:"):
+                continue
+            payload = line.split(":", 1)[1].strip()
+            if event_name == "error":
+                error_payload = payload
+                break
+            if event_name == "done":
+                seen_done = True
+                break
+
+    assert error_payload is None, f"SSE returned error event: {error_payload}"
+    assert seen_done, "SSE stream ended without done event"
+
+    # @@@runtime-idle-gate - `done` can arrive before runtime state transition settles.
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline:
+        status = await client.get(f"{api_base_url}/api/threads/{thread_id}/runtime")
+        assert status.status_code == 200
+        state = status.json().get("state", {}).get("state")
+        if state == "idle":
+            return
+        await asyncio.sleep(0.2)
+    raise AssertionError("Runtime did not reach idle state within 10 seconds after done event")
+
+
 class TestCompleteFrontendFlow:
-    """Complete E2E test tracing exact frontend user journey."""
+    """Complete E2E tests tracing strict frontend flow."""
 
     @pytest.mark.asyncio
-    async def test_complete_user_journey_with_e2b(self, api_base_url):
-        """
-        Test: Complete user journey from app load to message send.
-
-        This traces the EXACT frontend flow:
-        1. App.tsx useEffect → listSandboxTypes() + listThreads()
-        2. User clicks "New Thread" → createThread("e2b")
-        3. Thread becomes active → getThread(threadId)
-        4. SessionStatusPanel mounts → getThreadSession/Terminal/Lease in parallel
-        5. User sends message → startRun() SSE stream
-        6. User pauses/resumes → pauseThreadSandbox/resumeThreadSandbox
-        """
+    async def test_complete_user_journey_with_local(self, api_base_url):
         async with httpx.AsyncClient(timeout=60.0) as client:
-            # ===== STEP 1: App Mount =====
-            # App.tsx line 52-53: listSandboxTypes()
-            print("\n[STEP 1] App mount - List sandbox types")
             response = await client.get(f"{api_base_url}/api/sandbox/types")
             assert response.status_code == 200
             sandbox_types = response.json()["types"]
-            assert any(t["name"] == "e2b" for t in sandbox_types)
-            print(f"✓ Found {len(sandbox_types)} sandbox types")
+            assert any(t["name"] == "local" for t in sandbox_types)
 
-            # App.tsx line 64-66: listThreads()
-            print("\n[STEP 1] App mount - List threads")
             response = await client.get(f"{api_base_url}/api/threads")
             assert response.status_code == 200
-            initial_threads = response.json()["threads"]
-            print(f"✓ Found {len(initial_threads)} existing threads")
+            assert "threads" in response.json()
 
-            # ===== STEP 2: Create Thread =====
-            # App.tsx line 102-107: handleCreateThread("e2b")
-            print("\n[STEP 2] User creates new thread with E2B sandbox")
-            response = await client.post(f"{api_base_url}/api/threads", json={"sandbox": "e2b"})
+            response = await client.post(f"{api_base_url}/api/threads", json={"sandbox": "local"})
             assert response.status_code == 200
             thread = response.json()
             thread_id = thread["thread_id"]
-            assert thread["sandbox"] == "e2b"
-            print(f"✓ Created thread: {thread_id[:12]}... with E2B sandbox")
+            assert thread["sandbox"] == "local"
 
-            # ===== STEP 3: Load Thread =====
-            # App.tsx line 78-85: getThread(activeThreadId)
-            print("\n[STEP 3] Thread becomes active - Load thread data")
-            response = await client.get(f"{api_base_url}/api/threads/{thread_id}")
-            # May return 500 if agent init fails - acceptable for E2E test
-            if response.status_code == 200:
+            try:
+                await _run_until_done(client, api_base_url, thread_id, "Reply with exactly: frontend flow ready")
+
+                response = await client.get(f"{api_base_url}/api/threads/{thread_id}")
+                assert response.status_code == 200
                 thread_data = response.json()
                 assert "messages" in thread_data
-                print(f"✓ Loaded thread data with {len(thread_data['messages'])} messages")
-            else:
-                print(f"⚠ Thread load returned {response.status_code} (agent init may have failed)")
 
-            # ===== STEP 4: Session Status Panel =====
-            # SessionStatusPanel.tsx line 30-34: Promise.all([getThreadSession, getThreadTerminal, getThreadLease])
-            print("\n[STEP 4] SessionStatusPanel mounts - Fetch session/terminal/lease in parallel")
+                # @@@promise-all-strictness - Frontend fetches these in parallel; all must return 200 after runtime init.
+                session_response, terminal_response, lease_response = await asyncio.gather(
+                    client.get(f"{api_base_url}/api/threads/{thread_id}/session"),
+                    client.get(f"{api_base_url}/api/threads/{thread_id}/terminal"),
+                    client.get(f"{api_base_url}/api/threads/{thread_id}/lease"),
+                )
+                assert session_response.status_code == 200
+                assert terminal_response.status_code == 200
+                assert lease_response.status_code == 200
 
-            # This is the CRITICAL part - frontend does Promise.all with all three
-            results = await asyncio.gather(
-                client.get(f"{api_base_url}/api/threads/{thread_id}/session"),
-                client.get(f"{api_base_url}/api/threads/{thread_id}/terminal"),
-                client.get(f"{api_base_url}/api/threads/{thread_id}/lease"),
-                return_exceptions=True,
-            )
-
-            session_response, terminal_response, lease_response = results
-
-            # Check session endpoint
-            if isinstance(session_response, httpx.Response):
-                if session_response.status_code == 200:
-                    session = session_response.json()
-                    print(f"✓ Session: {session.get('session_id', 'N/A')[:12]}... status={session.get('status')}")
-                else:
-                    print(f"⚠ Session endpoint returned {session_response.status_code}")
-            else:
-                print(f"⚠ Session endpoint error: {session_response}")
-
-            # Check terminal endpoint
-            if isinstance(terminal_response, httpx.Response):
-                if terminal_response.status_code == 200:
-                    terminal = terminal_response.json()
-                    print(f"✓ Terminal: cwd={terminal.get('cwd')} version={terminal.get('version')}")
-                else:
-                    print(f"⚠ Terminal endpoint returned {terminal_response.status_code}")
-            else:
-                print(f"⚠ Terminal endpoint error: {terminal_response}")
-
-            # Check lease endpoint
-            if isinstance(lease_response, httpx.Response):
-                if lease_response.status_code == 200:
-                    lease = lease_response.json()
-                    print(
-                        f"✓ Lease: provider={lease.get('provider_name')} instance={lease.get('instance', {}).get('state')}"
-                    )
-                else:
-                    print(f"⚠ Lease endpoint returned {lease_response.status_code}")
-            else:
-                print(f"⚠ Lease endpoint error: {lease_response}")
-
-            # ===== STEP 5: Send Message (SSE Stream) =====
-            # ChatView.tsx line 65: startRun(threadId, text, onEvent)
-            # Note: SSE streaming is complex to test, so we just verify the endpoint exists
-            print("\n[STEP 5] User sends message (SSE stream endpoint check)")
-            # We won't actually stream here as it requires SSE parsing
-            # But we verify the endpoint is accessible
-            print("✓ SSE endpoint: POST /api/threads/{id}/runs (not tested in this flow)")
-
-            # ===== STEP 6: Pause/Resume Sandbox =====
-            # App.tsx line 119-129: handlePauseSandbox() / handleResumeSandbox()
-            print("\n[STEP 6] User pauses sandbox")
-            try:
                 response = await client.post(f"{api_base_url}/api/threads/{thread_id}/sandbox/pause")
-                print(f"✓ Pause returned {response.status_code}")
-            except Exception as e:
-                print(f"⚠ Pause failed: {e} (backend may have crashed)")
-
-            print("\n[STEP 6] User resumes sandbox")
-            try:
+                assert response.status_code == 200
                 response = await client.post(f"{api_base_url}/api/threads/{thread_id}/sandbox/resume")
-                print(f"✓ Resume returned {response.status_code}")
-            except Exception as e:
-                print(f"⚠ Resume failed: {e} (backend may have crashed)")
-
-            # ===== STEP 7: Delete Thread =====
-            # App.tsx line 109-117: handleDeleteThread(threadId)
-            print("\n[STEP 7] User deletes thread")
-            try:
+                assert response.status_code == 200
+            finally:
                 response = await client.delete(f"{api_base_url}/api/threads/{thread_id}")
-                print(f"✓ Delete returned {response.status_code}")
-            except Exception as e:
-                print(f"⚠ Delete failed: {e} (backend may have crashed)")
-
-            print("\n✅ COMPLETE FRONTEND FLOW TEST PASSED")
+                assert response.status_code == 200
 
     @pytest.mark.asyncio
     async def test_session_status_panel_parallel_fetch(self, api_base_url):
-        """
-        Test: SessionStatusPanel's parallel fetch pattern.
-
-        Frontend does: Promise.all([getThreadSession, getThreadTerminal, getThreadLease])
-        This is the CRITICAL pattern for the new architecture.
-        """
         async with httpx.AsyncClient(timeout=60.0) as client:
-            # Create thread
-            response = await client.post(f"{api_base_url}/api/threads", json={"sandbox": "e2b"})
+            response = await client.post(f"{api_base_url}/api/threads", json={"sandbox": "local"})
+            assert response.status_code == 200
             thread_id = response.json()["thread_id"]
 
-            # SessionStatusPanel.tsx line 30-34: Parallel fetch with Promise.all
-            print("\n[TEST] Parallel fetch of session/terminal/lease (Promise.all)")
+            try:
+                await _run_until_done(client, api_base_url, thread_id, "Reply with exactly: panel ready")
 
-            start_time = asyncio.get_event_loop().time()
+                session_resp, terminal_resp, lease_resp = await asyncio.gather(
+                    client.get(f"{api_base_url}/api/threads/{thread_id}/session"),
+                    client.get(f"{api_base_url}/api/threads/{thread_id}/terminal"),
+                    client.get(f"{api_base_url}/api/threads/{thread_id}/lease"),
+                )
 
-            # This is EXACTLY what the frontend does
-            results = await asyncio.gather(
-                client.get(f"{api_base_url}/api/threads/{thread_id}/session"),
-                client.get(f"{api_base_url}/api/threads/{thread_id}/terminal"),
-                client.get(f"{api_base_url}/api/threads/{thread_id}/lease"),
-                return_exceptions=True,
-            )
-
-            elapsed = asyncio.get_event_loop().time() - start_time
-
-            print(f"✓ Parallel fetch completed in {elapsed:.2f}s")
-            print(f"  - Session: {results[0].status_code if isinstance(results[0], httpx.Response) else 'error'}")
-            print(f"  - Terminal: {results[1].status_code if isinstance(results[1], httpx.Response) else 'error'}")
-            print(f"  - Lease: {results[2].status_code if isinstance(results[2], httpx.Response) else 'error'}")
-
-            # All three should complete (even if they return errors)
-            assert len(results) == 3
-            print("\n✅ PARALLEL FETCH TEST PASSED")
+                assert session_resp.status_code == 200
+                assert terminal_resp.status_code == 200
+                assert lease_resp.status_code == 200
+            finally:
+                response = await client.delete(f"{api_base_url}/api/threads/{thread_id}")
+                assert response.status_code == 200
 
     @pytest.mark.asyncio
     async def test_steer_message_flow(self, api_base_url):
-        """
-        Test: Steer message flow (not in main UI but available via API).
-        """
         async with httpx.AsyncClient(timeout=30.0) as client:
-            # Create thread
-            response = await client.post(f"{api_base_url}/api/threads", json={"sandbox": "e2b"})
+            response = await client.post(f"{api_base_url}/api/threads", json={"sandbox": "local"})
+            assert response.status_code == 200
             thread_id = response.json()["thread_id"]
 
-            # api.ts line 129-134: steer(threadId, message)
-            print("\n[TEST] Send steering message")
-            response = await client.post(
-                f"{api_base_url}/api/threads/{thread_id}/steer", json={"message": "Test steering message"}
-            )
-            assert response.status_code == 200
-            result = response.json()
-            print(f"✓ Steer response: {result}")
-            print("\n✅ STEER MESSAGE TEST PASSED")
+            try:
+                response = await client.post(
+                    f"{api_base_url}/api/threads/{thread_id}/steer", json={"message": "Test steering message"}
+                )
+                assert response.status_code == 200
+                result = response.json()
+                assert "ok" in result or "status" in result
+            finally:
+                response = await client.delete(f"{api_base_url}/api/threads/{thread_id}")
+                assert response.status_code == 200
 
 
 if __name__ == "__main__":

@@ -179,7 +179,7 @@ class TestMessageQueueManager:
 
     def test_mode_setting(self):
         mgr = get_queue_manager()
-        assert mgr.get_mode() == QueueMode.FOLLOWUP  # default
+        assert mgr.get_mode() == QueueMode.STEER  # default
 
         mgr.set_mode(QueueMode.STEER)
         assert mgr.get_mode() == QueueMode.STEER

@@ -365,6 +365,21 @@ def _extract_text_content(raw_content: Any) -> str:
     return str(raw_content)
 
 
+def _iter_update_messages(update_payload: Any) -> list[Any]:
+    if not isinstance(update_payload, dict):
+        return []
+    messages: list[Any] = []
+    for node_update in update_payload.values():
+        if not isinstance(node_update, dict):
+            continue
+        node_messages = node_update.get("messages", [])
+        if isinstance(node_messages, list):
+            messages.extend(node_messages)
+            continue
+        messages.append(node_messages)
+    return messages
+
+
 def _serialize_message(msg: Any) -> dict[str, Any]:
     return {
         "type": msg.__class__.__name__,
@@ -705,7 +720,7 @@ def _mutate_sandbox_session(
         elif action == "resume":
             ok = manager.resume_session(thread_id)
         elif action == "destroy":
-            ok = manager.destroy_session(thread_id)
+            ok = manager.destroy_thread_resources(thread_id)
         else:
             raise RuntimeError(f"Unknown action: {action}")
     else:
@@ -854,13 +869,8 @@ async def ingest_provider_webhook(provider_name: str, payload: dict[str, Any]) -
     manager = managers.get(provider_name)
     if not manager:
         raise HTTPException(503, f"Provider manager unavailable: {provider_name}")
-    await asyncio.to_thread(
-        lease.apply,
-        manager.provider,
-        event_type="observe.status",
-        source="webhook",
-        payload={"status": status_hint, "raw_event_type": event_type},
-    )
+    # @@@webhook-invalidation-only - Webhooks are freshness invalidation, not authoritative state transitions.
+    await asyncio.to_thread(lease.mark_needs_refresh)
     return {
         "ok": True,
         "provider": provider_name,
@@ -868,6 +878,8 @@ async def ingest_provider_webhook(provider_name: str, payload: dict[str, Any]) -
         "event_type": event_type,
         "matched": True,
         "lease_id": lease.lease_id,
+        "status_hint": status_hint,
+        "needs_refresh": True,
     }
 
 
@@ -924,13 +936,27 @@ async def get_thread_session_status(thread_id: str) -> dict[str, Any]:
     """Get ChatSession status for a thread."""
     agent = await _get_thread_agent(thread_id)
 
-    def _get_session():
+    def _get_session_and_terminal():
         mgr = agent._sandbox.manager
-        return mgr.session_manager.get(thread_id)
+        terminal = mgr.terminal_store.get_active(thread_id)
+        if not terminal:
+            return None, None
+        session = mgr.session_manager.get(thread_id, terminal.terminal_id)
+        return session, terminal
 
-    session = await asyncio.to_thread(_get_session)
-    if not session:
+    session, terminal = await asyncio.to_thread(_get_session_and_terminal)
+    if not terminal:
         raise HTTPException(404, f"No session found for thread {thread_id}")
+    if not session:
+        return {
+            "thread_id": thread_id,
+            "session_id": None,
+            "terminal_id": terminal.terminal_id,
+            "status": "inactive",
+            "started_at": None,
+            "last_active_at": None,
+            "expires_at": None,
+        }
     expires_by_idle = session.last_active_at + timedelta(seconds=session.policy.idle_ttl_sec)
     expires_by_duration = session.started_at + timedelta(seconds=session.policy.max_duration_sec)
     expires_at = min(expires_by_idle, expires_by_duration)
@@ -953,7 +979,7 @@ async def get_thread_terminal_status(thread_id: str) -> dict[str, Any]:
 
     def _get_terminal():
         mgr = agent._sandbox.manager
-        return mgr.terminal_store.get(thread_id)
+        return mgr.terminal_store.get_active(thread_id)
 
     terminal = await asyncio.to_thread(_get_terminal)
     if not terminal:
@@ -980,7 +1006,7 @@ async def get_thread_lease_status(thread_id: str) -> dict[str, Any]:
 
     def _get_lease():
         mgr = agent._sandbox.manager
-        terminal = mgr.terminal_store.get(thread_id)
+        terminal = mgr.terminal_store.get_active(thread_id)
         if not terminal:
             return None
         lease = mgr.lease_store.get(terminal.lease_id)
@@ -1125,8 +1151,8 @@ async def get_thread_messages(thread_id: str) -> dict[str, Any]:
     if hasattr(agent, "_sandbox"):
         try:
             mgr = agent._sandbox.manager
-            session = mgr.session_manager.get(thread_id)
-            terminal = mgr.terminal_store.get(thread_id)
+            terminal = mgr.terminal_store.get_active(thread_id)
+            session = mgr.session_manager.get(thread_id, terminal.terminal_id) if terminal else None
             if session:
                 sandbox_info["session_id"] = session.session_id
             if terminal:
@@ -1246,12 +1272,13 @@ async def run_thread(thread_id: str, payload: RunRequest) -> EventSourceResponse
                 def _prime_sandbox() -> None:
                     mgr = agent._sandbox.manager
                     mgr.enforce_idle_timeouts()
-                    existing = mgr.session_manager.get(thread_id)
+                    terminal = mgr.terminal_store.get_active(thread_id)
+                    existing = mgr.session_manager.get(thread_id, terminal.terminal_id) if terminal else None
                     if existing and existing.status == "paused":
                         if not agent._sandbox.resume_thread(thread_id):
                             raise RuntimeError(f"Failed to resume paused session for thread {thread_id}")
                     agent._sandbox.ensure_session(thread_id)
-                    terminal = mgr.terminal_store.get(thread_id)
+                    terminal = mgr.terminal_store.get_active(thread_id)
                     lease = mgr.lease_store.get(terminal.lease_id) if terminal else None
                     if lease:
                         lease_status = lease.refresh_instance_status(mgr.provider)
@@ -1291,56 +1318,47 @@ async def run_thread(thread_id: str, payload: RunRequest) -> EventSourceResponse
 
                 # --- Node-level updates from "updates" mode ---
                 elif mode == "updates":
-                    if not isinstance(data, dict):
-                        continue
-                    for _node_name, node_update in data.items():
-                        if not isinstance(node_update, dict):
-                            continue
-                        messages = node_update.get("messages", [])
-                        if not isinstance(messages, list):
-                            messages = [messages]
-                        for msg in messages:
-                            msg_class = msg.__class__.__name__
-                            # Skip AIMessage text — already streamed token-by-token via "messages" mode
-                            # But still emit tool_calls from updates as a fallback
-                            if msg_class == "AIMessage":
-                                for tc in getattr(msg, "tool_calls", []):
-                                    tc_id = tc.get("id")
-                                    if tc_id and tc_id in emitted_tool_call_ids:
-                                        continue
-                                    if tc_id:
-                                        emitted_tool_call_ids.add(tc_id)
-                                    yield {
-                                        "event": "tool_call",
-                                        "data": json.dumps(
-                                            {
-                                                "id": tc.get("id"),
-                                                "name": tc.get("name", "unknown"),
-                                                "args": tc.get("args", {}),
-                                            },
-                                            ensure_ascii=False,
-                                        ),
-                                    }
-                            elif msg_class == "ToolMessage":
+                    for msg in _iter_update_messages(data):
+                        msg_class = msg.__class__.__name__
+                        if msg_class == "AIMessage":
+                            for tc in getattr(msg, "tool_calls", []):
+                                tc_id = tc.get("id")
+                                if tc_id and tc_id in emitted_tool_call_ids:
+                                    continue
+                                if tc_id:
+                                    emitted_tool_call_ids.add(tc_id)
                                 yield {
-                                    "event": "tool_result",
+                                    "event": "tool_call",
                                     "data": json.dumps(
                                         {
-                                            "tool_call_id": getattr(msg, "tool_call_id", None),
-                                            "name": getattr(msg, "name", "unknown"),
-                                            "content": str(getattr(msg, "content", "")),
+                                            "id": tc.get("id"),
+                                            "name": tc.get("name", "unknown"),
+                                            "args": tc.get("args", {}),
                                         },
                                         ensure_ascii=False,
                                     ),
                                 }
-                                # Emit runtime status after each tool result
-                                if hasattr(agent, "runtime"):
-                                    status = agent.runtime.get_status_dict()
-                                    status["current_tool"] = getattr(msg, "name", None)
-                                    yield {
-                                        "event": "status",
-                                        "data": json.dumps(status, ensure_ascii=False),
-                                    }
+                            continue
+                        if msg_class != "ToolMessage":
+                            continue
+                        yield {
+                            "event": "tool_result",
+                            "data": json.dumps(
+                                {
+                                    "tool_call_id": getattr(msg, "tool_call_id", None),
+                                    "name": getattr(msg, "name", "unknown"),
+                                    "content": str(getattr(msg, "content", "")),
+                                },
+                                ensure_ascii=False,
+                            ),
+                        }
+                        if hasattr(agent, "runtime"):
+                            status = agent.runtime.get_status_dict()
+                            status["current_tool"] = getattr(msg, "name", None)
+                            yield {
+                                "event": "status",
+                                "data": json.dumps(status, ensure_ascii=False),
+                            }
 
             # --- Forward sub-agent events ---
             if hasattr(agent, "runtime"):

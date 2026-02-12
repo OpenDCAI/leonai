@@ -17,6 +17,7 @@ from langgraph.runtime import Runtime
 
 from .base import BaseExecutor
 from .dispatcher import get_executor, get_shell_info
+from sandbox.shell_output import normalize_pty_result
 
 RUN_COMMAND_TOOL_NAME = "run_command"
 COMMAND_STATUS_TOOL_NAME = "command_status"
@@ -244,6 +245,9 @@ class CommandMiddleware(AgentMiddleware[CommandState]):
         truncated_lines = output[:-max_chars].count("\n")
         return f"<truncated {truncated_lines} lines>\n{output[-max_chars:]}"
 
+    def _clean_running_output(self, output: str, command_line: str) -> str:
+        return normalize_pty_result(output, command_line)
+
     async def _get_command_status(
         self,
         command_id: str,
@@ -254,6 +258,14 @@ class CommandMiddleware(AgentMiddleware[CommandState]):
         if wait_seconds > 0:
             result = await self._executor.wait_for(command_id, timeout=float(min(wait_seconds, 60)))
             if result:
+                # @@@status-timeout-semantics - wait timeout means command is still running, not done.
+                if result.timed_out:
+                    status = await self._executor.get_status(command_id)
+                    if status is None:
+                        return f"Error: Command {command_id} not found"
+                    cleaned_output = self._clean_running_output("".join(status.stdout_buffer), status.command_line)
+                    current_output = self._truncate_output(cleaned_output, max_chars)
+                    return f"Status: running\nCommand: {status.command_line}\nOutput so far:\n{current_output}"
                 output = self._truncate_output(result.to_tool_result(), max_chars)
                 return f"Status: done\nExit code: {result.exit_code}\n{output}"
 
@@ -267,7 +279,8 @@ class CommandMiddleware(AgentMiddleware[CommandState]):
                 output = self._truncate_output(result.to_tool_result(), max_chars)
                 return f"Status: done\nExit code: {result.exit_code}\n{output}"
 
-        current_output = self._truncate_output("".join(status.stdout_buffer), max_chars)
+        cleaned_output = self._clean_running_output("".join(status.stdout_buffer), status.command_line)
+        current_output = self._truncate_output(cleaned_output, max_chars)
         return f"Status: running\nCommand: {status.command_line}\nOutput so far:\n{current_output}"
 
     def before_agent(self, state: CommandState, runtime: Runtime) -> dict[str, Any] | None:

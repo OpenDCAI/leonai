@@ -5,6 +5,7 @@ Tests terminal persistence architecture through the agent interface.
 Simulates all frontend interactions programmatically.
 """
 
+import asyncio
 import os
 
 import pytest
@@ -13,10 +14,17 @@ from agent import create_leon_agent
 from sandbox.thread_context import set_current_thread_id
 
 
+def _shell_exec(agent, command: str):
+    return asyncio.run(agent._sandbox.shell().execute(command))
+
+
 @pytest.fixture
-def test_db_path(tmp_path):
+def test_db_path(tmp_path, monkeypatch):
     """Create a temporary database for testing."""
     db_path = tmp_path / "test_e2e.db"
+    sandbox_db_path = tmp_path / "test_e2e_sandbox.db"
+    monkeypatch.setenv("LEON_DB_PATH", str(db_path))
+    monkeypatch.setenv("LEON_SANDBOX_DB_PATH", str(sandbox_db_path))
     return str(db_path)
 
 
@@ -37,10 +45,10 @@ class TestAgentBayE2E:
         thread_id = "test-agentbay-basic"
         set_current_thread_id(thread_id)
 
-        agent = create_leon_agent(sandbox="agentbay", db_path=test_db_path)
+        agent = create_leon_agent(sandbox="agentbay")
 
         # Execute command through agent
-        result = agent.sandbox.shell().execute("echo 'AgentBay Test'")
+        result = _shell_exec(agent, "echo 'AgentBay Test'")
         assert result.exit_code == 0
         assert "AgentBay Test" in result.stdout
 
@@ -52,16 +60,16 @@ class TestAgentBayE2E:
         thread_id = "test-agentbay-state"
         set_current_thread_id(thread_id)
 
-        agent = create_leon_agent(sandbox="agentbay", db_path=test_db_path)
+        agent = create_leon_agent(sandbox="agentbay")
 
         # Change directory
-        agent.sandbox.shell().execute("cd /tmp")
-        result = agent.sandbox.shell().execute("pwd")
+        _shell_exec(agent, "cd /tmp")
+        result = _shell_exec(agent, "pwd")
         assert "/tmp" in result.stdout
 
         # Set environment variable
-        agent.sandbox.shell().execute("export AGENTBAY_VAR=test123")
-        result = agent.sandbox.shell().execute("echo $AGENTBAY_VAR")
+        _shell_exec(agent, "export AGENTBAY_VAR=test123")
+        result = _shell_exec(agent, "echo $AGENTBAY_VAR")
         assert "test123" in result.stdout
 
         agent.close()
@@ -72,19 +80,19 @@ class TestAgentBayE2E:
         thread_id = "test-agentbay-files"
         set_current_thread_id(thread_id)
 
-        agent = create_leon_agent(sandbox="agentbay", db_path=test_db_path)
+        agent = create_leon_agent(sandbox="agentbay")
 
         # Create file
         test_content = "AgentBay file test"
-        agent.sandbox.shell().execute(f"echo '{test_content}' > /tmp/agentbay_test.txt")
+        _shell_exec(agent, f"echo '{test_content}' > /tmp/agentbay_test.txt")
 
         # Read file
-        content = agent.sandbox.fs().read_file("/tmp/agentbay_test.txt")
-        assert test_content in content
+        content = agent._sandbox.fs().read_file("/tmp/agentbay_test.txt")
+        assert test_content in content.content
 
         # List directory
-        files = agent.sandbox.fs().list_dir("/tmp")
-        assert "agentbay_test.txt" in files
+        files = agent._sandbox.fs().list_dir("/tmp")
+        assert any(entry.name == "agentbay_test.txt" for entry in files.entries)
 
         agent.close()
 
@@ -98,9 +106,9 @@ class TestE2BE2E:
         thread_id = "test-e2b-basic"
         set_current_thread_id(thread_id)
 
-        agent = create_leon_agent(sandbox="e2b", db_path=test_db_path)
+        agent = create_leon_agent(sandbox="e2b")
 
-        result = agent.sandbox.shell().execute("echo 'E2B Test'")
+        result = _shell_exec(agent, "echo 'E2B Test'")
         assert result.exit_code == 0
         assert "E2B Test" in result.stdout
 
@@ -111,16 +119,16 @@ class TestE2BE2E:
         thread_id = "test-e2b-state"
         set_current_thread_id(thread_id)
 
-        agent = create_leon_agent(sandbox="e2b", db_path=test_db_path)
+        agent = create_leon_agent(sandbox="e2b")
 
         # Change directory
-        agent.sandbox.shell().execute("cd /tmp")
-        result = agent.sandbox.shell().execute("pwd")
+        _shell_exec(agent, "cd /tmp")
+        result = _shell_exec(agent, "pwd")
         assert "/tmp" in result.stdout
 
         # Set env var
-        agent.sandbox.shell().execute("export E2B_VAR=test123")
-        result = agent.sandbox.shell().execute("echo $E2B_VAR")
+        _shell_exec(agent, "export E2B_VAR=test123")
+        result = _shell_exec(agent, "echo $E2B_VAR")
         assert "test123" in result.stdout
 
         agent.close()
@@ -130,15 +138,15 @@ class TestE2BE2E:
         thread_id = "test-e2b-files"
         set_current_thread_id(thread_id)
 
-        agent = create_leon_agent(sandbox="e2b", db_path=test_db_path)
+        agent = create_leon_agent(sandbox="e2b")
 
         # Create file
         test_content = "E2B file test"
-        agent.sandbox.shell().execute(f"echo '{test_content}' > /tmp/e2b_test.txt")
+        _shell_exec(agent, f"echo '{test_content}' > /tmp/e2b_test.txt")
 
         # Read file
-        content = agent.sandbox.fs().read_file("/tmp/e2b_test.txt")
-        assert test_content in content
+        content = agent._sandbox.fs().read_file("/tmp/e2b_test.txt")
+        assert test_content in content.content
 
         agent.close()
 
@@ -147,20 +155,20 @@ class TestE2BE2E:
         thread_id = "test-e2b-pause"
         set_current_thread_id(thread_id)
 
-        agent = create_leon_agent(sandbox="e2b", db_path=test_db_path)
+        agent = create_leon_agent(sandbox="e2b")
 
         # Set state
-        agent.sandbox.shell().execute("cd /tmp")
-        agent.sandbox.shell().execute("export PAUSE_VAR=preserved")
+        _shell_exec(agent, "cd /tmp")
+        _shell_exec(agent, "export PAUSE_VAR=preserved")
 
         # Pause session
-        agent.sandbox.manager.pause_session(thread_id)
+        agent._sandbox.manager.pause_session(thread_id)
 
         # Resume by getting sandbox again
-        result = agent.sandbox.shell().execute("pwd")
+        result = _shell_exec(agent, "pwd")
         assert "/tmp" in result.stdout
 
-        result = agent.sandbox.shell().execute("echo $PAUSE_VAR")
+        result = _shell_exec(agent, "echo $PAUSE_VAR")
         assert "preserved" in result.stdout
 
         agent.close()
@@ -175,9 +183,9 @@ class TestDaytonaE2E:
         thread_id = "test-daytona-basic"
         set_current_thread_id(thread_id)
 
-        agent = create_leon_agent(sandbox="daytona", db_path=test_db_path)
+        agent = create_leon_agent(sandbox="daytona")
 
-        result = agent.sandbox.shell().execute("echo 'Daytona Test'")
+        result = _shell_exec(agent, "echo 'Daytona Test'")
         assert result.exit_code == 0
         assert "Daytona Test" in result.stdout
 
@@ -188,16 +196,16 @@ class TestDaytonaE2E:
         thread_id = "test-daytona-state"
         set_current_thread_id(thread_id)
 
-        agent = create_leon_agent(sandbox="daytona", db_path=test_db_path)
+        agent = create_leon_agent(sandbox="daytona")
 
         # Change directory
-        agent.sandbox.shell().execute("cd /tmp")
-        result = agent.sandbox.shell().execute("pwd")
+        _shell_exec(agent, "cd /tmp")
+        result = _shell_exec(agent, "pwd")
         assert "/tmp" in result.stdout
 
         # Set env var
-        agent.sandbox.shell().execute("export DAYTONA_VAR=test456")
-        result = agent.sandbox.shell().execute("echo $DAYTONA_VAR")
+        _shell_exec(agent, "export DAYTONA_VAR=test456")
+        result = _shell_exec(agent, "echo $DAYTONA_VAR")
         assert "test456" in result.stdout
 
         agent.close()

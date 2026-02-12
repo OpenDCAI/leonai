@@ -12,15 +12,20 @@ Architecture:
 from __future__ import annotations
 
 import asyncio
+import json
+import os
+import pty
 import sqlite3
 import re
+import select
 import shlex
+import subprocess
 import time
 import uuid
 from abc import ABC, abstractmethod
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 if TYPE_CHECKING:
     from sandbox.lease import SandboxLease
@@ -29,6 +34,9 @@ if TYPE_CHECKING:
 
 from sandbox.interfaces.executor import ExecuteResult
 from sandbox.interfaces.executor import AsyncCommand
+from sandbox.shell_output import normalize_pty_result
+
+ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 class PhysicalTerminalRuntime(ABC):
@@ -185,8 +193,12 @@ class PhysicalTerminalRuntime(ABC):
         )
 
         async def _run() -> ExecuteResult:
+            def _append_stdout(chunk: str) -> None:
+                if chunk:
+                    async_cmd.stdout_buffer.append(chunk)
+
             try:
-                result = await self.execute(command, timeout=None)
+                result = await self._execute_background_command(command, timeout=None, on_stdout_chunk=_append_stdout)
                 status = "done"
             except Exception as exc:
                 result = ExecuteResult(exit_code=1, stdout="", stderr=f"Error: {exc}")
@@ -208,6 +220,14 @@ class PhysicalTerminalRuntime(ABC):
 
         self._tasks[command_id] = asyncio.create_task(_run())
         return async_cmd
+
+    async def _execute_background_command(
+        self,
+        command: str,
+        timeout: float | None,
+        on_stdout_chunk: Callable[[str], None] | None = None,
+    ) -> ExecuteResult:
+        return await self.execute(command, timeout=timeout)
 
     async def get_command(self, command_id: str) -> AsyncCommand | None:
         cmd = self._commands.get(command_id)
@@ -315,19 +335,32 @@ class PhysicalTerminalRuntime(ABC):
 
 def _parse_env_output(raw: str) -> dict[str, str]:
     env_map: dict[str, str] = {}
-    for line in raw.splitlines():
+    for line in raw.replace("\r", "").splitlines():
         if "=" not in line:
             continue
         key, value = line.split("=", 1)
+        if not ENV_NAME_RE.match(key):
+            continue
         env_map[key] = value
     return env_map
 
 
 def _sanitize_shell_output(raw: str) -> str:
-    cleaned = raw.replace("\x01\x01\x01", "").replace("\x02\x02\x02", "")
+    cleaned = raw.replace("\r", "").replace("\x01\x01\x01", "").replace("\x02\x02\x02", "")
     cleaned = re.sub(r"\x1B\[[0-?]*[ -/]*[@-~]", "", cleaned)
     cleaned = re.sub(r"\x1B\][^\x07]*\x07", "", cleaned)
+    while True:
+        next_cleaned = re.sub(r"[^\n]\x08", "", cleaned)
+        if next_cleaned == cleaned:
+            break
+        cleaned = next_cleaned
+    cleaned = cleaned.replace("\x08", "")
+    cleaned = "".join(ch for ch in cleaned if ch in "\n\t" or 32 <= ord(ch))
     return cleaned
+
+
+def _normalize_pty_result(output: str, command: str | None = None) -> str:
+    return normalize_pty_result(output, command)
 
 
 def _extract_state_from_output(
@@ -338,35 +371,144 @@ def _extract_state_from_output(
     cwd_fallback: str,
     env_fallback: dict[str, str],
 ) -> tuple[str, dict[str, str], str]:
-    try:
-        pre_state, tail = raw_output.split(start_marker, 1)
-        state_blob, post_state = tail.split(end_marker, 1)
-        state_lines = [line for line in state_blob.strip().splitlines() if line.strip()]
-        new_cwd = cwd_fallback
-        env_map = env_fallback
-        if state_lines:
-            parsed_cwd = state_lines[0].strip()
-            if parsed_cwd:
-                new_cwd = parsed_cwd
-            parsed_env: dict[str, str] = {}
-            for line in state_lines[1:]:
-                if "=" not in line:
-                    continue
-                key, value = line.split("=", 1)
+    pattern = re.compile(rf"{re.escape(start_marker)}(.*?){re.escape(end_marker)}", re.S)
+    matches = list(pattern.finditer(raw_output))
+    if not matches:
+        raise RuntimeError("Failed to parse terminal state: state markers not found")
+
+    match = matches[-1]
+    pre_state = raw_output[: match.start()]
+    state_blob = match.group(1)
+    post_state = raw_output[match.end() :]
+    state_lines = [_sanitize_shell_output(line).strip() for line in state_blob.splitlines()]
+    state_lines = [line for line in state_lines if line]
+
+    new_cwd = ""
+    parsed_env: dict[str, str] = {}
+    for line in state_lines:
+        if "=" in line:
+            key, value = line.split("=", 1)
+            if ENV_NAME_RE.match(key):
                 parsed_env[key] = value
-            if parsed_env:
-                env_map = parsed_env
-        cleaned_output = (pre_state + post_state).strip()
-        return new_cwd, env_map, cleaned_output
-    except ValueError:
-        return cwd_fallback, env_fallback, raw_output
+            continue
+        if os.path.isabs(line):
+            new_cwd = line
+
+    if not new_cwd:
+        raise RuntimeError("Failed to parse terminal state: cwd not found in state snapshot")
+    if not parsed_env:
+        raise RuntimeError("Failed to parse terminal state: env snapshot is empty")
+
+    cleaned_output = _sanitize_shell_output(pre_state + post_state).strip()
+    return new_cwd, parsed_env, cleaned_output
+
+
+class _SubprocessPtySession:
+    def __init__(self, command: list[str], cwd: str | None = None):
+        self.command = command
+        self.cwd = cwd
+        self._master_fd: int | None = None
+        self._proc: subprocess.Popen[bytes] | None = None
+
+    @property
+    def process(self) -> subprocess.Popen[bytes] | None:
+        return self._proc
+
+    def is_alive(self) -> bool:
+        return self._proc is not None and self._proc.poll() is None
+
+    @staticmethod
+    def _extract_marker_exit(raw: str, marker: str, command: str | None = None) -> tuple[str, int]:
+        exit_code = 0
+        cleaned_lines: list[str] = []
+        marker_re = re.compile(rf"{re.escape(marker)}\s+(-?\d+)")
+        for line in raw.replace("\r", "").splitlines():
+            m = marker_re.search(line)
+            if m:
+                exit_code = int(m.group(1))
+                continue
+            cleaned_lines.append(line)
+        cleaned = _sanitize_shell_output("\n".join(cleaned_lines).strip())
+        return _normalize_pty_result(cleaned, command), exit_code
+
+    def start(self) -> None:
+        if self.is_alive():
+            return
+        master_fd, slave_fd = pty.openpty()
+        try:
+            self._proc = subprocess.Popen(
+                self.command,
+                stdin=slave_fd,
+                stdout=slave_fd,
+                stderr=slave_fd,
+                cwd=self.cwd,
+                close_fds=True,
+            )
+        finally:
+            os.close(slave_fd)
+        self._master_fd = master_fd
+
+    def run(
+        self,
+        command: str,
+        timeout: float | None,
+        on_stdout_chunk: Callable[[str], None] | None = None,
+    ) -> tuple[str, str, int]:
+        if not self.is_alive() or self._master_fd is None:
+            raise RuntimeError("PTY session is not running")
+
+        marker = f"__LEON_PTY_END_{uuid.uuid4().hex[:8]}__"
+        marker_done_re = re.compile(rf"{re.escape(marker)}\s+-?\d+")
+        payload = f"{command}\nprintf '\\n{marker} %s\\n' $?\n"
+        os.write(self._master_fd, payload.encode("utf-8"))
+
+        raw = bytearray()
+        emitted_raw_len = 0
+        deadline = time.monotonic() + timeout if timeout else None
+        while True:
+            if deadline is not None and time.monotonic() > deadline:
+                raise TimeoutError(f"Command timed out after {timeout}s")
+            wait_sec = 0.1 if deadline is None else max(0.0, min(0.1, deadline - time.monotonic()))
+            readable, _, _ = select.select([self._master_fd], [], [], wait_sec)
+            if not readable:
+                continue
+            chunk = os.read(self._master_fd, 4096)
+            if not chunk:
+                raise RuntimeError("PTY stream closed unexpectedly")
+            raw.extend(chunk)
+            decoded = raw.decode("utf-8", errors="replace")
+            if marker_done_re.search(decoded):
+                cleaned, exit_code = self._extract_marker_exit(decoded, marker, command)
+                return cleaned, "", exit_code
+            if on_stdout_chunk is not None:
+                if len(decoded) > emitted_raw_len:
+                    delta_raw = decoded[emitted_raw_len:]
+                    emitted_raw_len = len(decoded)
+                    delta = _sanitize_shell_output(delta_raw)
+                    if delta:
+                        on_stdout_chunk(delta)
+
+    def close(self) -> None:
+        if self._master_fd is not None:
+            try:
+                os.close(self._master_fd)
+            except OSError:
+                pass
+            self._master_fd = None
+
+        if self._proc and self._proc.poll() is None:
+            self._proc.terminate()
+            try:
+                self._proc.wait(timeout=5.0)
+            except Exception:
+                self._proc.kill()
+                self._proc.wait(timeout=5.0)
 
 
 class LocalPersistentShellRuntime(PhysicalTerminalRuntime):
     """Local persistent shell runtime (for local provider).
 
-    Uses asyncio subprocess with persistent shell session.
-    Similar to BashExecutor but integrated with terminal state.
+    Uses a persistent PTY-backed shell session.
     """
 
     def __init__(
@@ -377,102 +519,73 @@ class LocalPersistentShellRuntime(PhysicalTerminalRuntime):
     ):
         super().__init__(terminal, lease)
         self.shell_command = shell_command
-        self._session: asyncio.subprocess.Process | None = None
+        self._pty_session: _SubprocessPtySession | None = None
+        self._session: subprocess.Popen[bytes] | None = None
         self._session_lock = asyncio.Lock()
         self._baseline_env: dict[str, str] | None = None
 
-    async def _ensure_session(self) -> asyncio.subprocess.Process:
-        """Ensure persistent shell session exists."""
-        if self._session is None or self._session.returncode is not None:
-            state = self.terminal.get_state()
-            self._session = await asyncio.create_subprocess_exec(
-                *self.shell_command,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-                cwd=state.cwd,
-            )
-            self._session.stdin.write(b"export PS1=''\n")
-            await self._session.stdin.drain()
-            baseline_stdout, _, _ = await self._send_command(self._session, "env")
-            self._baseline_env = _parse_env_output(baseline_stdout)
-            if state.env_delta:
-                for key, value in state.env_delta.items():
-                    self._session.stdin.write(f"export {key}={shlex.quote(value)}\n".encode())
-                await self._session.stdin.drain()
+    def _ensure_session_sync(self, timeout: float | None) -> _SubprocessPtySession:
+        if self._pty_session and self._pty_session.is_alive():
+            return self._pty_session
 
-        return self._session
+        state = self.terminal.get_state()
+        self._pty_session = _SubprocessPtySession(list(self.shell_command), cwd=state.cwd)
+        self._pty_session.start()
+        self._session = self._pty_session.process
 
-    async def _send_command(self, proc: asyncio.subprocess.Process, command: str) -> tuple[str, str, int]:
-        """Send command to persistent session and read output."""
-        marker = f"__END_{uuid.uuid4().hex[:8]}__"
-        full_cmd = f"{command}\necho {marker} $?\n"
+        self._pty_session.run("export PS1=''; stty -echo", timeout)
+        if state.env_delta:
+            exports = "\n".join(f"export {k}={shlex.quote(v)}" for k, v in state.env_delta.items())
+            if exports:
+                self._pty_session.run(exports, timeout)
+        baseline_out, _, _ = self._pty_session.run("env", timeout)
+        self._baseline_env = _parse_env_output(baseline_out)
+        return self._pty_session
 
-        proc.stdin.write(full_cmd.encode())
-        await proc.stdin.drain()
+    def _execute_once_sync(
+        self,
+        command: str,
+        timeout: float | None,
+        on_stdout_chunk: Callable[[str], None] | None = None,
+    ) -> ExecuteResult:
+        if self.lease.observed_state == "paused":
+            raise RuntimeError(f"Sandbox lease {self.lease.lease_id} is paused. Resume before executing commands.")
 
-        stdout_lines = []
-        exit_code = 0
+        state = self.terminal.get_state()
+        pty_session = self._ensure_session_sync(timeout)
+        stdout, stderr, exit_code = pty_session.run(command, timeout, on_stdout_chunk=on_stdout_chunk)
 
-        while True:
-            line = await proc.stdout.readline()
-            if not line:
-                break
-            line_str = line.decode("utf-8", errors="replace")
-            if marker in line_str:
-                prefix, suffix = line_str.split(marker, 1)
-                if prefix:
-                    stdout_lines.append(prefix)
-                parts = suffix.strip().split()
-                if len(parts) >= 2:
-                    try:
-                        exit_code = int(parts[0])
-                    except ValueError:
-                        pass
-                break
-            stdout_lines.append(line_str)
+        # Capture state snapshot after each command so new ChatSession can hydrate from DB.
+        pwd_stdout, _, _ = pty_session.run("pwd", timeout)
+        env_stdout, _, _ = pty_session.run("env", timeout)
+        pwd_lines = [line.strip() for line in pwd_stdout.splitlines() if line.strip()]
+        new_cwd = pwd_lines[-1] if pwd_lines else state.cwd
+        env_map = _parse_env_output(env_stdout)
+        baseline_env = self._baseline_env or {}
+        persisted_keys = set(state.env_delta.keys())
+        env_delta = {k: v for k, v in env_map.items() if baseline_env.get(k) != v or k in persisted_keys}
 
-        return "".join(stdout_lines), "", exit_code
+        if new_cwd:
+            from sandbox.terminal import TerminalState
 
-    async def execute(self, command: str, timeout: float | None = None) -> ExecuteResult:
-        """Execute command in local shell."""
+            self.update_terminal_state(TerminalState(cwd=new_cwd, env_delta=env_delta))
+
+        return ExecuteResult(
+            exit_code=exit_code,
+            stdout=stdout,
+            stderr=stderr,
+            timed_out=False,
+        )
+
+    async def _execute_background_command(
+        self,
+        command: str,
+        timeout: float | None,
+        on_stdout_chunk: Callable[[str], None] | None = None,
+    ) -> ExecuteResult:
         async with self._session_lock:
             try:
-                if self.lease.observed_state == "paused":
-                    raise RuntimeError(
-                        f"Sandbox lease {self.lease.lease_id} is paused. Resume before executing commands."
-                    )
-                proc = await self._ensure_session()
-
-                stdout, stderr, exit_code = await asyncio.wait_for(
-                    self._send_command(proc, command),
-                    timeout=timeout,
-                )
-
-                # Capture state snapshot after each command so new ChatSession can hydrate from DB.
-                pwd_stdout, _, _ = await self._send_command(proc, "pwd")
-                env_stdout, _, _ = await self._send_command(proc, "env")
-                new_cwd = pwd_stdout.strip() or self.terminal.get_state().cwd
-                env_map = _parse_env_output(env_stdout)
-                baseline_env = self._baseline_env or {}
-                persisted_keys = set(self.terminal.get_state().env_delta.keys())
-                env_delta = {k: v for k, v in env_map.items() if baseline_env.get(k) != v or k in persisted_keys}
-
-                if new_cwd:
-                    from sandbox.terminal import TerminalState
-
-                    new_state = TerminalState(
-                        cwd=new_cwd,
-                        env_delta=env_delta,
-                    )
-                    self.update_terminal_state(new_state)
-
-                return ExecuteResult(
-                    exit_code=exit_code,
-                    stdout=stdout,
-                    stderr=stderr,
-                    timed_out=False,
-                )
+                return await asyncio.to_thread(self._execute_once_sync, command, timeout, on_stdout_chunk)
             except TimeoutError:
                 return ExecuteResult(
                     exit_code=-1,
@@ -487,14 +600,15 @@ class LocalPersistentShellRuntime(PhysicalTerminalRuntime):
                     stderr=f"Error: {e}",
                 )
 
+    async def execute(self, command: str, timeout: float | None = None) -> ExecuteResult:
+        """Execute command in local shell."""
+        return await self._execute_background_command(command, timeout=timeout)
+
     async def close(self) -> None:
         """Close the shell session."""
-        if self._session and self._session.returncode is None:
-            try:
-                self._session.terminate()
-                await asyncio.wait_for(self._session.wait(), timeout=5.0)
-            except Exception:
-                self._session.kill()
+        if self._pty_session:
+            await asyncio.to_thread(self._pty_session.close)
+            self._session = self._pty_session.process
 
 
 class _RemoteRuntimeBase(PhysicalTerminalRuntime):
@@ -514,6 +628,9 @@ class _RemoteRuntimeBase(PhysicalTerminalRuntime):
             "not found",
             "no such session",
             "session does not exist",
+            "failed to create pty session",
+            "no ip address found",
+            "is the sandbox started",
             "is paused",
             "stopped",
             "connection",
@@ -634,89 +751,199 @@ class RemoteWrappedRuntime(_RemoteRuntimeBase):
 
 
 class DaytonaSessionRuntime(_RemoteRuntimeBase):
-    """Daytona runtime using native process session API (persistent shell semantics)."""
+    """Daytona runtime using native PTY session API (persistent terminal semantics)."""
 
     def __init__(self, terminal: AbstractTerminal, lease: SandboxLease, provider: SandboxProvider):
         super().__init__(terminal, lease, provider)
         self._session_lock = asyncio.Lock()
-        self._session_id = f"leon-term-{terminal.terminal_id[-12:]}"
+        self._pty_session_id = f"leon-pty-{terminal.terminal_id[-12:]}"
         self._bound_instance_id: str | None = None
+        self._pty_handle = None
         self._hydrated = False
         self._baseline_env: dict[str, str] | None = None
+        self._snapshot_task: asyncio.Task[None] | None = None
+        self._snapshot_generation = 0
+        self._snapshot_error: str | None = None
+
+    def _sanitize_terminal_snapshot(self) -> tuple[str, dict[str, str]]:
+        state = self.terminal.get_state()
+        cleaned_env = {k: v for k, v in state.env_delta.items() if ENV_NAME_RE.match(k)}
+        cleaned_cwd = state.cwd
+        if not os.path.isabs(cleaned_cwd):
+            pwd_hint = cleaned_env.get("PWD")
+            if isinstance(pwd_hint, str) and os.path.isabs(pwd_hint):
+                cleaned_cwd = pwd_hint
+            else:
+                raise RuntimeError(
+                    f"Invalid terminal cwd snapshot for terminal {self.terminal.terminal_id}: {state.cwd!r}"
+                )
+        if cleaned_cwd != state.cwd or cleaned_env != state.env_delta:
+            from sandbox.terminal import TerminalState
+
+            # @@@daytona-state-sanitize - Legacy prompt noise can corrupt persisted cwd/env_delta and break PTY creation.
+            # Normalize once here so new abstract terminals inherit only valid state.
+            self.update_terminal_state(TerminalState(cwd=cleaned_cwd, env_delta=cleaned_env))
+        return cleaned_cwd, cleaned_env
+
+    def _close_shell_sync(self) -> None:
+        if self._pty_handle is not None:
+            try:
+                self._pty_handle.disconnect()
+            except Exception:
+                pass
+        self._pty_handle = None
+        self._hydrated = False
+        if not self._bound_instance_id:
+            return
+        try:
+            sandbox = self._provider_sandbox(self._bound_instance_id)
+            sandbox.process.kill_pty_session(self._pty_session_id)
+        except Exception:
+            pass
 
     @staticmethod
-    def _normalize_output(resp) -> str:
-        stdout = getattr(resp, "stdout", None) or ""
-        stderr = getattr(resp, "stderr", None) or ""
-        output = getattr(resp, "output", None)
-        if output:
-            return _sanitize_shell_output(output)
-        if stderr:
-            merged = f"{stdout}\n{stderr}".strip() if stdout else stderr
-            return _sanitize_shell_output(merged)
-        return _sanitize_shell_output(stdout)
+    def _read_pty_chunk_sync(handle, wait_sec: float) -> bytes | None:
+        ws = getattr(handle, "_ws", None)
+        if ws is None:
+            raise RuntimeError("Daytona PTY websocket unavailable")
+        try:
+            message = ws.recv(timeout=wait_sec)
+        except TimeoutError:
+            return None
+        except Exception as exc:
+            raise RuntimeError(f"Daytona PTY read failed: {exc}") from exc
 
-    def _session_execute_sync(self, sandbox, command: str, timeout_ms: int):
-        from daytona_sdk.common.process import SessionExecuteRequest
+        if isinstance(message, bytes):
+            return message
 
-        timeout_sec = max(1, timeout_ms // 1000)
-        return sandbox.process.execute_session_command(
-            self._session_id,
-            SessionExecuteRequest(command=command),
-            timeout=timeout_sec,
-        )
+        text = str(message)
+        try:
+            control = json.loads(text)
+        except Exception:
+            return text.encode("utf-8", errors="replace")
 
-    def _ensure_session_sync(self, timeout_ms: int):
+        if isinstance(control, dict) and control.get("type") == "control":
+            status = str(control.get("status") or "")
+            if status == "error":
+                error = str(control.get("error") or "unknown")
+                raise RuntimeError(f"Daytona PTY control error: {error}")
+            return b""
+
+        return text.encode("utf-8", errors="replace")
+
+    def _run_pty_command_sync(
+        self,
+        handle,
+        command: str,
+        timeout: float | None,
+        on_stdout_chunk: Callable[[str], None] | None = None,
+    ) -> tuple[str, str, int]:
+        marker = f"__LEON_PTY_END_{uuid.uuid4().hex[:8]}__"
+        marker_done_re = re.compile(rf"{re.escape(marker)}\s+-?\d+")
+        payload = f"{command}\nprintf '\\n{marker} %s\\n' $?\n"
+        handle.send_input(payload)
+
+        raw = bytearray()
+        emitted_raw_len = 0
+        deadline = time.monotonic() + timeout if timeout else None
+        while True:
+            if deadline is not None and time.monotonic() > deadline:
+                raise TimeoutError(f"Command timed out after {timeout}s")
+            wait_sec = 0.1 if deadline is None else max(0.0, min(0.1, deadline - time.monotonic()))
+            chunk = self._read_pty_chunk_sync(handle, wait_sec)
+            if chunk is None:
+                continue
+            if not chunk:
+                continue
+            raw.extend(chunk)
+            decoded = raw.decode("utf-8", errors="replace")
+            if marker_done_re.search(decoded):
+                cleaned, exit_code = _SubprocessPtySession._extract_marker_exit(decoded, marker, command)
+                return cleaned, "", exit_code
+            if on_stdout_chunk is not None:
+                if len(decoded) > emitted_raw_len:
+                    delta_raw = decoded[emitted_raw_len:]
+                    emitted_raw_len = len(decoded)
+                    delta = _sanitize_shell_output(delta_raw)
+                    if delta:
+                        on_stdout_chunk(delta)
+
+    def _ensure_session_sync(self, timeout: float | None):
         instance = self.lease.ensure_active_instance(self.provider)
         if self._bound_instance_id != instance.instance_id:
+            self._close_shell_sync()
             self._bound_instance_id = instance.instance_id
-            self._hydrated = False
             self._baseline_env = None
+            self._hydrated = False
 
         sandbox = self._provider_sandbox(instance.instance_id)
-        if self._hydrated:
-            return sandbox
+        effective_cwd, effective_env = self._sanitize_terminal_snapshot()
+        if self._pty_handle is None:
+            from daytona_sdk.common.pty import PtySize
 
-        try:
-            sandbox.process.create_session(self._session_id)
-        except Exception as exc:
-            if "already exists" not in str(exc).lower():
-                raise
+            try:
+                handle = sandbox.process.connect_pty_session(self._pty_session_id)
+                handle.wait_for_connection(timeout=10.0)
+            except Exception:
+                try:
+                    handle = sandbox.process.create_pty_session(
+                        id=self._pty_session_id,
+                        cwd=effective_cwd,
+                        envs=None,
+                        pty_size=PtySize(rows=32, cols=120),
+                    )
+                except Exception as create_exc:
+                    message = str(create_exc)
+                    if "/usr/bin/zsh" in message:
+                        # @@@daytona-shell-fail-loud - Do not silently override provider shell selection.
+                        # Surface explicit infra error so snapshot/image shell mismatch is fixed at source.
+                        raise RuntimeError(
+                            "Daytona PTY bootstrap failed: provider requested /usr/bin/zsh but it is missing "
+                            "in the sandbox image. Fix provider snapshot/image shell config."
+                        ) from create_exc
+                    raise
+            self._pty_handle = handle
 
+        if not self._hydrated:
+            _, _, shell_exit = self._run_pty_command_sync(self._pty_handle, "export PS1=''; stty -echo", timeout)
+            if shell_exit != 0:
+                raise RuntimeError(f"Daytona PTY shell normalization failed (exit={shell_exit})")
+            init_parts = [f"cd {shlex.quote(effective_cwd)} || exit 1"]
+            init_parts.extend(f"export {k}={shlex.quote(v)}" for k, v in effective_env.items())
+            init_command = "\n".join(part for part in init_parts if part)
+            if init_command:
+                _, _, init_exit = self._run_pty_command_sync(self._pty_handle, init_command, timeout)
+                if init_exit != 0:
+                    raise RuntimeError(f"Daytona PTY hydrate failed (exit={init_exit})")
+
+            baseline_out, _, _ = self._run_pty_command_sync(self._pty_handle, "env", timeout)
+            self._baseline_env = _parse_env_output(baseline_out)
+            self._hydrated = True
+        return self._pty_handle
+
+    def _execute_once_sync(
+        self,
+        command: str,
+        timeout: float | None = None,
+        on_stdout_chunk: Callable[[str], None] | None = None,
+    ) -> ExecuteResult:
+        handle = self._ensure_session_sync(timeout)
+        stdout, _, exit_code = self._run_pty_command_sync(handle, command, timeout, on_stdout_chunk=on_stdout_chunk)
+        return ExecuteResult(exit_code=exit_code, stdout=stdout, stderr="")
+
+    def _sync_terminal_state_snapshot_sync(self, timeout: float | None = None) -> None:
+        if self._pty_handle is None:
+            raise RuntimeError("Daytona PTY handle missing for snapshot")
         state = self.terminal.get_state()
-        init_parts = [f"cd {shlex.quote(state.cwd)} || exit 1"]
-        init_parts.extend(f"export {k}={shlex.quote(v)}" for k, v in state.env_delta.items())
-        init_command = "\n".join(part for part in init_parts if part)
-        if init_command:
-            init_resp = self._session_execute_sync(sandbox, init_command, timeout_ms)
-            init_exit = getattr(init_resp, "exit_code", 0) or 0
-            if init_exit != 0:
-                raise RuntimeError(f"Daytona session hydrate failed (exit={init_exit}): {self._normalize_output(init_resp)}")
-
-        baseline_resp = self._session_execute_sync(sandbox, "env", timeout_ms)
-        self._baseline_env = _parse_env_output(self._normalize_output(baseline_resp))
-        self._hydrated = True
-        return sandbox
-
-    def _execute_once_sync(self, command: str, timeout: float | None = None) -> ExecuteResult:
-        timeout_ms = int(timeout * 1000) if timeout else 30000
-        sandbox = self._ensure_session_sync(timeout_ms)
-        state = self.terminal.get_state()
-
-        resp = self._session_execute_sync(sandbox, command, timeout_ms)
-        stdout = self._normalize_output(resp)
-        exit_code = getattr(resp, "exit_code", 0) or 0
-
         start_marker = f"__LEON_STATE_START_{uuid.uuid4().hex[:8]}__"
         end_marker = f"__LEON_STATE_END_{uuid.uuid4().hex[:8]}__"
-        snapshot_resp = self._session_execute_sync(
-            sandbox,
+        snapshot_out, _, _ = self._run_pty_command_sync(
+            self._pty_handle,
             "\n".join([f"echo {shlex.quote(start_marker)}", "pwd", "env", f"echo {shlex.quote(end_marker)}"]),
-            timeout_ms,
+            timeout,
         )
-        snapshot_raw = self._normalize_output(snapshot_resp)
         new_cwd, env_map, _ = _extract_state_from_output(
-            snapshot_raw,
+            snapshot_out,
             start_marker,
             end_marker,
             cwd_fallback=state.cwd,
@@ -728,34 +955,174 @@ class DaytonaSessionRuntime(_RemoteRuntimeBase):
         from sandbox.terminal import TerminalState
 
         self.update_terminal_state(TerminalState(cwd=new_cwd, env_delta=env_delta))
-        return ExecuteResult(exit_code=exit_code, stdout=stdout, stderr="")
 
-    async def execute(self, command: str, timeout: float | None = None) -> ExecuteResult:
+    async def _snapshot_state_async(self, generation: int, timeout: float | None) -> None:
         async with self._session_lock:
+            if generation != self._snapshot_generation:
+                return
             try:
-                first = await asyncio.to_thread(self._execute_once_sync, command, timeout)
+                await asyncio.to_thread(self._sync_terminal_state_snapshot_sync, timeout)
+            except Exception as exc:
+                self._snapshot_error = str(exc)
+
+    def _schedule_snapshot(self, generation: int, timeout: float | None) -> None:
+        if self._snapshot_task and not self._snapshot_task.done():
+            self._snapshot_task.cancel()
+        self._snapshot_task = asyncio.create_task(self._snapshot_state_async(generation, timeout))
+
+    async def _execute_background_command(
+        self,
+        command: str,
+        timeout: float | None,
+        on_stdout_chunk: Callable[[str], None] | None = None,
+    ) -> ExecuteResult:
+        async with self._session_lock:
+            if self._snapshot_error:
+                return ExecuteResult(exit_code=1, stdout="", stderr=f"Error: snapshot failed: {self._snapshot_error}")
+            try:
+                first = await asyncio.to_thread(self._execute_once_sync, command, timeout, on_stdout_chunk)
+            except TimeoutError:
+                return ExecuteResult(exit_code=-1, stdout="", stderr=f"Command timed out after {timeout}s", timed_out=True)
             except Exception as exc:
                 if not self._looks_like_infra_error(str(exc)):
                     return ExecuteResult(exit_code=1, stdout="", stderr=f"Error: {exc}")
                 self._recover_infra()
-                self._hydrated = False
+                self._close_shell_sync()
                 try:
-                    return await asyncio.to_thread(self._execute_once_sync, command, timeout)
+                    return await asyncio.to_thread(self._execute_once_sync, command, timeout, on_stdout_chunk)
                 except Exception as retry_exc:
                     return ExecuteResult(exit_code=1, stdout="", stderr=f"Error: {retry_exc}")
 
             if first.exit_code != 0 and self._looks_like_infra_error(first.stderr or first.stdout):
                 self._recover_infra()
-                self._hydrated = False
+                self._close_shell_sync()
                 try:
-                    return await asyncio.to_thread(self._execute_once_sync, command, timeout)
+                    return await asyncio.to_thread(self._execute_once_sync, command, timeout, on_stdout_chunk)
                 except Exception as retry_exc:
                     return ExecuteResult(exit_code=1, stdout="", stderr=f"Error: {retry_exc}")
-            return first
+
+            self._snapshot_generation += 1
+            generation = self._snapshot_generation
+
+        # @@@daytona-async-snapshot - state sync runs in background so command result streaming is not blocked.
+        self._schedule_snapshot(generation, timeout)
+        return first
+
+    async def execute(self, command: str, timeout: float | None = None) -> ExecuteResult:
+        return await self._execute_background_command(command, timeout=timeout)
 
     async def close(self) -> None:
-        # Session belongs to sandbox instance lifecycle; explicit close optional.
-        self._hydrated = False
+        if self._snapshot_task and not self._snapshot_task.done():
+            self._snapshot_task.cancel()
+            # @@@cross-loop-snapshot-close - Runtime.close may run on a different loop during manager cleanup.
+            # Only await task cancellation when task belongs to the current running loop.
+            try:
+                current_loop = asyncio.get_running_loop()
+            except RuntimeError:
+                current_loop = None
+            task_loop = self._snapshot_task.get_loop()
+            if current_loop is task_loop:
+                try:
+                    await self._snapshot_task
+                except asyncio.CancelledError:
+                    pass
+        self._snapshot_task = None
+        await asyncio.to_thread(self._close_shell_sync)
+
+
+class DockerPtyRuntime(_RemoteRuntimeBase):
+    """Docker runtime using a persistent PTY shell inside container."""
+
+    def __init__(self, terminal: AbstractTerminal, lease: SandboxLease, provider: SandboxProvider):
+        super().__init__(terminal, lease, provider)
+        self._session_lock = asyncio.Lock()
+        self._bound_instance_id: str | None = None
+        self._pty_session: _SubprocessPtySession | None = None
+        self._baseline_env: dict[str, str] | None = None
+
+    def _close_shell_sync(self) -> None:
+        if self._pty_session:
+            self._pty_session.close()
+        self._pty_session = None
+
+    def _ensure_shell_sync(self, timeout: float | None) -> _SubprocessPtySession:
+        instance = self.lease.ensure_active_instance(self.provider)
+        if self._bound_instance_id != instance.instance_id:
+            self._close_shell_sync()
+            self._bound_instance_id = instance.instance_id
+            self._baseline_env = None
+
+        if self._pty_session and self._pty_session.is_alive():
+            return self._pty_session
+
+        state = self.terminal.get_state()
+        self._pty_session = _SubprocessPtySession(["docker", "exec", "-it", instance.instance_id, "/bin/sh"])
+        self._pty_session.start()
+        self._pty_session.run("export PS1=''; stty -echo", timeout)
+        self._pty_session.run(f"cd {shlex.quote(state.cwd)} || exit 1", timeout)
+        if state.env_delta:
+            exports = "\n".join(f"export {k}={shlex.quote(v)}" for k, v in state.env_delta.items())
+            if exports:
+                self._pty_session.run(exports, timeout)
+        baseline_out, _, _ = self._pty_session.run("env", timeout)
+        self._baseline_env = _parse_env_output(baseline_out)
+        return self._pty_session
+
+    def _execute_once_sync(
+        self,
+        command: str,
+        timeout: float | None,
+        on_stdout_chunk: Callable[[str], None] | None = None,
+    ) -> ExecuteResult:
+        session = self._ensure_shell_sync(timeout)
+        state = self.terminal.get_state()
+        stdout, stderr, exit_code = session.run(command, timeout, on_stdout_chunk=on_stdout_chunk)
+
+        start_marker = f"__LEON_STATE_START_{uuid.uuid4().hex[:8]}__"
+        end_marker = f"__LEON_STATE_END_{uuid.uuid4().hex[:8]}__"
+        snapshot_cmd = "\n".join([f"echo {shlex.quote(start_marker)}", "pwd", "env", f"echo {shlex.quote(end_marker)}"])
+        snapshot_out, _, _ = session.run(snapshot_cmd, timeout)
+        new_cwd, env_map, _ = _extract_state_from_output(
+            snapshot_out,
+            start_marker,
+            end_marker,
+            cwd_fallback=state.cwd,
+            env_fallback=state.env_delta,
+        )
+        baseline_env = self._baseline_env or {}
+        persisted_keys = set(state.env_delta.keys())
+        env_delta = {k: v for k, v in env_map.items() if baseline_env.get(k) != v or k in persisted_keys}
+        from sandbox.terminal import TerminalState
+
+        self.update_terminal_state(TerminalState(cwd=new_cwd, env_delta=env_delta))
+        return ExecuteResult(exit_code=exit_code, stdout=stdout, stderr=stderr)
+
+    async def _execute_background_command(
+        self,
+        command: str,
+        timeout: float | None,
+        on_stdout_chunk: Callable[[str], None] | None = None,
+    ) -> ExecuteResult:
+        async with self._session_lock:
+            try:
+                return await asyncio.to_thread(self._execute_once_sync, command, timeout, on_stdout_chunk)
+            except TimeoutError:
+                return ExecuteResult(exit_code=-1, stdout="", stderr=f"Command timed out after {timeout}s", timed_out=True)
+            except Exception as exc:
+                if self._looks_like_infra_error(str(exc)):
+                    self._recover_infra()
+                    self._close_shell_sync()
+                    try:
+                        return await asyncio.to_thread(self._execute_once_sync, command, timeout, on_stdout_chunk)
+                    except Exception as retry_exc:
+                        return ExecuteResult(exit_code=1, stdout="", stderr=f"Error: {retry_exc}")
+                return ExecuteResult(exit_code=1, stdout="", stderr=f"Error: {exc}")
+
+    async def execute(self, command: str, timeout: float | None = None) -> ExecuteResult:
+        return await self._execute_background_command(command, timeout=timeout)
+
+    async def close(self) -> None:
+        await asyncio.to_thread(self._close_shell_sync)
 
 
 class E2BPtyRuntime(_RemoteRuntimeBase):
@@ -769,7 +1136,7 @@ class E2BPtyRuntime(_RemoteRuntimeBase):
         self._baseline_env: dict[str, str] | None = None
 
     @staticmethod
-    def _extract_marker_exit(raw: str, marker: str) -> tuple[str, int]:
+    def _extract_marker_exit(raw: str, marker: str, command: str | None = None) -> tuple[str, int]:
         exit_code = 0
         cleaned_lines: list[str] = []
         marker_re = re.compile(rf"{re.escape(marker)}\s+(-?\d+)")
@@ -779,7 +1146,8 @@ class E2BPtyRuntime(_RemoteRuntimeBase):
                 exit_code = int(m.group(1))
                 continue
             cleaned_lines.append(line)
-        return _sanitize_shell_output("\n".join(cleaned_lines).strip()), exit_code
+        cleaned = _sanitize_shell_output("\n".join(cleaned_lines).strip())
+        return _normalize_pty_result(cleaned, command), exit_code
 
     def _run_pty_command_sync(
         self,
@@ -800,7 +1168,7 @@ class E2BPtyRuntime(_RemoteRuntimeBase):
                     raw.extend(pty_data)
                     decoded = raw.decode("utf-8", errors="replace")
                     if marker in decoded:
-                        cleaned, exit_code = self._extract_marker_exit(decoded, marker)
+                        cleaned, exit_code = self._extract_marker_exit(decoded, marker, command)
                         return cleaned, "", exit_code
                 if timeout and time.monotonic() - started > timeout:
                     raise TimeoutError(f"Command timed out after {timeout}s")
@@ -912,7 +1280,9 @@ def create_runtime(
     runtime_kind = str(getattr(capability, "runtime_kind", "remote"))
     if runtime_kind == "local":
         return LocalPersistentShellRuntime(terminal, lease)
-    if runtime_kind == "daytona_session":
+    if runtime_kind == "docker_pty":
+        return DockerPtyRuntime(terminal, lease, provider)
+    if runtime_kind == "daytona_pty":
         return DaytonaSessionRuntime(terminal, lease, provider)
     if runtime_kind == "e2b_pty":
         return E2BPtyRuntime(terminal, lease, provider)

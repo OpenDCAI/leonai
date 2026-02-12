@@ -249,16 +249,28 @@ class ChatSessionManager:
             conn.execute(
                 """
                 CREATE UNIQUE INDEX IF NOT EXISTS uq_chat_sessions_active_thread
-                ON chat_sessions(thread_id)
+                ON chat_sessions(terminal_id)
                 WHERE status IN ('active', 'idle', 'paused')
                 """
             )
             conn.commit()
             cols = {row[1] for row in conn.execute("PRAGMA table_info(chat_sessions)").fetchall()}
+            idx_rows = conn.execute("PRAGMA index_list(chat_sessions)").fetchall()
+            unique_indexes = [str(row[1]) for row in idx_rows if int(row[2]) == 1]
+            unique_index_columns: dict[str, set[str]] = {}
+            for idx_name in unique_indexes:
+                info_rows = conn.execute(f"PRAGMA index_info({idx_name})").fetchall()
+                unique_index_columns[idx_name] = {str(info_row[2]) for info_row in info_rows}
         missing = REQUIRED_CHAT_SESSION_COLUMNS - cols
         if missing:
             raise RuntimeError(
                 f"chat_sessions schema mismatch: missing {sorted(missing)}. Purge ~/.leon/sandbox.db and retry."
+            )
+        # @@@single-active-per-terminal - multi-terminal model allows many active sessions per thread, one per terminal.
+        if any(cols == {"thread_id"} for cols in unique_index_columns.values()):
+            raise RuntimeError(
+                "chat_sessions still has UNIQUE index on thread_id from old schema. "
+                "Purge ~/.leon/sandbox.db and retry."
             )
 
     def _build_runtime(self, terminal: AbstractTerminal, lease: SandboxLease) -> PhysicalTerminalRuntime:
@@ -279,8 +291,8 @@ class ChatSessionManager:
             ).fetchone()
         return str(row[0]) if row else None
 
-    def get(self, thread_id: str) -> ChatSession | None:
-        live = self._live_sessions.get(thread_id)
+    def get(self, thread_id: str, terminal_id: str) -> ChatSession | None:
+        live = self._live_sessions.get(terminal_id)
         if live:
             if live.is_expired():
                 self.delete(live.session_id, reason="expired")
@@ -295,11 +307,11 @@ class ChatSessionManager:
                        runtime_id, status, idle_ttl_sec, max_duration_sec,
                        budget_json, started_at, last_active_at, ended_at, close_reason
                 FROM chat_sessions
-                WHERE thread_id = ? AND status IN ('active', 'idle', 'paused')
+                WHERE thread_id = ? AND terminal_id = ? AND status IN ('active', 'idle', 'paused')
                 ORDER BY started_at DESC
                 LIMIT 1
                 """,
-                (thread_id,),
+                (thread_id, terminal_id),
             ).fetchone()
 
         if not row:
@@ -336,7 +348,7 @@ class ChatSessionManager:
         if session.is_expired():
             self.delete(session.session_id, reason="expired")
             return None
-        self._live_sessions[thread_id] = session
+        self._live_sessions[terminal_id] = session
         return session
 
     def create(
@@ -350,10 +362,10 @@ class ChatSessionManager:
         policy = policy or self.default_policy
         now = datetime.now()
 
-        existing = self._live_sessions.get(thread_id)
+        existing = self._live_sessions.get(terminal.terminal_id)
         if existing and existing.session_id != session_id:
             self._close_runtime(existing, reason="superseded")
-            self._live_sessions.pop(thread_id, None)
+            self._live_sessions.pop(terminal.terminal_id, None)
 
         runtime = self._build_runtime(terminal, lease)
         runtime_id = getattr(runtime, "runtime_id", None)
@@ -363,9 +375,9 @@ class ChatSessionManager:
                 """
                 UPDATE chat_sessions
                 SET status = 'closed', ended_at = ?, close_reason = 'superseded'
-                WHERE thread_id = ? AND status IN ('active', 'idle', 'paused')
+                WHERE terminal_id = ? AND status IN ('active', 'idle', 'paused')
                 """,
-                (now.isoformat(), thread_id),
+                (now.isoformat(), terminal.terminal_id),
             )
             conn.execute(
                 """
@@ -408,7 +420,7 @@ class ChatSessionManager:
             status="active",
         )
         session.runtime.bind_session(session.session_id)
-        self._live_sessions[thread_id] = session
+        self._live_sessions[terminal.terminal_id] = session
         return session
 
     def touch(self, session_id: str) -> None:
@@ -481,10 +493,10 @@ class ChatSessionManager:
 
     def delete(self, session_id: str, *, reason: str = "closed") -> None:
         session_to_close = None
-        for thread_id, session in list(self._live_sessions.items()):
+        for live_terminal_id, session in list(self._live_sessions.items()):
             if session.session_id == session_id:
                 session_to_close = session
-                del self._live_sessions[thread_id]
+                del self._live_sessions[live_terminal_id]
                 break
 
         if session_to_close:
@@ -508,14 +520,14 @@ class ChatSessionManager:
             conn.commit()
 
     def close(self, reason: str = "manager_close") -> None:
-        for thread_id, session in list(self._live_sessions.items()):
+        for live_terminal_id, session in list(self._live_sessions.items()):
             assert_chat_session_transition(
                 parse_chat_session_state(session.status),
                 ChatSessionState.CLOSED,
                 reason=reason,
             )
             self._close_runtime(session, reason=reason)
-            self._live_sessions.pop(thread_id, None)
+            self._live_sessions.pop(live_terminal_id, None)
 
         with _connect(self.db_path) as conn:
             conn.execute(
