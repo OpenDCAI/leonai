@@ -58,13 +58,27 @@ def _available_sandbox_types() -> list[dict[str, Any]]:
     types = [{"name": "local", "available": True}]
     if not SANDBOXES_DIR.exists():
         return types
+    skipped_daytona: list[str] = []
     for f in sorted(SANDBOXES_DIR.glob("*.json")):
         name = f.stem
+        # @@@daytona-single-type - Daytona SaaS vs self-hosted is config-only (daytona.api_url). Do not surface
+        # multiple Daytona config filenames as distinct "sandbox types" in the frontend.
+        if name != "daytona" and name.startswith("daytona"):
+            skipped_daytona.append(name)
+            continue
         try:
             SandboxConfig.load(name)
             types.append({"name": name, "available": True})
         except Exception as e:
             types.append({"name": name, "available": False, "reason": str(e)})
+    if skipped_daytona and not any(t.get("name") == "daytona" for t in types):
+        types.append(
+            {
+                "name": "daytona",
+                "available": False,
+                "reason": f"Found Daytona config(s) {skipped_daytona} but expected ~/.leon/sandboxes/daytona.json",
+            }
+        )
     return types
 
 

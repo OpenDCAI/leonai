@@ -662,6 +662,10 @@ class _RemoteRuntimeBase(PhysicalTerminalRuntime):
             "is paused",
             "stopped",
             "connection",
+            # Websocket/PTY transport failures (sandbox may still be started; handle is stale).
+            "websocket",
+            "close frame",
+            "no close frame",
             "transport",
             "unreachable",
             "timed out",
