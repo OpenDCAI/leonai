@@ -1258,7 +1258,11 @@ async def run_thread(thread_id: str, payload: RunRequest) -> EventSourceResponse
     lock = await _get_thread_lock(app, thread_id)
     async with lock:
         if hasattr(agent, "runtime") and not agent.runtime.transition(AgentState.ACTIVE):
-            raise HTTPException(status_code=409, detail="Thread is already running")
+            # Transition can fail for reasons other than "already running" (e.g. error/terminated states).
+            state = getattr(getattr(agent, "runtime", None), "current_state", None)
+            if state == AgentState.ACTIVE:
+                raise HTTPException(status_code=409, detail="Thread is already running")
+            raise HTTPException(status_code=409, detail=f"Thread cannot start run from state={getattr(state, 'value', state)}")
 
     async def event_stream() -> AsyncGenerator[dict[str, str], None]:
         try:
