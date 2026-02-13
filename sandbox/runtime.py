@@ -827,7 +827,44 @@ class DaytonaSessionRuntime(_RemoteRuntimeBase):
             sandbox = self._provider_sandbox(self._bound_instance_id)
             sandbox.process.kill_pty_session(self._pty_session_id)
         except Exception:
-            pass
+                pass
+
+    @staticmethod
+    def _connect_pty_session_no_proxy(sandbox, session_id: str, timeout: float = 10.0):
+        # @@@daytona-ws-no-proxy - websockets defaults to using system proxy settings; that can break PTY bootstrap
+        # unless python-socks is installed. PTY should work regardless of host proxy configuration.
+        from daytona_sdk.handle.pty_handle import PtyHandle
+        from websockets.sync.client import connect
+
+        proc = getattr(sandbox, "process", None)
+        if proc is None:
+            raise RuntimeError("Daytona sandbox missing process handle")
+        ensure_toolbox_url = getattr(proc, "_ensure_toolbox_url", None)
+        api_client = getattr(proc, "_api_client", None)
+        if not callable(ensure_toolbox_url) or api_client is None:
+            raise RuntimeError("Daytona process internals unavailable (missing _ensure_toolbox_url/_api_client)")
+
+        ensure_toolbox_url()
+        _, url, headers, *_ = api_client._connect_pty_session_serialize(  # type: ignore[attr-defined]
+            session_id=session_id,
+            _request_auth=None,
+            _content_type=None,
+            _headers=None,
+            _host_index=None,
+        )
+        url = re.sub(r"^http", "ws", str(url))
+
+        ws = connect(url, additional_headers=headers, proxy=None, open_timeout=timeout)
+
+        def resize_handler(pty_size):
+            return proc.resize_pty_session(session_id, pty_size)
+
+        def kill_handler():
+            proc.kill_pty_session(session_id)
+
+        handle = PtyHandle(ws, session_id=session_id, handle_resize=resize_handler, handle_kill=kill_handler)
+        handle.wait_for_connection(timeout=timeout)
+        return handle
 
     @staticmethod
     def _read_pty_chunk_sync(handle, wait_sec: float) -> bytes | None:
@@ -910,16 +947,30 @@ class DaytonaSessionRuntime(_RemoteRuntimeBase):
             from daytona_sdk.common.pty import PtySize
 
             try:
-                handle = sandbox.process.connect_pty_session(self._pty_session_id)
-                handle.wait_for_connection(timeout=10.0)
+                handle = self._connect_pty_session_no_proxy(sandbox, self._pty_session_id, timeout=10.0)
             except Exception:
                 try:
-                    handle = sandbox.process.create_pty_session(
-                        id=self._pty_session_id,
-                        cwd=effective_cwd,
-                        envs=None,
-                        pty_size=PtySize(rows=32, cols=120),
+                    proc = sandbox.process
+                    ensure_toolbox_url = getattr(proc, "_ensure_toolbox_url", None)
+                    api_client = getattr(proc, "_api_client", None)
+                    if not callable(ensure_toolbox_url) or api_client is None:
+                        raise RuntimeError("Daytona process internals unavailable (missing _ensure_toolbox_url/_api_client)")
+                    ensure_toolbox_url()
+                    from daytona_toolbox_api_client.models.pty_create_request import PtyCreateRequest
+
+                    resp = api_client.create_pty_session(  # type: ignore[attr-defined]
+                        request=PtyCreateRequest(
+                            id=self._pty_session_id,
+                            cwd=effective_cwd,
+                            # @@@daytona-shell-deterministic - Never propagate host SHELL. Force a deterministic shell
+                            # to avoid PTY bootstrap failures when sandbox defaults to a missing shell (e.g. /usr/bin/zsh).
+                            envs={"SHELL": "/bin/bash"},
+                            cols=120,
+                            rows=32,
+                            lazy_start=True,
+                        ),
                     )
+                    handle = self._connect_pty_session_no_proxy(sandbox, resp.session_id, timeout=10.0)
                 except Exception as create_exc:
                     message = str(create_exc)
                     if "/usr/bin/zsh" in message:

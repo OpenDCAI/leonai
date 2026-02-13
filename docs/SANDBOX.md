@@ -99,8 +99,7 @@ The file name (minus `.json`) is the sandbox name you pass to `--sandbox`.
   "daytona": {
     "api_key": "dtn_...",
     "api_url": "https://app.daytona.io/api",
-    "cwd": "/home/daytona",
-    "transport": "sdk"
+    "cwd": "/home/daytona"
   },
   "on_exit": "pause"
 }
@@ -111,10 +110,7 @@ The file name (minus `.json`) is the sandbox name you pass to `--sandbox`.
 | `daytona.api_key` | — | Daytona API key (or set `DAYTONA_API_KEY` env var) |
 | `daytona.api_url` | `https://app.daytona.io/api` | Daytona API base URL |
 | `daytona.cwd` | `/home/daytona` | Working directory |
-| `daytona.transport` | `sdk` | `sdk` (native PTY runtime) or `toolbox` (toolbox API exec, no PTY semantics) |
 | `on_exit` | `pause` | `pause` or `destroy` |
-
-Self-hosted Daytona typically sets `daytona.api_url` to your server and `daytona.transport` to `toolbox`.
 
 ### AgentBay
 

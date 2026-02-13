@@ -126,7 +126,6 @@ class SandboxManagerApp(App):
                             api_url=config.daytona.api_url,
                             target=config.daytona.target,
                             default_cwd=config.daytona.cwd,
-                            transport=config.daytona.transport,
                         )
             except Exception as e:
                 print(f"[SandboxManager] Failed to load {name}: {e}")

@@ -295,7 +295,6 @@ def _create_provider(config):
                 api_url=config.daytona.api_url,
                 target=config.daytona.target,
                 default_cwd=config.daytona.cwd,
-                transport=config.daytona.transport,
             )
 
     return None
