@@ -7,6 +7,11 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+import pytest
+
+# services.web depends on FastAPI, which is intentionally not a hard dependency of leonai.
+pytest.importorskip("fastapi")
+
 from services.web import main as web_main
 
 
