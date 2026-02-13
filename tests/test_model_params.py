@@ -1,6 +1,6 @@
 """Tests for model parameter normalization."""
 
-from model_params import normalize_model_kwargs
+from middleware.model_params import normalize_model_kwargs
 
 
 def test_openai_gpt5_moves_max_tokens_to_max_completion_tokens() -> None:
@@ -37,4 +37,3 @@ def test_non_openai_provider_keeps_max_tokens() -> None:
     out = normalize_model_kwargs("gpt-5.2", kwargs)
     assert out["max_tokens"] == 256
     assert "max_completion_tokens" not in out
-

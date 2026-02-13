@@ -86,7 +86,7 @@ packages = [
     "tui",
     "tui.widgets",
 ]
-py-modules = ["agent", "agent_profile", "model_params"]
+py-modules = ["agent", "agent_profile"]
 
 [tool.setuptools.package-data]
 "agents" = ["*.md"]

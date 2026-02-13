@@ -31,7 +31,7 @@ if _env_file.exists():
 
 from agent_profile import AgentProfile
 from middleware.command import CommandMiddleware
-from model_params import normalize_model_kwargs
+from middleware.model_params import normalize_model_kwargs
 
 # 导入 hooks
 from middleware.command.hooks.dangerous_commands import DangerousCommandsHook
