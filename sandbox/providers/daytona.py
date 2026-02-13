@@ -17,6 +17,7 @@ import uuid
 from typing import Any
 
 import httpx
+from urllib.parse import urlparse
 
 from sandbox.provider import (
     Metrics,
@@ -32,7 +33,16 @@ class DaytonaProvider(SandboxProvider):
 
     name = "daytona"
 
+    @staticmethod
+    def _is_saas_api_url(api_url: str) -> bool:
+        parsed = urlparse((api_url or "").strip())
+        host = (parsed.hostname or "").lower()
+        path = (parsed.path or "").rstrip("/")
+        # Treat the official SaaS API as the default behavior.
+        return host == "app.daytona.io" and path == "/api"
+
     def get_capability(self) -> ProviderCapability:
+        runtime_kind = "daytona_pty" if self._is_saas_api_url(self.api_url) else "remote"
         return ProviderCapability(
             can_pause=True,
             can_resume=True,
@@ -40,7 +50,7 @@ class DaytonaProvider(SandboxProvider):
             supports_webhook=True,
             # @@@daytona-runtime-kind - Self-hosted Daytona toolbox forwarding is more reliable via
             # command-per-call execution than the PTY integration. RemoteWrappedRuntime uses provider.execute().
-            runtime_kind="remote",
+            runtime_kind=runtime_kind,
         )
 
     def __init__(
@@ -133,6 +143,19 @@ class DaytonaProvider(SandboxProvider):
         timeout_ms: int = 30000,
         cwd: str | None = None,
     ) -> ProviderExecResult:
+        if self._is_saas_api_url(self.api_url):
+            sb = self._get_sandbox(session_id)
+            try:
+                result = sb.process.exec(command, cwd=cwd or self.default_cwd, timeout=timeout_ms // 1000)
+                # daytona-sdk historically used both exitCode and exit_code variants across versions.
+                exit_code = getattr(result, "exit_code", None)
+                if exit_code is None:
+                    exit_code = getattr(result, "exitCode", 0)
+                output = getattr(result, "result", "") or ""
+                return ProviderExecResult(output=output, exit_code=int(exit_code or 0))
+            except Exception as e:
+                return ProviderExecResult(output="", exit_code=1, error=str(e))
+
         # Use toolbox session exec directly against the API.
         #
         # Why: daytona-sdk's process.exec path relies on a "toolbox proxy URL" indirection that can be
@@ -154,8 +177,7 @@ class DaytonaProvider(SandboxProvider):
                 exec_url = f"{base}/toolbox/{session_id}/toolbox/process/session/{sess}/exec"
                 flat = self._flatten_shell_script(command)
                 # Run in a subshell so `exit` doesn't tear down the underlying session plumbing.
-                # Silence locale warnings that can pollute stdout in minimal images.
-                wrapped = f"LANG=C LC_ALL=C bash -lc {self._sh_single_quote(flat)}"
+                wrapped = f"sh -c {self._sh_single_quote(flat)}"
                 r = client.post(exec_url, headers=headers, json={"command": wrapped})
                 r.raise_for_status()
                 data = r.json()

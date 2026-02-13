@@ -259,6 +259,27 @@ Some providers or account tiers don't support pause/resume. When this is detecte
 
 Selecting a session and pressing `m` shows:
 
+## Daytona (Self-Hosted)
+
+`daytona` supports both Daytona SaaS and self-hosted Daytona.
+
+- Default (SaaS): `api_url` is `https://app.daytona.io/api`
+- Self-hosted: set `api_url` to your own server (must include `/api`, e.g. `https://daytona.example.com/api`)
+
+Example `~/.leon/sandboxes/daytona_selfhost.json`:
+```json
+{
+  "provider": "daytona",
+  "daytona": {
+    "api_key": "dtn_...",
+    "api_url": "https://daytona.example.com/api",
+    "target": "local",
+    "cwd": "/home/daytona"
+  },
+  "on_exit": "pause"
+}
+```
+
 ```
 Session: abc123...
 CPU: 45.2%
