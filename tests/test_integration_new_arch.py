@@ -3,6 +3,8 @@
 Tests the complete flow: Thread → ChatSession → Runtime → Terminal → Lease → Instance
 """
 
+import asyncio
+import sqlite3
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -163,6 +165,93 @@ class TestFullArchitectureFlow:
         assert result.exit_code == 0
         assert result.stdout is not None
 
+    @pytest.mark.asyncio
+    async def test_async_command_status_survives_session_recreate(self, sandbox_manager):
+        """Completed async commands should remain queryable after ChatSession recreation."""
+        thread_id = "test-thread-3b"
+        capability1 = sandbox_manager.get_sandbox(thread_id)
+        session_id_1 = capability1._session.session_id
+
+        async_cmd = await capability1.command.execute_async("echo async-ok")
+        done_1 = await capability1.command.wait_for(async_cmd.command_id, timeout=5.0)
+        assert done_1 is not None
+        assert done_1.exit_code == 0
+        assert "async-ok" in done_1.stdout
+
+        sandbox_manager.session_manager.delete(session_id_1, reason="test_rotate_session")
+        capability2 = sandbox_manager.get_sandbox(thread_id)
+        assert capability2._session.session_id != session_id_1
+
+        status = await capability2.command.get_status(async_cmd.command_id)
+        assert status is not None
+        assert status.done
+
+        done_2 = await capability2.command.wait_for(async_cmd.command_id, timeout=1.0)
+        assert done_2 is not None
+        assert done_2.exit_code == 0
+        assert "async-ok" in done_2.stdout
+
+    @pytest.mark.asyncio
+    async def test_non_blocking_command_uses_new_abstract_terminal(self, sandbox_manager, temp_db):
+        thread_id = "test-thread-async-terminal"
+        capability = sandbox_manager.get_sandbox(thread_id)
+        default_terminal_id = capability._session.terminal.terminal_id
+        shared_lease_id = capability._session.lease.lease_id
+
+        from sandbox.terminal import TerminalState
+
+        capability._session.terminal.update_state(TerminalState(cwd="/tmp", env_delta={"FOO": "bar"}))
+
+        async_cmd = await capability.command.execute_async("echo bg-terminal")
+        result = await capability.command.wait_for(async_cmd.command_id, timeout=5.0)
+        assert result is not None
+        assert result.exit_code == 0
+        assert "bg-terminal" in result.stdout
+
+        terminals = sandbox_manager.terminal_store.list_by_thread(thread_id)
+        assert len(terminals) == 2
+        default_terminal = sandbox_manager.terminal_store.get_default(thread_id)
+        assert default_terminal is not None
+        assert default_terminal.terminal_id == default_terminal_id
+
+        background_terminal = next(t for t in terminals if t.terminal_id != default_terminal_id)
+        assert background_terminal.lease_id == shared_lease_id
+        bg_state = background_terminal.get_state()
+        assert bg_state.cwd in {"/tmp", "/private/tmp"}
+        assert bg_state.env_delta.get("FOO") == "bar"
+
+        with sqlite3.connect(str(temp_db), timeout=30) as conn:
+            row = conn.execute(
+                "SELECT terminal_id FROM terminal_commands WHERE command_id = ?",
+                (async_cmd.command_id,),
+            ).fetchone()
+        assert row is not None
+        assert row[0] == background_terminal.terminal_id
+
+    @pytest.mark.asyncio
+    async def test_running_async_command_visible_from_new_manager(self, temp_db, mock_provider):
+        thread_id = "test-thread-running-visible"
+        manager1 = SandboxManager(provider=mock_provider, db_path=temp_db)
+        capability1 = manager1.get_sandbox(thread_id)
+
+        async_cmd = await capability1.command.execute_async("for i in 1 2 3; do echo tick-$i; sleep 1; done")
+        await asyncio.sleep(1.2)
+
+        # Simulate command_status query from a fresh API manager/session process.
+        manager2 = SandboxManager(provider=mock_provider, db_path=temp_db)
+        capability2 = manager2.get_sandbox(thread_id)
+
+        running = await capability2.command.get_status(async_cmd.command_id)
+        assert running is not None
+        assert not running.done
+        assert "Runtime restarted before command completion" not in "".join(running.stderr_buffer)
+        assert "tick-1" in "".join(running.stdout_buffer)
+
+        finished = await capability2.command.wait_for(async_cmd.command_id, timeout=5.0)
+        assert finished is not None
+        assert finished.exit_code == 0
+        assert "tick-3" in finished.stdout
+
     def test_terminal_state_persists_across_sessions(self, sandbox_manager, temp_db):
         """Test that terminal state persists when session expires."""
         thread_id = "test-thread-4"
@@ -188,6 +277,24 @@ class TestFullArchitectureFlow:
         state = capability2._session.terminal.get_state()
         assert state.cwd == "/tmp"
         assert state.env_delta == {"FOO": "bar"}
+
+    def test_get_sandbox_fails_on_provider_mismatch(self, temp_db, mock_provider, mock_remote_provider):
+        local_mgr = SandboxManager(provider=mock_provider, db_path=temp_db)
+        remote_mgr = SandboxManager(provider=mock_remote_provider, db_path=temp_db)
+
+        thread_id = "test-thread-provider-mismatch"
+        _ = local_mgr.get_sandbox(thread_id)
+
+        with pytest.raises(RuntimeError, match="bound to provider"):
+            remote_mgr.get_sandbox(thread_id)
+
+    def test_pause_all_sessions_skips_provider_mismatch(self, temp_db, mock_provider, mock_remote_provider):
+        local_mgr = SandboxManager(provider=mock_provider, db_path=temp_db)
+        remote_mgr = SandboxManager(provider=mock_remote_provider, db_path=temp_db)
+
+        _ = local_mgr.get_sandbox("test-thread-provider-mismatch-pause")
+
+        assert remote_mgr.pause_all_sessions() == 0
 
     def test_lease_shared_across_terminals(self, sandbox_manager, temp_db):
         """Test that multiple terminals can share the same lease."""
@@ -292,18 +399,39 @@ class TestSessionLifecycle:
         # Create session
         capability = sandbox_manager.get_sandbox(thread_id)
         session_id = capability._session.session_id
+        terminal_id = capability._session.terminal.terminal_id
 
         assert sandbox_manager.pause_session(thread_id)
-        paused = sandbox_manager.session_manager.get(thread_id)
+        paused = sandbox_manager.session_manager.get(thread_id, terminal_id)
         assert paused is not None
         assert paused.session_id == session_id
         assert paused.status == "paused"
 
         assert sandbox_manager.resume_session(thread_id)
-        resumed = sandbox_manager.session_manager.get(thread_id)
+        resumed = sandbox_manager.session_manager.get(thread_id, terminal_id)
         assert resumed is not None
         assert resumed.session_id == session_id
         assert resumed.status == "active"
+
+    def test_pause_and_resume_cover_all_thread_terminals(self, sandbox_manager):
+        thread_id = "test-thread-10b"
+        capability = sandbox_manager.get_sandbox(thread_id)
+        asyncio.run(capability.command.execute_async("echo bg"))
+
+        terminals = sandbox_manager.terminal_store.list_by_thread(thread_id)
+        assert len(terminals) == 2
+
+        assert sandbox_manager.pause_session(thread_id)
+        for terminal in terminals:
+            session = sandbox_manager.session_manager.get(thread_id, terminal.terminal_id)
+            assert session is not None
+            assert session.status == "paused"
+
+        assert sandbox_manager.resume_session(thread_id)
+        for terminal in terminals:
+            session = sandbox_manager.session_manager.get(thread_id, terminal.terminal_id)
+            assert session is not None
+            assert session.status == "active"
 
     def test_destroy_session(self, sandbox_manager):
         """Test destroying a session."""
@@ -312,13 +440,28 @@ class TestSessionLifecycle:
         # Create session
         capability = sandbox_manager.get_sandbox(thread_id)
         session_id = capability._session.session_id
+        terminal_id = capability._session.terminal.terminal_id
 
         # Destroy
         sandbox_manager.destroy_session(thread_id)
 
         # Session should be gone
-        session = sandbox_manager.session_manager.get(thread_id)
+        session = sandbox_manager.session_manager.get(thread_id, terminal_id)
         assert session is None
+
+    def test_destroy_session_removes_all_thread_resources(self, sandbox_manager):
+        thread_id = "test-thread-11b"
+        capability = sandbox_manager.get_sandbox(thread_id)
+        asyncio.run(capability.command.execute_async("echo bg"))
+
+        terminals_before = sandbox_manager.terminal_store.list_by_thread(thread_id)
+        assert len(terminals_before) == 2
+
+        assert sandbox_manager.destroy_session(thread_id)
+        assert sandbox_manager.terminal_store.list_by_thread(thread_id) == []
+        assert all(
+            sandbox_manager.session_manager.get(thread_id, terminal.terminal_id) is None for terminal in terminals_before
+        )
 
 
 class TestMultiThreadScenarios:

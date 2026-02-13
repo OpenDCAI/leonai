@@ -7,13 +7,14 @@ import uuid
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from sandbox.capability import SandboxCapability
 from sandbox.chat_session import ChatSessionManager, ChatSessionPolicy
 from sandbox.db import DEFAULT_DB_PATH
 from sandbox.lease import LeaseStore
 from sandbox.provider import SandboxProvider
-from sandbox.terminal import TerminalStore
+from sandbox.terminal import TerminalState, TerminalStore
 
 
 def lookup_sandbox_for_thread(thread_id: str, db_path: Path | None = None) -> str | None:
@@ -77,23 +78,74 @@ class SandboxManager:
         if self.provider_capability.eager_instance_binding and not lease.get_instance():
             lease.ensure_active_instance(self.provider)
 
+    def _assert_lease_provider(self, lease, thread_id: str) -> None:
+        if lease.provider_name != self.provider.name:
+            raise RuntimeError(
+                f"Thread {thread_id} is bound to provider {lease.provider_name}, "
+                f"but current manager provider is {self.provider.name}. "
+                "Use the matching sandbox type for this thread or recreate the thread."
+            )
+
+    def _get_active_terminal(self, thread_id: str):
+        terminal = self.terminal_store.get_active(thread_id)
+        if terminal:
+            return terminal
+        thread_terminals = self.terminal_store.list_by_thread(thread_id)
+        # @@@thread-pointer-consistency - If terminals exist but no active pointer, DB is inconsistent and must fail loudly.
+        if thread_terminals:
+            raise RuntimeError(f"Thread {thread_id} has terminals but no active terminal pointer")
+        return None
+
+    def _get_active_session(self, thread_id: str):
+        terminal = self._get_active_terminal(thread_id)
+        if not terminal:
+            return None
+        return self.session_manager.get(thread_id, terminal.terminal_id)
+
+    def _get_thread_terminals(self, thread_id: str):
+        return self.terminal_store.list_by_thread(thread_id)
+
+    def _get_thread_lease(self, thread_id: str):
+        terminals = self._get_thread_terminals(thread_id)
+        if not terminals:
+            return None
+        lease_ids = {terminal.lease_id for terminal in terminals}
+        # @@@thread-single-lease-invariant - Terminals created via non-block must share one lease per thread.
+        if len(lease_ids) != 1:
+            raise RuntimeError(f"Thread {thread_id} has inconsistent lease_ids: {sorted(lease_ids)}")
+        lease_id = next(iter(lease_ids))
+        lease = self.lease_store.get(lease_id)
+        if lease is None:
+            return None
+        self._assert_lease_provider(lease, thread_id)
+        return lease
+
+    def _thread_belongs_to_provider(self, thread_id: str) -> bool:
+        terminals = self._get_thread_terminals(thread_id)
+        if not terminals:
+            return False
+        lease = self.lease_store.get(terminals[0].lease_id)
+        return bool(lease and lease.provider_name == self.provider.name)
+
     def close(self):
         self.session_manager.close(reason="manager_close")
 
     def get_sandbox(self, thread_id: str) -> SandboxCapability:
-        session = self.session_manager.get(thread_id)
+        terminal = self._get_active_terminal(thread_id)
+        session = self.session_manager.get(thread_id, terminal.terminal_id) if terminal else None
         if session:
+            self._assert_lease_provider(session.lease, thread_id)
             # @@@activity-resume - Any new activity against a paused thread must resume before command execution.
             if session.status == "paused":
                 if not self.resume_session(thread_id):
                     raise RuntimeError(f"Failed to resume paused session for thread {thread_id}")
-                session = self.session_manager.get(thread_id)
+                session = self.session_manager.get(thread_id, session.terminal.terminal_id)
                 if not session:
                     raise RuntimeError(f"Session disappeared after resume for thread {thread_id}")
+                self._assert_lease_provider(session.lease, thread_id)
             self._ensure_bound_instance(session.lease)
-            return SandboxCapability(session)
+            return SandboxCapability(session, manager=self)
 
-        terminal = self.terminal_store.get(thread_id)
         if not terminal:
             terminal_id = f"term-{uuid.uuid4().hex[:12]}"
             lease_id = f"lease-{uuid.uuid4().hex[:12]}"
@@ -109,6 +161,7 @@ class SandboxManager:
             lease = self.lease_store.get(terminal.lease_id)
             if not lease:
                 lease = self.lease_store.create(terminal.lease_id, self.provider.name)
+            self._assert_lease_provider(lease, thread_id)
 
         self._ensure_bound_instance(lease)
 
@@ -124,7 +177,40 @@ class SandboxManager:
         if instance:
             self._fire_session_ready(instance.instance_id, "create")
 
-        return SandboxCapability(session)
+        return SandboxCapability(session, manager=self)
+
+    def create_background_command_session(self, thread_id: str, initial_cwd: str) -> Any:
+        default_terminal = self.terminal_store.get_default(thread_id)
+        if default_terminal is None:
+            raise RuntimeError(f"Thread {thread_id} has no default terminal")
+        lease = self.lease_store.get(default_terminal.lease_id)
+        if lease is None:
+            raise RuntimeError(f"Missing lease {default_terminal.lease_id} for thread {thread_id}")
+        self._assert_lease_provider(lease, thread_id)
+
+        inherited = default_terminal.get_state()
+        terminal_id = f"term-{uuid.uuid4().hex[:12]}"
+        terminal = self.terminal_store.create(
+            terminal_id=terminal_id,
+            thread_id=thread_id,
+            lease_id=lease.lease_id,
+            initial_cwd=initial_cwd,
+        )
+        # @@@async-terminal-inherit-state - non-blocking commands fork from default terminal cwd/env snapshot.
+        terminal.update_state(
+            TerminalState(
+                cwd=initial_cwd,
+                env_delta=dict(inherited.env_delta),
+                state_version=inherited.state_version,
+            )
+        )
+        session = self.session_manager.create(
+            session_id=f"sess-{uuid.uuid4().hex[:12]}",
+            thread_id=thread_id,
+            terminal=terminal,
+            lease=lease,
+        )
+        return session
 
     def enforce_idle_timeouts(self) -> int:
         """Pause expired leases and close chat sessions.
@@ -160,8 +246,11 @@ class SandboxManager:
             if idle_elapsed <= idle_ttl_sec and total_elapsed <= max_duration_sec:
                 continue
 
-            terminal = self.terminal_store.get(thread_id)
+            terminal_id = row.get("terminal_id")
+            terminal = self.terminal_store.get_by_id(str(terminal_id)) if terminal_id else None
             lease = self.lease_store.get(terminal.lease_id) if terminal else None
+            if lease and lease.provider_name != self.provider.name:
+                continue
             if lease:
                 status = lease.refresh_instance_status(self.provider)
                 # Only pause remote providers (local sandbox doesn't need pause)
@@ -169,9 +258,7 @@ class SandboxManager:
                     try:
                         paused = lease.pause_instance(self.provider)
                     except Exception as exc:
-                        print(
-                            f"[idle-reaper] failed to pause expired lease {lease.lease_id} for thread {thread_id}: {exc}"
-                        )
+                        print(f"[idle-reaper] failed to pause expired lease {lease.lease_id} for thread {thread_id}: {exc}")
                         continue
                     if not paused:
                         print(f"[idle-reaper] failed to pause expired lease {lease.lease_id} for thread {thread_id}")
@@ -188,34 +275,38 @@ class SandboxManager:
 
     def pause_session(self, thread_id: str) -> bool:
         """Pause session for thread."""
-        terminal = self.terminal_store.get(thread_id)
-        if not terminal:
+        terminals = self._get_thread_terminals(thread_id)
+        if not terminals:
             return False
 
-        lease = self.lease_store.get(terminal.lease_id)
+        lease = self._get_thread_lease(thread_id)
         if not lease:
             return False
 
-        if not lease.pause_instance(self.provider):
-            return False
+        if lease.observed_state != "paused":
+            # @@@pause-rebind-instance - Pause must operate on a concrete running instance.
+            # Re-resolve through lease to avoid pausing stale detached bindings.
+            lease.ensure_active_instance(self.provider)
+            if not lease.pause_instance(self.provider):
+                return False
 
-        session = self.session_manager.get(thread_id)
-        if session and session.status != "paused":
-            self.session_manager.pause(session.session_id)
+        for terminal in terminals:
+            session = self.session_manager.get(thread_id, terminal.terminal_id)
+            if session and session.status != "paused":
+                self.session_manager.pause(session.session_id)
         return True
 
-    def _get_thread_lease(self, thread_id: str):
-        terminal = self.terminal_store.get(thread_id)
-        if not terminal:
-            return None
-        return self.lease_store.get(terminal.lease_id)
-
     def _ensure_chat_session(self, thread_id: str) -> None:
-        if self.session_manager.get(thread_id):
+        terminal = self._get_active_terminal(thread_id)
+        if terminal and self.session_manager.get(thread_id, terminal.terminal_id):
             return
         self.get_sandbox(thread_id)
 
     def resume_session(self, thread_id: str) -> bool:
+        terminals = self._get_thread_terminals(thread_id)
+        if not terminals:
+            return False
+
         lease = self._get_thread_lease(thread_id)
         if not lease:
             return False
@@ -223,60 +314,73 @@ class SandboxManager:
         if not lease.resume_instance(self.provider):
             return False
 
-        session = self.session_manager.get(thread_id)
-        if session:
-            self.session_manager.resume(session.session_id)
-        else:
+        resumed_any = False
+        for terminal in terminals:
+            session = self.session_manager.get(thread_id, terminal.terminal_id)
+            if session:
+                self.session_manager.resume(session.session_id)
+                resumed_any = True
+
+        if not resumed_any:
             self._ensure_chat_session(thread_id)
         return True
 
     def pause_all_sessions(self) -> int:
         sessions = self.session_manager.list_all()
         count = 0
+        paused_threads: set[str] = set()
         for session_data in sessions:
-            if self.pause_session(session_data["thread_id"]):
+            thread_id = str(session_data["thread_id"])
+            if thread_id in paused_threads:
+                continue
+            if not self._thread_belongs_to_provider(thread_id):
+                continue
+            paused = self.pause_session(thread_id)
+            if paused:
                 count += 1
+                paused_threads.add(thread_id)
         return count
 
     def destroy_session(self, thread_id: str, session_id: str | None = None) -> bool:
-        session = self.session_manager.get(thread_id)
-        if session:
-            self.session_manager.delete(session.session_id)
+        if session_id:
+            sessions = self.session_manager.list_all()
+            matched = next((row for row in sessions if str(row.get("session_id")) == session_id), None)
+            if matched is not None and str(matched.get("thread_id") or "") != thread_id:
+                matched_thread_id = str(matched.get("thread_id") or "")
+                raise RuntimeError(
+                    f"Session {session_id} belongs to thread {matched_thread_id}, not thread {thread_id}"
+                )
 
-        terminal = self.terminal_store.get(thread_id)
-        if not terminal:
+        terminals = self._get_thread_terminals(thread_id)
+        if not terminals:
             return False
 
-        lease = self.lease_store.get(terminal.lease_id)
-        if not lease:
-            return False
-
-        lease.destroy_instance(self.provider)
-        return True
+        return self.destroy_thread_resources(thread_id)
 
     def destroy_thread_resources(self, thread_id: str) -> bool:
         """Destroy physical resources and detach thread from terminal/lease records."""
-        terminal = self.terminal_store.get(thread_id)
-        if not terminal:
-            session = self.session_manager.get(thread_id)
-            if session:
-                self.session_manager.delete(session.session_id, reason="thread_deleted")
+        terminals = self.terminal_store.list_by_thread(thread_id)
+        if not terminals:
             return False
 
-        lease = self.lease_store.get(terminal.lease_id)
-        if not lease:
-            raise RuntimeError(f"Missing lease {terminal.lease_id} for thread {thread_id}")
+        lease_ids = {terminal.lease_id for terminal in terminals}
 
-        session = self.session_manager.get(thread_id)
-        if session:
-            self.session_manager.delete(session.session_id, reason="thread_deleted")
+        for terminal in terminals:
+            session = self.session_manager.get(thread_id, terminal.terminal_id)
+            if session:
+                self.session_manager.delete(session.session_id, reason="thread_deleted")
 
-        lease.destroy_instance(self.provider)
-        self.terminal_store.delete(terminal.terminal_id)
+        for terminal in terminals:
+            self.terminal_store.delete(terminal.terminal_id)
 
-        lease_in_use = any(row.get("lease_id") == terminal.lease_id for row in self.terminal_store.list_all())
-        if not lease_in_use:
-            self.lease_store.delete(terminal.lease_id)
+        for lease_id in lease_ids:
+            lease = self.lease_store.get(lease_id)
+            if not lease:
+                raise RuntimeError(f"Missing lease {lease_id} for thread {thread_id}")
+            lease.destroy_instance(self.provider)
+            lease_in_use = any(row.get("lease_id") == lease_id for row in self.terminal_store.list_all())
+            if not lease_in_use:
+                self.lease_store.delete(lease_id)
         return True
 
     def list_sessions(self) -> list[dict]:
@@ -292,7 +396,15 @@ class SandboxManager:
 
         rows = self.session_manager.list_all()
         active_rows = [r for r in rows if r.get("status") in {"active", "idle", "paused"}]
-        chat_by_thread: dict[str, dict] = {row["thread_id"]: row for row in active_rows if row.get("thread_id")}
+        chat_by_thread_lease: dict[tuple[str, str], dict] = {}
+        for row in active_rows:
+            thread_id = row.get("thread_id")
+            lease_id = row.get("lease_id")
+            if not thread_id or not lease_id:
+                continue
+            key = (str(thread_id), str(lease_id))
+            if key not in chat_by_thread_lease:
+                chat_by_thread_lease[key] = row
         inspect_visible = self.provider_capability.inspect_visible
 
         seen_instance_ids: set[str] = set()
@@ -334,7 +446,7 @@ class SandboxManager:
                 continue
 
             for thread_id in threads:
-                chat = chat_by_thread.get(thread_id)
+                chat = chat_by_thread_lease.get((thread_id, lease_id))
                 sessions.append(
                     {
                         "session_id": refreshed_instance.instance_id,

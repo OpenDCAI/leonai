@@ -5,6 +5,7 @@ import tempfile
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -44,6 +45,7 @@ def mock_provider():
     """Create mock SandboxProvider."""
     provider = MagicMock()
     provider.name = "local"
+    provider.get_capability.return_value = SimpleNamespace(runtime_kind="local")
     return provider
 
 
@@ -243,14 +245,14 @@ class TestChatSessionManager:
             lease=lease,
         )
 
-        session = session_manager.get("thread-1")
+        session = session_manager.get("thread-1", "term-1")
         assert session is not None
         assert session.session_id == "sess-1"
         assert session.thread_id == "thread-1"
 
     def test_get_nonexistent_session(self, session_manager):
         """Test retrieving non-existent session returns None."""
-        session = session_manager.get("nonexistent-thread")
+        session = session_manager.get("nonexistent-thread", "term-x")
         assert session is None
 
     def test_get_expired_session_returns_none(self, session_manager, terminal_store, lease_store):
@@ -271,7 +273,7 @@ class TestChatSessionManager:
         time.sleep(0.1)  # Wait for expiry
 
         # Should return None and clean up
-        session = session_manager.get("thread-1")
+        session = session_manager.get("thread-1", "term-1")
         assert session is None
 
     def test_touch_updates_db(self, session_manager, terminal_store, lease_store, temp_db):
@@ -292,7 +294,7 @@ class TestChatSessionManager:
         session_manager.touch("sess-1")
 
         # Retrieve again and verify updated
-        session2 = session_manager.get("thread-1")
+        session2 = session_manager.get("thread-1", "term-1")
         assert session2.last_active_at > old_activity
 
     def test_delete_session(self, session_manager, terminal_store, lease_store):
@@ -308,13 +310,13 @@ class TestChatSessionManager:
         )
 
         # Verify exists
-        assert session_manager.get("thread-1") is not None
+        assert session_manager.get("thread-1", "term-1") is not None
 
         # Delete
         session_manager.delete("sess-1")
 
         # Verify deleted
-        assert session_manager.get("thread-1") is None
+        assert session_manager.get("thread-1", "term-1") is None
 
     def test_list_all_sessions(self, session_manager, terminal_store, lease_store):
         """Test listing all sessions."""
@@ -354,8 +356,8 @@ class TestChatSessionManager:
         count = session_manager.cleanup_expired()
 
         assert count == 1
-        assert session_manager.get("thread-1") is None
-        assert session_manager.get("thread-2") is not None
+        assert session_manager.get("thread-1", "term-1") is None
+        assert session_manager.get("thread-2", "term-2") is not None
 
 
 class TestChatSessionIntegration:
@@ -374,12 +376,12 @@ class TestChatSessionIntegration:
         session_manager.touch("sess-1")
 
         # Retrieve again
-        session2 = session_manager.get("thread-1")
+        session2 = session_manager.get("thread-1", "term-1")
         assert session2 is not None
 
         # Delete
         session_manager.delete("sess-1")
-        assert session_manager.get("thread-1") is None
+        assert session_manager.get("thread-1", "term-1") is None
 
     def test_session_with_custom_policy(self, session_manager, terminal_store, lease_store):
         """Test session with custom policy."""

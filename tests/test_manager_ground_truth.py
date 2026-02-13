@@ -1,6 +1,7 @@
 """Tests for SandboxManager inspect ground-truth behavior."""
 
 import asyncio
+import re
 import sqlite3
 import tempfile
 import uuid
@@ -59,7 +60,19 @@ class FakeProvider(SandboxProvider):
         timeout_ms: int = 30000,
         cwd: str | None = None,
     ) -> ProviderExecResult:
-        return ProviderExecResult(output="", exit_code=0, error=None)
+        start_match = re.search(r"__LEON_STATE_START_[a-f0-9]{8}__", command)
+        end_match = re.search(r"__LEON_STATE_END_[a-f0-9]{8}__", command)
+        if start_match and end_match:
+            output = (
+                "hi\n"
+                f"{start_match.group(0)}\n"
+                "/home/user\n"
+                "PWD=/home/user\n"
+                "PATH=/usr/bin\n"
+                f"{end_match.group(0)}\n"
+            )
+            return ProviderExecResult(output=output, exit_code=0, error=None)
+        return ProviderExecResult(output="hi\n", exit_code=0, error=None)
 
     def read_file(self, session_id: str, path: str) -> str:
         return ""
@@ -125,6 +138,7 @@ def test_enforce_idle_timeouts_pauses_lease_and_closes_session() -> None:
         capability = mgr.get_sandbox("thread-1")
         asyncio.run(capability.command.execute("echo hi"))
         session_id = capability._session.session_id
+        terminal_id = capability._session.terminal.terminal_id
         instance_id = capability._session.lease.get_instance().instance_id
 
         with sqlite3.connect(str(db)) as conn:
@@ -141,7 +155,7 @@ def test_enforce_idle_timeouts_pauses_lease_and_closes_session() -> None:
         count = mgr.enforce_idle_timeouts()
         assert count == 1
         assert provider.get_session_status(instance_id) == "paused"
-        assert mgr.session_manager.get("thread-1") is None
+        assert mgr.session_manager.get("thread-1", terminal_id) is None
     finally:
         db.unlink(missing_ok=True)
 
@@ -155,6 +169,7 @@ def test_enforce_idle_timeouts_continues_on_pause_failure() -> None:
         capability = mgr.get_sandbox("thread-1")
         asyncio.run(capability.command.execute("echo hi"))
         session_id = capability._session.session_id
+        terminal_id = capability._session.terminal.terminal_id
 
         with sqlite3.connect(str(db)) as conn:
             conn.execute(
@@ -170,6 +185,6 @@ def test_enforce_idle_timeouts_continues_on_pause_failure() -> None:
         provider.fail_pause = True
         count = mgr.enforce_idle_timeouts()
         assert count == 0
-        assert mgr.session_manager.get("thread-1") is not None
+        assert mgr.session_manager.get("thread-1", terminal_id) is not None
     finally:
         db.unlink(missing_ok=True)

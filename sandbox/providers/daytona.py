@@ -35,7 +35,7 @@ class DaytonaProvider(SandboxProvider):
             can_resume=True,
             can_destroy=True,
             supports_webhook=True,
-            runtime_kind="daytona_session",
+            runtime_kind="daytona_pty",
         )
 
     def __init__(

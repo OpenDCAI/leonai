@@ -1,7 +1,8 @@
 import asyncio
+import uuid
 
 from sandbox.capability import SandboxCapability
-from sandbox.interfaces.executor import ExecuteResult
+from sandbox.interfaces.executor import AsyncCommand, ExecuteResult
 
 
 class _DummyState:
@@ -16,11 +17,40 @@ class _DummyTerminal:
 class _DummyRuntime:
     def __init__(self):
         self.commands: list[str] = []
+        self._async_commands: dict[str, AsyncCommand] = {}
 
     async def execute(self, command: str, timeout=None):
         self.commands.append(command)
         await asyncio.sleep(0.01)
         return ExecuteResult(exit_code=0, stdout=f"ok:{command}", stderr="")
+
+    async def start_command(self, command: str, cwd: str):
+        cmd = AsyncCommand(
+            command_id=f"cmd_{uuid.uuid4().hex[:8]}",
+            command_line=command,
+            cwd=cwd,
+        )
+        result = await self.execute(command)
+        cmd.stdout_buffer = [result.stdout]
+        cmd.stderr_buffer = [result.stderr]
+        cmd.exit_code = result.exit_code
+        cmd.done = True
+        self._async_commands[cmd.command_id] = cmd
+        return cmd
+
+    async def get_command(self, command_id: str):
+        return self._async_commands.get(command_id)
+
+    async def wait_for_command(self, command_id: str, timeout: float | None = None):
+        cmd = self._async_commands.get(command_id)
+        if cmd is None:
+            return None
+        return ExecuteResult(
+            exit_code=cmd.exit_code or 0,
+            stdout="".join(cmd.stdout_buffer),
+            stderr="".join(cmd.stderr_buffer),
+            command_id=command_id,
+        )
 
 
 class _DummySession:
