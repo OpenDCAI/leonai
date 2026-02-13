@@ -59,6 +59,9 @@ class StateMonitor(BaseMonitor):
         self.flags = AgentFlags()
         self.created_at = datetime.now()
         self.last_activity = datetime.now()
+        self.last_error_type: str | None = None
+        self.last_error_message: str | None = None
+        self.last_error_at: datetime | None = None
         self._callbacks: list[Callable[[AgentState, AgentState], None]] = []
 
     def on_request(self, request: dict[str, Any]) -> None:
@@ -102,6 +105,19 @@ class StateMonitor(BaseMonitor):
     def mark_error(self, error: Exception | None = None) -> bool:
         """标记为错误状态"""
         self.flags.hasError = True
+        if error is not None:
+            # @@@error-snapshot - Capture a small, inspectable error snapshot for debugging.
+            self.last_error_type = type(error).__name__
+            msg = str(error)
+            self.last_error_message = msg[:500] if msg else ""
+            self.last_error_at = datetime.now()
+
+        # When an exception happens mid-run (ACTIVE), moving into a sticky ERROR state prevents any new runs
+        # and causes misleading 409 "already running" responses. Keep the agent runnable but surface hasError
+        # + last_error_* via metrics for debugging.
+        if self.state == AgentState.ACTIVE:
+            return self.transition(AgentState.IDLE)
+
         return self.transition(AgentState.ERROR)
 
     def mark_terminated(self) -> bool:
@@ -132,6 +148,11 @@ class StateMonitor(BaseMonitor):
                 "blocked": self.flags.isBlocked,
                 "error": self.flags.hasError,
             },
+            "error": {
+                "type": self.last_error_type,
+                "message": self.last_error_message,
+                "at": self.last_error_at.isoformat() if self.last_error_at else None,
+            },
             "uptime_seconds": round((datetime.now() - self.created_at).total_seconds(), 1),
             "last_activity": self.last_activity.isoformat(),
         }
@@ -139,3 +160,6 @@ class StateMonitor(BaseMonitor):
     def reset(self) -> None:
         self.state = AgentState.INITIALIZING
         self.flags = AgentFlags()
+        self.last_error_type = None
+        self.last_error_message = None
+        self.last_error_at = None
