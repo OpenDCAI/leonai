@@ -13,11 +13,9 @@ Key differences from E2B:
 from __future__ import annotations
 
 import os
-import uuid
 from typing import Any
 
 import httpx
-from urllib.parse import urlparse
 
 from sandbox.provider import (
     Metrics,
@@ -33,23 +31,15 @@ class DaytonaProvider(SandboxProvider):
 
     name = "daytona"
 
-    @staticmethod
-    def _is_saas_api_url(api_url: str) -> bool:
-        parsed = urlparse((api_url or "").strip())
-        host = (parsed.hostname or "").lower()
-        path = (parsed.path or "").rstrip("/")
-        # Treat the official SaaS API as the default behavior.
-        return host == "app.daytona.io" and path == "/api"
-
     def get_capability(self) -> ProviderCapability:
-        runtime_kind = "daytona_pty" if self._is_saas_api_url(self.api_url) else "remote"
+        runtime_kind = "daytona_pty" if self.transport == "sdk" else "remote"
         return ProviderCapability(
             can_pause=True,
             can_resume=True,
             can_destroy=True,
             supports_webhook=True,
-            # @@@daytona-runtime-kind - Self-hosted Daytona toolbox forwarding is more reliable via
-            # command-per-call execution than the PTY integration. RemoteWrappedRuntime uses provider.execute().
+            # @@@daytona-runtime-kind - Toolbox transport intentionally downgrades PTY/persistent terminal semantics.
+            # Make it explicit via config instead of silently switching based on api_url.
             runtime_kind=runtime_kind,
         )
 
@@ -59,6 +49,7 @@ class DaytonaProvider(SandboxProvider):
         api_url: str = "https://app.daytona.io/api",
         target: str = "local",
         default_cwd: str = "/home/daytona",
+        transport: str = "sdk",
     ):
         from daytona_sdk import Daytona
 
@@ -66,6 +57,7 @@ class DaytonaProvider(SandboxProvider):
         self.api_url = api_url
         self.target = target
         self.default_cwd = default_cwd
+        self.transport = transport
 
         os.environ["DAYTONA_API_KEY"] = api_key
         os.environ["DAYTONA_API_URL"] = api_url
@@ -74,13 +66,6 @@ class DaytonaProvider(SandboxProvider):
 
     def _api_base(self) -> str:
         return self.api_url.rstrip("/")
-
-    @staticmethod
-    def _flatten_shell_script(command: str) -> str:
-        # Toolbox "session exec" behaves best with a single command line.
-        # Preserve semantics for our usage by converting newlines to statement separators.
-        parts = [line.strip() for line in command.replace("\r", "").split("\n") if line.strip()]
-        return "; ".join(parts)
 
     @staticmethod
     def _sh_single_quote(text: str) -> str:
@@ -143,53 +128,37 @@ class DaytonaProvider(SandboxProvider):
         timeout_ms: int = 30000,
         cwd: str | None = None,
     ) -> ProviderExecResult:
-        if self._is_saas_api_url(self.api_url):
+        if self.transport == "sdk":
             sb = self._get_sandbox(session_id)
             try:
                 result = sb.process.exec(command, cwd=cwd or self.default_cwd, timeout=timeout_ms // 1000)
-                # daytona-sdk historically used both exitCode and exit_code variants across versions.
-                exit_code = getattr(result, "exit_code", None)
-                if exit_code is None:
-                    exit_code = getattr(result, "exitCode", 0)
-                output = getattr(result, "result", "") or ""
-                return ProviderExecResult(output=output, exit_code=int(exit_code or 0))
+                return ProviderExecResult(
+                    output=result.result or "",
+                    exit_code=result.exit_code or 0,
+                )
             except Exception as e:
-                return ProviderExecResult(output="", exit_code=1, error=str(e))
+                return ProviderExecResult(output="", error=str(e))
 
-        # Use toolbox session exec directly against the API.
+        # Use toolbox process execute directly against the API.
         #
-        # Why: daytona-sdk's process.exec path relies on a "toolbox proxy URL" indirection that can be
+        # Why: daytona-sdk's process.exec path depends on a "toolbox proxy URL" indirection that can be
         # misconfigured in self-hosted setups (runner.proxyUrl), returning HTML/502 instead of JSON.
         # The API-hosted toolbox endpoints forward to the runner internally and accept a standard Bearer API key.
-        sess = f"leon-exec-{uuid.uuid4().hex[:12]}"
         base = self._api_base()
         headers = {"Authorization": f"Bearer {self.api_key}"}
         timeout_sec = max(1.0, float(timeout_ms) / 1000.0)
 
         try:
             with httpx.Client(timeout=timeout_sec) as client:
-                # Create session
-                create_url = f"{base}/toolbox/{session_id}/toolbox/process/session"
-                r = client.post(create_url, headers=headers, json={"sessionId": sess})
-                r.raise_for_status()
-
-                # Exec command in session (runs via shell, supports multiline scripts, cd/export, &&, etc.)
-                exec_url = f"{base}/toolbox/{session_id}/toolbox/process/session/{sess}/exec"
-                flat = self._flatten_shell_script(command)
-                # Run in a subshell so `exit` doesn't tear down the underlying session plumbing.
-                wrapped = f"sh -c {self._sh_single_quote(flat)}"
+                exec_url = f"{base}/toolbox/{session_id}/toolbox/process/execute"
+                wrapped = f"sh -c {self._sh_single_quote(command)}"
                 r = client.post(exec_url, headers=headers, json={"command": wrapped})
                 r.raise_for_status()
                 data = r.json()
-                output = str(data.get("output") or "")
-                exit_code = int(data.get("exitCode") or 0)
-
-                # Best-effort cleanup: don't mask execution result if delete fails.
-                delete_url = f"{base}/toolbox/{session_id}/toolbox/process/session/{sess}"
-                try:
-                    client.delete(delete_url, headers=headers).raise_for_status()
-                except Exception:
-                    pass
+                if not isinstance(data, dict) or "exitCode" not in data or "result" not in data:
+                    raise RuntimeError(f"Unexpected Daytona toolbox response: {data!r}")
+                output = str(data["result"] or "")
+                exit_code = int(data["exitCode"] or 0)
 
                 return ProviderExecResult(output=output, exit_code=exit_code)
         except httpx.HTTPStatusError as e:

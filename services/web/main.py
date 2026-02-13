@@ -176,6 +176,7 @@ def _init_providers_and_managers() -> tuple[dict, dict]:
                         api_url=config.daytona.api_url,
                         target=config.daytona.target,
                         default_cwd=config.daytona.cwd,
+                        transport=config.daytona.transport,
                     )
         except Exception as e:
             print(f"[sandbox] Failed to load {name}: {e}")

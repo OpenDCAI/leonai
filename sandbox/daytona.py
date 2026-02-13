@@ -28,6 +28,7 @@ class DaytonaSandbox(RemoteSandbox):
             api_url=dt.api_url,
             target=dt.target,
             default_cwd=dt.cwd,
+            transport=dt.transport,
         )
         super().__init__(
             provider=provider,

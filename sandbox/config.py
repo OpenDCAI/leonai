@@ -9,6 +9,8 @@ import json
 import os
 from pathlib import Path
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -36,6 +38,9 @@ class DaytonaConfig(BaseModel):
     api_url: str = "https://app.daytona.io/api"
     target: str = "local"
     cwd: str = "/home/daytona"
+    # @@@daytona-transport - "sdk" keeps native PTY/persistent terminal semantics (DaytonaSessionRuntime).
+    # "toolbox" forces per-command exec via the Daytona toolbox API (RemoteWrappedRuntime).
+    transport: Literal["sdk", "toolbox"] = "sdk"
 
 
 class SandboxConfig(BaseModel):
