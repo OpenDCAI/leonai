@@ -3,6 +3,8 @@
 import os
 import sys
 
+import pytest
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from sandbox.providers.e2b import E2BProvider
@@ -13,6 +15,10 @@ def test_e2b_provider():
     if not api_key:
         print("E2B_API_KEY not set, skipping")
         return
+    try:
+        import e2b  # noqa: F401
+    except ModuleNotFoundError:
+        pytest.skip("E2B_API_KEY is set but optional dependency 'e2b' is not installed")
 
     provider = E2BProvider(api_key=api_key, timeout=60)
 

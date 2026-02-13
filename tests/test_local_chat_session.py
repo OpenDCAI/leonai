@@ -57,10 +57,10 @@ def test_local_provider_pause_resume_state_recovery():
     session = provider.create_session(context_id="leon-lease-test-session")
     sid = session.session_id
     provider._session_states.clear()
-    assert not provider.pause_session(sid)
-    assert provider.get_session_status(sid) == "detached"
+    assert provider.pause_session(sid)
+    assert provider.get_session_status(sid) == "paused"
 
     provider._session_states.clear()
-    assert not provider.resume_session(sid)
-    assert provider.get_session_status(sid) == "detached"
+    assert provider.resume_session(sid)
+    assert provider.get_session_status(sid) == "running"
     assert not provider.pause_session("unknown-session-id")

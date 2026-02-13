@@ -228,7 +228,22 @@ class SandboxManager:
         now = datetime.now()
         count = 0
 
-        for row in self.session_manager.list_active():
+        active_rows = self.session_manager.list_active()
+
+        def _is_expired(session_row: dict) -> bool:
+            started_at_raw = session_row.get("started_at")
+            last_active_raw = session_row.get("last_active_at")
+            if not started_at_raw or not last_active_raw:
+                return False
+            started_at = datetime.fromisoformat(str(started_at_raw))
+            last_active_at = datetime.fromisoformat(str(last_active_raw))
+            idle_ttl_sec = int(session_row.get("idle_ttl_sec") or 0)
+            max_duration_sec = int(session_row.get("max_duration_sec") or 0)
+            idle_elapsed = (now - last_active_at).total_seconds()
+            total_elapsed = (now - started_at).total_seconds()
+            return idle_elapsed > idle_ttl_sec or total_elapsed > max_duration_sec
+
+        for row in active_rows:
             session_id = row.get("session_id")
             thread_id = row.get("thread_id")
             started_at_raw = row.get("started_at")
@@ -251,18 +266,38 @@ class SandboxManager:
             lease = self.lease_store.get(terminal.lease_id) if terminal else None
             if lease and lease.provider_name != self.provider.name:
                 continue
+
             if lease:
-                status = lease.refresh_instance_status(self.provider)
-                # Only pause remote providers (local sandbox doesn't need pause)
-                if status == "running" and self.provider.name != "local":
-                    try:
-                        paused = lease.pause_instance(self.provider)
-                    except Exception as exc:
-                        print(f"[idle-reaper] failed to pause expired lease {lease.lease_id} for thread {thread_id}: {exc}")
+                # @@@idle-reaper-shared-lease - non-blocking commands fork background terminals but share one lease.
+                # Do not pause the underlying lease if another session on the same lease is still active/idle.
+                lease_id = str(row.get("lease_id") or lease.lease_id)
+                has_other_active = False
+                for other in active_rows:
+                    if str(other.get("lease_id") or "") != lease_id:
                         continue
-                    if not paused:
-                        print(f"[idle-reaper] failed to pause expired lease {lease.lease_id} for thread {thread_id}")
+                    if str(other.get("session_id") or "") == str(session_id):
                         continue
+                    if str(other.get("status") or "") not in {"active", "idle"}:
+                        continue
+                    if _is_expired(other):
+                        continue
+                    has_other_active = True
+                    break
+
+                if not has_other_active:
+                    status = lease.refresh_instance_status(self.provider)
+                    # Only pause remote providers (local sandbox doesn't need pause)
+                    if status == "running" and self.provider.name != "local":
+                        try:
+                            paused = lease.pause_instance(self.provider)
+                        except Exception as exc:
+                            print(
+                                f"[idle-reaper] failed to pause expired lease {lease.lease_id} for thread {thread_id}: {exc}"
+                            )
+                            continue
+                        if not paused:
+                            print(f"[idle-reaper] failed to pause expired lease {lease.lease_id} for thread {thread_id}")
+                            continue
 
             self.session_manager.delete(session_id, reason="idle_timeout")
             count += 1
