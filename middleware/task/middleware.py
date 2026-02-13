@@ -260,7 +260,11 @@ The agent will work independently and return results when complete.""",
         return self._make_tool_message(result, tool_id)
 
     async def _handle_task(self, args: dict, tool_id: str) -> TaskResult:
-        """Handle task tool call with streaming support."""
+        """Handle task tool call.
+
+        - Background mode: start an async task and return immediately (TaskOutput polls).
+        - Foreground mode: stream sub-agent progress events and return final output.
+        """
         params: TaskParams = {
             "SubagentType": args.get("SubagentType", ""),
             "Prompt": args.get("Prompt", ""),
@@ -275,7 +279,15 @@ The agent will work independently and return results when complete.""",
         if "MaxTurns" in args:
             params["MaxTurns"] = args["MaxTurns"]
 
-        # Use streaming mode to capture sub-agent events
+        if params.get("RunInBackground"):
+            # Background execution uses runner.run() which registers task_id for TaskOutput.
+            return await self.runner.run(
+                params=params,
+                all_middleware=self.parent_middleware,
+                checkpointer=self.checkpointer,
+            )
+
+        # Foreground: use streaming mode to capture sub-agent events
         task_id = None
         thread_id = None
         final_result = None
@@ -283,6 +295,7 @@ The agent will work independently and return results when complete.""",
         final_error = None
         turns_used = 0
 
+        text_parts: list[str] = []
         async for event in self.runner.run_streaming(
             params=params,
             all_middleware=self.parent_middleware,
@@ -312,8 +325,17 @@ The agent will work independently and return results when complete.""",
                 data = json.loads(event["data"])
                 final_error = data.get("error", "Unknown error")
                 final_status = "error"
+            elif event["event"] == "task_text":
+                import json
 
-        # Get the final result from the runner's task results
+                data = json.loads(event["data"])
+                chunk = data.get("content") or ""
+                if chunk:
+                    text_parts.append(chunk)
+
+        final_result = "".join(text_parts).strip() or final_result
+
+        # Get the final result from the runner's task results (streaming path must populate it).
         if task_id:
             result = self.runner.get_task_status(task_id)
             return result

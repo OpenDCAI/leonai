@@ -284,6 +284,8 @@ class SubagentRunner:
         prompt = params["Prompt"]
         turns_used = 0
         emitted_tool_call_ids: set[str] = set()
+        text_parts: list[str] = []
+        max_text_chars = 200_000
 
         try:
             async for chunk in agent.astream(
@@ -303,6 +305,9 @@ class SubagentRunner:
                     if msg_class == "AIMessageChunk":
                         content = self._extract_text_content(getattr(msg_chunk, "content", ""))
                         if content:
+                            if sum(len(p) for p in text_parts) < max_text_chars:
+                                remaining = max_text_chars - sum(len(p) for p in text_parts)
+                                text_parts.append(content[:remaining])
                             yield {
                                 "event": "task_text",
                                 "data": json.dumps({"task_id": task_id, "content": content}),
@@ -352,6 +357,14 @@ class SubagentRunner:
                                 }
 
             # Task completed
+            final_text = "".join(text_parts).strip() or None
+            self._task_results[task_id] = TaskResult(
+                task_id=task_id,
+                thread_id=subagent_thread_id,
+                status="completed",
+                result=final_text,
+                turns_used=turns_used,
+            )
             yield {
                 "event": "task_done",
                 "data": json.dumps(
@@ -364,6 +377,13 @@ class SubagentRunner:
             }
 
         except Exception as e:
+            self._task_results[task_id] = TaskResult(
+                task_id=task_id,
+                thread_id=subagent_thread_id,
+                status="error",
+                error=str(e),
+                turns_used=turns_used,
+            )
             yield {
                 "event": "task_error",
                 "data": json.dumps({"task_id": task_id, "error": str(e)}),
