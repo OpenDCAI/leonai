@@ -17,10 +17,12 @@ async def prime_sandbox(agent: Any, thread_id: str) -> None:
     def _prime_sandbox() -> None:
         mgr = agent._sandbox.manager
         mgr.enforce_idle_timeouts()
-        existing = mgr.session_manager.get(thread_id)
-        if existing and existing.status == "paused":
-            if not agent._sandbox.resume_thread(thread_id):
-                raise RuntimeError(f"Failed to resume paused session for thread {thread_id}")
+        terminal = mgr.terminal_store.get(thread_id)
+        if terminal:
+            existing = mgr.session_manager.get(thread_id, terminal.terminal_id)
+            if existing and existing.status == "paused":
+                if not agent._sandbox.resume_thread(thread_id):
+                    raise RuntimeError(f"Failed to resume paused session for thread {thread_id}")
         agent._sandbox.ensure_session(thread_id)
         terminal = mgr.terminal_store.get(thread_id)
         lease = mgr.lease_store.get(terminal.lease_id) if terminal else None
