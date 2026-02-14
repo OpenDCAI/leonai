@@ -160,6 +160,62 @@ def test_enforce_idle_timeouts_pauses_lease_and_closes_session() -> None:
         db.unlink(missing_ok=True)
 
 
+def test_enforce_idle_timeouts_does_not_close_when_running_command_exists() -> None:
+    db = _temp_db()
+    try:
+        provider = FakeProvider()
+        mgr = SandboxManager(provider=provider, db_path=db)
+
+        capability = mgr.get_sandbox("thread-1")
+        asyncio.run(capability.command.execute("echo hi"))
+        session_id = capability._session.session_id
+        terminal_id = capability._session.terminal.terminal_id
+        instance_id = capability._session.lease.get_instance().instance_id
+
+        # Expire the chat session.
+        with sqlite3.connect(str(db)) as conn:
+            conn.execute(
+                """
+                UPDATE chat_sessions
+                SET idle_ttl_sec = 1, last_active_at = ?
+                WHERE chat_session_id = ?
+                """,
+                ((datetime.now() - timedelta(seconds=5)).isoformat(), session_id),
+            )
+            # Insert a synthetic running command under the same terminal/lease.
+            now = datetime.now().isoformat()
+            conn.execute(
+                """
+                INSERT INTO terminal_commands (
+                    command_id, terminal_id, chat_session_id, command_line, cwd, status,
+                    stdout, stderr, exit_code, created_at, updated_at, finished_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    f"cmd_{uuid.uuid4().hex[:12]}",
+                    terminal_id,
+                    session_id,
+                    "sleep 9999",
+                    "/home/user",
+                    "running",
+                    "",
+                    "",
+                    None,
+                    now,
+                    now,
+                    None,
+                ),
+            )
+            conn.commit()
+
+        count = mgr.enforce_idle_timeouts()
+        assert count == 0
+        assert provider.get_session_status(instance_id) == "running"
+        assert mgr.session_manager.get("thread-1", terminal_id) is not None
+    finally:
+        db.unlink(missing_ok=True)
+
+
 def test_enforce_idle_timeouts_continues_on_pause_failure() -> None:
     db = _temp_db()
     try:
