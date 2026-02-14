@@ -119,8 +119,7 @@ class DaytonaProvider(SandboxProvider):
         sb = self._get_sandbox(session_id)
         entries = sb.fs.list_files(path)
         return [
-            {"name": e.name, "type": "directory" if e.is_dir else "file", "size": e.size or 0}
-            for e in (entries or [])
+            {"name": e.name, "type": "directory" if e.is_dir else "file", "size": e.size or 0} for e in (entries or [])
         ]
 
     # ==================== Batch Status ====================
@@ -154,4 +153,3 @@ class DaytonaProvider(SandboxProvider):
     def get_runtime_sandbox(self, session_id: str):
         """Expose native SDK sandbox for runtime-level persistent terminal handling."""
         return self._get_sandbox(session_id)
-

@@ -24,6 +24,11 @@ app.include_router(sandbox.router)
 app.include_router(webhooks.router)
 app.include_router(workspace.router)
 
+# Import settings router here to avoid linter removing unused import
+from .routers import settings
+
+app.include_router(settings.router)
+
 
 if __name__ == "__main__":
     import uvicorn

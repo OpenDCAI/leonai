@@ -10,25 +10,25 @@ function makeId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-export type SetEntries = React.Dispatch<React.SetStateAction<ChatEntry[]>>;
+export type UpdateEntries = (updater: (prev: ChatEntry[]) => ChatEntry[]) => void;
 export type StreamEvent = { type: string; data?: unknown };
 
 export function processStreamEvent(
   event: StreamEvent,
   turnId: string,
-  setEntries: SetEntries,
+  onUpdate: UpdateEntries,
   setIsStreaming: (v: boolean) => void,
   setRuntimeStatus: (v: StreamStatus | null) => void,
 ) {
   switch (event.type) {
     case "text":
-      handleTextEvent(event, turnId, setEntries);
+      handleTextEvent(event, turnId, onUpdate);
       return;
     case "tool_call":
-      handleToolCallEvent(event, turnId, setEntries);
+      handleToolCallEvent(event, turnId, onUpdate);
       return;
     case "tool_result":
-      handleToolResultEvent(event, turnId, setEntries);
+      handleToolResultEvent(event, turnId, onUpdate);
       return;
     case "status": {
       const status = event.data as StreamStatus | undefined;
@@ -36,35 +36,35 @@ export function processStreamEvent(
       return;
     }
     case "error":
-      handleErrorEvent(event, turnId, setEntries);
+      handleErrorEvent(event, turnId, onUpdate);
       return;
     case "cancelled":
-      handleCancelledEvent(event, turnId, setEntries, setIsStreaming);
+      handleCancelledEvent(event, turnId, onUpdate, setIsStreaming);
       return;
     default:
       if (event.type.startsWith("subagent_")) {
-        handleSubagentEvent(event, turnId, setEntries);
+        handleSubagentEvent(event, turnId, onUpdate);
       }
   }
 }
 
 function updateTurnSegments(
-  setEntries: SetEntries,
+  onUpdate: UpdateEntries,
   turnId: string,
   updater: (turn: AssistantTurn) => AssistantTurn,
 ) {
-  setEntries((prev) =>
+  onUpdate((prev) =>
     prev.map((e) =>
       e.id === turnId && e.role === "assistant" ? updater(e as AssistantTurn) : e,
     ),
   );
 }
 
-function handleTextEvent(event: StreamEvent, turnId: string, setEntries: SetEntries) {
+function handleTextEvent(event: StreamEvent, turnId: string, onUpdate: UpdateEntries) {
   const payload = event.data as { content?: string } | string | undefined;
   const chunk = typeof payload === "string" ? payload : payload?.content ?? "";
   flushSync(() => {
-    updateTurnSegments(setEntries, turnId, (turn) => {
+    updateTurnSegments(onUpdate, turnId, (turn) => {
       const segs = [...turn.segments];
       const last = segs[segs.length - 1];
       if (last && last.type === "text") {
@@ -77,7 +77,7 @@ function handleTextEvent(event: StreamEvent, turnId: string, setEntries: SetEntr
   });
 }
 
-function handleToolCallEvent(event: StreamEvent, turnId: string, setEntries: SetEntries) {
+function handleToolCallEvent(event: StreamEvent, turnId: string, onUpdate: UpdateEntries) {
   const payload = (event.data ?? {}) as { id?: string; name?: string; args?: unknown };
   const seg: ToolSegment = {
     type: "tool",
@@ -89,17 +89,17 @@ function handleToolCallEvent(event: StreamEvent, turnId: string, setEntries: Set
       timestamp: Date.now(),
     },
   };
-  updateTurnSegments(setEntries, turnId, (turn) => ({
+  updateTurnSegments(onUpdate, turnId, (turn) => ({
     ...turn,
     segments: [...turn.segments, seg],
   }));
 }
 
-function handleToolResultEvent(event: StreamEvent, turnId: string, setEntries: SetEntries) {
+function handleToolResultEvent(event: StreamEvent, turnId: string, onUpdate: UpdateEntries) {
   const payload = (event.data ?? {}) as { content?: string; tool_call_id?: string; name?: string };
 
   const updateResult = () => {
-    updateTurnSegments(setEntries, turnId, (turn) => ({
+    updateTurnSegments(onUpdate, turnId, (turn) => ({
       ...turn,
       segments: turn.segments.map((s) => {
         if (s.type !== "tool" || s.step.id !== payload.tool_call_id) return s;
@@ -109,7 +109,7 @@ function handleToolResultEvent(event: StreamEvent, turnId: string, setEntries: S
   };
 
   // Ensure "calling" state is visible for at least 200ms before showing result
-  setEntries((prev) => {
+  onUpdate((prev) => {
     const turn = prev.find((e) => e.id === turnId && e.role === "assistant") as AssistantTurn | undefined;
     if (turn) {
       const toolSeg = turn.segments.find(
@@ -137,9 +137,9 @@ function handleToolResultEvent(event: StreamEvent, turnId: string, setEntries: S
   });
 }
 
-function handleErrorEvent(event: StreamEvent, turnId: string, setEntries: SetEntries) {
+function handleErrorEvent(event: StreamEvent, turnId: string, onUpdate: UpdateEntries) {
   const text = typeof event.data === "string" ? event.data : JSON.stringify(event.data ?? "Unknown error");
-  updateTurnSegments(setEntries, turnId, (turn) => ({
+  updateTurnSegments(onUpdate, turnId, (turn) => ({
     ...turn,
     segments: [...turn.segments, { type: "text", content: `\n\nError: ${text}` }],
   }));
@@ -148,12 +148,12 @@ function handleErrorEvent(event: StreamEvent, turnId: string, setEntries: SetEnt
 function handleCancelledEvent(
   event: StreamEvent,
   turnId: string,
-  setEntries: SetEntries,
+  onUpdate: UpdateEntries,
   setIsStreaming: (v: boolean) => void,
 ) {
   setIsStreaming(false);
   const cancelledToolCallIds = (event.data as any)?.cancelled_tool_call_ids || [];
-  updateTurnSegments(setEntries, turnId, (turn) => ({
+  updateTurnSegments(onUpdate, turnId, (turn) => ({
     ...turn,
     segments: turn.segments.map((seg) => {
       if (seg.type === "tool" && cancelledToolCallIds.includes(seg.step.id)) {
@@ -164,12 +164,12 @@ function handleCancelledEvent(
   }));
 }
 
-function handleSubagentEvent(event: StreamEvent, turnId: string, setEntries: SetEntries) {
+function handleSubagentEvent(event: StreamEvent, turnId: string, onUpdate: UpdateEntries) {
   const data = event.data as any;
   const parentToolCallId = data?.parent_tool_call_id;
   if (!parentToolCallId) return;
 
-  updateTurnSegments(setEntries, turnId, (turn) => ({
+  updateTurnSegments(onUpdate, turnId, (turn) => ({
     ...turn,
     segments: turn.segments.map((s) => {
       if (s.type !== "tool" || s.step.id !== parentToolCallId) return s;

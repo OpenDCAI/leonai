@@ -31,7 +31,6 @@ if _env_file.exists():
 
 from agent_profile import AgentProfile
 from middleware.command import CommandMiddleware
-from middleware.model_params import normalize_model_kwargs
 
 # 导入 hooks
 from middleware.command.hooks.dangerous_commands import DangerousCommandsHook
@@ -40,6 +39,7 @@ from middleware.command.hooks.file_permission import FilePermissionHook
 from middleware.command.hooks.path_security import PathSecurityHook
 from middleware.filesystem import FileSystemMiddleware
 from middleware.memory import MemoryMiddleware
+from middleware.model_params import normalize_model_kwargs
 from middleware.monitor import MonitorMiddleware
 from middleware.prompt_caching import PromptCachingMiddleware
 from middleware.queue import SteeringMiddleware
@@ -293,9 +293,7 @@ class LeonAgent:
         env_sandbox_db_path = os.getenv("LEON_SANDBOX_DB_PATH")
         self.db_path = Path(env_db_path).expanduser() if env_db_path else (Path.home() / ".leon" / "leon.db")
         self.sandbox_db_path = (
-            Path(env_sandbox_db_path).expanduser()
-            if env_sandbox_db_path
-            else (Path.home() / ".leon" / "sandbox.db")
+            Path(env_sandbox_db_path).expanduser() if env_sandbox_db_path else (Path.home() / ".leon" / "sandbox.db")
         )
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.sandbox_db_path.parent.mkdir(parents=True, exist_ok=True)

@@ -5,11 +5,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 
-import pytest
-
 from sandbox.manager import SandboxManager
 from sandbox.provider import ProviderCapability, ProviderExecResult, SandboxProvider, SessionInfo
-from sandbox.terminal import TerminalState
 
 
 @dataclass
@@ -38,7 +35,7 @@ class DummyProvider(SandboxProvider):
         )
 
     def create_session(self, context_id: str | None = None) -> SessionInfo:
-        sid = f"sb-{len(self._created)+1}"
+        sid = f"sb-{len(self._created) + 1}"
         self._created.append(sid)
         return SessionInfo(session_id=sid, provider=self.name, status="running")
 
@@ -137,4 +134,3 @@ def test_idle_reaper_does_not_pause_shared_lease_when_other_session_active(tmp_p
         assert row is not None
         assert row[0] == "closed"
         assert row[1] == "idle_timeout"
-

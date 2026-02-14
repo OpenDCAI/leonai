@@ -9,7 +9,6 @@ function parseArgs(args: unknown): { path?: string; dir_path?: string } {
 export default memo(function ListDirRenderer({ step, expanded }: ToolRendererProps) {
   const { path, dir_path } = parseArgs(step.args);
   const dirPath = path || dir_path || ".";
-  const shortPath = dirPath.split("/").filter(Boolean).pop() || dirPath;
 
   if (!expanded) {
     return (

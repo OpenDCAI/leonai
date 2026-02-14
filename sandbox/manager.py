@@ -3,13 +3,12 @@
 Orchestrates: Thread → ChatSession → Runtime → Terminal → Lease → Instance
 """
 
+import sqlite3
 import uuid
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-
-import sqlite3
 
 from sandbox.capability import SandboxCapability
 from sandbox.chat_session import ChatSessionManager, ChatSessionPolicy
@@ -365,7 +364,9 @@ class SandboxManager:
                             )
                             continue
                         if not paused:
-                            print(f"[idle-reaper] failed to pause expired lease {lease.lease_id} for thread {thread_id}")
+                            print(
+                                f"[idle-reaper] failed to pause expired lease {lease.lease_id} for thread {thread_id}"
+                            )
                             continue
 
             self.session_manager.delete(session_id, reason="idle_timeout")

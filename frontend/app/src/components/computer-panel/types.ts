@@ -1,4 +1,4 @@
-import type { ChatEntry, LeaseStatus, SessionStatus, TerminalStatus, ToolStep, WorkspaceEntry } from "../../api";
+import type { ChatEntry, LeaseStatus, SessionStatus, TerminalStatus } from "../../api";
 
 export type TabType = "terminal" | "files" | "agents";
 

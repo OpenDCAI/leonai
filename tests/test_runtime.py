@@ -10,16 +10,16 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from sandbox.chat_session import ChatSessionManager
 from sandbox.lease import LeaseStore, SandboxInstance
 from sandbox.provider import ProviderExecResult
-from sandbox.chat_session import ChatSessionManager
 from sandbox.runtime import (
     DockerPtyRuntime,
     ExecuteResult,
     LocalPersistentShellRuntime,
     RemoteWrappedRuntime,
-    _normalize_pty_result,
     _extract_state_from_output,
+    _normalize_pty_result,
     create_runtime,
 )
 from sandbox.terminal import TerminalState, TerminalStore
@@ -330,6 +330,7 @@ class TestRemoteWrappedRuntime:
         )
         lease.ensure_active_instance = MagicMock(return_value=instance)
         lease.refresh_instance_status = MagicMock(return_value="running")
+
         def mock_execute(_instance_id, wrapped_command, **_kwargs):
             output = _wrap_remote_state_output(wrapped_command, "grep: bad regex", cwd="/root")
             return ProviderExecResult(exit_code=2, output=output, error="")
@@ -688,7 +689,11 @@ async def test_daytona_runtime_sanitizes_corrupted_terminal_state_before_create(
             start = re.search(r"__LEON_STATE_START_[a-f0-9]{8}__", command)
             end = re.search(r"__LEON_STATE_END_[a-f0-9]{8}__", command)
             assert start and end
-            return f"{start.group(0)}\n/home/daytona/snake-fullstack\nPWD=/home/daytona/snake-fullstack\n{end.group(0)}\n", "", 0
+            return (
+                f"{start.group(0)}\n/home/daytona/snake-fullstack\nPWD=/home/daytona/snake-fullstack\n{end.group(0)}\n",
+                "",
+                0,
+            )
         if on_stdout_chunk is not None:
             on_stdout_chunk("ok\n")
         return "ok\n", "", 0

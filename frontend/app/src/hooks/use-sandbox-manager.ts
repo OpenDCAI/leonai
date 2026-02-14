@@ -24,7 +24,7 @@ export interface SandboxManagerActions {
 }
 
 export function useSandboxManager(deps: SandboxManagerDeps): SandboxManagerState & SandboxManagerActions {
-  const { activeThreadId, isStreaming, activeSandbox, setActiveSandbox, loadThread } = deps;
+  const { activeThreadId, isStreaming, setActiveSandbox, loadThread } = deps;
   const [sandboxActionError, setSandboxActionError] = useState<string | null>(null);
 
   // Poll sandbox status while streaming

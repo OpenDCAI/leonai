@@ -10,6 +10,7 @@ from typing import Any
 from langchain.agents import create_agent
 from langchain.chat_models import init_chat_model
 from langchain_core.tools import tool
+
 from middleware.model_params import normalize_model_kwargs
 
 from .types import AgentConfig, TaskParams, TaskResult

@@ -210,7 +210,7 @@ class TestCommandStatusFormatting:
     async def test_running_status_includes_stderr_chunks(self, tmp_path):
         status = AsyncCommand(
             command_id="cmd_stderr",
-            command_line="python -c 'import sys,time; print(\"out\"); sys.stderr.write(\"err\\n\"); time.sleep(3)'",
+            command_line='python -c \'import sys,time; print("out"); sys.stderr.write("err\\n"); time.sleep(3)\'',
             cwd=str(tmp_path),
             stdout_buffer=["out\n"],
             stderr_buffer=["err\n"],

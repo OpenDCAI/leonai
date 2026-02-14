@@ -23,4 +23,3 @@ def normalize_model_kwargs(model_name: str, model_kwargs: dict[str, Any]) -> dic
 def _is_openai_gpt5(model_name: str) -> bool:
     bare_name = model_name.split("/")[-1]
     return bare_name.startswith("gpt-5")
-
