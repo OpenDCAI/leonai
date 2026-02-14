@@ -279,7 +279,7 @@ export default function ChatArea({ entries, isStreaming, streamTurnId, runtimeSt
         {isStreaming && entries.length > 0 && entries[entries.length - 1].role === "assistant" && (
           (() => {
             const lastEntry = entries[entries.length - 1] as AssistantTurn;
-            const hasContent = lastEntry.text_segments?.some(s => s.text.trim()) || lastEntry.tool_segments?.length > 0;
+            const hasContent = lastEntry.segments.some((seg) => (seg.type === "text" ? seg.content.trim().length > 0 : true));
             if (hasContent) return null;
             return (
               <div className="flex items-center animate-fade-in">

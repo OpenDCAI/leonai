@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
@@ -27,6 +27,8 @@ from sandbox.manager import SandboxManager, lookup_sandbox_for_thread
 from sandbox.provider_events import ProviderEventStore
 from sandbox.thread_context import set_current_thread_id
 from tui.config import ConfigManager
+
+from run_manager import RunManager, RunStatus
 
 DB_PATH = Path.home() / ".leon" / "leon.db"
 SANDBOXES_DIR = Path.home() / ".leon" / "sandboxes"
@@ -323,6 +325,7 @@ async def lifespan(app: FastAPI):
     app.state.thread_locks: dict[str, asyncio.Lock] = {}
     app.state.thread_locks_guard = asyncio.Lock()
     app.state.idle_reaper_task: asyncio.Task | None = None
+    app.state.run_manager = RunManager()
 
     try:
         app.state.idle_reaper_task = asyncio.create_task(_idle_reaper_loop(app))
@@ -335,6 +338,10 @@ async def lifespan(app: FastAPI):
                 await task
             except asyncio.CancelledError:
                 pass
+        try:
+            await app.state.run_manager.shutdown()
+        except Exception as e:
+            print(f"[web] run manager shutdown error: {e}")
         for agent in app.state.agent_pool.values():
             try:
                 agent.close()
@@ -1255,10 +1262,152 @@ async def get_thread_runtime(thread_id: str) -> dict[str, Any]:
     agent = await _get_or_create_agent(app, sandbox_type, thread_id=thread_id)
     if not hasattr(agent, "runtime"):
         raise HTTPException(status_code=404, detail="Agent has no runtime monitor")
-    return agent.runtime.get_status_dict()
+    status = agent.runtime.get_status_dict()
+    active_run_id = await app.state.run_manager.get_active_run_id(thread_id)
+    status["active_run_id"] = active_run_id
+    if active_run_id:
+        rec = await app.state.run_manager.get_run(thread_id, active_run_id)
+        status["active_run_cursor"] = rec.last_seq if rec else 0
+    return status
 
 
 # --- Run endpoint (SSE streaming) ---
+
+def _parse_last_event_id(request: Request) -> int:
+    raw = request.headers.get("last-event-id")
+    if not raw:
+        return 0
+    try:
+        return int(raw.strip())
+    except Exception:
+        return 0
+
+
+async def _append_status(agent: Any, run_id: str, record: Any) -> None:
+    if not hasattr(agent, "runtime"):
+        return
+    status = agent.runtime.get_status_dict()
+    status["active_run_id"] = run_id
+    status["active_run_cursor"] = record.last_seq
+    await record.append("status", status)
+
+
+async def _execute_run_to_log(thread_id: str, agent: Any, run_id: str, message: str, record: Any) -> None:
+    try:
+        set_current_thread_id(thread_id)
+        await _append_status(agent, run_id, record)
+
+        config = {"configurable": {"thread_id": thread_id}}
+
+        # @@@ Streaming parser mirrors TUI runner chunk semantics so web and CLI stay consistent.
+        # Prime session before tool calls so lazy capability wrappers never race thread context propagation.
+        if hasattr(agent, "_sandbox"):
+
+            def _prime_sandbox() -> None:
+                mgr = agent._sandbox.manager
+                mgr.enforce_idle_timeouts()
+                terminal = mgr.terminal_store.get_active(thread_id)
+                existing = mgr.session_manager.get(thread_id, terminal.terminal_id) if terminal else None
+                if existing and existing.status == "paused":
+                    if not agent._sandbox.resume_thread(thread_id):
+                        raise RuntimeError(f"Failed to resume paused session for thread {thread_id}")
+                agent._sandbox.ensure_session(thread_id)
+                terminal = mgr.terminal_store.get_active(thread_id)
+                lease = mgr.lease_store.get(terminal.lease_id) if terminal else None
+                if lease:
+                    lease_status = lease.refresh_instance_status(mgr.provider)
+                    if lease_status == "paused" and mgr.provider_capability.can_resume:
+                        if not agent._sandbox.resume_thread(thread_id):
+                            raise RuntimeError(f"Failed to auto-resume paused sandbox for thread {thread_id}")
+
+            await asyncio.to_thread(_prime_sandbox)
+
+        emitted_tool_call_ids: set[str] = set()
+
+        async for chunk in agent.agent.astream(
+            {"messages": [{"role": "user", "content": message}]},
+            config=config,
+            stream_mode=["messages", "updates"],
+        ):
+            if not chunk:
+                continue
+            if not isinstance(chunk, tuple) or len(chunk) != 2:
+                continue
+            mode, data = chunk
+
+            if mode == "messages":
+                msg_chunk, _metadata = data
+                msg_class = msg_chunk.__class__.__name__
+                if msg_class == "AIMessageChunk":
+                    content = _extract_text_content(getattr(msg_chunk, "content", ""))
+                    if content:
+                        await record.append("text", {"content": content})
+                continue
+
+            if mode == "updates":
+                for msg in _iter_update_messages(data):
+                    msg_class = msg.__class__.__name__
+                    if msg_class == "AIMessage":
+                        for tc in getattr(msg, "tool_calls", []):
+                            tc_id = tc.get("id")
+                            if tc_id and tc_id in emitted_tool_call_ids:
+                                continue
+                            if tc_id:
+                                emitted_tool_call_ids.add(tc_id)
+                            await record.append(
+                                "tool_call",
+                                {
+                                    "id": tc.get("id"),
+                                    "name": tc.get("name", "unknown"),
+                                    "args": tc.get("args", {}),
+                                },
+                            )
+                        continue
+                    if msg_class != "ToolMessage":
+                        continue
+                    await record.append(
+                        "tool_result",
+                        {
+                            "tool_call_id": getattr(msg, "tool_call_id", None),
+                            "name": getattr(msg, "name", "unknown"),
+                            "content": str(getattr(msg, "content", "")),
+                        },
+                    )
+                    if hasattr(agent, "runtime"):
+                        status = agent.runtime.get_status_dict()
+                        status["current_tool"] = getattr(msg, "name", None)
+                        status["active_run_id"] = run_id
+                        status["active_run_cursor"] = record.last_seq
+                        await record.append("status", status)
+
+        # Forward sub-agent events (best-effort; current implementation buffers until end)
+        if hasattr(agent, "runtime"):
+            for tool_call_id, events in agent.runtime.get_pending_subagent_events():
+                for event in events:
+                    event_type = event.get("event", "")
+                    event_data = json.loads(event.get("data", "{}"))
+                    event_data["parent_tool_call_id"] = tool_call_id
+                    await record.append(f"subagent_{event_type}", event_data)
+
+        await _append_status(agent, run_id, record)
+        await record.append("done", {"thread_id": thread_id, "run_id": run_id})
+        await record.finish(RunStatus.DONE)
+    except asyncio.CancelledError:
+        await record.append("error", {"error": "cancelled", "run_id": run_id})
+        await record.finish(RunStatus.CANCELLED, "cancelled")
+    except Exception as e:
+        import traceback
+
+        traceback.print_exc()
+        await record.append("error", {"error": str(e), "run_id": run_id})
+        await record.finish(RunStatus.ERROR, str(e))
+    finally:
+        try:
+            if agent and hasattr(agent, "runtime") and agent.runtime.current_state == AgentState.ACTIVE:
+                agent.runtime.transition(AgentState.IDLE)
+        finally:
+            await app.state.run_manager.clear_active_if_match(thread_id, run_id)
+
 
 
 @app.post("/api/threads/{thread_id}/runs")
@@ -1271,145 +1420,36 @@ async def run_thread(thread_id: str, payload: RunRequest) -> EventSourceResponse
     agent = await _get_or_create_agent(app, sandbox_type, thread_id=thread_id)
     lock = await _get_thread_lock(app, thread_id)
     async with lock:
+        active_run_id = await app.state.run_manager.get_active_run_id(thread_id)
+        if active_run_id:
+            raise HTTPException(status_code=409, detail=f"Thread is already running (run_id={active_run_id})")
         if hasattr(agent, "runtime") and not agent.runtime.transition(AgentState.ACTIVE):
             # Transition can fail for reasons other than "already running" (e.g. error/terminated states).
             state = getattr(getattr(agent, "runtime", None), "current_state", None)
             if state == AgentState.ACTIVE:
                 raise HTTPException(status_code=409, detail="Thread is already running")
             raise HTTPException(status_code=409, detail=f"Thread cannot start run from state={getattr(state, 'value', state)}")
+        record = await app.state.run_manager.start_run(thread_id)
+        task = asyncio.create_task(_execute_run_to_log(thread_id, agent, record.run_id, payload.message, record))
+        await app.state.run_manager.set_task(record.run_id, task)
 
-    async def event_stream() -> AsyncGenerator[dict[str, str], None]:
-        try:
-            config = {"configurable": {"thread_id": thread_id}}
-            set_current_thread_id(thread_id)
+    return EventSourceResponse(app.state.run_manager.stream_sse(thread_id, record.run_id, cursor=0))
 
-            # @@@ Streaming parser mirrors TUI runner chunk semantics so web and CLI stay consistent.
-            # Prime session before tool calls so lazy capability wrappers never race thread context propagation.
-            if hasattr(agent, "_sandbox"):
 
-                def _prime_sandbox() -> None:
-                    mgr = agent._sandbox.manager
-                    mgr.enforce_idle_timeouts()
-                    terminal = mgr.terminal_store.get_active(thread_id)
-                    existing = mgr.session_manager.get(thread_id, terminal.terminal_id) if terminal else None
-                    if existing and existing.status == "paused":
-                        if not agent._sandbox.resume_thread(thread_id):
-                            raise RuntimeError(f"Failed to resume paused session for thread {thread_id}")
-                    agent._sandbox.ensure_session(thread_id)
-                    terminal = mgr.terminal_store.get_active(thread_id)
-                    lease = mgr.lease_store.get(terminal.lease_id) if terminal else None
-                    if lease:
-                        lease_status = lease.refresh_instance_status(mgr.provider)
-                        if lease_status == "paused" and mgr.provider_capability.can_resume:
-                            if not agent._sandbox.resume_thread(thread_id):
-                                raise RuntimeError(f"Failed to auto-resume paused sandbox for thread {thread_id}")
+@app.post("/api/threads/{thread_id}/runs/{run_id}/join")
+async def join_run_stream(thread_id: str, run_id: str, request: Request, cursor: int = Query(0)) -> EventSourceResponse:
+    last = _parse_last_event_id(request)
+    start = last if last else cursor
+    return EventSourceResponse(app.state.run_manager.stream_sse(thread_id, run_id, cursor=start))
 
-                await asyncio.to_thread(_prime_sandbox)
 
-            emitted_tool_call_ids: set[str] = set()
-
-            async for chunk in agent.agent.astream(
-                {"messages": [{"role": "user", "content": payload.message}]},
-                config=config,
-                stream_mode=["messages", "updates"],
-            ):
-                if not chunk:
-                    continue
-
-                # stream_mode=["messages", "updates"] yields tuples: (mode, data)
-                if not isinstance(chunk, tuple) or len(chunk) != 2:
-                    continue
-                mode, data = chunk
-
-                # --- Token-level streaming from "messages" mode ---
-                if mode == "messages":
-                    msg_chunk, metadata = data
-                    msg_class = msg_chunk.__class__.__name__
-                    # Only stream AIMessageChunk tokens (not ToolMessage, HumanMessage, etc.)
-                    if msg_class == "AIMessageChunk":
-                        content = _extract_text_content(getattr(msg_chunk, "content", ""))
-                        if content:
-                            yield {
-                                "event": "text",
-                                "data": json.dumps({"content": content}, ensure_ascii=False),
-                            }
-
-                # --- Node-level updates from "updates" mode ---
-                elif mode == "updates":
-                    for msg in _iter_update_messages(data):
-                        msg_class = msg.__class__.__name__
-                        if msg_class == "AIMessage":
-                            for tc in getattr(msg, "tool_calls", []):
-                                tc_id = tc.get("id")
-                                if tc_id and tc_id in emitted_tool_call_ids:
-                                    continue
-                                if tc_id:
-                                    emitted_tool_call_ids.add(tc_id)
-                                yield {
-                                    "event": "tool_call",
-                                    "data": json.dumps(
-                                        {
-                                            "id": tc.get("id"),
-                                            "name": tc.get("name", "unknown"),
-                                            "args": tc.get("args", {}),
-                                        },
-                                        ensure_ascii=False,
-                                    ),
-                                }
-                            continue
-                        if msg_class != "ToolMessage":
-                            continue
-                        yield {
-                            "event": "tool_result",
-                            "data": json.dumps(
-                                {
-                                    "tool_call_id": getattr(msg, "tool_call_id", None),
-                                    "name": getattr(msg, "name", "unknown"),
-                                    "content": str(getattr(msg, "content", "")),
-                                },
-                                ensure_ascii=False,
-                            ),
-                        }
-                        if hasattr(agent, "runtime"):
-                            status = agent.runtime.get_status_dict()
-                            status["current_tool"] = getattr(msg, "name", None)
-                            yield {
-                                "event": "status",
-                                "data": json.dumps(status, ensure_ascii=False),
-                            }
-
-            # --- Forward sub-agent events ---
-            if hasattr(agent, "runtime"):
-                for tool_call_id, events in agent.runtime.get_pending_subagent_events():
-                    for event in events:
-                        # Parse event data and add parent_tool_call_id
-                        event_type = event.get("event", "")
-                        event_data = json.loads(event.get("data", "{}"))
-                        event_data["parent_tool_call_id"] = tool_call_id
-
-                        # Emit with subagent_ prefix
-                        yield {
-                            "event": f"subagent_{event_type}",
-                            "data": json.dumps(event_data, ensure_ascii=False),
-                        }
-
-            # Final status before done
-            if hasattr(agent, "runtime"):
-                yield {
-                    "event": "status",
-                    "data": json.dumps(agent.runtime.get_status_dict(), ensure_ascii=False),
-                }
-            yield {"event": "done", "data": json.dumps({"thread_id": thread_id})}
-        except Exception as e:
-            import traceback
-
-            traceback.print_exc()
-            yield {"event": "error", "data": json.dumps({"error": str(e)}, ensure_ascii=False)}
-        finally:
-            if agent and hasattr(agent, "runtime") and agent.runtime.current_state == AgentState.ACTIVE:
-                agent.runtime.transition(AgentState.IDLE)
-
-    return EventSourceResponse(event_stream())
+@app.post("/api/threads/{thread_id}/runs/{run_id}/cancel")
+async def cancel_run(thread_id: str, run_id: str) -> dict[str, Any]:
+    try:
+        await app.state.run_manager.cancel(thread_id, run_id)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    return {"ok": True, "thread_id": thread_id, "run_id": run_id}
 
 
 class TaskAgentRequest(BaseModel):

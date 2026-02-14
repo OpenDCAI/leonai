@@ -176,6 +176,8 @@ export interface StreamStatus {
   tokens: { total_tokens: number; input_tokens: number; output_tokens: number; cost: number };
   context: { message_count: number; estimated_tokens: number; usage_percent: number; near_limit: boolean };
   current_tool?: string;
+  active_run_id?: string | null;
+  active_run_cursor?: number;
 }
 
 export interface ChatSettings {
@@ -516,6 +518,58 @@ export async function getThreadRuntime(threadId: string): Promise<StreamStatus> 
   return request(`/api/threads/${encodeURIComponent(threadId)}/runtime`);
 }
 
+export async function joinRun(
+  threadId: string,
+  runId: string,
+  onEvent: (event: StreamEvent) => void,
+  signal?: AbortSignal,
+  cursor: number = 0,
+): Promise<void> {
+  const response = await fetch(
+    `/api/threads/${encodeURIComponent(threadId)}/runs/${encodeURIComponent(runId)}/join?cursor=${encodeURIComponent(String(cursor))}`,
+    { method: "POST", signal },
+  );
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`Join failed ${response.status}: ${body || response.statusText}`);
+  }
+  if (!response.body) {
+    throw new Error("Join response has no body stream");
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    const decoded = decoder.decode(value, { stream: true });
+    buffer += decoded;
+    const chunks = buffer.split(/\r?\n\r?\n/);
+    buffer = chunks.pop() ?? "";
+    for (const chunk of chunks) {
+      if (!chunk.trim()) continue;
+      let eventType = "text";
+      const dataLines: string[] = [];
+      for (const line of chunk.split("\n")) {
+        if (line.startsWith("event:")) {
+          eventType = line.slice(6).trim();
+        } else if (line.startsWith("data:")) {
+          dataLines.push(line.slice(5).trim());
+        }
+      }
+      if (dataLines.length === 0) continue; // ignore keepalive comments like ": ping ..."
+      const dataRaw = dataLines.join("\n");
+      onEvent({ type: normalizeStreamType(eventType), data: tryParse(dataRaw) });
+    }
+  }
+}
+
+export async function cancelRun(threadId: string, runId: string): Promise<void> {
+  await request(`/api/threads/${encodeURIComponent(threadId)}/runs/${encodeURIComponent(runId)}/cancel`, { method: "POST" });
+}
+
 export async function steerThread(threadId: string, message: string): Promise<void> {
   await request(`/api/threads/${encodeURIComponent(threadId)}/steer`, {
     method: "POST",
@@ -602,6 +656,7 @@ export async function startRun(threadId: string, message: string, onEvent: (even
           dataLines.push(line.slice(5).trim());
         }
       }
+      if (dataLines.length === 0) continue; // ignore keepalive comments like ": ping ..."
       const dataRaw = dataLines.join("\n");
       onEvent({ type: normalizeStreamType(eventType), data: tryParse(dataRaw) });
     }
