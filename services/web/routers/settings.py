@@ -17,6 +17,10 @@ class UserSettings(BaseModel):
     recent_workspaces: list[str] = []
 
 
+class WorkspaceRequest(BaseModel):
+    workspace: str
+
+
 class DirectoryItem(BaseModel):
     name: str
     path: str
@@ -80,14 +84,12 @@ async def browse_filesystem(path: str = Query(default="~")) -> dict[str, Any]:
 
 
 @router.post("/workspace")
-async def set_default_workspace(workspace: str) -> dict[str, Any]:
+async def set_default_workspace(request: WorkspaceRequest) -> dict[str, Any]:
     """Set default workspace path."""
     # Validate path exists
-    workspace_path = Path(workspace).expanduser().resolve()
+    workspace_path = Path(request.workspace).expanduser().resolve()
     if not workspace_path.exists():
-        raise HTTPException(status_code=400, detail="Workspace path does not exist")
-
-    if not workspace_path.is_dir():
+        raise HTTPException(status_code=400, detail="Workspace path does not exist") not workspace_path.is_dir():
         raise HTTPException(status_code=400, detail="Workspace path is not a directory")
 
     settings = load_settings()
@@ -105,63 +107,9 @@ async def set_default_workspace(workspace: str) -> dict[str, Any]:
 
 
 @router.post("/workspace/recent")
-async def add_recent_workspace(workspace: str) -> dict[str, Any]:
+async def add_recent_workspace(request: WorkspaceRequest) -> dict[str, Any]:
     """Add a workspace to recent list."""
-    workspace_path = Path(workspace).expanduser().resolve()
-    if not workspace_path.exists() or not workspace_path.is_dir():
-        raise HTTPException(status_code=400, detail="Invalid workspace path")
-
-    settings = load_settings()
-    workspace_str = str(workspace_path)
-
-    if workspace_str in settings.recent_workspaces:
-        settings.recent_workspaces.remove(workspace_str)
-    settings.recent_workspaces.insert(0, workspace_str)
-    settings.recent_workspaces = settings.recent_workspaces[:5]
-
-    save_settings(settings)
-    return {"success": True}
-
-    SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
-        json.dump(settings.model_dump(), f, indent=2, ensure_ascii=False)
-
-
-@router.get("")
-async def get_settings() -> UserSettings:
-    """Get user settings."""
-    return load_settings()
-
-
-@router.post("/workspace")
-async def set_default_workspace(workspace: str) -> dict[str, Any]:
-    """Set default workspace path."""
-    # Validate path exists
-    workspace_path = Path(workspace).expanduser().resolve()
-    if not workspace_path.exists():
-        raise HTTPException(status_code=400, detail="Workspace path does not exist")
-
-    if not workspace_path.is_dir():
-        raise HTTPException(status_code=400, detail="Workspace path is not a directory")
-
-    settings = load_settings()
-    settings.default_workspace = str(workspace_path)
-
-    # Add to recent workspaces
-    workspace_str = str(workspace_path)
-    if workspace_str in settings.recent_workspaces:
-        settings.recent_workspaces.remove(workspace_str)
-    settings.recent_workspaces.insert(0, workspace_str)
-    settings.recent_workspaces = settings.recent_workspaces[:5]  # Keep only 5 recent
-
-    save_settings(settings)
-    return {"success": True, "workspace": workspace_str}
-
-
-@router.post("/workspace/recent")
-async def add_recent_workspace(workspace: str) -> dict[str, Any]:
-    """Add a workspace to recent list."""
-    workspace_path = Path(workspace).expanduser().resolve()
+    workspace_path = Path(request.workspace).expanduser().resolve()
     if not workspace_path.exists() or not workspace_path.is_dir():
         raise HTTPException(status_code=400, detail="Invalid workspace path")
 
