@@ -325,9 +325,10 @@ async def lifespan(app: FastAPI):
     app.state.thread_locks: dict[str, asyncio.Lock] = {}
     app.state.thread_locks_guard = asyncio.Lock()
     app.state.idle_reaper_task: asyncio.Task | None = None
-    app.state.run_manager = RunManager()
+    app.state.run_manager = RunManager(db_path=DB_PATH)
 
     try:
+        await app.state.run_manager.ensure_schema()
         app.state.idle_reaper_task = asyncio.create_task(_idle_reaper_loop(app))
         yield
     finally:
@@ -1258,16 +1259,65 @@ async def get_thread_queue_mode(thread_id: str) -> dict[str, Any]:
 
 @app.get("/api/threads/{thread_id}/runtime")
 async def get_thread_runtime(thread_id: str) -> dict[str, Any]:
-    sandbox_type = _resolve_thread_sandbox(app, thread_id)
-    agent = await _get_or_create_agent(app, sandbox_type, thread_id=thread_id)
-    if not hasattr(agent, "runtime"):
-        raise HTTPException(status_code=404, detail="Agent has no runtime monitor")
-    status = agent.runtime.get_status_dict()
     active_run_id = await app.state.run_manager.get_active_run_id(thread_id)
-    status["active_run_id"] = active_run_id
+
+    # Keep this endpoint read-only: never create a new agent/sandbox session as a side-effect.
+    # In multi-worker deployments, creating an agent in the "wrong" worker causes refresh to lose
+    # the active run and can leak duplicate sessions.
+    def _minimal_status(state: str) -> dict[str, Any]:
+        now = datetime.now().isoformat()
+        return {
+            "state": {
+                "state": state,
+                "flags": {"streaming": False, "compacting": False, "waiting": False, "blocked": False, "error": False},
+                "error": {"type": None, "message": None, "at": None},
+                "uptime_seconds": 0.0,
+                "last_activity": now,
+            },
+            "tokens": {
+                "total_tokens": 0,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "reasoning_tokens": 0,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "call_count": 0,
+                "cost": 0.0,
+            },
+            "context": {
+                "message_count": 0,
+                "estimated_tokens": 0,
+                "context_limit": 100000,
+                "usage_percent": 0.0,
+                "near_limit": False,
+            },
+        }
+
     if active_run_id:
-        rec = await app.state.run_manager.get_run(thread_id, active_run_id)
-        status["active_run_cursor"] = rec.last_seq if rec else 0
+        status = await app.state.run_manager.get_last_status(thread_id, active_run_id)
+        if not status:
+            status = _minimal_status("active")
+        status["active_run_id"] = active_run_id
+        status["active_run_cursor"] = await app.state.run_manager.get_run_cursor(thread_id, active_run_id)
+        return status
+
+    # No active run. Use resident agent status if present in this process.
+    agent = None
+    prefix = f"{thread_id}:"
+    for key, pooled in app.state.agent_pool.items():
+        if key.startswith(prefix):
+            agent = pooled
+            break
+
+    if agent and hasattr(agent, "runtime"):
+        status = agent.runtime.get_status_dict()
+    else:
+        status = _minimal_status("idle")
+
+    status["active_run_id"] = None
+    status["active_run_cursor"] = 0
     return status
 
 
@@ -1329,6 +1379,8 @@ async def _execute_run_to_log(thread_id: str, agent: Any, run_id: str, message: 
             config=config,
             stream_mode=["messages", "updates"],
         ):
+            if await app.state.run_manager.is_cancel_requested(thread_id, run_id):
+                raise asyncio.CancelledError()
             if not chunk:
                 continue
             if not isinstance(chunk, tuple) or len(chunk) != 2:
