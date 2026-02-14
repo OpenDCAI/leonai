@@ -58,6 +58,7 @@ import SearchModal from "./components/SearchModal";
 import Sidebar from "./components/Sidebar";
 import TaskProgress from "./components/TaskProgress";
 import {
+  cancelRun,
   createThread,
   deleteThread,
   getThread,
@@ -200,6 +201,7 @@ export default function App() {
       const abortController = new AbortController();
       abortControllerRef.current = abortController;
 
+      let aborted = false;
       try {
         await startRun(threadId, message, (event) => {
           if (event.type === "text") {
@@ -248,8 +250,40 @@ export default function App() {
 
           if (event.type === "tool_result") {
             const payload = (event.data ?? {}) as { content?: string; tool_call_id?: string; name?: string };
-            setEntries((prev) =>
-              prev.map((e) => {
+
+            // Ensure "calling" state is visible for at least 200ms before showing result
+            const updateResult = () => {
+              setEntries((prev) =>
+                prev.map((e) => {
+                  if (e.id !== turnId || e.role !== "assistant") return e;
+                  const turn = e as AssistantTurn;
+                  const updatedSegs = turn.segments.map((s) => {
+                    if (s.type !== "tool" || s.step.id !== payload.tool_call_id) return s;
+                    return { ...s, step: { ...s.step, result: payload.content ?? "", status: "done" as const } };
+                  });
+                  return { ...turn, segments: updatedSegs };
+                })
+              );
+            };
+
+            // Check if tool call was just created (within last 200ms)
+            setEntries((prev) => {
+              const turn = prev.find((e) => e.id === turnId && e.role === "assistant") as AssistantTurn | undefined;
+              if (turn) {
+                const toolSeg = turn.segments.find(
+                  (s) => s.type === "tool" && s.step.id === payload.tool_call_id,
+                ) as ToolSegment | undefined;
+                if (toolSeg) {
+                  const elapsed = Date.now() - toolSeg.step.timestamp;
+                  if (elapsed < 200) {
+          // Delay the result update to ensure "calling" state is visible
+                    setTimeout(updateResult, 200 - elapsed);
+                    return prev; // Don't update yet
+                  }
+                }
+              }
+              // Tool call is old enough, update immediately
+              return prev.map((e) => {
                 if (e.id !== turnId || e.role !== "assistant") return e;
                 const turn = e as AssistantTurn;
                 const updatedSegs = turn.segments.map((s) => {
@@ -257,8 +291,8 @@ export default function App() {
                   return { ...s, step: { ...s.step, result: payload.content ?? "", status: "done" as const } };
                 });
                 return { ...turn, segments: updatedSegs };
-              }),
-            );
+              });
+            });
             return;
           }
 
@@ -277,6 +311,36 @@ export default function App() {
                 const segs = [...turn.segments];
                 segs.push({ type: "text", content: `\n\nError: ${text}` });
                 return { ...turn, segments: segs };
+              }),
+            );
+          }
+
+          if (event.type === "cancelled") {
+            setIsStreaming(false);
+            // Mark cancelled tool calls
+            const cancelledToolCallIds = (event.data as any)?.cancelled_tool_call_ids || [];
+
+            setEntries((prev) =>
+              prev.map((e) => {
+                if (e.id !== turnId || e.role !== "assistant") return e;
+                const turn = e as AssistantTurn;
+                const updatedSegs = turn.segments.map((seg) => {
+                  if (seg.type === "tool") {
+                    const step = seg.step;
+                    if (cancelledToolCallIds.includes(step.id)) {
+                      return {
+                        ...seg,
+                        step: {
+                          ...step,
+                          status: "cancelled" as const,
+                          result: "任务被用户取消",
+                        },
+                      };
+                    }
+                  }
+                  return seg;
+                });
+                return { ...turn, segments: updatedSegs };
               }),
             );
           }
@@ -340,15 +404,8 @@ export default function App() {
       } catch (error) {
         // Handle abort
         if (error instanceof Error && error.name === "AbortError") {
-          setEntries((prev) =>
-            prev.map((e) => {
-              if (e.id !== turnId || e.role !== "assistant") return e;
-              const turn = e as AssistantTurn;
-              const segs = [...turn.segments];
-              segs.push({ type: "text", content: "\n\n_[已停止]_" });
-              return { ...turn, segments: segs };
-            }),
-          );
+          aborted = true;
+          // Just stop streaming, keep existing content as-is
         } else {
           throw error;
         }
@@ -356,18 +413,32 @@ export default function App() {
         abortControllerRef.current = null;
         setIsStreaming(false);
         setStreamTurnId(null);
-        await loadThread(threadId);
+        if (!aborted) {
+          await loadThread(threadId);
+        }
         await refreshThreads();
       }
     },
     [activeThreadId, loadThread, refreshThreads, selectedSandbox],
   );
 
-  const handleStopStreaming = useCallback(() => {
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
+  const handleStopStreaming = useCallback(async () => {
+    // 1. Notify backend to cancel the run (do this first so backend stops before we abort)
+    if (activeThreadId) {
+      try {
+        await cancelRun(activeThreadId);
+      } catch (e) {
+        console.error("Failed to cancel run:", e);
+      }
     }
-  }, []);
+
+    // 2. Delay abort to give backend time to send the cancelled event
+    setTimeout(() => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    }, 500);
+  }, [activeThreadId]);
 
   const handlePauseSandbox = useCallback(async () => {
     if (!activeThreadId) return;
