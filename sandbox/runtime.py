@@ -964,13 +964,13 @@ class DaytonaSessionRuntime(_RemoteRuntimeBase):
         return ExecuteResult(exit_code=exit_code, stdout=stdout, stderr="")
 
     def _sync_terminal_state_snapshot_sync(self, timeout: float | None = None) -> None:
-        if self._pty_handle is None:
-            raise RuntimeError("Daytona PTY handle missing for snapshot")
+        # Snapshot must be able to run after infra recovery (PTY re-created), so always ensure a handle.
+        handle = self._ensure_session_sync(timeout)
         state = self.terminal.get_state()
         start_marker = f"__LEON_STATE_START_{uuid.uuid4().hex[:8]}__"
         end_marker = f"__LEON_STATE_END_{uuid.uuid4().hex[:8]}__"
         snapshot_out, _, _ = self._run_pty_command_sync(
-            self._pty_handle,
+            handle,
             "\n".join([f"echo {shlex.quote(start_marker)}", "pwd", "env", f"echo {shlex.quote(end_marker)}"]),
             timeout,
         )
@@ -995,7 +995,20 @@ class DaytonaSessionRuntime(_RemoteRuntimeBase):
             try:
                 await asyncio.to_thread(self._sync_terminal_state_snapshot_sync, timeout)
             except Exception as exc:
-                self._snapshot_error = str(exc)
+                message = str(exc)
+                if self._looks_like_infra_error(message):
+                    # @@@daytona-snapshot-retry - Snapshot can fail due to stale PTY websocket even if sandbox is running.
+                    # Refresh infra truth once, re-create PTY, and retry exactly once.
+                    try:
+                        self._recover_infra()
+                        self._close_shell_sync()
+                        await asyncio.to_thread(self._sync_terminal_state_snapshot_sync, timeout)
+                        self._snapshot_error = None
+                        return
+                    except Exception as retry_exc:
+                        self._snapshot_error = str(retry_exc)
+                        return
+                self._snapshot_error = message
 
     def _schedule_snapshot(self, generation: int, timeout: float | None) -> None:
         if self._snapshot_task and not self._snapshot_task.done():
@@ -1010,7 +1023,21 @@ class DaytonaSessionRuntime(_RemoteRuntimeBase):
     ) -> ExecuteResult:
         async with self._session_lock:
             if self._snapshot_error:
-                return ExecuteResult(exit_code=1, stdout="", stderr=f"Error: snapshot failed: {self._snapshot_error}")
+                if self._looks_like_infra_error(self._snapshot_error):
+                    # @@@daytona-snapshot-recover - Do not wedge the terminal forever on a transient snapshot failure.
+                    # Attempt infra recovery once, then proceed (a fresh snapshot will be scheduled after this command).
+                    try:
+                        self._recover_infra()
+                        self._close_shell_sync()
+                        self._snapshot_error = None
+                    except Exception as exc:
+                        return ExecuteResult(
+                            exit_code=1,
+                            stdout="",
+                            stderr=f"Error: snapshot failed: {exc}",
+                        )
+                else:
+                    return ExecuteResult(exit_code=1, stdout="", stderr=f"Error: snapshot failed: {self._snapshot_error}")
             try:
                 first = await asyncio.to_thread(self._execute_once_sync, command, timeout, on_stdout_chunk)
             except TimeoutError:
@@ -1037,7 +1064,9 @@ class DaytonaSessionRuntime(_RemoteRuntimeBase):
             generation = self._snapshot_generation
 
         # @@@daytona-async-snapshot - state sync runs in background so command result streaming is not blocked.
-        self._schedule_snapshot(generation, timeout)
+        # @@@daytona-snapshot-timeout - Snapshot reads full env; don't inherit overly aggressive user timeouts.
+        snapshot_timeout = None if timeout is None else max(float(timeout), 10.0)
+        self._schedule_snapshot(generation, snapshot_timeout)
         return first
 
     async def execute(self, command: str, timeout: float | None = None) -> ExecuteResult:
