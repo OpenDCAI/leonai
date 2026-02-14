@@ -303,6 +303,12 @@ export default function App() {
     void loadThread(activeThreadId);
   }, [activeThreadId, loadThread]);
 
+  useEffect(() => {
+    if (activeThreadId) {
+      localStorage.setItem(LAST_THREAD_KEY, activeThreadId);
+    }
+  }, [activeThreadId]);
+
   const attachToRun = useCallback(
     async (threadId: string, runId: string) => {
       if (isStreaming) return;
