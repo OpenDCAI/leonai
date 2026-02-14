@@ -2,10 +2,6 @@ import sys
 from pathlib import Path
 from unittest.mock import MagicMock
 
-import pytest
-
-pytest.importorskip("fastapi")
-
 from fastapi.testclient import TestClient
 
 from sandbox.lease import LeaseStore

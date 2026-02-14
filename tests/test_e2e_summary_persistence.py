@@ -9,18 +9,11 @@ fresh agents for each test phase.
 """
 
 from pathlib import Path
-import os
 
 import pytest
 
 from agent import create_leon_agent
 from sandbox.thread_context import set_current_thread_id
-
-
-pytestmark = pytest.mark.skipif(
-    os.getenv("RUN_REAL_LLM_TESTS") != "1",
-    reason="requires real LLM endpoint and credentials",
-)
 
 
 @pytest.fixture

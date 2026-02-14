@@ -56,11 +56,8 @@ def print_info(msg: str):
     print(f"{Colors.YELLOW}ℹ️  {msg}{Colors.RESET}")
 
 
-def test_multiround_persistence(tmp_path, monkeypatch):
+def test_multiround_persistence():
     """真实多轮对话测试"""
-    monkeypatch.setenv("LEON_DB_PATH", str(tmp_path / "leon.db"))
-    monkeypatch.setenv("LEON_SANDBOX_DB_PATH", str(tmp_path / "sandbox.db"))
-
     print(f"\n{Colors.BOLD}{Colors.BLUE}{'=' * 70}")
     print("真实多轮对话测试 - Bash Session 持久化")
     print(f"{'=' * 70}{Colors.RESET}\n")
