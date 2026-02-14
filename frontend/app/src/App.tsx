@@ -115,6 +115,7 @@ export default function App() {
 
   // Track the current streaming assistant turn id for appending
   const [streamTurnId, setStreamTurnId] = useState<string | null>(null);
+  const [streamEntry, setStreamEntry] = useState<AssistantTurn | null>(null);
 
   // AbortController for stopping streaming
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -126,20 +127,17 @@ export default function App() {
         const payload = event.data as { content?: string } | string | undefined;
         const chunk = typeof payload === "string" ? payload : payload?.content ?? "";
         flushSync(() => {
-          setEntries((prev) =>
-            prev.map((e) => {
-              if (e.id !== turnId || e.role !== "assistant") return e;
-              const turn = e as AssistantTurn;
-              const segs = [...turn.segments];
-              const last = segs[segs.length - 1];
-              if (last && last.type === "text") {
-                segs[segs.length - 1] = { type: "text", content: last.content + chunk };
-              } else {
-                segs.push({ type: "text", content: chunk });
-              }
-              return { ...turn, segments: segs };
-            }),
-          );
+          setStreamEntry((prev) => {
+            if (!prev || prev.id !== turnId) return prev;
+            const segs = [...prev.segments];
+            const last = segs[segs.length - 1];
+            if (last && last.type === "text") {
+              segs[segs.length - 1] = { type: "text", content: last.content + chunk };
+            } else {
+              segs.push({ type: "text", content: chunk });
+            }
+            return { ...prev, segments: segs };
+          });
         });
         return;
       }
@@ -156,29 +154,39 @@ export default function App() {
             timestamp: Date.now(),
           },
         };
-        setEntries((prev) =>
-          prev.map((e) =>
-            e.id === turnId && e.role === "assistant"
-              ? { ...e, segments: [...(e as AssistantTurn).segments, seg] }
-              : e,
-          ),
-        );
+        setStreamEntry((prev) => {
+          if (!prev || prev.id !== turnId) return prev;
+          return { ...prev, segments: [...prev.segments, seg] };
+        });
         return;
       }
 
       if (event.type === "tool_result") {
         const payload = (event.data ?? {}) as { content?: string; tool_call_id?: string; name?: string };
-        setEntries((prev) =>
-          prev.map((e) => {
-            if (e.id !== turnId || e.role !== "assistant") return e;
-            const turn = e as AssistantTurn;
-            const updatedSegs = turn.segments.map((s) => {
-              if (s.type !== "tool" || s.step.id !== payload.tool_call_id) return s;
-              return { ...s, step: { ...s.step, result: payload.content ?? "", status: "done" as const } };
+        setStreamEntry((prev) => {
+          if (!prev || prev.id !== turnId) return prev;
+          let matched = false;
+          const updatedSegs = prev.segments.map((s) => {
+            if (s.type !== "tool" || s.step.id !== payload.tool_call_id) return s;
+            matched = true;
+            return { ...s, step: { ...s.step, result: payload.content ?? "", status: "done" as const } };
+          });
+          if (!matched && payload.tool_call_id) {
+            // Best-effort: if we missed the tool_call event, still surface the result.
+            updatedSegs.push({
+              type: "tool",
+              step: {
+                id: payload.tool_call_id,
+                name: payload.name ?? "tool",
+                args: {},
+                status: "done",
+                result: payload.content ?? "",
+                timestamp: Date.now(),
+              },
             });
-            return { ...turn, segments: updatedSegs };
-          }),
-        );
+          }
+          return { ...prev, segments: updatedSegs };
+        });
         return;
       }
 
@@ -193,15 +201,10 @@ export default function App() {
 
       if (event.type === "error") {
         const text = typeof event.data === "string" ? event.data : JSON.stringify(event.data ?? "Unknown error");
-        setEntries((prev) =>
-          prev.map((e) => {
-            if (e.id !== turnId || e.role !== "assistant") return e;
-            const turn = e as AssistantTurn;
-            const segs = [...turn.segments];
-            segs.push({ type: "text", content: `\n\nError: ${text}` });
-            return { ...turn, segments: segs };
-          }),
-        );
+        setStreamEntry((prev) => {
+          if (!prev || prev.id !== turnId) return prev;
+          return { ...prev, segments: [...prev.segments, { type: "text", content: `\n\nError: ${text}` }] };
+        });
       }
 
       // Handle sub-agent events
@@ -211,53 +214,50 @@ export default function App() {
 
         if (!parentToolCallId) return;
 
-        setEntries((prev) =>
-          prev.map((e) => {
-            if (e.id !== turnId || e.role !== "assistant") return e;
-            const turn = e as AssistantTurn;
-            const updatedSegs = turn.segments.map((s) => {
-              if (s.type !== "tool" || s.step.id !== parentToolCallId) return s;
+        setStreamEntry((prev) => {
+          if (!prev || prev.id !== turnId) return prev;
+          const updatedSegs = prev.segments.map((s) => {
+            if (s.type !== "tool" || s.step.id !== parentToolCallId) return s;
 
-              const step = s.step;
-              if (!step.subagent_stream) {
-                step.subagent_stream = {
-                  task_id: "",
-                  thread_id: "",
-                  text: "",
-                  tool_calls: [],
-                  status: "running",
-                };
-              }
+            const step = s.step;
+            if (!step.subagent_stream) {
+              step.subagent_stream = {
+                task_id: "",
+                thread_id: "",
+                text: "",
+                tool_calls: [],
+                status: "running",
+              };
+            }
 
-              const stream = step.subagent_stream;
+            const stream = step.subagent_stream;
 
-              if (event.type === "subagent_task_start") {
-                stream.task_id = typeof data["task_id"] === "string" ? (data["task_id"] as string) : "";
-                stream.thread_id = typeof data["thread_id"] === "string" ? (data["thread_id"] as string) : "";
-                stream.status = "running";
-              } else if (event.type === "subagent_task_text") {
-                stream.text += typeof data["content"] === "string" ? (data["content"] as string) : "";
-              } else if (event.type === "subagent_task_tool_call") {
-                stream.tool_calls.push({
-                  id: typeof data["tool_call_id"] === "string" ? (data["tool_call_id"] as string) : "",
-                  name: typeof data["name"] === "string" ? (data["name"] as string) : "",
-                  args: data["args"] ?? {},
-                });
-              } else if (event.type === "subagent_task_done") {
-                stream.status = "completed";
-              } else if (event.type === "subagent_task_error") {
-                stream.status = "error";
-                stream.error = typeof data["error"] === "string" ? (data["error"] as string) : "Unknown error";
-              }
+            if (event.type === "subagent_task_start") {
+              stream.task_id = typeof data["task_id"] === "string" ? (data["task_id"] as string) : "";
+              stream.thread_id = typeof data["thread_id"] === "string" ? (data["thread_id"] as string) : "";
+              stream.status = "running";
+            } else if (event.type === "subagent_task_text") {
+              stream.text += typeof data["content"] === "string" ? (data["content"] as string) : "";
+            } else if (event.type === "subagent_task_tool_call") {
+              stream.tool_calls.push({
+                id: typeof data["tool_call_id"] === "string" ? (data["tool_call_id"] as string) : "",
+                name: typeof data["name"] === "string" ? (data["name"] as string) : "",
+                args: data["args"] ?? {},
+              });
+            } else if (event.type === "subagent_task_done") {
+              stream.status = "completed";
+            } else if (event.type === "subagent_task_error") {
+              stream.status = "error";
+              stream.error = typeof data["error"] === "string" ? (data["error"] as string) : "Unknown error";
+            }
 
-              return { ...s, step: { ...step } };
-            });
-            return { ...turn, segments: updatedSegs };
-          }),
-        );
+            return { ...s, step: { ...step } };
+          });
+          return { ...prev, segments: updatedSegs };
+        });
       }
     },
-    [setEntries],
+    [],
   );
 
   const refreshThreads = useCallback(async () => {
@@ -311,8 +311,8 @@ export default function App() {
         segments: [],
         timestamp: Date.now(),
       };
-      setEntries((prev) => [...prev, assistantTurn]);
       setStreamTurnId(turnId);
+      setStreamEntry(assistantTurn);
       setIsStreaming(true);
 
       const abortController = new AbortController();
@@ -325,6 +325,7 @@ export default function App() {
         attachedRunRef.current = null;
         setIsStreaming(false);
         setStreamTurnId(null);
+        setStreamEntry(null);
         setActiveRunId(null);
         await loadThread(threadId);
         await refreshThreads();
@@ -432,8 +433,9 @@ export default function App() {
         segments: [],
         timestamp: Date.now(),
       };
-      setEntries((prev) => [...prev, userEntry, assistantTurn]);
+      setEntries((prev) => [...prev, userEntry]);
       setStreamTurnId(turnId);
+      setStreamEntry(assistantTurn);
       setIsStreaming(true);
       setRuntimeStatus(null);
       setActiveRunId(null);
@@ -465,6 +467,7 @@ export default function App() {
         abortControllerRef.current = null;
         setIsStreaming(false);
         setStreamTurnId(null);
+        setStreamEntry(null);
         await loadThread(threadId);
         await refreshThreads();
       }
@@ -532,6 +535,8 @@ export default function App() {
     }
   }, [activeThreadId, queueEnabled]);
 
+  const renderedEntries = streamEntry ? [...entries, streamEntry] : entries;
+
   return (
     <div className="h-screen w-screen bg-white flex overflow-hidden">
       <Sidebar
@@ -566,7 +571,7 @@ export default function App() {
                 {sandboxActionError}
               </div>
             )}
-            <ChatArea entries={entries} isStreaming={isStreaming} streamTurnId={streamTurnId} runtimeStatus={runtimeStatus} loading={loading} onFocusAgent={handleFocusAgent} />
+            <ChatArea entries={renderedEntries} isStreaming={isStreaming} streamTurnId={streamTurnId} runtimeStatus={runtimeStatus} loading={loading} onFocusAgent={handleFocusAgent} />
             {activeThreadId && (
               <TaskProgress
                 isStreaming={isStreaming}
@@ -596,7 +601,7 @@ export default function App() {
                 onClose={() => setComputerOpen(false)}
                 threadId={activeThreadId}
                 sandboxType={activeSandbox?.type ?? null}
-                chatEntries={entries}
+                chatEntries={renderedEntries}
                 width={computerResize.width}
                 activeTab={computerTab}
                 onTabChange={setComputerTab}
