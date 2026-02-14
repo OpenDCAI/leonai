@@ -58,27 +58,13 @@ def _available_sandbox_types() -> list[dict[str, Any]]:
     types = [{"name": "local", "available": True}]
     if not SANDBOXES_DIR.exists():
         return types
-    skipped_daytona: list[str] = []
     for f in sorted(SANDBOXES_DIR.glob("*.json")):
         name = f.stem
-        # @@@daytona-single-type - Daytona SaaS vs self-hosted is config-only (daytona.api_url). Do not surface
-        # multiple Daytona config filenames as distinct "sandbox types" in the frontend.
-        if name != "daytona" and name.startswith("daytona"):
-            skipped_daytona.append(name)
-            continue
         try:
             SandboxConfig.load(name)
             types.append({"name": name, "available": True})
         except Exception as e:
             types.append({"name": name, "available": False, "reason": str(e)})
-    if skipped_daytona and not any(t.get("name") == "daytona" for t in types):
-        types.append(
-            {
-                "name": "daytona",
-                "available": False,
-                "reason": f"Found Daytona config(s) {skipped_daytona} but expected ~/.leon/sandboxes/daytona.json",
-            }
-        )
     return types
 
 
@@ -322,6 +308,7 @@ async def lifespan(app: FastAPI):
     app.state.thread_cwd: dict[str, str] = {}
     app.state.thread_locks: dict[str, asyncio.Lock] = {}
     app.state.thread_locks_guard = asyncio.Lock()
+    app.state.thread_tasks: dict[str, asyncio.Task] = {}
     app.state.idle_reaper_task: asyncio.Task | None = None
 
     try:
@@ -377,21 +364,6 @@ def _extract_text_content(raw_content: Any) -> str:
                 parts.append(block)
         return "".join(parts)
     return str(raw_content)
-
-
-def _iter_update_messages(update_payload: Any) -> list[Any]:
-    if not isinstance(update_payload, dict):
-        return []
-    messages: list[Any] = []
-    for node_update in update_payload.values():
-        if not isinstance(node_update, dict):
-            continue
-        node_messages = node_update.get("messages", [])
-        if isinstance(node_messages, list):
-            messages.extend(node_messages)
-            continue
-        messages.append(node_messages)
-    return messages
 
 
 def _serialize_message(msg: Any) -> dict[str, Any]:
@@ -734,7 +706,7 @@ def _mutate_sandbox_session(
         elif action == "resume":
             ok = manager.resume_session(thread_id)
         elif action == "destroy":
-            ok = manager.destroy_thread_resources(thread_id)
+            ok = manager.destroy_session(thread_id)
         else:
             raise RuntimeError(f"Unknown action: {action}")
     else:
@@ -883,8 +855,13 @@ async def ingest_provider_webhook(provider_name: str, payload: dict[str, Any]) -
     manager = managers.get(provider_name)
     if not manager:
         raise HTTPException(503, f"Provider manager unavailable: {provider_name}")
-    # @@@webhook-invalidation-only - Webhooks are freshness invalidation, not authoritative state transitions.
-    await asyncio.to_thread(lease.mark_needs_refresh)
+    await asyncio.to_thread(
+        lease.apply,
+        manager.provider,
+        event_type="observe.status",
+        source="webhook",
+        payload={"status": status_hint, "raw_event_type": event_type},
+    )
     return {
         "ok": True,
         "provider": provider_name,
@@ -892,8 +869,6 @@ async def ingest_provider_webhook(provider_name: str, payload: dict[str, Any]) -
         "event_type": event_type,
         "matched": True,
         "lease_id": lease.lease_id,
-        "status_hint": status_hint,
-        "needs_refresh": True,
     }
 
 
@@ -950,27 +925,13 @@ async def get_thread_session_status(thread_id: str) -> dict[str, Any]:
     """Get ChatSession status for a thread."""
     agent = await _get_thread_agent(thread_id)
 
-    def _get_session_and_terminal():
+    def _get_session():
         mgr = agent._sandbox.manager
-        terminal = mgr.terminal_store.get_active(thread_id)
-        if not terminal:
-            return None, None
-        session = mgr.session_manager.get(thread_id, terminal.terminal_id)
-        return session, terminal
+        return mgr.session_manager.get(thread_id)
 
-    session, terminal = await asyncio.to_thread(_get_session_and_terminal)
-    if not terminal:
-        raise HTTPException(404, f"No session found for thread {thread_id}")
+    session = await asyncio.to_thread(_get_session)
     if not session:
-        return {
-            "thread_id": thread_id,
-            "session_id": None,
-            "terminal_id": terminal.terminal_id,
-            "status": "inactive",
-            "started_at": None,
-            "last_active_at": None,
-            "expires_at": None,
-        }
+        raise HTTPException(404, f"No session found for thread {thread_id}")
     expires_by_idle = session.last_active_at + timedelta(seconds=session.policy.idle_ttl_sec)
     expires_by_duration = session.started_at + timedelta(seconds=session.policy.max_duration_sec)
     expires_at = min(expires_by_idle, expires_by_duration)
@@ -993,7 +954,7 @@ async def get_thread_terminal_status(thread_id: str) -> dict[str, Any]:
 
     def _get_terminal():
         mgr = agent._sandbox.manager
-        return mgr.terminal_store.get_active(thread_id)
+        return mgr.terminal_store.get(thread_id)
 
     terminal = await asyncio.to_thread(_get_terminal)
     if not terminal:
@@ -1020,7 +981,7 @@ async def get_thread_lease_status(thread_id: str) -> dict[str, Any]:
 
     def _get_lease():
         mgr = agent._sandbox.manager
-        terminal = mgr.terminal_store.get_active(thread_id)
+        terminal = mgr.terminal_store.get(thread_id)
         if not terminal:
             return None
         lease = mgr.lease_store.get(terminal.lease_id)
@@ -1165,8 +1126,8 @@ async def get_thread_messages(thread_id: str) -> dict[str, Any]:
     if hasattr(agent, "_sandbox"):
         try:
             mgr = agent._sandbox.manager
-            terminal = mgr.terminal_store.get_active(thread_id)
-            session = mgr.session_manager.get(thread_id, terminal.terminal_id) if terminal else None
+            session = mgr.session_manager.get(thread_id)
+            terminal = mgr.terminal_store.get(thread_id)
             if session:
                 sandbox_info["session_id"] = session.session_id
             if terminal:
@@ -1272,13 +1233,11 @@ async def run_thread(thread_id: str, payload: RunRequest) -> EventSourceResponse
     lock = await _get_thread_lock(app, thread_id)
     async with lock:
         if hasattr(agent, "runtime") and not agent.runtime.transition(AgentState.ACTIVE):
-            # Transition can fail for reasons other than "already running" (e.g. error/terminated states).
-            state = getattr(getattr(agent, "runtime", None), "current_state", None)
-            if state == AgentState.ACTIVE:
-                raise HTTPException(status_code=409, detail="Thread is already running")
-            raise HTTPException(status_code=409, detail=f"Thread cannot start run from state={getattr(state, 'value', state)}")
+            raise HTTPException(status_code=409, detail="Thread is already running")
 
     async def event_stream() -> AsyncGenerator[dict[str, str], None]:
+        task = None
+        stream_gen = None
         try:
             config = {"configurable": {"thread_id": thread_id}}
             set_current_thread_id(thread_id)
@@ -1290,13 +1249,12 @@ async def run_thread(thread_id: str, payload: RunRequest) -> EventSourceResponse
                 def _prime_sandbox() -> None:
                     mgr = agent._sandbox.manager
                     mgr.enforce_idle_timeouts()
-                    terminal = mgr.terminal_store.get_active(thread_id)
-                    existing = mgr.session_manager.get(thread_id, terminal.terminal_id) if terminal else None
+                    existing = mgr.session_manager.get(thread_id)
                     if existing and existing.status == "paused":
                         if not agent._sandbox.resume_thread(thread_id):
                             raise RuntimeError(f"Failed to resume paused session for thread {thread_id}")
                     agent._sandbox.ensure_session(thread_id)
-                    terminal = mgr.terminal_store.get_active(thread_id)
+                    terminal = mgr.terminal_store.get(thread_id)
                     lease = mgr.lease_store.get(terminal.lease_id) if terminal else None
                     if lease:
                         lease_status = lease.refresh_instance_status(mgr.provider)
@@ -1307,12 +1265,38 @@ async def run_thread(thread_id: str, payload: RunRequest) -> EventSourceResponse
                 await asyncio.to_thread(_prime_sandbox)
 
             emitted_tool_call_ids: set[str] = set()
+            pending_tool_calls: dict[str, dict] = {}  # Track in-flight tool calls for cancellation
 
-            async for chunk in agent.agent.astream(
-                {"messages": [{"role": "user", "content": payload.message}]},
-                config=config,
-                stream_mode=["messages", "updates"],
-            ):
+            # Wrap astream in a task for cancellation support
+            async def run_agent_stream():
+                async for chunk in agent.agent.astream(
+                    {"messages": [{"role": "user", "content": payload.message}]},
+                    config=config,
+                    stream_mode=["messages", "updates"],
+                ):
+                    yield chunk
+
+            # Create and track the task
+            stream_gen = run_agent_stream()
+            task = asyncio.create_task(stream_gen.__anext__())
+            app.state.thread_tasks[thread_id] = task
+
+            # Iterate through the stream
+            while True:
+                try:
+                    chunk = await task
+                    # Create next task immediately
+                    task = asyncio.create_task(stream_gen.__anext__())
+                    app.state.thread_tasks[thread_id] = task
+                except StopAsyncIteration:
+                    break
+                except Exception as stream_error:
+                    # Catch errors from the agent stream (e.g., API connection errors)
+                    import traceback
+
+                    traceback.print_exc()
+                    yield {"event": "error", "data": json.dumps({"error": str(stream_error)}, ensure_ascii=False)}
+                    break
                 if not chunk:
                     continue
 
@@ -1336,47 +1320,65 @@ async def run_thread(thread_id: str, payload: RunRequest) -> EventSourceResponse
 
                 # --- Node-level updates from "updates" mode ---
                 elif mode == "updates":
-                    for msg in _iter_update_messages(data):
-                        msg_class = msg.__class__.__name__
-                        if msg_class == "AIMessage":
-                            for tc in getattr(msg, "tool_calls", []):
-                                tc_id = tc.get("id")
-                                if tc_id and tc_id in emitted_tool_call_ids:
-                                    continue
-                                if tc_id:
-                                    emitted_tool_call_ids.add(tc_id)
-                                yield {
-                                    "event": "tool_call",
-                                    "data": json.dumps(
-                                        {
-                                            "id": tc.get("id"),
+                    if not isinstance(data, dict):
+                        continue
+                    for _node_name, node_update in data.items():
+                        if not isinstance(node_update, dict):
+                            continue
+                        messages = node_update.get("messages", [])
+                        if not isinstance(messages, list):
+                            messages = [messages]
+                        for msg in messages:
+                            msg_class = msg.__class__.__name__
+                            # Skip AIMessage text — already streamed token-by-token via "messages" mode
+                            # But still emit tool_calls from updates as a fallback
+                            if msg_class == "AIMessage":
+                                for tc in getattr(msg, "tool_calls", []):
+                                    tc_id = tc.get("id")
+                                    if tc_id and tc_id in emitted_tool_call_ids:
+                                        continue
+                                    if tc_id:
+                                        emitted_tool_call_ids.add(tc_id)
+                                        # Track pending tool call
+                                        pending_tool_calls[tc_id] = {
                                             "name": tc.get("name", "unknown"),
                                             "args": tc.get("args", {}),
+                                        }
+                                    yield {
+                                        "event": "tool_call",
+                                        "data": json.dumps(
+                                            {
+                                                "id": tc.get("id"),
+                                                "name": tc.get("name", "unknown"),
+                                                "args": tc.get("args", {}),
+                                            },
+                                            ensure_ascii=False,
+                                        ),
+                                    }
+                            elif msg_class == "ToolMessage":
+                                tc_id = getattr(msg, "tool_call_id", None)
+                                # Remove from pending when tool completes
+                                if tc_id:
+                                    pending_tool_calls.pop(tc_id, None)
+                                yield {
+                                    "event": "tool_result",
+                                    "data": json.dumps(
+                                        {
+                                            "tool_call_id": tc_id,
+                                            "name": getattr(msg, "name", "unknown"),
+                                            "content": str(getattr(msg, "content", "")),
                                         },
                                         ensure_ascii=False,
                                     ),
                                 }
-                            continue
-                        if msg_class != "ToolMessage":
-                            continue
-                        yield {
-                            "event": "tool_result",
-                            "data": json.dumps(
-                                {
-                                    "tool_call_id": getattr(msg, "tool_call_id", None),
-                                    "name": getattr(msg, "name", "unknown"),
-                                    "content": str(getattr(msg, "content", "")),
-                                },
-                                ensure_ascii=False,
-                            ),
-                        }
-                        if hasattr(agent, "runtime"):
-                            status = agent.runtime.get_status_dict()
-                            status["current_tool"] = getattr(msg, "name", None)
-                            yield {
-                                "event": "status",
-                                "data": json.dumps(status, ensure_ascii=False),
-                            }
+                                # Emit runtime status after each tool result
+                                if hasattr(agent, "runtime"):
+                                    status = agent.runtime.get_status_dict()
+                                    status["current_tool"] = getattr(msg, "name", None)
+                                    yield {
+                                        "event": "status",
+                                        "data": json.dumps(status, ensure_ascii=False),
+                                    }
 
             # --- Forward sub-agent events ---
             if hasattr(agent, "runtime"):
@@ -1400,16 +1402,98 @@ async def run_thread(thread_id: str, payload: RunRequest) -> EventSourceResponse
                     "data": json.dumps(agent.runtime.get_status_dict(), ensure_ascii=False),
                 }
             yield {"event": "done", "data": json.dumps({"thread_id": thread_id})}
+        except asyncio.CancelledError:
+            # Write cancellation markers to checkpoint for pending tool calls
+            cancelled_tool_call_ids = []
+            if pending_tool_calls and agent:
+                try:
+                    from langchain_core.messages import ToolMessage
+
+                    checkpointer = agent.agent.checkpointer
+                    if checkpointer:
+                        # aget_tuple returns CheckpointTuple with .checkpoint and .metadata
+                        checkpoint_tuple = await checkpointer.aget_tuple(config)
+                        if checkpoint_tuple:
+                            checkpoint = checkpoint_tuple.checkpoint
+                            metadata = checkpoint_tuple.metadata or {}
+
+                            # Create ToolMessage for each pending tool call
+                            cancel_messages = []
+                            for tc_id, tc_info in pending_tool_calls.items():
+                                cancelled_tool_call_ids.append(tc_id)
+                                cancel_messages.append(
+                                    ToolMessage(
+                                        content="任务被用户取消",
+                                        tool_call_id=tc_id,
+                                        name=tc_info["name"],
+                                    )
+                                )
+
+                            # Update checkpoint with cancellation markers
+                            updated_channel_values = checkpoint["channel_values"].copy()
+                            updated_channel_values["messages"] = list(updated_channel_values.get("messages", []))
+                            updated_channel_values["messages"].extend(cancel_messages)
+
+                            # Prepare new versions for checkpoint
+                            new_versions = {k: int(v) + 1 for k, v in checkpoint["channel_versions"].items()}
+
+                            # Build complete checkpoint with all required fields
+                            from langgraph.checkpoint.base import create_checkpoint
+
+                            new_checkpoint = create_checkpoint(checkpoint, None, metadata.get("step", 0))
+                            # Override channel_values with our updated messages
+                            new_checkpoint["channel_values"] = updated_channel_values
+
+                            # Write updated checkpoint
+                            await checkpointer.aput(
+                                config,
+                                new_checkpoint,
+                                {
+                                    "source": "update",
+                                    "step": metadata.get("step", 0),
+                                    "writes": {},
+                                },
+                                new_versions,
+                            )
+                except Exception as e:
+                    import traceback
+
+                    print(f"Failed to write cancellation markers: {e}")
+                    traceback.print_exc()
+
+            yield {
+                "event": "cancelled",
+                "data": json.dumps(
+                    {
+                        "message": "Run cancelled by user",
+                        "cancelled_tool_call_ids": cancelled_tool_call_ids,
+                    }
+                ),
+            }
         except Exception as e:
             import traceback
 
             traceback.print_exc()
             yield {"event": "error", "data": json.dumps({"error": str(e)}, ensure_ascii=False)}
         finally:
+            # Clean up task tracking and stream generator
+            app.state.thread_tasks.pop(thread_id, None)
+            if stream_gen is not None:
+                await stream_gen.aclose()
             if agent and hasattr(agent, "runtime") and agent.runtime.current_state == AgentState.ACTIVE:
                 agent.runtime.transition(AgentState.IDLE)
 
     return EventSourceResponse(event_stream())
+
+
+@app.post("/api/threads/{thread_id}/runs/cancel")
+async def cancel_run(thread_id: str):
+    """Cancel an active run for the given thread."""
+    task = app.state.thread_tasks.get(thread_id)
+    if not task:
+        return {"ok": False, "message": "No active run found"}
+    task.cancel()
+    return {"ok": True, "message": "Run cancellation requested"}
 
 
 class TaskAgentRequest(BaseModel):
