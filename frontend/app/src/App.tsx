@@ -62,6 +62,7 @@ import {
   deleteThread,
   getThread,
   getThreadLease,
+  getThreadRuntime,
   listSandboxTypes,
   listThreads,
   mapBackendEntries,
@@ -75,7 +76,6 @@ import {
   type SandboxInfo,
   type SandboxType,
   type StreamStatus,
-  type TextSegment,
   type ThreadSummary,
   type ToolSegment,
 } from "./api";
@@ -105,6 +105,8 @@ export default function App() {
   const [entries, setEntries] = useState<ChatEntry[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [runtimeStatus, setRuntimeStatus] = useState<StreamStatus | null>(null);
+  const [runtimePollError, setRuntimePollError] = useState<string | null>(null);
+  const [runtimeSyncing, setRuntimeSyncing] = useState(false);
   const [sandboxActionError, setSandboxActionError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -147,13 +149,61 @@ export default function App() {
     if (!activeThreadId) {
       setEntries([]);
       setActiveSandbox(null);
+      setRuntimeStatus(null);
+      setRuntimePollError(null);
+      setRuntimeSyncing(false);
       return;
     }
+    setRuntimeSyncing(true);
     void loadThread(activeThreadId);
   }, [activeThreadId, loadThread]);
 
+  const backendRunning = runtimeStatus?.state?.state === "active";
+  const uiIsRunning = isStreaming || backendRunning;
+
   useEffect(() => {
-    if (!isStreaming || !activeThreadId) return;
+    if (!activeThreadId) return;
+    // @@@runtime_sync - Refreshing the page drops the SSE connection, but the backend run keeps going.
+    // Poll /runtime as the source of truth whenever we are NOT actively streaming SSE.
+    if (isStreaming) {
+      setRuntimeSyncing(false);
+      return;
+    }
+
+    let cancelled = false;
+    let timer: number | null = null;
+    const threadId = activeThreadId;
+
+    const tick = async () => {
+      let nextDelayMs = 5000;
+      try {
+        const status = await getThreadRuntime(threadId);
+        if (cancelled) return;
+        setRuntimeStatus(status);
+        setRuntimePollError(null);
+        setRuntimeSyncing(false);
+        nextDelayMs = status.state?.state === "active" ? 1000 : 5000;
+      } catch (e) {
+        if (cancelled) return;
+        setRuntimePollError(e instanceof Error ? e.message : String(e));
+        setRuntimeSyncing(false);
+        // Keep last known runtimeStatus; failing loudly is via the banner.
+        nextDelayMs = 5000;
+      }
+
+      if (cancelled) return;
+      timer = window.setTimeout(() => void tick(), nextDelayMs);
+    };
+
+    void tick();
+    return () => {
+      cancelled = true;
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [activeThreadId, isStreaming]);
+
+  useEffect(() => {
+    if (!uiIsRunning || !activeThreadId) return;
     let cancelled = false;
     const threadId = activeThreadId;
 
@@ -182,7 +232,36 @@ export default function App() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [isStreaming, activeThreadId]);
+  }, [uiIsRunning, activeThreadId]);
+
+  useEffect(() => {
+    if (!activeThreadId) return;
+    // Poll thread messages while backend is active but we don't have an SSE stream (e.g. after refresh).
+    if (isStreaming) return;
+    if (!backendRunning) return;
+
+    let cancelled = false;
+    const threadId = activeThreadId;
+
+    const refreshMessages = async () => {
+      try {
+        await loadThread(threadId);
+      } catch {
+        // keep polling; runtime banner will still show active state
+      }
+    };
+
+    void refreshMessages();
+    const timer = window.setInterval(() => {
+      if (cancelled) return;
+      void refreshMessages();
+    }, 1500);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [activeThreadId, backendRunning, isStreaming, loadThread]);
 
   const handleCreateThread = useCallback(async (sandbox?: string, cwd?: string) => {
     const type = sandbox ?? selectedSandbox;
@@ -228,6 +307,7 @@ export default function App() {
       setStreamTurnId(turnId);
       setIsStreaming(true);
       setRuntimeStatus(null);
+      setRuntimeSyncing(false);
 
       // Create new AbortController for this request
       const abortController = new AbortController();
@@ -382,9 +462,19 @@ export default function App() {
               return { ...turn, segments: segs };
             }),
           );
-        } else {
-          throw error;
+          return;
         }
+
+        const text = error instanceof Error ? error.message : String(error);
+        setEntries((prev) =>
+          prev.map((e) => {
+            if (e.id !== turnId || e.role !== "assistant") return e;
+            const turn = e as AssistantTurn;
+            const segs = [...turn.segments];
+            segs.push({ type: "text", content: `\n\nError: ${text}` });
+            return { ...turn, segments: segs };
+          }),
+        );
       } finally {
         abortControllerRef.current = null;
         setIsStreaming(false);
@@ -487,10 +577,29 @@ export default function App() {
                 {sandboxActionError}
               </div>
             )}
-            <ChatArea entries={entries} isStreaming={isStreaming} streamTurnId={streamTurnId} runtimeStatus={runtimeStatus} loading={loading} onFocusAgent={handleFocusAgent} />
+            {runtimeSyncing && (
+              <div className="px-3 py-2 text-xs bg-slate-50 text-slate-700 border-b border-slate-200">
+                正在同步后台运行状态...
+              </div>
+            )}
+            {runtimePollError && (
+              <div className="px-3 py-2 text-xs bg-amber-50 text-amber-700 border-b border-amber-200">
+                运行状态轮询失败（/runtime）：{runtimePollError}
+              </div>
+            )}
+            <ChatArea
+              entries={entries}
+              isStreaming={uiIsRunning}
+              hasLiveStream={isStreaming}
+              backendRunning={backendRunning}
+              streamTurnId={streamTurnId}
+              runtimeStatus={runtimeStatus}
+              loading={loading}
+              onFocusAgent={handleFocusAgent}
+            />
             {activeThreadId && (
               <TaskProgress
-                isStreaming={isStreaming}
+                isStreaming={uiIsRunning}
                 runtimeStatus={runtimeStatus}
                 sandboxType={activeSandbox?.type ?? "local"}
                 sandboxStatus={activeSandbox?.status ?? (activeSandbox?.type === "local" ? "running" : null)}
@@ -499,8 +608,8 @@ export default function App() {
               />
             )}
             <InputBox
-              disabled={isStreaming}
-              isStreaming={isStreaming}
+              disabled={uiIsRunning || runtimeSyncing}
+              isStreaming={uiIsRunning}
               queueEnabled={queueEnabled}
               placeholder={activeThreadId ? "告诉 Leon 你需要什么帮助..." : "新建会话后开始对话"}
               onSendMessage={handleSendMessage}

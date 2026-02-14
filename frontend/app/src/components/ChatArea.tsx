@@ -8,6 +8,8 @@ import { Skeleton } from "./ui/skeleton";
 interface ChatAreaProps {
   entries: ChatEntry[];
   isStreaming: boolean;
+  hasLiveStream?: boolean;
+  backendRunning?: boolean;
   streamTurnId?: string | null;
   runtimeStatus: StreamStatus | null;
   loading?: boolean;
@@ -256,7 +258,16 @@ function ChatSkeleton() {
   );
 }
 
-export default function ChatArea({ entries, isStreaming, streamTurnId, runtimeStatus, loading, onFocusAgent }: ChatAreaProps) {
+export default function ChatArea({
+  entries,
+  isStreaming,
+  hasLiveStream = false,
+  backendRunning = false,
+  streamTurnId,
+  runtimeStatus,
+  loading,
+  onFocusAgent,
+}: ChatAreaProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -279,7 +290,7 @@ export default function ChatArea({ entries, isStreaming, streamTurnId, runtimeSt
         {isStreaming && entries.length > 0 && entries[entries.length - 1].role === "assistant" && (
           (() => {
             const lastEntry = entries[entries.length - 1] as AssistantTurn;
-            const hasContent = lastEntry.text_segments?.some(s => s.text.trim()) || lastEntry.tool_segments?.length > 0;
+            const hasContent = lastEntry.segments.some((seg) => (seg.type === "text" ? seg.content.trim().length > 0 : true));
             if (hasContent) return null;
             return (
               <div className="flex items-center animate-fade-in">
@@ -293,7 +304,17 @@ export default function ChatArea({ entries, isStreaming, streamTurnId, runtimeSt
           })()
         )}
 
-        {!isStreaming && entries.length === 0 && (
+        {backendRunning && !hasLiveStream && (
+          <div className="flex items-center animate-fade-in">
+            <span className="text-sm text-[#a3a3a3]">
+              {runtimeStatus?.current_tool
+                ? `Leon 正在使用 ${runtimeStatus.current_tool}...（后台运行中，页面已刷新，正在轮询）`
+                : "Leon 正在工作...（后台运行中，页面已刷新，正在轮询）"}
+            </span>
+          </div>
+        )}
+
+        {!isStreaming && !backendRunning && entries.length === 0 && (
           <div className="flex flex-col items-center justify-center py-24 animate-fade-in">
             <div className="w-14 h-14 rounded-2xl bg-[#171717] flex items-center justify-center mb-6">
               <span className="text-2xl font-semibold text-white">L</span>
