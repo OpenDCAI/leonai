@@ -267,7 +267,7 @@ class ChatSessionManager:
                 f"chat_sessions schema mismatch: missing {sorted(missing)}. Purge ~/.leon/sandbox.db and retry."
             )
         # @@@single-active-per-terminal - multi-terminal model allows many active sessions per thread, one per terminal.
-        if any(cols == {"thread_id"} for cols in unique_index_columns.values()):
+        if any(idx_cols == {"thread_id"} for idx_cols in unique_index_columns.values()):
             raise RuntimeError(
                 "chat_sessions still has UNIQUE index on thread_id from old schema. "
                 "Purge ~/.leon/sandbox.db and retry."
@@ -291,7 +291,21 @@ class ChatSessionManager:
             ).fetchone()
         return str(row[0]) if row else None
 
-    def get(self, thread_id: str, terminal_id: str) -> ChatSession | None:
+    def get(self, thread_id: str, terminal_id: str | None = None) -> ChatSession | None:
+        """Get the active ChatSession for a thread.
+
+        If terminal_id is omitted, it resolves to the thread's active terminal.
+        """
+
+        if terminal_id is None:
+            from sandbox.terminal import TerminalStore
+
+            terminal = TerminalStore(db_path=self.db_path).get_active(thread_id)
+            terminal_id = terminal.terminal_id if terminal else None
+
+        if not terminal_id:
+            return None
+
         live = self._live_sessions.get(terminal_id)
         if live:
             if live.is_expired():

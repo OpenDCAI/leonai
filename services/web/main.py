@@ -20,8 +20,10 @@ from sse_starlette.sse import EventSourceResponse
 from agent import create_leon_agent
 from middleware.monitor import AgentState
 from middleware.queue import QueueMode, get_queue_manager
+from services.web.data_platform.api import create_operator_router as _dp_create_operator_router
+from services.web.data_platform.api import create_router as _dp_create_router
+from services.web.data_platform.store import ensure_tables as _dp_ensure_tables
 from sandbox.config import SandboxConfig
-from sandbox.db import DEFAULT_DB_PATH as SANDBOX_DB_PATH
 from sandbox.lease import LeaseStore
 from sandbox.manager import SandboxManager, lookup_sandbox_for_thread
 from sandbox.provider_events import ProviderEventStore
@@ -32,6 +34,16 @@ DB_PATH = Path.home() / ".leon" / "leon.db"
 SANDBOXES_DIR = Path.home() / ".leon" / "sandboxes"
 LOCAL_WORKSPACE_ROOT = Path.cwd().resolve()
 IDLE_REAPER_INTERVAL_SEC = 30
+
+
+def _resolve_sandbox_db_path() -> Path:
+    # Loaded from env via ConfigManager.load_to_env() (lifespan), or inherited from parent process env.
+    return Path(os.getenv("LEON_SANDBOX_DB_PATH") or (Path.home() / ".leon" / "sandbox.db"))
+
+
+def _resolve_data_platform_db_path() -> Path:
+    # @@@dp-db-separation - DP ledger writes must not contend with LangGraph checkpoint writes in leon.db (SQLite locks).
+    return Path(os.getenv("LEON_DATA_PLATFORM_DB_PATH") or (Path.home() / ".leon" / "data_platform.db"))
 
 
 # --- Request models ---
@@ -126,11 +138,12 @@ def _init_providers_and_managers() -> tuple[dict, dict]:
     """Load sandbox providers and managers from config files."""
     from sandbox.local import LocalSessionProvider
 
+    sandbox_db_path = _resolve_sandbox_db_path()
     providers: dict[str, Any] = {
         "local": LocalSessionProvider(default_cwd=str(LOCAL_WORKSPACE_ROOT)),
     }
     if not SANDBOXES_DIR.exists():
-        managers = {name: SandboxManager(provider=p, db_path=SANDBOX_DB_PATH) for name, p in providers.items()}
+        managers = {name: SandboxManager(provider=p, db_path=sandbox_db_path) for name, p in providers.items()}
         return providers, managers
 
     for config_file in SANDBOXES_DIR.glob("*.json"):
@@ -180,7 +193,7 @@ def _init_providers_and_managers() -> tuple[dict, dict]:
         except Exception as e:
             print(f"[sandbox] Failed to load {name}: {e}")
 
-    managers = {name: SandboxManager(provider=p, db_path=SANDBOX_DB_PATH) for name, p in providers.items()}
+    managers = {name: SandboxManager(provider=p, db_path=sandbox_db_path) for name, p in providers.items()}
     return providers, managers
 
 
@@ -303,6 +316,16 @@ async def lifespan(app: FastAPI):
     config_manager = ConfigManager()
     config_manager.load_to_env()
 
+    # Data platform persistence (runs + run event ledger).
+    dp_db_path = _resolve_data_platform_db_path()
+    _dp_ensure_tables(dp_db_path)
+    app.state.data_platform_db_path = dp_db_path
+    # Routers must be included after config.env has been loaded into env.
+    if not getattr(app.state, "_dp_routes_included", False):
+        app.include_router(_dp_create_router(db_path=dp_db_path))
+        app.include_router(_dp_create_operator_router(dp_db_path=dp_db_path))
+        app.state._dp_routes_included = True
+
     app.state.agent_pool: dict[str, Any] = {}
     app.state.thread_sandbox: dict[str, str] = {}
     app.state.thread_cwd: dict[str, str] = {}
@@ -310,12 +333,24 @@ async def lifespan(app: FastAPI):
     app.state.thread_locks_guard = asyncio.Lock()
     app.state.thread_tasks: dict[str, asyncio.Task] = {}
     app.state.idle_reaper_task: asyncio.Task | None = None
+    app.state.alerts_task: asyncio.Task | None = None
 
     try:
         app.state.idle_reaper_task = asyncio.create_task(_idle_reaper_loop(app))
+        if (os.getenv("LEON_ALERT_WEBHOOK_URL") or "").strip():
+            from services.web.data_platform.alerts import alerts_loop
+
+            app.state.alerts_task = asyncio.create_task(alerts_loop(app, dp_db_path=dp_db_path))
         yield
     finally:
         task = app.state.idle_reaper_task
+        if task:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        task = app.state.alerts_task
         if task:
             task.cancel()
             try:
@@ -419,8 +454,9 @@ def _list_threads_from_db() -> list[dict[str, Any]]:
                 except ImportError:
                     pass
 
-    if SANDBOX_DB_PATH.exists():
-        with sqlite3.connect(str(SANDBOX_DB_PATH)) as conn:
+    sandbox_db_path = _resolve_sandbox_db_path()
+    if sandbox_db_path.exists():
+        with sqlite3.connect(str(sandbox_db_path)) as conn:
             conn.row_factory = sqlite3.Row
             existing = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
             if "chat_sessions" in existing:
@@ -455,7 +491,7 @@ def _delete_thread_in_db(thread_id: str) -> None:
             raise RuntimeError(f"Invalid sqlite identifier: {name}")
         return f'"{name}"'
 
-    for db_path in (DB_PATH, SANDBOX_DB_PATH):
+    for db_path in (DB_PATH, _resolve_sandbox_db_path()):
         if not db_path.exists():
             continue
         with sqlite3.connect(str(db_path)) as conn:
@@ -485,9 +521,10 @@ def _destroy_thread_resources_sync(thread_id: str, sandbox_type: str) -> bool:
 
 
 def _get_terminal_timestamps(terminal_id: str) -> tuple[str | None, str | None]:
-    if not SANDBOX_DB_PATH.exists():
+    sandbox_db_path = _resolve_sandbox_db_path()
+    if not sandbox_db_path.exists():
         return None, None
-    with sqlite3.connect(str(SANDBOX_DB_PATH)) as conn:
+    with sqlite3.connect(str(sandbox_db_path)) as conn:
         conn.row_factory = sqlite3.Row
         row = conn.execute(
             "SELECT created_at, updated_at FROM abstract_terminals WHERE terminal_id = ?",
@@ -499,9 +536,10 @@ def _get_terminal_timestamps(terminal_id: str) -> tuple[str | None, str | None]:
 
 
 def _get_lease_timestamps(lease_id: str) -> tuple[str | None, str | None]:
-    if not SANDBOX_DB_PATH.exists():
+    sandbox_db_path = _resolve_sandbox_db_path()
+    if not sandbox_db_path.exists():
         return None, None
-    with sqlite3.connect(str(SANDBOX_DB_PATH)) as conn:
+    with sqlite3.connect(str(sandbox_db_path)) as conn:
         conn.row_factory = sqlite3.Row
         row = conn.execute(
             "SELECT created_at, updated_at FROM sandbox_leases WHERE lease_id = ?",
@@ -818,8 +856,9 @@ async def ingest_provider_webhook(provider_name: str, payload: dict[str, Any]) -
         raise HTTPException(400, "Webhook payload missing instance/session id")
 
     event_type = str(payload.get("event") or payload.get("type") or "unknown")
-    store = LeaseStore(db_path=SANDBOX_DB_PATH)
-    event_store = ProviderEventStore(db_path=SANDBOX_DB_PATH)
+    sandbox_db_path = _resolve_sandbox_db_path()
+    store = LeaseStore(db_path=sandbox_db_path)
+    event_store = ProviderEventStore(db_path=sandbox_db_path)
     lease = await asyncio.to_thread(store.find_by_instance, provider_name=provider_name, instance_id=instance_id)
     matched_lease_id = lease.lease_id if lease else None
 
@@ -874,7 +913,7 @@ async def ingest_provider_webhook(provider_name: str, payload: dict[str, Any]) -
 
 @app.get("/api/webhooks/events")
 async def list_provider_events(limit: int = Query(default=100, ge=1, le=1000)) -> dict[str, Any]:
-    store = ProviderEventStore(db_path=SANDBOX_DB_PATH)
+    store = ProviderEventStore(db_path=_resolve_sandbox_db_path())
     items = await asyncio.to_thread(store.list_recent, limit)
     return {"items": items, "count": len(items)}
 
@@ -1238,9 +1277,23 @@ async def run_thread(thread_id: str, payload: RunRequest) -> EventSourceResponse
     async def event_stream() -> AsyncGenerator[dict[str, str], None]:
         task = None
         stream_gen = None
+        ledger = None
+        emitted_tool_call_ids: set[str] = set()
+        pending_tool_calls: dict[str, dict] = {}  # Track in-flight tool calls for cancellation
         try:
             config = {"configurable": {"thread_id": thread_id}}
             set_current_thread_id(thread_id)
+
+            from services.web.data_platform.ledger import RunLedger
+
+            dp_db_path = getattr(app.state, "data_platform_db_path", _resolve_data_platform_db_path())
+            ledger = RunLedger.start(
+                db_path=dp_db_path,
+                thread_id=thread_id,
+                sandbox=sandbox_type,
+                input_message=payload.message,
+            )
+            yield ledger.emit("run", {"run_id": ledger.run_id, "thread_id": thread_id}, persist=False)
 
             # @@@ Streaming parser mirrors TUI runner chunk semantics so web and CLI stay consistent.
             # Prime session before tool calls so lazy capability wrappers never race thread context propagation.
@@ -1264,9 +1317,6 @@ async def run_thread(thread_id: str, payload: RunRequest) -> EventSourceResponse
 
                 await asyncio.to_thread(_prime_sandbox)
 
-            emitted_tool_call_ids: set[str] = set()
-            pending_tool_calls: dict[str, dict] = {}  # Track in-flight tool calls for cancellation
-
             # Wrap astream in a task for cancellation support
             async def run_agent_stream():
                 async for chunk in agent.agent.astream(
@@ -1280,6 +1330,8 @@ async def run_thread(thread_id: str, payload: RunRequest) -> EventSourceResponse
             stream_gen = run_agent_stream()
             task = asyncio.create_task(stream_gen.__anext__())
             app.state.thread_tasks[thread_id] = task
+
+            stream_error_msg: str | None = None
 
             # Iterate through the stream
             while True:
@@ -1295,7 +1347,8 @@ async def run_thread(thread_id: str, payload: RunRequest) -> EventSourceResponse
                     import traceback
 
                     traceback.print_exc()
-                    yield {"event": "error", "data": json.dumps({"error": str(stream_error)}, ensure_ascii=False)}
+                    stream_error_msg = str(stream_error)
+                    yield {"event": "error", "data": json.dumps({"error": stream_error_msg}, ensure_ascii=False)}
                     break
                 if not chunk:
                     continue
@@ -1313,6 +1366,8 @@ async def run_thread(thread_id: str, payload: RunRequest) -> EventSourceResponse
                     if msg_class == "AIMessageChunk":
                         content = _extract_text_content(getattr(msg_chunk, "content", ""))
                         if content:
+                            if ledger:
+                                ledger.buffer_text(content)
                             yield {
                                 "event": "text",
                                 "data": json.dumps({"content": content}, ensure_ascii=False),
@@ -1344,41 +1399,40 @@ async def run_thread(thread_id: str, payload: RunRequest) -> EventSourceResponse
                                             "name": tc.get("name", "unknown"),
                                             "args": tc.get("args", {}),
                                         }
-                                    yield {
-                                        "event": "tool_call",
-                                        "data": json.dumps(
-                                            {
-                                                "id": tc.get("id"),
-                                                "name": tc.get("name", "unknown"),
-                                                "args": tc.get("args", {}),
-                                            },
-                                            ensure_ascii=False,
-                                        ),
+                                    tc_payload = {
+                                        "id": tc.get("id"),
+                                        "name": tc.get("name", "unknown"),
+                                        "args": tc.get("args", {}),
                                     }
+                                    if ledger:
+                                        ledger.flush_text()
+                                        yield ledger.emit("tool_call", tc_payload)
+                                    else:
+                                        yield {"event": "tool_call", "data": json.dumps(tc_payload, ensure_ascii=False)}
                             elif msg_class == "ToolMessage":
                                 tc_id = getattr(msg, "tool_call_id", None)
                                 # Remove from pending when tool completes
                                 if tc_id:
                                     pending_tool_calls.pop(tc_id, None)
-                                yield {
-                                    "event": "tool_result",
-                                    "data": json.dumps(
-                                        {
-                                            "tool_call_id": tc_id,
-                                            "name": getattr(msg, "name", "unknown"),
-                                            "content": str(getattr(msg, "content", "")),
-                                        },
-                                        ensure_ascii=False,
-                                    ),
+                                tr_payload = {
+                                    "tool_call_id": tc_id,
+                                    "name": getattr(msg, "name", "unknown"),
+                                    "content": str(getattr(msg, "content", "")),
                                 }
+                                if ledger:
+                                    ledger.flush_text()
+                                    yield ledger.emit("tool_result", tr_payload)
+                                else:
+                                    yield {"event": "tool_result", "data": json.dumps(tr_payload, ensure_ascii=False)}
                                 # Emit runtime status after each tool result
                                 if hasattr(agent, "runtime"):
                                     status = agent.runtime.get_status_dict()
                                     status["current_tool"] = getattr(msg, "name", None)
-                                    yield {
-                                        "event": "status",
-                                        "data": json.dumps(status, ensure_ascii=False),
-                                    }
+                                    status["run_id"] = ledger.run_id if ledger else None
+                                    if ledger:
+                                        yield ledger.emit("status", status)
+                                    else:
+                                        yield {"event": "status", "data": json.dumps(status, ensure_ascii=False)}
 
             # --- Forward sub-agent events ---
             if hasattr(agent, "runtime"):
@@ -1390,18 +1444,34 @@ async def run_thread(thread_id: str, payload: RunRequest) -> EventSourceResponse
                         event_data["parent_tool_call_id"] = tool_call_id
 
                         # Emit with subagent_ prefix
-                        yield {
-                            "event": f"subagent_{event_type}",
-                            "data": json.dumps(event_data, ensure_ascii=False),
-                        }
+                        if ledger:
+                            yield ledger.emit(f"subagent_{event_type}", event_data)
+                        else:
+                            yield {
+                                "event": f"subagent_{event_type}",
+                                "data": json.dumps(event_data, ensure_ascii=False),
+                            }
+
+            if stream_error_msg:
+                if ledger:
+                    ledger.record("error", {"error": stream_error_msg, "run_id": ledger.run_id})
+                    ledger.finalize(status="error", error=stream_error_msg)
+                return
 
             # Final status before done
             if hasattr(agent, "runtime"):
-                yield {
-                    "event": "status",
-                    "data": json.dumps(agent.runtime.get_status_dict(), ensure_ascii=False),
-                }
-            yield {"event": "done", "data": json.dumps({"thread_id": thread_id})}
+                final_status = agent.runtime.get_status_dict()
+                final_status["run_id"] = ledger.run_id if ledger else None
+                if ledger:
+                    yield ledger.emit("status", final_status)
+                else:
+                    yield {"event": "status", "data": json.dumps(final_status, ensure_ascii=False)}
+            done_payload = {"thread_id": thread_id, "run_id": ledger.run_id if ledger else None}
+            if ledger:
+                ledger.flush_text()
+                ledger.record("done", done_payload)
+                ledger.finalize(status="done")
+            yield {"event": "done", "data": json.dumps(done_payload)}
         except asyncio.CancelledError:
             # Write cancellation markers to checkpoint for pending tool calls
             cancelled_tool_call_ids = []
@@ -1470,14 +1540,30 @@ async def run_thread(thread_id: str, payload: RunRequest) -> EventSourceResponse
                     }
                 ),
             }
+            if ledger:
+                ledger.record(
+                    "cancelled",
+                    {"message": "Run cancelled by user", "cancelled_tool_call_ids": cancelled_tool_call_ids},
+                )
+                ledger.finalize(status="cancelled")
         except Exception as e:
             import traceback
 
             traceback.print_exc()
-            yield {"event": "error", "data": json.dumps({"error": str(e)}, ensure_ascii=False)}
+            err_payload = {"error": str(e), "run_id": (ledger.run_id if ledger else None)}
+            yield {"event": "error", "data": json.dumps(err_payload, ensure_ascii=False)}
+            if ledger:
+                ledger.record("error", err_payload)
+                ledger.finalize(status="error", error=str(e))
         finally:
             # Clean up task tracking and stream generator
             app.state.thread_tasks.pop(thread_id, None)
+            if task is not None and hasattr(task, "done") and not task.done():
+                task.cancel()
+                try:
+                    await task
+                except Exception:
+                    pass
             if stream_gen is not None:
                 await stream_gen.aclose()
             if agent and hasattr(agent, "runtime") and agent.runtime.current_state == AgentState.ACTIVE:
