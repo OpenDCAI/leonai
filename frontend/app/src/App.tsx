@@ -87,6 +87,8 @@ function makeId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+const LAST_THREAD_KEY = "leon.activeThreadId";
+
 export default function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [computerOpen, setComputerOpen] = useState(false);
@@ -110,6 +112,7 @@ export default function App() {
   const [runtimeStatus, setRuntimeStatus] = useState<StreamStatus | null>(null);
   const [runtimeSyncing, setRuntimeSyncing] = useState(false);
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
+  const [attachError, setAttachError] = useState<string | null>(null);
   const [sandboxActionError, setSandboxActionError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -264,7 +267,9 @@ export default function App() {
     const rows = await listThreads();
     setThreads(rows);
     if (!activeThreadId && rows.length > 0) {
-      setActiveThreadId(rows[0].thread_id);
+      const saved = localStorage.getItem(LAST_THREAD_KEY);
+      const preferred = saved && rows.some((t) => t.thread_id === saved) ? saved : rows[0].thread_id;
+      setActiveThreadId(preferred);
     }
   }, [activeThreadId]);
 
@@ -303,6 +308,7 @@ export default function App() {
       if (isStreaming) return;
       if (attachedRunRef.current?.threadId === threadId && attachedRunRef.current?.runId === runId) return;
       attachedRunRef.current = { threadId, runId };
+      setAttachError(null);
 
       const turnId = makeId("turn");
       const assistantTurn: AssistantTurn = {
@@ -320,6 +326,10 @@ export default function App() {
 
       try {
         await joinRun(threadId, runId, (event) => handleStreamEvent(turnId, event), abortController.signal, 0);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.log("[run-attach] join failed:", msg);
+        setAttachError(msg);
       } finally {
         abortControllerRef.current = null;
         attachedRunRef.current = null;
@@ -347,10 +357,13 @@ export default function App() {
         setRuntimeStatus(status);
         setActiveRunId(status.active_run_id ?? null);
         if (status.state?.state === "active" && status.active_run_id) {
+          console.log("[run-attach] detected active run:", status.active_run_id);
           void attachToRun(activeThreadId, status.active_run_id);
         }
-      } catch {
-        // ignore — UI can still operate; backend will reject if actually running
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.log("[run-attach] runtime sync failed:", msg);
+        setAttachError(msg);
       } finally {
         if (!cancelled) setRuntimeSyncing(false);
       }
@@ -413,6 +426,11 @@ export default function App() {
     },
     [activeThreadId, threads],
   );
+
+  const handleSelectThread = useCallback((threadId: string) => {
+    localStorage.setItem(LAST_THREAD_KEY, threadId);
+    setActiveThreadId(threadId);
+  }, []);
 
   const handleSendMessage = useCallback(
     async (message: string) => {
@@ -545,7 +563,7 @@ export default function App() {
         collapsed={sidebarCollapsed}
         loading={loading}
         width={sidebarResize.width}
-        onSelectThread={setActiveThreadId}
+        onSelectThread={handleSelectThread}
         onCreateThread={() => setNewThreadOpen(true)}
         onDeleteThread={(id) => void handleDeleteThread(id)}
         onSearchClick={() => setSearchOpen(true)}
@@ -569,6 +587,11 @@ export default function App() {
             {sandboxActionError && (
               <div className="px-3 py-2 text-xs bg-red-50 text-red-600 border-b border-red-200">
                 {sandboxActionError}
+              </div>
+            )}
+            {attachError && (
+              <div className="px-3 py-2 text-xs bg-amber-50 text-amber-700 border-b border-amber-200">
+                attach/run sync error: {attachError}
               </div>
             )}
             <ChatArea entries={renderedEntries} isStreaming={isStreaming} streamTurnId={streamTurnId} runtimeStatus={runtimeStatus} loading={loading} onFocusAgent={handleFocusAgent} />
