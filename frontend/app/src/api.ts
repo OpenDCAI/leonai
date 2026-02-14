@@ -1,4 +1,4 @@
-export type StreamEventType = "text" | "tool_call" | "tool_result" | "status" | "done" | "error" | "task_start" | "task_text" | "task_tool_call" | "task_tool_result" | "task_done" | "task_error" | "subagent_task_start" | "subagent_task_text" | "subagent_task_tool_call" | "subagent_task_tool_result" | "subagent_task_done" | "subagent_task_error";
+export type StreamEventType = "text" | "tool_call" | "tool_result" | "status" | "done" | "error" | "cancelled" | "task_start" | "task_text" | "task_tool_call" | "task_tool_result" | "task_done" | "task_error" | "subagent_task_start" | "subagent_task_text" | "subagent_task_tool_call" | "subagent_task_tool_result" | "subagent_task_done" | "subagent_task_error";
 
 export interface StreamEvent {
   type: StreamEventType;
@@ -544,6 +544,7 @@ function normalizeStreamType(raw: string): StreamEventType {
     raw === "status" ||
     raw === "done" ||
     raw === "error" ||
+    raw === "cancelled" ||
     raw === "task_start" ||
     raw === "task_text" ||
     raw === "task_tool_call" ||

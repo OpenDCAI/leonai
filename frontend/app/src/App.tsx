@@ -250,8 +250,40 @@ export default function App() {
 
           if (event.type === "tool_result") {
             const payload = (event.data ?? {}) as { content?: string; tool_call_id?: string; name?: string };
-            setEntries((prev) =>
-              prev.map((e) => {
+
+            // Ensure "calling" state is visible for at least 200ms before showing result
+            const updateResult = () => {
+              setEntries((prev) =>
+                prev.map((e) => {
+                  if (e.id !== turnId || e.role !== "assistant") return e;
+                  const turn = e as AssistantTurn;
+                  const updatedSegs = turn.segments.map((s) => {
+                    if (s.type !== "tool" || s.step.id !== payload.tool_call_id) return s;
+                    return { ...s, step: { ...s.step, result: payload.content ?? "", status: "done" as const } };
+                  });
+                  return { ...turn, segments: updatedSegs };
+                })
+              );
+            };
+
+            // Check if tool call was just created (within last 200ms)
+            setEntries((prev) => {
+              const turn = prev.find((e) => e.id === turnId && e.role === "assistant") as AssistantTurn | undefined;
+              if (turn) {
+                const toolSeg = turn.segments.find(
+                  (s) => s.type === "tool" && s.step.id === payload.tool_call_id,
+                ) as ToolSegment | undefined;
+                if (toolSeg) {
+                  const elapsed = Date.now() - toolSeg.step.timestamp;
+                  if (elapsed < 200) {
+          // Delay the result update to ensure "calling" state is visible
+                    setTimeout(updateResult, 200 - elapsed);
+                    return prev; // Don't update yet
+                  }
+                }
+              }
+              // Tool call is old enough, update immediately
+              return prev.map((e) => {
                 if (e.id !== turnId || e.role !== "assistant") return e;
                 const turn = e as AssistantTurn;
                 const updatedSegs = turn.segments.map((s) => {
@@ -259,8 +291,8 @@ export default function App() {
                   return { ...s, step: { ...s.step, result: payload.content ?? "", status: "done" as const } };
                 });
                 return { ...turn, segments: updatedSegs };
-              }),
-            );
+              });
+            });
             return;
           }
 
@@ -400,10 +432,12 @@ export default function App() {
       }
     }
 
-    // 2. Abort the HTTP connection — this triggers AbortError in the catch block
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-    }
+    // 2. Delay abort to give backend time to send the cancelled event
+    setTimeout(() => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    }, 500);
   }, [activeThreadId]);
 
   const handlePauseSandbox = useCallback(async () => {

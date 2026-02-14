@@ -1237,6 +1237,7 @@ async def run_thread(thread_id: str, payload: RunRequest) -> EventSourceResponse
 
     async def event_stream() -> AsyncGenerator[dict[str, str], None]:
         task = None
+        stream_gen = None
         try:
             config = {"configurable": {"thread_id": thread_id}}
             set_current_thread_id(thread_id)
@@ -1288,6 +1289,13 @@ async def run_thread(thread_id: str, payload: RunRequest) -> EventSourceResponse
                     task = asyncio.create_task(stream_gen.__anext__())
                     app.state.thread_tasks[thread_id] = task
                 except StopAsyncIteration:
+                    break
+                except Exception as stream_error:
+                    # Catch errors from the agent stream (e.g., API connection errors)
+                    import traceback
+
+                    traceback.print_exc()
+                    yield {"event": "error", "data": json.dumps({"error": str(stream_error)}, ensure_ascii=False)}
                     break
                 if not chunk:
                     continue
@@ -1403,9 +1411,12 @@ async def run_thread(thread_id: str, payload: RunRequest) -> EventSourceResponse
 
                     checkpointer = agent.agent.checkpointer
                     if checkpointer:
-                        # Get current checkpoint
-                        checkpoint = await checkpointer.aget(config)
-                        if checkpoint:
+                        # aget_tuple returns CheckpointTuple with .checkpoint and .metadata
+                        checkpoint_tuple = await checkpointer.aget_tuple(config)
+                        if checkpoint_tuple:
+                            checkpoint = checkpoint_tuple.checkpoint
+                            metadata = checkpoint_tuple.metadata or {}
+
                             # Create ToolMessage for each pending tool call
                             cancel_messages = []
                             for tc_id, tc_info in pending_tool_calls.items():
@@ -1426,18 +1437,20 @@ async def run_thread(thread_id: str, payload: RunRequest) -> EventSourceResponse
                             # Prepare new versions for checkpoint
                             new_versions = {k: int(v) + 1 for k, v in checkpoint["channel_versions"].items()}
 
+                            # Build complete checkpoint with all required fields
+                            from langgraph.checkpoint.base import create_checkpoint
+
+                            new_checkpoint = create_checkpoint(checkpoint, None, metadata.get("step", 0))
+                            # Override channel_values with our updated messages
+                            new_checkpoint["channel_values"] = updated_channel_values
+
                             # Write updated checkpoint
                             await checkpointer.aput(
                                 config,
-                                {
-                                    "channel_values": updated_channel_values,
-                                    "channel_versions": checkpoint["channel_versions"],
-                                    "versions_seen": checkpoint["versions_seen"],
-                                    "pending_sends": checkpoint.get("pending_sends", []),
-                                },
+                                new_checkpoint,
                                 {
                                     "source": "update",
-                                    "step": checkpoint["metadata"]["step"],
+                                    "step": metadata.get("step", 0),
                                     "writes": {},
                                 },
                                 new_versions,
@@ -1463,8 +1476,10 @@ async def run_thread(thread_id: str, payload: RunRequest) -> EventSourceResponse
             traceback.print_exc()
             yield {"event": "error", "data": json.dumps({"error": str(e)}, ensure_ascii=False)}
         finally:
-            # Clean up task tracking
+            # Clean up task tracking and stream generator
             app.state.thread_tasks.pop(thread_id, None)
+            if stream_gen is not None:
+                await stream_gen.aclose()
             if agent and hasattr(agent, "runtime") and agent.runtime.current_state == AgentState.ACTIVE:
                 agent.runtime.transition(AgentState.IDLE)
 
@@ -1476,7 +1491,7 @@ async def cancel_run(thread_id: str):
     """Cancel an active run for the given thread."""
     task = app.state.thread_tasks.get(thread_id)
     if not task:
-        raise HTTPException(status_code=404, detail="No active run found")
+        return {"ok": False, "message": "No active run found"}
     task.cancel()
     return {"ok": True, "message": "Run cancellation requested"}
 

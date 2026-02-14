@@ -101,10 +101,21 @@ const TOOL_BADGE_STYLES: Record<string, { bg: string; text: string; label: strin
 const DEFAULT_BADGE = { bg: "bg-gray-50", text: "text-gray-500", label: "" };
 
 const ToolStepBlock = memo(function ToolStepBlock({ seg, onFocusAgent }: { seg: ToolSegment; onFocusAgent?: (stepId: string) => void }) {
-  const [expanded, setExpanded] = useState(false);
-  const Renderer = getToolRenderer(seg.step);
   const isCalling = seg.step.status === "calling";
   const isCancelled = seg.step.status === "cancelled";
+  const isWriteTool = seg.step.name === "Write" || seg.step.name === "write_file";
+
+  // Auto-expand write_file when calling, collapse when done
+  const [expanded, setExpanded] = useState(isWriteTool && isCalling);
+
+  // Update expanded state when status changes
+  useEffect(() => {
+    if (isWriteTool) {
+      setExpanded(isCalling);
+    }
+  }, [isWriteTool, isCalling]);
+
+  const Renderer = getToolRenderer(seg.step);
   const badge = TOOL_BADGE_STYLES[seg.step.name] ?? { ...DEFAULT_BADGE, label: seg.step.name };
 
   // Task (sub-agent) gets a clickable card that opens the Agents panel
@@ -124,7 +135,7 @@ const ToolStepBlock = memo(function ToolStepBlock({ seg, onFocusAgent }: { seg: 
             <Renderer step={seg.step} expanded={false} />
           </div>
           {isCancelled && (
-            <span className="px-2 py-0.5 bg-gray-200 text-gray-600 rounded text-[10px] font-medium">Cancelled</span>
+            <span className="px-2 py-0.5 bg-gray-200 text-gray-600 rounded text-[10px] font-medium">已取消</span>
           )}
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 text-[#a3a3a3] flex-shrink-0">
             <polyline points="6,3 11,8 6,13" />
