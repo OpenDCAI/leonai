@@ -229,6 +229,7 @@ class _FileSystemWrapper(FileSystemBackend):
 
     def file_exists(self, path: str) -> bool:
         """Check if file exists."""
+        self._session.touch()
         provider = self._get_provider()
         instance_id = self._get_instance_id()
 
@@ -248,6 +249,7 @@ class _FileSystemWrapper(FileSystemBackend):
 
     def is_dir(self, path: str) -> bool:
         """Check if path is directory."""
+        self._session.touch()
         provider = self._get_provider()
         instance_id = self._get_instance_id()
 
@@ -261,6 +263,7 @@ class _FileSystemWrapper(FileSystemBackend):
         """List directory contents."""
         from sandbox.interfaces.filesystem import DirEntry, DirListResult
 
+        self._session.touch()
         provider = self._get_provider()
         instance_id = self._get_instance_id()
 

@@ -9,6 +9,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import sqlite3
+
 from sandbox.capability import SandboxCapability
 from sandbox.chat_session import ChatSessionManager, ChatSessionPolicy
 from sandbox.db import DEFAULT_DB_PATH
@@ -230,6 +232,68 @@ class SandboxManager:
 
         active_rows = self.session_manager.list_active()
 
+        def _db_has_table(conn: sqlite3.Connection, name: str) -> bool:
+            return (
+                conn.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name = ? LIMIT 1",
+                    (name,),
+                ).fetchone()
+                is not None
+            )
+
+        def _terminal_is_busy(terminal_id: str) -> bool:
+            """Return True if this terminal has a running command.
+
+            A busy terminal must not have its ChatSession closed.
+            """
+
+            if not terminal_id:
+                return False
+            if not self.db_path.exists():
+                return False
+            with sqlite3.connect(str(self.db_path), timeout=30) as conn:
+                conn.execute("PRAGMA busy_timeout=30000")
+                if not _db_has_table(conn, "terminal_commands"):
+                    return False
+                row = conn.execute(
+                    """
+                    SELECT 1
+                    FROM terminal_commands
+                    WHERE terminal_id = ? AND status = 'running'
+                    LIMIT 1
+                    """,
+                    (terminal_id,),
+                ).fetchone()
+                return row is not None
+
+        def _lease_is_busy(lease_id: str) -> bool:
+            """Return True if any terminal under this lease has a running command.
+
+            A busy lease must not be paused.
+            """
+
+            if not lease_id:
+                return False
+            if not self.db_path.exists():
+                return False
+            with sqlite3.connect(str(self.db_path), timeout=30) as conn:
+                conn.execute("PRAGMA busy_timeout=30000")
+                if not _db_has_table(conn, "terminal_commands"):
+                    return False
+                if not _db_has_table(conn, "abstract_terminals"):
+                    return False
+                row = conn.execute(
+                    """
+                    SELECT 1
+                    FROM terminal_commands tc
+                    JOIN abstract_terminals at ON at.terminal_id = tc.terminal_id
+                    WHERE at.lease_id = ? AND tc.status = 'running'
+                    LIMIT 1
+                    """,
+                    (lease_id,),
+                ).fetchone()
+                return row is not None
+
         def _is_expired(session_row: dict) -> bool:
             started_at_raw = session_row.get("started_at")
             last_active_raw = session_row.get("last_active_at")
@@ -267,6 +331,9 @@ class SandboxManager:
             if lease and lease.provider_name != self.provider.name:
                 continue
 
+            if terminal and _terminal_is_busy(terminal.terminal_id):
+                continue
+
             if lease:
                 # @@@idle-reaper-shared-lease - non-blocking commands fork background terminals but share one lease.
                 # Do not pause the underlying lease if another session on the same lease is still active/idle.
@@ -285,6 +352,8 @@ class SandboxManager:
                     break
 
                 if not has_other_active:
+                    if _lease_is_busy(lease.lease_id):
+                        continue
                     status = lease.refresh_instance_status(self.provider)
                     # Only pause remote providers (local sandbox doesn't need pause)
                     if status == "running" and self.provider.name != "local":
