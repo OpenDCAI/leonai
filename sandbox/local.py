@@ -54,10 +54,17 @@ class LocalSessionProvider(SandboxProvider):
 
     def pause_session(self, session_id: str) -> bool:
         with self._state_lock:
+            # @@@local-provider-process-boundary - LocalSessionProvider state is in-memory only; in multi-worker
+            # web backends the pause/resume request can land on a different process than the one that created
+            # the session. For lease-bound local sessions (context_id like "leon-<lease_id>" or "local-..."),
+            # treat missing in-memory state as "running" so pause/resume stays idempotent across processes.
             state = self._session_states.get(session_id)
-            if state is None and session_id.startswith("leon-lease-"):
-                state = self._session_states[session_id] = "running"
-            if state in {None, "detached"}:
+            if state is None:
+                if session_id.startswith(("leon-", "local-")):
+                    state = "running"
+                else:
+                    return False
+            if state == "detached":
                 return False
             if state != "paused":
                 self._session_states[session_id] = "paused"
@@ -66,9 +73,12 @@ class LocalSessionProvider(SandboxProvider):
     def resume_session(self, session_id: str) -> bool:
         with self._state_lock:
             state = self._session_states.get(session_id)
-            if state is None and session_id.startswith("leon-lease-"):
-                state = self._session_states[session_id] = "running"
-            if state in {None, "detached"}:
+            if state is None:
+                if session_id.startswith(("leon-", "local-")):
+                    state = "running"
+                else:
+                    return False
+            if state == "detached":
                 return False
             if state != "running":
                 self._session_states[session_id] = "running"
@@ -76,7 +86,10 @@ class LocalSessionProvider(SandboxProvider):
 
     def get_session_status(self, session_id: str) -> str:
         with self._state_lock:
-            return self._session_states.get(session_id, "detached")
+            state = self._session_states.get(session_id)
+            if state is None and session_id.startswith(("leon-", "local-")):
+                return "running"
+            return state or "detached"
 
     def execute(
         self,

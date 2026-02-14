@@ -151,9 +151,17 @@ const ToolStepBlock = memo(function ToolStepBlock({ seg, onFocusAgent }: { seg: 
         isCalling ? "tool-card-calling border-[#d4d4d4]" : isCancelled ? "border-gray-300 opacity-60" : "border-[#e5e5e5]"
       }`}
     >
-      <button
+      <div
+        role="button"
+        tabIndex={0}
         className="flex items-center gap-1.5 w-full text-left px-2.5 py-1.5 hover:bg-[#fafafa] rounded-lg transition-colors"
         onClick={() => setExpanded((v) => !v)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            setExpanded((v) => !v);
+          }
+        }}
       >
         {expanded ? (
           <ChevronDown className="w-3 h-3 text-[#a3a3a3] flex-shrink-0" />
@@ -169,7 +177,7 @@ const ToolStepBlock = memo(function ToolStepBlock({ seg, onFocusAgent }: { seg: 
         {isCancelled && (
           <span className="px-2 py-0.5 bg-gray-200 text-gray-600 rounded text-[10px] font-medium">Cancelled</span>
         )}
-      </button>
+      </div>
       {expanded && (
         <div className="px-2.5 pb-2.5 pt-0 animate-scale-in">
           <Renderer step={seg.step} expanded={true} />

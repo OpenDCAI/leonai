@@ -11,6 +11,7 @@ All paths must be absolute. Full security mechanisms and audit logging.
 """
 
 import os
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +31,7 @@ if _env_file.exists():
 
 from agent_profile import AgentProfile
 from middleware.command import CommandMiddleware
+from middleware.model_params import normalize_model_kwargs
 
 # 导入 hooks
 from middleware.command.hooks.dangerous_commands import DangerousCommandsHook
@@ -287,8 +289,16 @@ class LeonAgent:
         self.enable_web_tools = self.profile.tool.web.enabled
         self.queue_mode = self.profile.agent.queue_mode
         self._session_pool: dict[str, Any] = {}
-        self.db_path = Path.home() / ".leon" / "leon.db"
-        self.sandbox_db_path = Path.home() / ".leon" / "sandbox.db"
+        env_db_path = os.getenv("LEON_DB_PATH")
+        env_sandbox_db_path = os.getenv("LEON_SANDBOX_DB_PATH")
+        self.db_path = Path(env_db_path).expanduser() if env_db_path else (Path.home() / ".leon" / "leon.db")
+        self.sandbox_db_path = (
+            Path(env_sandbox_db_path).expanduser()
+            if env_sandbox_db_path
+            else (Path.home() / ".leon" / "sandbox.db")
+        )
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self.sandbox_db_path.parent.mkdir(parents=True, exist_ok=True)
 
     def _init_sandbox(self, sandbox: Any) -> Any:
         """Initialize sandbox infrastructure layer."""
@@ -336,7 +346,7 @@ class LeonAgent:
 
     def _create_model(self):
         """Initialize model with all parameters passed to init_chat_model."""
-        kwargs = self._build_model_kwargs()
+        kwargs = normalize_model_kwargs(self.model_name, self._build_model_kwargs())
         return init_chat_model(self.model_name, api_key=self.api_key, **kwargs)
 
     def _build_model_kwargs(self) -> dict:
@@ -378,22 +388,42 @@ class LeonAgent:
         if hasattr(self, "_monitor_middleware"):
             self._monitor_middleware.mark_terminated()
 
+    @staticmethod
+    def _run_async_cleanup(coro_factory, label: str) -> None:
+        import asyncio
+
+        try:
+            running_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            running_loop = None
+
+        if running_loop is None:
+            asyncio.run(coro_factory())
+            return
+
+        error: list[Exception] = []
+
+        def _runner() -> None:
+            try:
+                asyncio.run(coro_factory())
+            except Exception as exc:
+                error.append(exc)
+
+        thread = threading.Thread(target=_runner, daemon=True)
+        thread.start()
+        thread.join()
+        if error:
+            raise RuntimeError(f"{label} cleanup failed: {error[0]}") from error[0]
+
     def _cleanup_mcp_client(self) -> None:
         """Clean up MCP client."""
         if not hasattr(self, "_mcp_client") or not self._mcp_client:
             return
 
-        import asyncio
-
         try:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                loop.run_until_complete(self._mcp_client.close())
-            finally:
-                loop.close()
-        except Exception:
-            pass
+            self._run_async_cleanup(lambda: self._mcp_client.close(), "MCP client")
+        except Exception as e:
+            print(f"[LeonAgent] MCP cleanup error: {e}")
         self._mcp_client = None
 
     def _cleanup_sqlite_connection(self) -> None:
@@ -401,17 +431,10 @@ class LeonAgent:
         if not hasattr(self, "_aiosqlite_conn") or not self._aiosqlite_conn:
             return
 
-        import asyncio
-
         try:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                loop.run_until_complete(self._aiosqlite_conn.close())
-            finally:
-                loop.close()
-        except Exception:
-            pass
+            self._run_async_cleanup(lambda: self._aiosqlite_conn.close(), "SQLite connection")
+        except Exception as e:
+            print(f"[LeonAgent] SQLite cleanup error: {e}")
         self._aiosqlite_conn = None
 
     def __del__(self):

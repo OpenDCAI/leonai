@@ -7,16 +7,18 @@ while maintaining the same interface as before.
 
 from __future__ import annotations
 
-import asyncio
 import shlex
+import sqlite3
 import uuid
+from pathlib import Path
 from typing import TYPE_CHECKING
 
-from sandbox.interfaces.executor import AsyncCommand, BaseExecutor, ExecuteResult
+from sandbox.interfaces.executor import BaseExecutor
 from sandbox.interfaces.filesystem import FileSystemBackend
 
 if TYPE_CHECKING:
     from sandbox.chat_session import ChatSession
+    from sandbox.manager import SandboxManager
 
 
 class SandboxCapability:
@@ -31,9 +33,9 @@ class SandboxCapability:
         content = sandbox.fs.read_file("/path/to/file")
     """
 
-    def __init__(self, session: ChatSession):
+    def __init__(self, session: ChatSession, manager: SandboxManager | None = None):
         self._session = session
-        self._command_wrapper = _CommandWrapper(session)
+        self._command_wrapper = _CommandWrapper(session, manager=manager)
         self._fs_wrapper = _FileSystemWrapper(session)
 
     @property
@@ -53,11 +55,11 @@ class SandboxCapability:
     def resolve_session_info(self, provider_name: str):
         """Resolve current session info without exposing internal session object."""
         from sandbox.provider import SessionInfo
-        from sandbox.runtime import RemoteWrappedRuntime
 
         instance = self._session.lease.get_instance()
-        if not instance and isinstance(self._session.runtime, RemoteWrappedRuntime):
-            instance = self._session.lease.ensure_active_instance(self._session.runtime.provider)
+        provider = getattr(self._session.runtime, "provider", None)
+        if not instance and provider is not None:
+            instance = self._session.lease.ensure_active_instance(provider)
         return SessionInfo(
             session_id=instance.instance_id if instance else "local",
             provider=provider_name,
@@ -70,20 +72,22 @@ class _CommandWrapper(BaseExecutor):
 
     runtime_owns_cwd = True
 
-    def __init__(self, session: ChatSession):
+    def __init__(self, session: ChatSession, manager: SandboxManager | None = None):
         super().__init__(default_cwd=session.terminal.get_state().cwd)
         self._session = session
-        self._commands: dict[str, AsyncCommand] = {}
-        self._tasks: dict[str, asyncio.Task[ExecuteResult]] = {}
+        self._manager = manager
+        db_path = getattr(session.terminal, "db_path", None)
+        self._db_path: Path | None = Path(db_path) if db_path else None
 
     def _wrap_command(self, command: str, cwd: str | None, env: dict[str, str] | None) -> tuple[str, str]:
         wrapped = command
         if env:
             exports = "\n".join(f"export {k}={shlex.quote(v)}" for k, v in env.items())
             wrapped = f"{exports}\n{wrapped}"
-        work_dir = cwd or self.default_cwd or self._session.terminal.get_state().cwd
-        if work_dir:
-            wrapped = f"cd {shlex.quote(work_dir)}\n{wrapped}"
+        # @@@runtime-owned-cwd - Preserve runtime session cwd unless caller explicitly requests cwd override.
+        work_dir = cwd or self._session.terminal.get_state().cwd
+        if cwd:
+            wrapped = f"cd {shlex.quote(cwd)}\n{wrapped}"
         return wrapped, work_dir
 
     async def execute(
@@ -99,71 +103,76 @@ class _CommandWrapper(BaseExecutor):
         """Execute command asynchronously via runtime and return command handle."""
         self._session.touch()
         wrapped, work_dir = self._wrap_command(command, cwd, env)
-        command_id = f"cmd_{uuid.uuid4().hex[:12]}"
-        async_cmd = AsyncCommand(
-            command_id=command_id,
-            command_line=command,
-            cwd=work_dir,
+        if self._manager is None:
+            return await self._session.runtime.start_command(wrapped, work_dir)
+        bg_session = self._manager.create_background_command_session(
+            thread_id=self._session.thread_id,
+            initial_cwd=work_dir,
         )
-        self._commands[command_id] = async_cmd
+        return await bg_session.runtime.start_command(wrapped, work_dir)
 
-        async def _run() -> ExecuteResult:
-            try:
-                result = await self._session.runtime.execute(wrapped, timeout=None)
-            except Exception as exc:
-                result = ExecuteResult(exit_code=1, stdout="", stderr=f"Error: {exc}")
-            async_cmd.stdout_buffer = [result.stdout]
-            async_cmd.stderr_buffer = [result.stderr]
-            async_cmd.exit_code = result.exit_code
-            async_cmd.done = True
-            return result
+    def _lookup_command_terminal_id(self, command_id: str) -> str | None:
+        if self._db_path is None:
+            return None
+        with sqlite3.connect(str(self._db_path), timeout=30) as conn:
+            conn.execute("PRAGMA busy_timeout=30000")
+            row = conn.execute(
+                """
+                SELECT tc.terminal_id
+                FROM terminal_commands tc
+                JOIN abstract_terminals at ON at.terminal_id = tc.terminal_id
+                WHERE tc.command_id = ? AND at.thread_id = ?
+                """,
+                (command_id, self._session.thread_id),
+            ).fetchone()
+        return str(row[0]) if row else None
 
-        self._tasks[command_id] = asyncio.create_task(_run())
-        return async_cmd
+    def _resolve_session_for_terminal(self, terminal_id: str):
+        if terminal_id == self._session.terminal.terminal_id:
+            return self._session
+        if self._manager is None:
+            raise RuntimeError(f"Command belongs to terminal {terminal_id}, but manager is unavailable")
+        session = self._manager.session_manager.get(self._session.thread_id, terminal_id)
+        if session:
+            return session
+        terminal = self._manager.terminal_store.get_by_id(terminal_id)
+        if terminal is None:
+            raise RuntimeError(f"Terminal {terminal_id} not found")
+        if terminal.thread_id != self._session.thread_id:
+            raise RuntimeError(
+                f"Terminal {terminal_id} belongs to thread {terminal.thread_id}, not {self._session.thread_id}"
+            )
+        lease = self._manager.lease_store.get(terminal.lease_id)
+        if lease is None:
+            raise RuntimeError(f"Lease {terminal.lease_id} not found for terminal {terminal_id}")
+        return self._manager.session_manager.create(
+            session_id=f"sess-{uuid.uuid4().hex[:12]}",
+            thread_id=self._session.thread_id,
+            terminal=terminal,
+            lease=lease,
+        )
+
+    def _resolve_session_for_command(self, command_id: str):
+        terminal_id = self._lookup_command_terminal_id(command_id)
+        if terminal_id is None:
+            if self._manager is None:
+                return self._session
+            raise RuntimeError(f"Command {command_id} not found for thread {self._session.thread_id}")
+        return self._resolve_session_for_terminal(terminal_id)
 
     async def get_status(self, command_id: str):
         """Get status for an async command."""
-        return self._commands.get(command_id)
+        session = self._resolve_session_for_command(command_id)
+        return await session.runtime.get_command(command_id)
 
     async def wait_for(self, command_id: str, timeout: float | None = None):
         """Wait for async command completion."""
-        async_cmd = self._commands.get(command_id)
-        task = self._tasks.get(command_id)
-        if async_cmd is None:
-            return None
-        if task is not None and not task.done():
-            try:
-                if timeout is None:
-                    await task
-                else:
-                    await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
-            except TimeoutError:
-                return ExecuteResult(
-                    exit_code=-1,
-                    stdout="".join(async_cmd.stdout_buffer),
-                    stderr="".join(async_cmd.stderr_buffer),
-                    timed_out=True,
-                    command_id=command_id,
-                )
-        return ExecuteResult(
-            exit_code=async_cmd.exit_code or 0,
-            stdout="".join(async_cmd.stdout_buffer),
-            stderr="".join(async_cmd.stderr_buffer),
-            timed_out=False,
-            command_id=command_id,
-        )
+        session = self._resolve_session_for_command(command_id)
+        return await session.runtime.wait_for_command(command_id, timeout=timeout)
 
     def store_completed_result(self, command_id: str, command_line: str, cwd: str, result):
         """Store completed result for command_status lookup."""
-        self._commands[command_id] = AsyncCommand(
-            command_id=command_id,
-            command_line=command_line,
-            cwd=cwd,
-            stdout_buffer=[result.stdout],
-            stderr_buffer=[result.stderr],
-            exit_code=result.exit_code,
-            done=True,
-        )
+        self._session.runtime.store_completed_result(command_id, command_line, cwd, result)
 
 
 class _FileSystemWrapper(FileSystemBackend):
@@ -176,20 +185,17 @@ class _FileSystemWrapper(FileSystemBackend):
 
     def _get_provider(self):
         """Get provider from session's lease."""
-        # Provider is passed to runtime, we need to access it
-        from sandbox.runtime import RemoteWrappedRuntime
-
-        if isinstance(self._session.runtime, RemoteWrappedRuntime):
-            return self._session.runtime.provider
-        raise RuntimeError("FileSystem operations only supported for remote runtimes")
+        provider = getattr(self._session.runtime, "provider", None)
+        if provider is None:
+            raise RuntimeError("FileSystem operations only supported for remote runtimes")
+        return provider
 
     def _get_instance_id(self) -> str:
         """Get active instance ID."""
         # @@@lease-convergence - File operations can also wake paused instances; always converge through lease.
-        from sandbox.runtime import RemoteWrappedRuntime
-
-        if isinstance(self._session.runtime, RemoteWrappedRuntime):
-            instance = self._session.lease.ensure_active_instance(self._session.runtime.provider)
+        provider = getattr(self._session.runtime, "provider", None)
+        if provider is not None:
+            instance = self._session.lease.ensure_active_instance(provider)
         else:
             instance = self._session.lease.get_instance()
             if not instance:
@@ -223,6 +229,7 @@ class _FileSystemWrapper(FileSystemBackend):
 
     def file_exists(self, path: str) -> bool:
         """Check if file exists."""
+        self._session.touch()
         provider = self._get_provider()
         instance_id = self._get_instance_id()
 
@@ -242,6 +249,7 @@ class _FileSystemWrapper(FileSystemBackend):
 
     def is_dir(self, path: str) -> bool:
         """Check if path is directory."""
+        self._session.touch()
         provider = self._get_provider()
         instance_id = self._get_instance_id()
 
@@ -255,6 +263,7 @@ class _FileSystemWrapper(FileSystemBackend):
         """List directory contents."""
         from sandbox.interfaces.filesystem import DirEntry, DirListResult
 
+        self._session.touch()
         provider = self._get_provider()
         instance_id = self._get_instance_id()
 

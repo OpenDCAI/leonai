@@ -1,6 +1,6 @@
 # Sandbox
 
-LEON's sandbox system runs agent operations (file I/O, shell commands) in isolated environments instead of the host machine. Three providers are supported: **Docker** (local container), **E2B** (cloud), and **AgentBay** (Alibaba cloud).
+LEON's sandbox system runs agent operations (file I/O, shell commands) in isolated environments instead of the host machine. Four providers are supported: **Docker** (local container), **E2B** (cloud), **Daytona** (cloud or self-hosted), and **AgentBay** (Alibaba cloud).
 
 ## Quick Start
 
@@ -10,6 +10,9 @@ leonai --sandbox docker
 
 # Run LEON in E2B cloud sandbox
 leonai --sandbox e2b
+
+# Run LEON in Daytona cloud sandbox
+leonai --sandbox daytona
 
 # Run LEON in AgentBay cloud sandbox
 leonai --sandbox agentbay
@@ -38,6 +41,7 @@ Each sandbox provider is configured via a JSON file in `~/.leon/sandboxes/`:
 ~/.leon/sandboxes/
 ├── docker.json
 ├── e2b.json
+├── daytona.json
 └── agentbay.json
 ```
 
@@ -85,6 +89,27 @@ The file name (minus `.json`) is the sandbox name you pass to `--sandbox`.
 | `e2b.template` | `base` | E2B sandbox template |
 | `e2b.cwd` | `/home/user` | Working directory |
 | `e2b.timeout` | `300` | Session timeout in seconds |
+| `on_exit` | `pause` | `pause` or `destroy` |
+
+### Daytona
+
+```json
+{
+  "provider": "daytona",
+  "daytona": {
+    "api_key": "dtn_...",
+    "api_url": "https://app.daytona.io/api",
+    "cwd": "/home/daytona"
+  },
+  "on_exit": "pause"
+}
+```
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `daytona.api_key` | — | Daytona API key (or set `DAYTONA_API_KEY` env var) |
+| `daytona.api_url` | `https://app.daytona.io/api` | Daytona API base URL |
+| `daytona.cwd` | `/home/daytona` | Working directory |
 | `on_exit` | `pause` | `pause` or `destroy` |
 
 ### AgentBay
@@ -258,6 +283,27 @@ Some providers or account tiers don't support pause/resume. When this is detecte
 ### Metrics
 
 Selecting a session and pressing `m` shows:
+
+## Daytona
+
+`daytona` supports both Daytona SaaS and self-hosted Daytona. This is config-only: set `daytona.api_url`.
+
+- Default (SaaS): `daytona.api_url` is `https://app.daytona.io/api`
+- Self-hosted: set `daytona.api_url` to your own server (must include `/api`, e.g. `https://daytona.example.com/api`)
+
+Example `~/.leon/sandboxes/daytona.json` (self-hosted):
+```json
+{
+  "provider": "daytona",
+  "daytona": {
+    "api_key": "dtn_...",
+    "api_url": "https://daytona.example.com/api",
+    "target": "local",
+    "cwd": "/home/daytona"
+  },
+  "on_exit": "pause"
+}
+```
 
 ```
 Session: abc123...

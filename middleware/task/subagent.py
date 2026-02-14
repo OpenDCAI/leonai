@@ -10,6 +10,7 @@ from typing import Any
 from langchain.agents import create_agent
 from langchain.chat_models import init_chat_model
 from langchain_core.tools import tool
+from middleware.model_params import normalize_model_kwargs
 
 from .types import AgentConfig, TaskParams, TaskResult
 
@@ -170,7 +171,8 @@ class SubagentRunner:
         model_name = params.get("Model") or config.model or self.parent_model
 
         # Build model (unified path via init_chat_model)
-        model = init_chat_model(model_name, api_key=self.api_key, **self.model_kwargs)
+        model_kwargs = normalize_model_kwargs(model_name, self.model_kwargs)
+        model = init_chat_model(model_name, api_key=self.api_key, **model_kwargs)
 
         # Build filtered middleware
         middleware = self._build_subagent_middleware(config, all_middleware)
@@ -253,7 +255,8 @@ class SubagentRunner:
         model_name = params.get("Model") or config.model or self.parent_model
 
         # Build model
-        model = init_chat_model(model_name, api_key=self.api_key, **self.model_kwargs)
+        model_kwargs = normalize_model_kwargs(model_name, self.model_kwargs)
+        model = init_chat_model(model_name, api_key=self.api_key, **model_kwargs)
 
         # Build filtered middleware
         middleware = self._build_subagent_middleware(config, all_middleware)
@@ -281,6 +284,8 @@ class SubagentRunner:
         prompt = params["Prompt"]
         turns_used = 0
         emitted_tool_call_ids: set[str] = set()
+        text_parts: list[str] = []
+        max_text_chars = 200_000
 
         try:
             async for chunk in agent.astream(
@@ -300,6 +305,9 @@ class SubagentRunner:
                     if msg_class == "AIMessageChunk":
                         content = self._extract_text_content(getattr(msg_chunk, "content", ""))
                         if content:
+                            if sum(len(p) for p in text_parts) < max_text_chars:
+                                remaining = max_text_chars - sum(len(p) for p in text_parts)
+                                text_parts.append(content[:remaining])
                             yield {
                                 "event": "task_text",
                                 "data": json.dumps({"task_id": task_id, "content": content}),
@@ -349,6 +357,14 @@ class SubagentRunner:
                                 }
 
             # Task completed
+            final_text = "".join(text_parts).strip() or None
+            self._task_results[task_id] = TaskResult(
+                task_id=task_id,
+                thread_id=subagent_thread_id,
+                status="completed",
+                result=final_text,
+                turns_used=turns_used,
+            )
             yield {
                 "event": "task_done",
                 "data": json.dumps(
@@ -361,6 +377,13 @@ class SubagentRunner:
             }
 
         except Exception as e:
+            self._task_results[task_id] = TaskResult(
+                task_id=task_id,
+                thread_id=subagent_thread_id,
+                status="error",
+                error=str(e),
+                turns_used=turns_used,
+            )
             yield {
                 "event": "task_error",
                 "data": json.dumps({"task_id": task_id, "error": str(e)}),
