@@ -61,7 +61,7 @@ class TestConfigLoader:
 
         default_config = {
             "api": {"model": "claude-sonnet-4-5-20250929"},
-            "memory": {"pruning": {"keep_recent": 10}},
+            "memory": {"pruning": {"protect_recent": 10}},
         }
 
         with open(agents_dir / "default.json", "w") as f:
@@ -73,7 +73,7 @@ class TestConfigLoader:
 
         result = loader._load_system_defaults()
         assert result["api"]["model"] == "claude-sonnet-4-5-20250929"
-        assert result["memory"]["pruning"]["keep_recent"] == 10
+        assert result["memory"]["pruning"]["protect_recent"] == 10
 
     def test_load_system_defaults_missing(self, tmp_path):
         loader = ConfigLoader()
@@ -267,7 +267,7 @@ class TestConfigLoader:
         # User config
         user_dir = tmp_path / ".leon"
         user_dir.mkdir()
-        user_config = {"api": {"temperature": 0.7}, "memory": {"pruning": {"keep_recent": 15}}}
+        user_config = {"api": {"temperature": 0.7}, "memory": {"pruning": {"protect_recent": 15}}}
         with open(user_dir / "config.json", "w") as f:
             json.dump(user_config, f)
 
@@ -289,7 +289,7 @@ class TestConfigLoader:
         # User overrides system
         assert settings.api.temperature == 0.7
         # User config preserved
-        assert settings.memory.pruning.keep_recent == 15
+        assert settings.memory.pruning.protect_recent == 15
 
     def test_load_cli_overrides(self, tmp_path, monkeypatch):
         monkeypatch.setenv("HOME", str(tmp_path))

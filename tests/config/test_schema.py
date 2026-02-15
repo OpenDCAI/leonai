@@ -120,45 +120,51 @@ class TestMemoryConfig:
     def test_default_pruning(self):
         config = PruningConfig()
         assert config.enabled is True
-        assert config.keep_recent == 10
+        assert config.soft_trim_chars == 3000
+        assert config.hard_clear_threshold == 10000
+        assert config.protect_recent == 3
         assert config.trim_tool_results is True
-        assert config.max_tool_result_length == 5000
 
     def test_custom_pruning(self):
         config = PruningConfig(
             enabled=False,
-            keep_recent=20,
+            soft_trim_chars=5000,
+            hard_clear_threshold=20000,
+            protect_recent=5,
             trim_tool_results=False,
-            max_tool_result_length=10000,
         )
         assert config.enabled is False
-        assert config.keep_recent == 20
+        assert config.soft_trim_chars == 5000
+        assert config.hard_clear_threshold == 20000
+        assert config.protect_recent == 5
         assert config.trim_tool_results is False
-        assert config.max_tool_result_length == 10000
 
     def test_default_compaction(self):
         config = CompactionConfig()
         assert config.enabled is True
-        assert config.trigger_ratio == 0.8
+        assert config.reserve_tokens == 16384
+        assert config.keep_recent_tokens == 20000
         assert config.min_messages == 20
 
     def test_custom_compaction(self):
         config = CompactionConfig(
             enabled=False,
-            trigger_ratio=0.9,
+            reserve_tokens=8192,
+            keep_recent_tokens=10000,
             min_messages=30,
         )
         assert config.enabled is False
-        assert config.trigger_ratio == 0.9
+        assert config.reserve_tokens == 8192
+        assert config.keep_recent_tokens == 10000
         assert config.min_messages == 30
 
     def test_memory_config_nested(self):
         config = MemoryConfig(
-            pruning={"keep_recent": 15},
-            compaction={"trigger_ratio": 0.7},
+            pruning={"protect_recent": 15},
+            compaction={"reserve_tokens": 8192},
         )
-        assert config.pruning.keep_recent == 15
-        assert config.compaction.trigger_ratio == 0.7
+        assert config.pruning.protect_recent == 15
+        assert config.compaction.reserve_tokens == 8192
 
 
 class TestToolsConfig:
@@ -381,12 +387,12 @@ class TestLeonSettings:
         monkeypatch.setenv("OPENAI_API_KEY", "test-key")
         monkeypatch.setenv("LEON__API__MODEL", "gpt-4")
         monkeypatch.setenv("LEON__API__TEMPERATURE", "0.7")
-        monkeypatch.setenv("LEON__MEMORY__PRUNING__KEEP_RECENT", "20")
+        monkeypatch.setenv("LEON__MEMORY__PRUNING__PROTECT_RECENT", "20")
 
         settings = LeonSettings()
         assert settings.api.model == "gpt-4"
         assert settings.api.temperature == 0.7
-        assert settings.memory.pruning.keep_recent == 20
+        assert settings.memory.pruning.protect_recent == 20
 
     def test_workspace_root_validation(self, monkeypatch, tmp_path):
         monkeypatch.setenv("OPENAI_API_KEY", "test-key")
@@ -426,12 +432,12 @@ class TestLeonSettings:
         monkeypatch.setenv("OPENAI_API_KEY", "test-key")
         settings = LeonSettings(
             api={"model": "gpt-4", "temperature": 0.5},
-            memory={"pruning": {"keep_recent": 15}},
+            memory={"pruning": {"protect_recent": 15}},
             tools={"filesystem": {"enabled": False}},
         )
         assert settings.api.model == "gpt-4"
         assert settings.api.temperature == 0.5
-        assert settings.memory.pruning.keep_recent == 15
+        assert settings.memory.pruning.protect_recent == 15
         assert settings.tools.filesystem.enabled is False
 
     def test_custom_model_mapping(self, monkeypatch):

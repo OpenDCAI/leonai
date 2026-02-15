@@ -185,12 +185,14 @@ class TestConfigMigrator:
         new_memory = migrator._convert_memory_config(old_memory)
 
         assert new_memory["pruning"]["enabled"] is True
-        assert new_memory["pruning"]["keep_recent"] == 5
+        assert new_memory["pruning"]["protect_recent"] == 5
         assert new_memory["pruning"]["trim_tool_results"] is True
-        assert new_memory["pruning"]["max_tool_result_length"] == 3000
+        assert new_memory["pruning"]["soft_trim_chars"] == 3000
+        assert new_memory["pruning"]["hard_clear_threshold"] == 10000
 
         assert new_memory["compaction"]["enabled"] is True
-        assert new_memory["compaction"]["trigger_ratio"] == 0.8
+        assert new_memory["compaction"]["reserve_tokens"] == 16384
+        assert new_memory["compaction"]["keep_recent_tokens"] == 20000
         assert new_memory["compaction"]["min_messages"] == 20
 
     def test_validate_config_valid(self):
@@ -464,7 +466,7 @@ class TestConfigMigrator:
 
         assert new_config["api"]["model"] == "gpt-4"
         assert new_config["api"]["temperature"] == 0.7
-        assert new_config["memory"]["pruning"]["keep_recent"] == 5
+        assert new_config["memory"]["pruning"]["protect_recent"] == 5
         assert new_config["tools"]["filesystem"]["enabled"] is False
         assert new_config["tools"]["search"]["max_results"] == 100
         assert "test_server" in new_config["mcp"]["servers"]

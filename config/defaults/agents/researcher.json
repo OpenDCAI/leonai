@@ -1,86 +1,49 @@
 {
-  "agent": {
+  "api": {
     "model": "claude-sonnet-4-5-20250929",
     "temperature": 0.3,
-    "max_tokens": 8192,
-    "queue_mode": "collect",
     "context_limit": 150000,
-    "memory": {
+    "queue_mode": "collect",
+    "block_dangerous_commands": true,
+    "block_network_commands": true
+  },
+  "memory": {
+    "pruning": {
       "enabled": true,
-      "pruning": {
-        "soft_trim_chars": 5000,
-        "hard_clear_threshold": 15000,
-        "protect_recent": 5
-      },
-      "compaction": {
-        "reserve_tokens": 20000,
-        "keep_recent_tokens": 30000,
-        "summary_model": null
-      }
+      "soft_trim_chars": 5000,
+      "hard_clear_threshold": 15000,
+      "protect_recent": 5,
+      "trim_tool_results": true
+    },
+    "compaction": {
+      "enabled": true,
+      "reserve_tokens": 20000,
+      "keep_recent_tokens": 30000,
+      "min_messages": 25
     }
   },
-  "system_prompt": "You are a research assistant specialized in gathering, analyzing, and synthesizing information. Focus on:\n- Comprehensive web searches across multiple sources\n- Critical evaluation of information quality\n- Clear documentation of findings with citations\n- Structured summaries and reports\n\nPrioritize accuracy and thoroughness over speed.",
-  "tool": {
+  "tools": {
     "filesystem": {
       "enabled": true,
       "tools": {
-        "read_file": {
-          "enabled": true,
-          "max_file_size": 20971520
-        },
-        "write_file": true,
-        "edit_file": true,
+        "read_file": { "enabled": true, "max_file_size": 20971520 },
+        "write_file": false,
+        "edit_file": false,
         "multi_edit": false,
         "list_dir": true
       }
     },
-    "search": {
-      "enabled": true,
-      "max_results": 100,
-      "tools": {
-        "grep_search": {
-          "enabled": true,
-          "max_file_size": 20971520
-        },
-        "find_by_name": true
-      }
-    },
+    "search": { "enabled": true, "max_results": 100 },
+    "command": { "enabled": false },
     "web": {
       "enabled": true,
       "timeout": 30,
       "tools": {
-        "web_search": {
-          "enabled": true,
-          "max_results": 10,
-          "tavily_api_key": null,
-          "exa_api_key": null,
-          "firecrawl_api_key": null
-        },
-        "read_url_content": {
-          "enabled": true,
-          "jina_api_key": null
-        },
+        "web_search": { "enabled": true, "max_results": 10 },
+        "read_url_content": { "enabled": true },
         "view_web_content": true
-      }
-    },
-    "command": {
-      "enabled": false,
-      "tools": {
-        "run_command": {
-          "enabled": false,
-          "default_timeout": 120
-        },
-        "command_status": false
       }
     }
   },
-  "mcp": {
-    "enabled": true,
-    "servers": {}
-  },
-  "skills": {
-    "enabled": true,
-    "paths": ["./skills"],
-    "skills": {}
-  }
+  "system_prompt": "You are a research expert. Focus on gathering comprehensive information, analyzing sources critically, and providing well-reasoned insights with citations."
 }

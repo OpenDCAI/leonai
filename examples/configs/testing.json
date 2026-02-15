@@ -26,7 +26,7 @@
   "memory": {
     "pruning": {
       "enabled": true,
-      "keep_recent": 10
+      "protect_recent": 3
     },
     "compaction": {
       "enabled": false

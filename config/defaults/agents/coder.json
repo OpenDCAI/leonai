@@ -1,88 +1,47 @@
 {
-  "agent": {
+  "api": {
     "model": "claude-opus-4-6",
     "temperature": 0.0,
-    "max_tokens": 16384,
-    "queue_mode": "steer",
     "context_limit": 200000,
+    "queue_mode": "steer",
     "block_dangerous_commands": true,
-    "block_network_commands": false,
-    "memory": {
+    "block_network_commands": false
+  },
+  "memory": {
+    "pruning": {
       "enabled": true,
-      "pruning": {
-        "soft_trim_chars": 2000,
-        "hard_clear_threshold": 8000,
-        "protect_recent": 2
-      },
-      "compaction": {
-        "reserve_tokens": 32768,
-        "keep_recent_tokens": 40000,
-        "summary_model": "claude-sonnet-4-5-20250929"
-      }
+      "soft_trim_chars": 2000,
+      "hard_clear_threshold": 5000,
+      "protect_recent": 2,
+      "trim_tool_results": true
+    },
+    "compaction": {
+      "enabled": true,
+      "reserve_tokens": 32768,
+      "keep_recent_tokens": 40000,
+      "min_messages": 20
     }
   },
-  "system_prompt": "You are an expert software engineer. Focus on:\n- Writing clean, maintainable, well-tested code\n- Following project conventions and best practices\n- Minimal changes that solve the specific problem\n- Clear commit messages and documentation\n- Security and performance considerations\n\nAlways read existing code before making changes. Prefer editing over rewriting.",
-  "tool": {
+  "tools": {
     "filesystem": {
       "enabled": true,
       "tools": {
-        "read_file": {
-          "enabled": true,
-          "max_file_size": 10485760
-        },
+        "read_file": { "enabled": true, "max_file_size": 10485760 },
         "write_file": true,
         "edit_file": true,
         "multi_edit": true,
         "list_dir": true
       }
     },
-    "search": {
-      "enabled": true,
-      "max_results": 50,
-      "tools": {
-        "grep_search": {
-          "enabled": true,
-          "max_file_size": 10485760
-        },
-        "find_by_name": true
-      }
-    },
-    "web": {
-      "enabled": true,
-      "timeout": 15,
-      "tools": {
-        "web_search": {
-          "enabled": true,
-          "max_results": 5,
-          "tavily_api_key": null,
-          "exa_api_key": null,
-          "firecrawl_api_key": null
-        },
-        "read_url_content": {
-          "enabled": true,
-          "jina_api_key": null
-        },
-        "view_web_content": true
-      }
-    },
+    "search": { "enabled": true, "max_results": 50 },
     "command": {
       "enabled": true,
       "tools": {
-        "run_command": {
-          "enabled": true,
-          "default_timeout": 300
-        },
+        "run_command": { "enabled": true, "default_timeout": 300 },
         "command_status": true
       }
-    }
+    },
+    "web": { "enabled": false }
   },
-  "mcp": {
-    "enabled": true,
-    "servers": {}
-  },
-  "skills": {
-    "enabled": true,
-    "paths": ["./skills"],
-    "skills": {}
-  }
+  "system_prompt": "You are an expert software developer. Write clean, maintainable, well-tested code. Follow best practices and design patterns. Focus on code quality, performance, and security."
 }

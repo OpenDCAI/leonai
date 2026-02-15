@@ -445,9 +445,10 @@ tool:
 agent:
   memory:
     pruning:
-      soft_trim_chars: 3000
-      hard_clear_threshold: 10000
-      protect_recent: 3
+      keep_recent: 3
+      max_tool_result_length: 3000
+    compaction:
+      trigger_ratio: 0.8
 ```
 
 **New**:
@@ -456,9 +457,16 @@ agent:
   "memory": {
     "pruning": {
       "enabled": true,
-      "keep_recent": 3,
+      "protect_recent": 3,
       "trim_tool_results": true,
-      "max_tool_result_length": 3000
+      "soft_trim_chars": 3000,
+      "hard_clear_threshold": 10000
+    },
+    "compaction": {
+      "enabled": true,
+      "reserve_tokens": 16384,
+      "keep_recent_tokens": 20000,
+      "min_messages": 20
     }
   }
 }
@@ -724,13 +732,13 @@ mcp:
 
 ### Q8: What if I have custom memory settings?
 
-**A**: Memory config structure changed. Map old fields to new:
+**A**: Memory config field names changed. Map old fields to new:
 
-**Old fields** → **New fields**:
-- `soft_trim_chars` → `max_tool_result_length`
-- `protect_recent` → `keep_recent`
-- `hard_clear_threshold` → (removed, use `trigger_ratio` instead)
-- `reserve_tokens` → (removed, use `trigger_ratio` instead)
+**Old fields** -> **New fields**:
+- `keep_recent` -> `protect_recent`
+- `max_tool_result_length` -> `soft_trim_chars`
+- (new) `hard_clear_threshold`
+- `trigger_ratio` -> removed, replaced by `reserve_tokens` and `keep_recent_tokens`
 
 ### Q9: Can I keep using environment variables?
 

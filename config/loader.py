@@ -38,13 +38,15 @@ from config.schema import LeonSettings
 class ConfigLoader:
     """Three-tier configuration loader."""
 
-    def __init__(self, workspace_root: str | None = None):
+    def __init__(self, workspace_root: str | None = None, agent_name: str | None = None):
         """Initialize loader.
 
         Args:
             workspace_root: Project workspace root (for .leon/config.json)
+            agent_name: Agent preset name (e.g., "default", "coder", "researcher", "tester")
         """
         self.workspace_root = Path(workspace_root).resolve() if workspace_root else None
+        self.agent_name = agent_name or "default"
         self._system_defaults_dir = Path(__file__).parent / "defaults"
 
     def load(self, cli_overrides: dict[str, Any] | None = None) -> LeonSettings:
@@ -155,11 +157,13 @@ class ConfigLoader:
 
     def _load_system_defaults(self) -> dict[str, Any]:
         """Load system default configuration."""
-        default_agent_path = self._system_defaults_dir / "agents" / "default.json"
-        if not default_agent_path.exists():
+        path = self._system_defaults_dir / "agents" / f"{self.agent_name}.json"
+        if not path.exists():
+            path = self._system_defaults_dir / "agents" / "default.json"
+        if not path.exists():
             return {}
 
-        with open(default_agent_path) as f:
+        with open(path) as f:
             return json.load(f)
 
     def _load_user_config(self) -> dict[str, Any]:
@@ -288,15 +292,17 @@ class ConfigLoader:
 def load_config(
     workspace_root: str | None = None,
     cli_overrides: dict[str, Any] | None = None,
+    agent_name: str | None = None,
 ) -> LeonSettings:
     """Convenience function to load configuration.
 
     Args:
         workspace_root: Project workspace root
         cli_overrides: CLI overrides
+        agent_name: Agent preset name (e.g., "default", "coder", "researcher", "tester")
 
     Returns:
         Loaded LeonSettings instance
     """
-    loader = ConfigLoader(workspace_root=workspace_root)
+    loader = ConfigLoader(workspace_root=workspace_root, agent_name=agent_name)
     return loader.load(cli_overrides=cli_overrides)

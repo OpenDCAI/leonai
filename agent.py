@@ -364,7 +364,7 @@ class LeonAgent:
             cli_overrides.setdefault("tools", {}).setdefault("web", {})["enabled"] = enable_web_tools
 
         # Load config with agent name
-        loader = ConfigLoader(workspace_root=workspace_root)
+        loader = ConfigLoader(workspace_root=workspace_root, agent_name=agent_name)
         config = loader.load(cli_overrides=cli_overrides if cli_overrides else None)
 
         if self.verbose:
@@ -895,23 +895,10 @@ tool:
     def _add_memory_middleware(self, middleware: list) -> None:
         """Add memory middleware to stack."""
         if self.config:
-            # New config schema - convert to old format
-            from types import SimpleNamespace
-
+            # New config schema — field names match runtime constructors directly
             context_limit = self.config.api.context_limit
-
-            # Convert new pruning config to old format
-            pruning_config = SimpleNamespace(
-                soft_trim_chars=self.config.memory.pruning.max_tool_result_length,
-                hard_clear_threshold=self.config.memory.pruning.max_tool_result_length * 2,
-                protect_recent=self.config.memory.pruning.keep_recent,
-            )
-
-            # Convert new compaction config to old format
-            compaction_config = SimpleNamespace(
-                reserve_tokens=int(context_limit * (1 - self.config.memory.compaction.trigger_ratio)),
-                keep_recent_tokens=int(context_limit * self.config.memory.compaction.trigger_ratio),
-            )
+            pruning_config = self.config.memory.pruning
+            compaction_config = self.config.memory.compaction
         else:
             # Old profile schema - use directly
             context_limit = self.profile.agent.context_limit

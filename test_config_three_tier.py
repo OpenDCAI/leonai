@@ -29,7 +29,9 @@ def test_system_defaults():
 
     print(f"✓ System defaults loaded from: {loader._system_defaults_dir}")
     print(f"  - Default model: {system_config.get('api', {}).get('model')}")
-    print(f"  - Memory pruning keep_recent: {system_config.get('memory', {}).get('pruning', {}).get('keep_recent')}")
+    print(
+        f"  - Memory pruning protect_recent: {system_config.get('memory', {}).get('pruning', {}).get('protect_recent')}"
+    )
     print(f"  - Tools filesystem enabled: {system_config.get('tools', {}).get('filesystem', {}).get('enabled')}")
 
     return system_config
@@ -168,7 +170,7 @@ def test_config_merging():
         # Create user config with partial settings
         user_dir = Path(tmpdir) / ".leon"
         user_dir.mkdir()
-        user_config = {"api": {"temperature": 0.7}, "memory": {"pruning": {"keep_recent": 15}}}
+        user_config = {"api": {"temperature": 0.7}, "memory": {"pruning": {"protect_recent": 15}}}
         with open(user_dir / "config.json", "w") as f:
             json.dump(user_config, f, indent=2)
 
@@ -178,7 +180,7 @@ def test_config_merging():
         leon_dir = project_dir / ".leon"
         leon_dir.mkdir()
 
-        project_config = {"api": {"model": "gpt-4"}, "memory": {"compaction": {"trigger_ratio": 0.9}}}
+        project_config = {"api": {"model": "gpt-4"}, "memory": {"compaction": {"reserve_tokens": 8192}}}
 
         with open(leon_dir / "config.json", "w") as f:
             json.dump(project_config, f, indent=2)
@@ -197,13 +199,13 @@ def test_config_merging():
             # Check deep merge results
             print(f"  - Model: {settings.api.model} (from project)")
             print(f"  - Temperature: {settings.api.temperature} (from user)")
-            print(f"  - Pruning keep_recent: {settings.memory.pruning.keep_recent} (from user)")
-            print(f"  - Compaction trigger_ratio: {settings.memory.compaction.trigger_ratio} (from project)")
+            print(f"  - Pruning protect_recent: {settings.memory.pruning.protect_recent} (from user)")
+            print(f"  - Compaction reserve_tokens: {settings.memory.compaction.reserve_tokens} (from project)")
 
             assert settings.api.model == "gpt-4", "Project model not applied"
             assert settings.api.temperature == 0.7, "User temperature not preserved"
-            assert settings.memory.pruning.keep_recent == 15, "User pruning not preserved"
-            assert settings.memory.compaction.trigger_ratio == 0.9, "Project compaction not applied"
+            assert settings.memory.pruning.protect_recent == 15, "User pruning not preserved"
+            assert settings.memory.compaction.reserve_tokens == 8192, "Project compaction not applied"
 
             print("✓ Deep merge working correctly")
 

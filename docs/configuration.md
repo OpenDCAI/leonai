@@ -56,13 +56,15 @@ Configuration is loaded and merged from three levels (highest priority first):
   "memory": {
     "pruning": {
       "enabled": true,
-      "keep_recent": 10,
+      "protect_recent": 3,
       "trim_tool_results": true,
-      "max_tool_result_length": 5000
+      "soft_trim_chars": 3000,
+      "hard_clear_threshold": 10000
     },
     "compaction": {
       "enabled": true,
-      "trigger_ratio": 0.8,
+      "reserve_tokens": 16384,
+      "keep_recent_tokens": 20000,
       "min_messages": 20
     }
   },
@@ -186,17 +188,19 @@ Automatically trim old messages to stay within context limits:
   "memory": {
     "pruning": {
       "enabled": true,
-      "keep_recent": 10,
+      "protect_recent": 3,
       "trim_tool_results": true,
-      "max_tool_result_length": 5000
+      "soft_trim_chars": 3000,
+      "hard_clear_threshold": 10000
     }
   }
 }
 ```
 
-- `keep_recent`: Number of recent messages to always keep
+- `protect_recent`: Number of recent tool messages to keep untrimmed
 - `trim_tool_results`: Truncate large tool outputs
-- `max_tool_result_length`: Max characters for tool results
+- `soft_trim_chars`: Soft trim tool results longer than this (characters)
+- `hard_clear_threshold`: Clear tool results longer than this (characters)
 
 ### Compaction
 
@@ -207,14 +211,16 @@ Compress conversation history using LLM summarization:
   "memory": {
     "compaction": {
       "enabled": true,
-      "trigger_ratio": 0.8,
+      "reserve_tokens": 16384,
+      "keep_recent_tokens": 20000,
       "min_messages": 20
     }
   }
 }
 ```
 
-- `trigger_ratio`: Trigger at 80% of context limit
+- `reserve_tokens`: Reserve space for new messages (tokens)
+- `keep_recent_tokens`: Keep recent messages verbatim (tokens)
 - `min_messages`: Minimum messages before compaction
 
 ## Tools Configuration
@@ -543,11 +549,12 @@ Perfect for local development with all tools enabled:
   "memory": {
     "pruning": {
       "enabled": true,
-      "keep_recent": 10
+      "protect_recent": 3
     },
     "compaction": {
       "enabled": true,
-      "trigger_ratio": 0.8
+      "reserve_tokens": 16384,
+      "keep_recent_tokens": 20000
     }
   }
 }
@@ -596,9 +603,10 @@ Secure configuration for production environments:
   "memory": {
     "pruning": {
       "enabled": true,
-      "keep_recent": 5,
+      "protect_recent": 3,
       "trim_tool_results": true,
-      "max_tool_result_length": 3000
+      "soft_trim_chars": 3000,
+      "hard_clear_threshold": 10000
     }
   }
 }
@@ -957,14 +965,16 @@ Enable aggressive pruning and compaction:
   "memory": {
     "pruning": {
       "enabled": true,
-      "keep_recent": 5,  // Keep fewer messages
+      "protect_recent": 2,
       "trim_tool_results": true,
-      "max_tool_result_length": 3000  // Smaller limit
+      "soft_trim_chars": 2000,
+      "hard_clear_threshold": 8000
     },
     "compaction": {
       "enabled": true,
-      "trigger_ratio": 0.7,  // Trigger earlier
-      "min_messages": 15  // Compact sooner
+      "reserve_tokens": 24576,
+      "keep_recent_tokens": 16000,
+      "min_messages": 15
     }
   }
 }
@@ -1208,13 +1218,15 @@ Always enable audit logging and command blocking:
   "memory": {
     "pruning": {
       "enabled": true,
-      "keep_recent": 10,
+      "protect_recent": 3,
       "trim_tool_results": true,
-      "max_tool_result_length": 3000
+      "soft_trim_chars": 3000,
+      "hard_clear_threshold": 10000
     },
     "compaction": {
       "enabled": true,
-      "trigger_ratio": 0.7,  // Compact earlier
+      "reserve_tokens": 24576,
+      "keep_recent_tokens": 16000,
       "min_messages": 15
     }
   }
@@ -1336,8 +1348,8 @@ Using leon:coding for deterministic code generation (temp=0.0)
 - Audit log enabled for compliance
 
 ## Memory
-- Aggressive pruning (keep_recent=5) due to long conversations
-- Early compaction (trigger_ratio=0.7) to avoid context limits
+- Aggressive pruning (protect_recent=2) due to long conversations
+- Early compaction (reserve_tokens=24576) to avoid context limits
 ```
 
 ## See Also

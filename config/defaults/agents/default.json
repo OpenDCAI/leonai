@@ -17,13 +17,15 @@
   "memory": {
     "pruning": {
       "enabled": true,
-      "keep_recent": 10,
-      "trim_tool_results": true,
-      "max_tool_result_length": 5000
+      "soft_trim_chars": 3000,
+      "hard_clear_threshold": 10000,
+      "protect_recent": 3,
+      "trim_tool_results": true
     },
     "compaction": {
       "enabled": true,
-      "trigger_ratio": 0.8,
+      "reserve_tokens": 16384,
+      "keep_recent_tokens": 20000,
       "min_messages": 20
     }
   },

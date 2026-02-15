@@ -67,19 +67,27 @@ class APIConfig(BaseModel):
 
 
 class PruningConfig(BaseModel):
-    """Configuration for message pruning."""
+    """Configuration for message pruning.
+
+    Field names match SessionPruner constructor for direct passthrough.
+    """
 
     enabled: bool = Field(True, description="Enable message pruning")
-    keep_recent: int = Field(10, gt=0, description="Number of recent messages to keep")
+    soft_trim_chars: int = Field(3000, gt=0, description="Soft-trim tool results longer than this")
+    hard_clear_threshold: int = Field(10000, gt=0, description="Hard-clear tool results longer than this")
+    protect_recent: int = Field(3, gt=0, description="Keep last N tool messages untrimmed")
     trim_tool_results: bool = Field(True, description="Trim large tool results")
-    max_tool_result_length: int = Field(5000, gt=0, description="Max length for tool results")
 
 
 class CompactionConfig(BaseModel):
-    """Configuration for context compaction."""
+    """Configuration for context compaction.
+
+    Field names match ContextCompactor constructor for direct passthrough.
+    """
 
     enabled: bool = Field(True, description="Enable context compaction")
-    trigger_ratio: float = Field(0.8, gt=0.0, le=1.0, description="Trigger compaction at this ratio of max tokens")
+    reserve_tokens: int = Field(16384, gt=0, description="Reserve space for new messages")
+    keep_recent_tokens: int = Field(20000, gt=0, description="Keep recent messages verbatim")
     min_messages: int = Field(20, gt=0, description="Minimum messages before compaction")
 
 

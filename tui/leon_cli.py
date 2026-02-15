@@ -574,6 +574,7 @@ def main():
     parser = argparse.ArgumentParser(description="Leon AI - 你的 AI 编程助手", add_help=False)
     parser.add_argument("--profile", type=str, help="Profile 配置文件路径")
     parser.add_argument("--model", type=str, help="模型名称（覆盖 profile 和环境变量）")
+    parser.add_argument("--agent", type=str, default=None, help="Agent preset name (default/coder/researcher/tester)")
     parser.add_argument("--workspace", type=str, help="工作目录")
     parser.add_argument("--sandbox", type=str, help="Sandbox 名称 (从 ~/.leon/sandboxes/<name>.json 加载，默认 local)")
     parser.add_argument("--thread", type=str, help="Thread ID (恢复对话)")
@@ -621,6 +622,7 @@ def _show_main_help() -> None:
     print("  leonai                    启动 Leon (新对话)")
     print("  leonai -c                 继续上次对话")
     print("  leonai --model <name>     使用指定模型")
+    print("  leonai --agent <name>     使用指定 agent 预设 (default/coder/researcher/tester)")
     print("  leonai --profile <path>   使用指定 profile 启动")
     print("  leonai --workspace <dir>  指定工作目录")
     print("  leonai --sandbox <name>   使用指定 sandbox 配置")
@@ -769,6 +771,7 @@ def _launch_tui(args) -> None:
             profile=args.profile,
             workspace_root=workspace,
             sandbox=sandbox_arg,
+            agent=args.agent,
             verbose=False,
         )
     except Exception as e:

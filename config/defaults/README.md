@@ -96,27 +96,29 @@ LLM-based summarization when context approaches limit:
 
 Load a preset via CLI:
 ```bash
-leonai --profile config/defaults/agents/coder.json
+leonai --agent coder
 ```
 
 Or programmatically:
 ```python
-from agent_profile import AgentProfile
+from config.loader import load_config
 
-profile = AgentProfile.from_file("config/defaults/agents/researcher.json")
+config = load_config(agent="researcher")
 ```
 
 ## Customization
 
 User configs override defaults via three-tier merge:
 1. System defaults (this directory)
-2. User global config (`~/.leon/profile.yaml`)
-3. Project config (`./leon.yaml`)
+2. User global config (`~/.leon/config.json`)
+3. Project config (`.leon/config.json`)
 
 Example override:
-```yaml
-# ~/.leon/profile.yaml
-agent:
-  model: leon:coding  # Use virtual model
-  temperature: 0.1    # Override temperature
+```json
+{
+  "api": {
+    "model": "leon:coding",
+    "temperature": 0.1
+  }
+}
 ```

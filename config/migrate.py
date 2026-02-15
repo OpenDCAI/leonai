@@ -225,7 +225,7 @@ class ConfigMigrator:
     def _convert_memory_config(self, old_memory: dict[str, Any]) -> dict[str, Any]:
         """Convert old memory config to new format.
 
-        Old format:
+        Old format (profile.yaml) used runtime names directly:
             pruning:
               soft_trim_chars: 3000
               hard_clear_threshold: 10000
@@ -234,36 +234,40 @@ class ConfigMigrator:
               reserve_tokens: 16384
               keep_recent_tokens: 20000
 
-        New format:
+        New format preserves the same field names (schema now matches runtime):
             pruning:
               enabled: true
-              keep_recent: 10
+              soft_trim_chars: 3000
+              hard_clear_threshold: 10000
+              protect_recent: 3
               trim_tool_results: true
-              max_tool_result_length: 5000
             compaction:
               enabled: true
-              trigger_ratio: 0.8
+              reserve_tokens: 16384
+              keep_recent_tokens: 20000
               min_messages: 20
         """
         new_memory: dict[str, Any] = {}
 
-        # Convert pruning config
+        # Convert pruning config — field names preserved, add enabled/trim_tool_results
         if "pruning" in old_memory:
             old_pruning = old_memory["pruning"]
             new_memory["pruning"] = {
                 "enabled": old_memory.get("enabled", True),
-                "keep_recent": old_pruning.get("protect_recent", 10),
+                "soft_trim_chars": old_pruning.get("soft_trim_chars", 3000),
+                "hard_clear_threshold": old_pruning.get("hard_clear_threshold", 10000),
+                "protect_recent": old_pruning.get("protect_recent", 3),
                 "trim_tool_results": True,
-                "max_tool_result_length": old_pruning.get("soft_trim_chars", 5000),
             }
 
-        # Convert compaction config
+        # Convert compaction config — field names preserved, add min_messages
         if "compaction" in old_memory:
             old_compaction = old_memory["compaction"]
             new_memory["compaction"] = {
                 "enabled": old_memory.get("enabled", True),
-                "trigger_ratio": 0.8,  # Default value
-                "min_messages": 20,  # Default value
+                "reserve_tokens": old_compaction.get("reserve_tokens", 16384),
+                "keep_recent_tokens": old_compaction.get("keep_recent_tokens", 20000),
+                "min_messages": old_compaction.get("min_messages", 20),
             }
 
         return new_memory
@@ -329,37 +333,9 @@ class ConfigMigrator:
         if "tool" in old_config and "tools" in new_config:
             changes["renamed_sections"].append("tool → tools")
 
-        # Track memory config changes
+        # Track memory config changes (field names now preserved, only location changed)
         if "agent" in old_config and "memory" in old_config["agent"]:
-            old_memory = old_config["agent"]["memory"]
-            if "pruning" in old_memory:
-                changes["removed_fields"].extend(
-                    [
-                        "memory.pruning.soft_trim_chars",
-                        "memory.pruning.hard_clear_threshold",
-                        "memory.pruning.protect_recent",
-                    ]
-                )
-                changes["new_fields"].extend(
-                    [
-                        "memory.pruning.keep_recent",
-                        "memory.pruning.trim_tool_results",
-                        "memory.pruning.max_tool_result_length",
-                    ]
-                )
-            if "compaction" in old_memory:
-                changes["removed_fields"].extend(
-                    [
-                        "memory.compaction.reserve_tokens",
-                        "memory.compaction.keep_recent_tokens",
-                    ]
-                )
-                changes["new_fields"].extend(
-                    [
-                        "memory.compaction.trigger_ratio",
-                        "memory.compaction.min_messages",
-                    ]
-                )
+            changes["new_fields"].append("memory (moved from agent.memory to root level)")
 
         return changes
 
