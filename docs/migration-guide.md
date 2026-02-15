@@ -260,6 +260,11 @@ model: claude-sonnet-4-5-20250929
 }
 ```
 
+**Validation**:
+```bash
+jq . < ~/.leon/config.json  # Should output formatted JSON without errors
+```
+
 ### Issue 2: Boolean Values
 
 **Problem**: YAML uses `true`/`false`, JSON uses `true`/`false` (same, but watch for YAML's `yes`/`no`)
@@ -275,6 +280,8 @@ enabled: yes  # or true
   "enabled": true
 }
 ```
+
+**Common mistake**: Using `"true"` (string) instead of `true` (boolean)
 
 ### Issue 3: Null Values
 
@@ -294,6 +301,8 @@ workspace_root: ~
 }
 ```
 
+**Note**: In JSON, `null` is unquoted. `"null"` is a string, not null.
+
 ### Issue 4: Lists/Arrays
 
 **Problem**: YAML uses `-` for lists, JSON uses `[]`
@@ -312,6 +321,8 @@ paths:
 }
 ```
 
+**Common mistake**: Forgetting commas between array elements.
+
 ### Issue 5: Environment Variables
 
 **Problem**: Both support `${VAR}`, but ensure proper quoting in JSON
@@ -325,6 +336,131 @@ api_key: ${OPENAI_API_KEY}
 ```json
 {
   "api_key": "${OPENAI_API_KEY}"
+}
+```
+
+**Verification**:
+```bash
+leonai config show  # Should show expanded value, not ${VAR}
+```
+
+### Issue 6: Trailing Commas
+
+**Problem**: JSON doesn't allow trailing commas, YAML doesn't care
+
+**Invalid JSON** ❌:
+```json
+{
+  "api": {
+    "model": "claude-opus-4-6",
+    "temperature": 0.5,  // ← Trailing comma causes error
+  }
+}
+```
+
+**Valid JSON** ✅:
+```json
+{
+  "api": {
+    "model": "claude-opus-4-6",
+    "temperature": 0.5
+  }
+}
+```
+
+### Issue 7: Comments Not Supported
+
+**Problem**: JSON doesn't support comments, YAML does
+
+**YAML** (works):
+```yaml
+agent:
+  model: claude-opus-4-6  # Using Opus for complex tasks
+```
+
+**JSON** (doesn't work):
+```json
+{
+  "api": {
+    "model": "claude-opus-4-6"  // This breaks JSON parsing
+  }
+}
+```
+
+**Solution**: Remove comments or use a separate documentation file.
+
+### Issue 8: Nested Structure Changes
+
+**Problem**: Some fields moved from nested to root level
+
+**Old YAML**:
+```yaml
+agent:
+  workspace_root: /path/to/project
+  memory:
+    pruning:
+      enabled: true
+```
+
+**New JSON**:
+```json
+{
+  "workspace_root": "/path/to/project",  // Moved to root
+  "memory": {  // Moved to root
+    "pruning": {
+      "enabled": true
+    }
+  }
+}
+```
+
+### Issue 9: Tool vs Tools Naming
+
+**Problem**: Singular `tool` renamed to plural `tools`
+
+**Old**:
+```yaml
+tool:
+  filesystem:
+    enabled: true
+```
+
+**New**:
+```json
+{
+  "tools": {  // Note the 's'
+    "filesystem": {
+      "enabled": true
+    }
+  }
+}
+```
+
+### Issue 10: Memory Config Structure Changed
+
+**Problem**: Memory configuration fields renamed
+
+**Old**:
+```yaml
+agent:
+  memory:
+    pruning:
+      soft_trim_chars: 3000
+      hard_clear_threshold: 10000
+      protect_recent: 3
+```
+
+**New**:
+```json
+{
+  "memory": {
+    "pruning": {
+      "enabled": true,
+      "keep_recent": 3,
+      "trim_tool_results": true,
+      "max_tool_result_length": 3000
+    }
+  }
 }
 ```
 
@@ -343,7 +479,332 @@ api_key: ${OPENAI_API_KEY}
 - [ ] Verify all tools work
 - [ ] Remove old `profile.yaml` (optional)
 
-## Using Agent Presets Instead
+## Migration Success Stories
+
+### Story 1: Simple Local Development Setup
+
+**Before** (profile.yaml):
+```yaml
+agent:
+  model: claude-sonnet-4-5-20250929
+  temperature: 0.5
+  workspace_root: /Users/dev/myproject
+
+tool:
+  filesystem:
+    enabled: true
+  command:
+    enabled: true
+```
+
+**After** (config.json):
+```json
+{
+  "api": {
+    "model": "leon:balanced",
+    "temperature": 0.5
+  },
+  "workspace_root": "/Users/dev/myproject",
+  "tools": {
+    "filesystem": {
+      "enabled": true
+    },
+    "command": {
+      "enabled": true
+    }
+  }
+}
+```
+
+**Result**: Cleaner config using virtual model names, all features working.
+
+### Story 2: Multi-Project Setup with Shared Credentials
+
+**Before**: Duplicated API keys in each project's profile.yaml
+
+**After**:
+
+User config (`~/.leon/config.json`):
+```json
+{
+  "api": {
+    "api_key": "${OPENAI_API_KEY}",
+    "base_url": "${OPENAI_BASE_URL}",
+    "model_provider": "openai"
+  }
+}
+```
+
+Project A (`.leon/config.json`):
+```json
+{
+  "api": {
+    "model": "leon:coding"
+  }
+}
+```
+
+Project B (`.leon/config.json`):
+```json
+{
+  "api": {
+    "model": "leon:research"
+  },
+  "tools": {
+    "command": {
+      "enabled": false
+    }
+  }
+}
+```
+
+**Result**: Credentials in one place, per-project customization, no duplication.
+
+### Story 3: Production Environment with Security
+
+**Before** (profile.yaml):
+```yaml
+agent:
+  model: claude-opus-4-6
+  enable_audit_log: false
+  block_dangerous_commands: false
+
+tool:
+  filesystem:
+    enabled: true
+  command:
+    enabled: true
+```
+
+**After** (config.json):
+```json
+{
+  "api": {
+    "model": "claude-opus-4-6",
+    "enable_audit_log": true,
+    "allowed_extensions": ["py", "js", "ts", "json"],
+    "block_dangerous_commands": true,
+    "block_network_commands": true
+  },
+  "tools": {
+    "filesystem": {
+      "enabled": true,
+      "tools": {
+        "write_file": false,
+        "edit_file": false
+      }
+    },
+    "command": {
+      "enabled": false
+    }
+  }
+}
+```
+
+**Result**: Read-only access, audit logging enabled, dangerous commands blocked.
+
+### Story 4: Research Agent with Web Access
+
+**Before** (profile.yaml):
+```yaml
+agent:
+  model: claude-sonnet-4-5-20250929
+  temperature: 0.3
+
+tool:
+  web:
+    enabled: true
+    tools:
+      web_search:
+        enabled: true
+        tavily_api_key: ${TAVILY_API_KEY}
+  command:
+    enabled: true
+```
+
+**After** (config.json):
+```json
+{
+  "api": {
+    "model": "leon:research"
+  },
+  "tools": {
+    "web": {
+      "enabled": true,
+      "tools": {
+        "web_search": {
+          "enabled": true,
+          "max_results": 20,
+          "tavily_api_key": "${TAVILY_API_KEY}"
+        }
+      }
+    },
+    "command": {
+      "enabled": false
+    },
+    "filesystem": {
+      "tools": {
+        "write_file": false,
+        "edit_file": false
+      }
+    }
+  }
+}
+```
+
+**Result**: Research-focused agent with enhanced web search, no code execution.
+
+## FAQ
+
+### Q1: Do I have to migrate immediately?
+
+**A**: No, but it's recommended. The old profile.yaml format is deprecated and may be removed in future versions. The new config system provides better validation, three-tier merging, and virtual model mapping.
+
+### Q2: Can I use both profile.yaml and config.json?
+
+**A**: No. Leon will only load config.json if it exists. If both exist, profile.yaml is ignored.
+
+### Q3: What happens to my old profile.yaml after migration?
+
+**A**: The migration tool creates a backup with `.bak` suffix (e.g., `profile.yaml.bak`). You can safely delete it after verifying the migration worked.
+
+### Q4: How do I test the migration without making changes?
+
+**A**: Use dry-run mode:
+```bash
+leonai config migrate --dry-run
+```
+
+This validates the migration without writing files.
+
+### Q5: Can I rollback if something goes wrong?
+
+**A**: Yes, the migration tool creates backups:
+```bash
+# Restore from backup
+cp ~/.leon/profile.yaml.bak ~/.leon/profile.yaml
+rm ~/.leon/config.json
+
+# Or use the rollback command (if available)
+leonai config rollback
+```
+
+### Q6: Do virtual model names work with all providers?
+
+**A**: Virtual models (leon:*) are mapped to specific Claude models by default. If you're using a different provider, you can:
+- Use actual model names instead: `"model": "gpt-4"`
+- Override the model mapping in your config
+
+### Q7: How do I migrate MCP server configurations?
+
+**A**: MCP config structure is mostly unchanged, just move from YAML to JSON:
+
+**Before**:
+```yaml
+mcp:
+  servers:
+    github:
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-github"]
+```
+
+**After**:
+```json
+{
+  "mcp": {
+    "servers": {
+      "github": {
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-github"]
+      }
+    }
+  }
+}
+```
+
+### Q8: What if I have custom memory settings?
+
+**A**: Memory config structure changed. Map old fields to new:
+
+**Old fields** → **New fields**:
+- `soft_trim_chars` → `max_tool_result_length`
+- `protect_recent` → `keep_recent`
+- `hard_clear_threshold` → (removed, use `trigger_ratio` instead)
+- `reserve_tokens` → (removed, use `trigger_ratio` instead)
+
+### Q9: Can I keep using environment variables?
+
+**A**: Yes! Environment variable expansion (`${VAR}`) works the same way in JSON. You can also use the `LEON__` prefix for nested config:
+
+```bash
+export LEON__API__MODEL=claude-opus-4-6
+export LEON__API__TEMPERATURE=0.3
+```
+
+### Q10: How do I verify my migration was successful?
+
+**A**: Run these checks:
+
+```bash
+# 1. Validate JSON syntax
+jq . < ~/.leon/config.json
+
+# 2. View merged configuration
+leonai config show
+
+# 3. Test agent startup
+leonai
+
+# 4. Verify tools are available
+# (Check that expected tools appear in agent)
+```
+
+### Q11: What if I encounter validation errors?
+
+**A**: Common validation errors and fixes:
+
+**Error**: `Missing 'api.model' field`
+**Fix**: Add model to api section:
+```json
+{
+  "api": {
+    "model": "claude-sonnet-4-5-20250929"
+  }
+}
+```
+
+**Error**: `Unknown tool: xyz`
+**Fix**: Check tool name spelling. Valid tools: `filesystem`, `search`, `web`, `command`
+
+**Error**: `Invalid MCP server config`
+**Fix**: Ensure each MCP server has a `command` field:
+```json
+{
+  "mcp": {
+    "servers": {
+      "github": {
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-github"]
+      }
+    }
+  }
+}
+```
+
+### Q12: Can I migrate just part of my config?
+
+**A**: Yes, you can start with a minimal config and add more later:
+
+**Minimal config**:
+```json
+{
+  "api": {
+    "model": "leon:balanced"
+  }
+}
+```
+
+Then add tools, memory settings, etc. as needed. The three-tier system will merge your config with system defaults.
 
 Instead of migrating, consider using built-in presets:
 

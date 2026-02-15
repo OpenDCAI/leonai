@@ -12,6 +12,7 @@ All paths must be absolute. Full security mechanisms and audit logging.
 
 import os
 import threading
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +31,8 @@ if _env_file.exists():
             os.environ[key] = value
 
 from agent_profile import AgentProfile
+from config import LeonSettings
+from config.loader import ConfigLoader
 from middleware.command import CommandMiddleware
 
 # 导入 hooks
@@ -717,7 +720,12 @@ tool:
         middleware.append(SteeringMiddleware())
 
         # 1. Memory (context pruning + compaction)
-        memory_enabled = self.config.memory.enabled if self.config else self.profile.agent.memory.enabled
+        if self.config:
+            # New config: check if pruning or compaction is enabled
+            memory_enabled = self.config.memory.pruning.enabled or self.config.memory.compaction.enabled
+        else:
+            # Old profile: check agent.memory.enabled
+            memory_enabled = self.profile.agent.memory.enabled
         if memory_enabled:
             self._add_memory_middleware(middleware)
 
@@ -780,17 +788,34 @@ tool:
     def _add_memory_middleware(self, middleware: list) -> None:
         """Add memory middleware to stack."""
         if self.config:
-            cfg = self.config.memory
+            # New config schema - convert to old format
+            from types import SimpleNamespace
+
             context_limit = self.config.api.context_limit
+
+            # Convert new pruning config to old format
+            pruning_config = SimpleNamespace(
+                soft_trim_chars=self.config.memory.pruning.max_tool_result_length,
+                hard_clear_threshold=self.config.memory.pruning.max_tool_result_length * 2,
+                protect_recent=self.config.memory.pruning.keep_recent,
+            )
+
+            # Convert new compaction config to old format
+            compaction_config = SimpleNamespace(
+                reserve_tokens=int(context_limit * (1 - self.config.memory.compaction.trigger_ratio)),
+                keep_recent_tokens=int(context_limit * self.config.memory.compaction.trigger_ratio),
+            )
         else:
-            cfg = self.profile.agent.memory
+            # Old profile schema - use directly
             context_limit = self.profile.agent.context_limit
+            pruning_config = self.profile.agent.memory.pruning
+            compaction_config = self.profile.agent.memory.compaction
 
         db_path = Path.home() / ".leon" / "leon.db"
         self._memory_middleware = MemoryMiddleware(
             context_limit=context_limit,
-            pruning_config=cfg.pruning,
-            compaction_config=cfg.compaction,
+            pruning_config=pruning_config,
+            compaction_config=compaction_config,
             db_path=db_path,
             checkpointer=self.checkpointer,
             compaction_threshold=0.7,

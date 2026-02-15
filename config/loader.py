@@ -6,8 +6,23 @@ Configuration priority (highest to lowest):
 3. System defaults (leon/config/defaults/)
 
 Merge strategies:
-- Agent configs: deep merge (system + user + project)
-- Sandbox/MCP/Skills: lookup (first found wins, no merge)
+- API/Memory/Tools configs: deep merge (system + user + project)
+- MCP/Skills: lookup (first found wins, no merge)
+- System prompt: lookup (project > user > system)
+
+Example usage:
+    >>> from config.loader import load_config
+    >>> config = load_config(workspace_root="/path/to/project")
+    >>> print(config.api.model)
+    'claude-sonnet-4-5-20250929'
+
+Example with CLI overrides:
+    >>> config = load_config(
+    ...     workspace_root="/path/to/project",
+    ...     cli_overrides={"api": {"model": "leon:powerful"}}
+    ... )
+    >>> print(config.api.model)
+    'claude-opus-4-6'  # Resolved from virtual model mapping
 """
 
 from __future__ import annotations
@@ -138,6 +153,15 @@ class ConfigLoader:
 
         Returns:
             Merged dictionary
+
+        Example:
+            >>> loader = ConfigLoader()
+            >>> system = {"api": {"model": "gpt-4", "temperature": 0.5}}
+            >>> user = {"api": {"temperature": 0.7}}
+            >>> project = {"api": {"model": "claude-opus-4-6"}}
+            >>> result = loader._deep_merge(system, user, project)
+            >>> result
+            {'api': {'model': 'claude-opus-4-6', 'temperature': 0.7}}
         """
         result: dict[str, Any] = {}
 
@@ -175,11 +199,24 @@ class ConfigLoader:
     def _expand_env_vars(self, obj: Any) -> Any:
         """Recursively expand environment variables ${VAR}.
 
+        Supports both ${VAR} syntax and ~ for home directory.
+
         Args:
             obj: Object to expand (dict/list/str)
 
         Returns:
             Expanded object
+
+        Example:
+            >>> import os
+            >>> os.environ['MY_KEY'] = 'secret123'
+            >>> loader = ConfigLoader()
+            >>> loader._expand_env_vars("${MY_KEY}")
+            'secret123'
+            >>> loader._expand_env_vars("~/config")
+            '/Users/username/config'
+            >>> loader._expand_env_vars({"key": "${MY_KEY}"})
+            {'key': 'secret123'}
         """
         if isinstance(obj, dict):
             return {k: self._expand_env_vars(v) for k, v in obj.items()}

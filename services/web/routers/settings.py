@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])

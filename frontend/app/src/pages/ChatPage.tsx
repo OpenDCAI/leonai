@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, useOutletContext, useLocation } from "react-router-dom";
 import ChatArea from "../components/ChatArea";
 import ComputerPanel from "../components/ComputerPanel";
@@ -26,10 +26,18 @@ export default function ChatPage() {
   const location = useLocation();
   const { tm, setSidebarCollapsed } = useOutletContext<OutletContext>();
   const initialMessageSent = useRef(false);
+  const [currentModel, setCurrentModel] = useState<string>("leon:balanced");
 
   // Check if we have an initial message to send
   const state = location.state as { initialMessage?: string; selectedModel?: string } | null;
   const hasInitialMessage = !!state?.initialMessage;
+
+  // Set initial model from location state if provided
+  useEffect(() => {
+    if (state?.selectedModel) {
+      setCurrentModel(state.selectedModel);
+    }
+  }, [state?.selectedModel]);
 
   const { entries, activeSandbox, loading, setEntries, setActiveSandbox, refreshThread } = useThreadData(threadId, hasInitialMessage);
 
@@ -79,10 +87,12 @@ export default function ChatPage() {
         threadPreview={tm.threads.find((t) => t.thread_id === threadId)?.preview ?? null}
         sandboxInfo={activeSandbox}
         queueEnabled={queueEnabled}
+        currentModel={currentModel}
         onToggleSidebar={() => setSidebarCollapsed(v => !v)}
         onPauseSandbox={() => void handlePauseSandbox()}
         onResumeSandbox={() => void handleResumeSandbox()}
         onToggleQueue={() => void handleToggleQueue()}
+        onModelChange={setCurrentModel}
       />
 
       <div className="flex-1 flex min-h-0">

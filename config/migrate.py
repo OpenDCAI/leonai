@@ -8,6 +8,27 @@ Migrates from old format:
 To new format:
 - config.json (unified configuration)
 - .env (environment variables)
+
+Example usage:
+    >>> from config.migrate import migrate_config
+    >>> from pathlib import Path
+    >>>
+    >>> # Dry run to preview changes
+    >>> report = migrate_config("~/.leon", dry_run=True)
+    >>> print(report['changes'])
+    {'renamed_sections': ['agent → api', 'tool → tools']}
+    >>>
+    >>> # Actual migration
+    >>> report = migrate_config("~/.leon")
+    >>> print(f"Migrated to {report['new_files']['config.json']}")
+    'Migrated to /Users/username/.leon/config.json'
+
+Key changes:
+- agent.* → api.* (renamed section)
+- tool.* → tools.* (pluralized)
+- agent.workspace_root → workspace_root (moved to root)
+- agent.memory → memory (moved to root)
+- Memory config fields renamed (see migration guide)
 """
 
 from __future__ import annotations
@@ -43,6 +64,12 @@ class ConfigMigrator:
 
         Returns:
             Dict of {file_type: path} for found old config files
+
+        Example:
+            >>> migrator = ConfigMigrator(Path("~/.leon"))
+            >>> old_files = migrator.detect_old_config()
+            >>> old_files
+            {'profile.yaml': Path('/Users/username/.leon/profile.yaml')}
         """
         old_files = {}
 
@@ -355,8 +382,14 @@ class ConfigMigrator:
     def rollback(self) -> None:
         """Rollback migration by restoring backup files.
 
+        Restores all .bak files and removes new config.json.
+
         Raises:
-            ConfigMigrationError: If rollback fails
+            ConfigMigrationError: If rollback fails (no backups found)
+
+        Example:
+            >>> migrator = ConfigMigrator(Path("~/.leon"))
+            >>> migrator.rollback()  # Restores profile.yaml.bak → profile.yaml
         """
         # Find backup files
         backup_files = list(self.config_dir.glob(f"*{self.backup_suffix}"))

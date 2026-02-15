@@ -8,6 +8,8 @@ LEON 以 LangChain Middleware 为核心架构：通过统一的 middleware 管�
 
 ## 快速开始
 
+### 安装
+
 ```bash
 uv tool install -U leonai   # 安装/更新
 leonai                      # 启动
@@ -15,14 +17,83 @@ leonai                      # 启动
 
 首次运行会自动进入配置向导，支持 OpenAI 兼容格式的 API（OpenAI、Claude via proxy、DeepSeek 等）。
 
+### 基础使用
+
 ```bash
-leonai config            # 修改配置
+# 使用默认配置启动
+leonai
+
+# 使用预设 Agent
+leonai --agent coder        # 代码开发（Opus, temp=0.0）
+leonai --agent researcher   # 研究分析（Sonnet, 只读）
+leonai --agent tester       # 测试 QA
+
+# 使用虚拟模型名
+leonai --model leon:fast       # 快速响应（Sonnet, temp=0.7）
+leonai --model leon:balanced   # 平衡模式（Sonnet, temp=0.5）
+leonai --model leon:powerful   # 强大推理（Opus, temp=0.3）
+leonai --model leon:coding     # 代码生成（Opus, temp=0.0）
+
+# 配置管理
+leonai config            # 交互式配置
 leonai config show       # 查看当前配置
-leonai --agent coder     # 使用预设配置
-leonai --model leon:powerful  # 使用虚拟模型名
 ```
 
-配置保存在 `~/.leon/config.json`（用户配置）或 `.leon/config.json`（项目配置）。
+### 配置文件位置
+
+- **用户配置**: `~/.leon/config.json` - API 密钥和个人偏好
+- **项目配置**: `.leon/config.json` - 项目特定设置
+
+### 快速配置示例
+
+**最小配置** (`~/.leon/config.json`):
+```json
+{
+  "api": {
+    "api_key": "${OPENAI_API_KEY}",
+    "model": "leon:balanced"
+  }
+}
+```
+
+**开发环境** (`.leon/config.json`):
+```json
+{
+  "api": {
+    "model": "leon:coding",
+    "allowed_extensions": ["py", "js", "ts", "json", "yaml"]
+  },
+  "tools": {
+    "web": {
+      "enabled": false
+    }
+  }
+}
+```
+
+**生产环境** (`.leon/config.json`):
+```json
+{
+  "api": {
+    "model": "claude-opus-4-6",
+    "enable_audit_log": true,
+    "block_dangerous_commands": true
+  },
+  "tools": {
+    "filesystem": {
+      "tools": {
+        "write_file": false,
+        "edit_file": false
+      }
+    },
+    "command": {
+      "enabled": false
+    }
+  }
+}
+```
+
+详见 [配置文档](docs/configuration.md) 和 [迁移指南](docs/migration-guide.md)
 
 ## 最小基座
 
@@ -93,7 +164,7 @@ LEON 采用三层配置系统，通过 JSON 配置文件统一管理 Agent 能�
 - CLI 参数可覆盖配置
 - 内置 Agent 预设（default/coder/researcher/tester）
 
-详见 [配置文档](docs/configuration.md) 和 [迁移指南](docs/migration-guide.md)
+详见 [配置文档](docs/configuration.md)、[迁移指南](docs/migration-guide.md) 和 [配置示例](examples/configs/)
 
 ### Skills 系统
 

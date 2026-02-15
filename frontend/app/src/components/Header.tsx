@@ -1,6 +1,7 @@
 import { Monitor, PanelLeft, Pause, Play } from "lucide-react";
 import type { SandboxInfo } from "../api";
 import SettingsPanel from "./SettingsPanel";
+import ModelSelector from "./ModelSelector";
 
 const sandboxTypeLabels: Record<string, string> = {
   local: "本地",
@@ -15,10 +16,12 @@ interface HeaderProps {
   threadPreview: string | null;
   sandboxInfo: SandboxInfo | null;
   queueEnabled: boolean;
+  currentModel?: string;
   onToggleSidebar: () => void;
   onPauseSandbox: () => void;
   onResumeSandbox: () => void;
   onToggleQueue: () => void;
+  onModelChange?: (model: string) => void;
 }
 
 export default function Header({
@@ -26,10 +29,12 @@ export default function Header({
   threadPreview,
   sandboxInfo,
   queueEnabled,
+  currentModel = "leon:balanced",
   onToggleSidebar,
   onPauseSandbox,
   onResumeSandbox,
   onToggleQueue,
+  onModelChange,
 }: HeaderProps) {
   const hasRemote = sandboxInfo && sandboxInfo.type !== "local";
   const sandboxLabel = sandboxTypeLabels[sandboxInfo?.type ?? "local"] ?? sandboxInfo?.type ?? "本地";
@@ -83,6 +88,12 @@ export default function Header({
       </div>
 
       <div className="flex items-center gap-1.5">
+        <ModelSelector
+          currentModel={currentModel}
+          threadId={activeThreadId}
+          onModelChange={onModelChange}
+        />
+
         {hasRemote && sandboxInfo?.status === "running" && (
           <button
             className="px-3 py-1.5 rounded-lg text-xs flex items-center gap-2 border border-[#e5e5e5] text-[#525252] hover:bg-[#f5f5f5] hover:text-[#171717]"

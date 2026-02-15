@@ -445,7 +445,9 @@ leonai --agent tester
 
 ## Configuration Examples
 
-### Project-Specific Config
+### Example 1: Local Development Setup
+
+Perfect for local development with all tools enabled:
 
 `.leon/config.json` in your project:
 
@@ -453,18 +455,181 @@ leonai --agent tester
 {
   "api": {
     "model": "leon:coding",
-    "allowed_extensions": ["py", "js", "ts", "json", "yaml"]
+    "temperature": 0.0,
+    "allowed_extensions": ["py", "js", "ts", "json", "yaml", "md"]
   },
   "system_prompt": "You are a Python expert working on a FastAPI project. Follow PEP 8 and use type hints.",
   "tools": {
+    "filesystem": {
+      "enabled": true,
+      "tools": {
+        "read_file": {
+          "enabled": true,
+          "max_file_size": 10485760
+        },
+        "write_file": true,
+        "edit_file": true,
+        "multi_edit": true
+      }
+    },
+    "command": {
+      "enabled": true,
+      "tools": {
+        "run_command": {
+          "enabled": true,
+          "default_timeout": 120
+        }
+      }
+    },
     "web": {
       "enabled": false
+    }
+  },
+  "memory": {
+    "pruning": {
+      "enabled": true,
+      "keep_recent": 10
+    },
+    "compaction": {
+      "enabled": true,
+      "trigger_ratio": 0.8
     }
   }
 }
 ```
 
-### User Global Config
+**Use case**: Working on a local codebase where you need full file system and command access but don't need web search.
+
+### Example 2: Production Deployment
+
+Secure configuration for production environments:
+
+`~/.leon/config.json`:
+
+```json
+{
+  "api": {
+    "model": "claude-opus-4-6",
+    "api_key": "${OPENAI_API_KEY}",
+    "base_url": "${OPENAI_BASE_URL}",
+    "model_provider": "openai",
+    "temperature": 0.3,
+    "enable_audit_log": true,
+    "allowed_extensions": ["py", "js", "ts", "json", "yaml"],
+    "block_dangerous_commands": true,
+    "block_network_commands": true
+  },
+  "tools": {
+    "filesystem": {
+      "enabled": true,
+      "tools": {
+        "read_file": {
+          "enabled": true,
+          "max_file_size": 5242880
+        },
+        "write_file": false,
+        "edit_file": false
+      }
+    },
+    "command": {
+      "enabled": false
+    },
+    "web": {
+      "enabled": false
+    }
+  },
+  "memory": {
+    "pruning": {
+      "enabled": true,
+      "keep_recent": 5,
+      "trim_tool_results": true,
+      "max_tool_result_length": 3000
+    }
+  }
+}
+```
+
+**Use case**: Production environment where you need read-only access with strict security controls.
+
+### Example 3: Testing Environment
+
+Configuration optimized for running tests:
+
+`.leon/config.json`:
+
+```json
+{
+  "api": {
+    "model": "leon:balanced",
+    "temperature": 0.5
+  },
+  "tools": {
+    "filesystem": {
+      "enabled": true
+    },
+    "command": {
+      "enabled": true,
+      "tools": {
+        "run_command": {
+          "enabled": true,
+          "default_timeout": 300
+        }
+      }
+    },
+    "web": {
+      "enabled": false
+    }
+  },
+  "system_prompt": "You are a testing expert. Focus on test coverage, edge cases, and quality assurance."
+}
+```
+
+**Use case**: Running automated tests where you need longer timeouts and balanced model performance.
+
+### Example 4: Research-Only Agent
+
+Disable code execution for safe research:
+
+```json
+{
+  "api": {
+    "model": "leon:research",
+    "temperature": 0.3
+  },
+  "tools": {
+    "command": {
+      "enabled": false
+    },
+    "filesystem": {
+      "enabled": true,
+      "tools": {
+        "read_file": {
+          "enabled": true,
+          "max_file_size": 20971520
+        },
+        "write_file": false,
+        "edit_file": false
+      }
+    },
+    "web": {
+      "enabled": true,
+      "tools": {
+        "web_search": {
+          "enabled": true,
+          "max_results": 20,
+          "tavily_api_key": "${TAVILY_API_KEY}"
+        }
+      }
+    }
+  }
+}
+```
+
+**Use case**: Research tasks where you need web access and file reading but no code execution.
+
+### Example 5: Multi-Environment Setup
+
+User global config with API credentials:
 
 `~/.leon/config.json`:
 
@@ -480,11 +645,15 @@ leonai --agent tester
       "tools": {
         "web_search": {
           "tavily_api_key": "${TAVILY_API_KEY}"
+        },
+        "read_url_content": {
+          "jina_api_key": "${JINA_API_KEY}"
         }
       }
     }
   },
   "mcp": {
+    "enabled": true,
     "servers": {
       "github": {
         "command": "npx",
@@ -498,35 +667,21 @@ leonai --agent tester
 }
 ```
 
-### Research-Only Agent
+Project-specific overrides:
 
-Disable code execution for safe research:
+`.leon/config.json`:
 
 ```json
 {
   "api": {
-    "model": "leon:research"
+    "model": "leon:powerful",
+    "temperature": 0.0
   },
-  "tools": {
-    "command": {
-      "enabled": false
-    },
-    "filesystem": {
-      "tools": {
-        "write_file": false,
-        "edit_file": false
-      }
-    },
-    "web": {
-      "tools": {
-        "web_search": {
-          "max_results": 20
-        }
-      }
-    }
-  }
+  "system_prompt": "You are working on a critical production system. Be extra careful with changes."
 }
 ```
+
+**Use case**: Keep credentials in user config, override model and behavior per project.
 
 ## CLI Overrides
 
@@ -556,63 +711,106 @@ Configuration changes are applied on next agent initialization. For immediate ef
 
 ## Troubleshooting
 
-### API Key Not Found
+### Common Issues and Solutions
 
-**Error**: `No API key found`
+#### 1. API Key Not Found
 
-**Solution**: Set environment variable or add to config:
+**Error**: `No API key found. Set LEON__API__API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, or OPENROUTER_API_KEY environment variable.`
 
+**Cause**: No API key configured in environment or config file.
+
+**Solution**:
+
+Option A - Environment variable:
 ```bash
 export OPENAI_API_KEY=sk-...
 # or
 export ANTHROPIC_API_KEY=sk-ant-...
 ```
 
-Or in `~/.leon/config.json`:
-
+Option B - User config (`~/.leon/config.json`):
 ```json
 {
   "api": {
-    "api_key": "sk-..."
+    "api_key": "${OPENAI_API_KEY}"
   }
 }
 ```
 
-### Invalid Model Name
+**Verification**:
+```bash
+leonai config show  # Check if API key is loaded
+```
+
+#### 2. Invalid Model Name
 
 **Error**: `Unknown virtual model: leon:xyz`
 
-**Solution**: Use valid virtual model names or actual model names:
+**Cause**: Using a virtual model name that doesn't exist in the mapping.
 
-```bash
-leonai --model leon:balanced  # Valid
-leonai --model claude-opus-4-6  # Valid
-```
-
-### Configuration Not Loading
-
-**Issue**: Changes not taking effect
+**Valid virtual models**:
+- `leon:fast` → claude-sonnet-4-5 (temp 0.7, 409kens)
+- `leon:balanced` → claude-sonnet-4-5 (temp 0.5, 8192 tokens)
+- `leon:powerful` → claude-opus-4-6 (temp 0.3, 16384 tokens)
+- `leon:coding` → claude-opus-4-6 (temp 0.0, 16384 tokens)
+- `leon:research` → claude-sonnet-4-5 (temp 0.3, 8192 tokens)
+- `leon:creative` → claude-sonnet-4-5 (temp 0.9, 8192 tokens)
 
 **Solution**:
-1. Check file location (`.leon/config.json` in workspace or `~/.leon/config.json`)
-2. Validate JSON syntax (use `jq . < config.json`)
-3. Restart leonai
-4. Check merge priority (project > user > system)
+```bash
+leonai --model leon:balanced  # Use valid virtual name
+leonai --model claude-opus-4-6  # Or use actual model name
+```
 
-### Tool Not Available
+#### 3. Configuration Not Loading
 
-**Issue**: Tool not showing up
+**Issue**: Changes to config.json not taking effect
 
-**Solution**: Check tool is enabled in config:
+**Cause**: JSON syntax error, wrong file location, or config not reloade*Solution**:
+
+Step 1 - Validate JSON syntax:
+```bash
+jq . < ~/.leon/config.json  # Should output formatted JSON
+jq . < .leon/config.json    # Check project config too
+```
+
+Step 2 - Check file location:
+```bash
+ls -la ~/.leon/config.json      # User config
+ls -la .leon/config.json        # Project config
+```
+
+Step 3 - Verify config is loaded:
+```bash
+leonai config show  # View merged configuration
+```
+
+Step 4 - Restart Leon:
+```bash
+# Exit current session (Ctrl+D)
+leonai  # Start fresh
+```
+
+**Remember**: Configuration priority is Project > User > System. Project config overrides user config.
+
+#### 4. Tool Not Available
+
+**Issue**: Expected tool not showing up in agent
+
+**Cause**: Tool disabled in configuration or parent middleware disabled.
+
+**Solution**:
+
+Check tool hierarchy - both parent and child must be enabled:
 
 ```json
 {
   "tools": {
     "web": {
-      "enabled": true,
+      "enabled": true,  // Parent must be enabled
       "tools": {
         "web_search": {
-          "enabled": true
+          "enabled": true  // Child must be enabled
         }
       }
     }
@@ -620,14 +818,180 @@ leonai --model claude-opus-4-6  # Valid
 }
 ```
 
-### MCP Server Not Starting
+**Verification**:
+```bash
+leonai config show | grep -A 10 "web"
+```
 
-**Issue**: MCP tools not available
+#### 5. MCP Server Not Starting
+
+**Issue**: MCP tools not available, server fails to start
+
+**Cause**: Invalid command, missing dependencies, or environment variables not set.
 
 **Solution**:
-1. Check command is valid: `npx -y @modelcontextprotocol/server-filesystem`
-2. Check environment variables are set
-3. Enable debug logging: `leonai --verbose`
+
+Step 1 - Test command manually:
+```bash
+npx -y @modelcontextprotocol/server-github
+# Should start without errors
+```
+
+Step 2 - Check environment variables:
+```bash
+echo $GITHUB_TOKEN  # Should output token
+```
+
+Step 3 - Enable verbose logging:
+```bash
+leonai --verbose
+# Look for MCP server startup messages
+```
+
+Step 4 - Verify config:
+```json
+{
+  "mcp": {
+    "enabled": true,
+    "servers": {
+      "github": {
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-github"],
+        "env": {
+          "GITHUB_TOKEN": "${GITHUB_TOKEN}"
+        }
+      }
+    }
+  }
+}
+```
+
+#### 6. Base URL Not Working with Proxy
+
+**Issue**: Using OpenAI-compatible proxy but getting connection errors
+
+**Cause**: Missing `/v1` suffix or incorrect provider setting.
+
+**Solution**:
+
+For OpenAI-compatible proxies serving Claude:
+```json
+{
+  "api": {
+    "model": "claude-opus-4-6",
+    "model_provider": "openai",  // Must set to "openai"
+    "base_url": "https://api.example.com/v1",  // Must end with /v1
+    "api_key": "${OPENAI_API_KEY}"
+  }
+}
+```
+
+**Note**: The schema automatically adds `/v1` if missing, but explicit provider is required.
+
+#### 7. Memory Issues - Context Too Large
+
+**Issue**: Agent runs out of context, messages getting truncated
+
+**Cause**: Long conversation exceeding context limit.
+
+**Solution**:
+
+Enable aggressive pruning and compaction:
+```json
+{
+  "memory": {
+    "pruning": {
+      "enabled": true,
+      "keep_recent": 5,  // Keep fewer messages
+      "trim_tool_results": true,
+      "max_tool_result_length": 3000  // Smaller limit
+    },
+    "compaction": {
+      "enabled": true,
+      "trigger_ratio": 0.7,  // Trigger earlier
+      "min_messages": 15  // Compact sooner
+    }
+  }
+}
+```
+
+#### 8. File Size Limit Exceeded
+
+**Issue**: Cannot read large files
+
+**Cause**: File exceeds max_file_size limit.
+
+**Solution**:
+
+Increase file size limit:
+```json
+{
+  "tools": {
+    "filesystem": {
+      "tools": {
+        "read_file": {
+          "enabled": true,
+          "max_file_size": 20971520  // 20MB instead of 10MB
+        }
+      }
+    }
+  }
+}
+```
+
+**Warning**: Larger files consume more tokens and may hit context limits.
+
+#### 9. Command Timeout
+
+**Issue**: Long-running commands getting killed
+
+**Cause**: Command exceeds default timeout (120 seconds).
+
+**Solution**:
+
+Increase timeout:
+```json
+{
+  "tools": {
+    "command": {
+      "tools": {
+        "run_command": {
+          "enabled": true,
+          "default_timeout": 300  // 5 minutes
+        }
+      }
+    }
+  }
+}
+```
+
+#### 10. Environment Variables Not Expanding
+
+**Issue**: `${VAR}` not being replaced with actual value
+
+**Cause**: Environment variable not set or typo in variable name.
+
+**Solution**:
+
+Step 1 - Verify variable is set:
+```bash
+echo $OPENAI_API_KEY  # Should output value
+```
+
+Step 2 - Check config syntax:
+```json
+{
+  "api": {
+    "api_key": "${OPENAI_API_KEY}"  // Correct
+    // NOT: "api_key": "$OPENAI_API_KEY"  // Wrong
+  }
+}
+```
+
+Step 3 - Verify expansion:
+```bash
+leonai config show  # Should show actual value, not ${VAR}
+```
 
 ## Schema Reference
 
@@ -643,14 +1007,283 @@ Key types:
 
 ## Best Practices
 
-1. **Use Virtual Models**: Prefer `leon:*` names for portability
-2. **Environment Variables**: Never commit API keys, use `${VAR}` syntax
-3. **Project Config**: Keep project-specific settings in `.leon/config.json`
-4. **User Config**: Keep personal API keys in `~/.leon/config.json`
-5. **Agent Presets**: Start with presets, customize as needed
-6. **Security**: Enable audit logging and command blocking in production
-7. **Memory**: Tune pruning/compaction based on conversation length
-8. **Tools**: Disable unused tools to reduce token usage
+### 1. Use Virtual Models for Portability
+
+Virtual models make it easy to switch between different model configurations without changing your code:
+
+```json
+{
+  "api": {
+    "model": "leon:coding"  // Easy to switch to leon:research later
+  }
+}
+```
+
+**Benefits**:
+- Switch models without remembering exact names
+- Consistent temperature/token settings per use case
+- Easy to update all projects when new models release
+
+### 2. Never Commit API Keys
+
+Always use environment variables for sensitive data:
+
+**Bad** ❌:
+```json
+{
+  "api": {
+    "api_key": "sk-ant-api03-actual-key-here"
+  }
+}
+```
+
+**Good** ✅:
+```json
+{
+  "api": {
+    "api_key": "${OPENAI_API_KEY}"
+  }
+}
+```
+
+Add `.leon/config.json` to `.gitignore` if it contains secrets, or use `~/.leon/config.json` for credentials.
+
+### 3. Separate Project and User Configs
+
+**User config** (`~/.leon/config.json`) - API credentials and personal preferences:
+```json
+{
+  "api": {
+    "api_key": "${OPENAI_API_KEY}",
+    "base_url": "${OPENAI_BASE_URL}",
+    "model_provider": "openai"
+  },
+  "tools": {
+    "web": {
+      "tools": {
+        "web_search": {
+          "tavily_api_key": "${TAVILY_API_KEY}"
+        }
+      }
+    }
+  }
+}
+```
+
+**Project config** (`.leon/config.json`) - Project-specific settings:
+```json
+{
+  "api": {
+    "model": "leon:coding",
+    "allowed_extensions": ["py", "js", "ts"]
+  },
+  "system_prompt": "You are working on a FastAPI project. Follow PEP 8."
+}
+```
+
+**Benefits**:
+- Credentials stay in user config (not committed)
+- Project settings can be shared with team
+- Easy to work on multiple projects
+
+### 4. Start with Agent Presets
+
+Use built-in presets as starting points:
+
+```bash
+leonai --agent coder      # For development
+leonai --agent researcher # For research
+leonai --agent tester     # For testing
+```
+
+Then customize only what you need:
+```json
+{
+  "api": {
+    "temperature": 0.1  // Slightly more deterministic than default
+  }
+}
+```
+
+**Benefits**:
+- Proven configurations for common use cases
+- Less configuration to maintain
+- Easy to understand what changed
+
+### 5. Enable Security Features in Production
+
+Always enable audit logging and command blocking:
+
+```json
+{
+  "api": {
+    "enable_audit_log": true,
+    "allowed_extensions": ["py", "js", "ts", "json", "yaml"],
+    "block_dangerous_commands": true,
+    "block_network_commands": true
+  }
+}
+```
+
+**What this protects against**:
+- Accidental file deletions (`rm -rf`)
+- Unauthorized network access
+- Execution of dangerous system commands
+- Access to sensitive file types
+
+### 6. Tune Memory Settings Based on Usage
+
+**Short conversations** (< 20 messages):
+```json
+{
+  "memory": {
+    "pruning": {
+      "enabled": false  // No need to prune
+    },
+    "compaction": {
+      "enabled": false  // No need to compact
+    }
+  }
+}
+```
+
+**Long conversations** (> 50 messages):
+```json
+{
+  "memory": {
+    "pruning": {
+      "enabled": true,
+      "keep_recent": 10,
+      "trim_tool_results": true,
+      "max_tool_result_length": 3000
+    },
+    "compaction": {
+      "enabled": true,
+      "trigger_ratio": 0.7,  // Compact earlier
+      "min_messages": 15
+    }
+  }
+}
+```
+
+### 7. Disable Unused Tools to Reduce Token Usage
+
+Every enabled tool adds to the system prompt. Disable tools you don't need:
+
+```json
+{
+  "tools": {
+    "web": {
+      "enabled": false  // Disable if no internet access needed
+    },
+    "command": {
+      "enabled": false  // Disable if read-only access sufficient
+    }
+  }
+}
+```
+
+**Token savings**: ~200-500 tokens per disabled middleware.
+
+### 8. Use Appropriate File Size Limits
+
+**Default** (10MB):
+```json
+{
+  "tools": {
+    "filesystem": {
+      "tools": {
+        "read_file": {
+          "max_file_size": 10485760
+        }
+      }
+    }
+  }
+}
+```
+
+**For large codebases** (20MB):
+```json
+{
+  "tools": {
+    "filesystem": {
+      "tools": {
+        "read_file": {
+          "max_file_size": 20971520
+        }
+      }
+    }
+  }
+}
+```
+
+**For restricted environments** (5MB):
+```json
+{
+  "tools": {
+    "filesystem": {
+      "tools": {
+        "read_file": {
+          "max_file_size": 5242880
+        }
+      }
+    }
+  }
+}
+```
+
+### 9. Configure Timeouts Based on Task Type
+
+**Quick tasks** (default 120s):
+```json
+{
+  "tools": {
+    "command": {
+      "tools": {
+        "run_command": {
+          "default_timeout": 120
+        }
+      }
+    }
+  }
+}
+```
+
+**Long-running tasks** (tests, builds):
+```json
+{
+  "tools": {
+    "command": {
+      "tools": {
+        "run_command": {
+          "default_timeout": 600  // 10 minutes
+        }
+      }
+    }
+  }
+}
+```
+
+### 10. Document Your Configuration
+
+Add comments to your config (use a separate README if JSON doesn't support comments):
+
+**config-notes.md**:
+```markdown
+# Leon Configuration Notes
+
+## Model Choice
+Using leon:coding for deterministic code generation (temp=0.0)
+
+## Security
+- Dangerous commands blocked for safety
+- Only Python/JS/TS files allowed
+- Audit log enabled for compliance
+
+## Memory
+- Aggressive pruning (keep_recent=5) due to long conversations
+- Early compaction (trigger_ratio=0.7) to avoid context limits
+```
 
 ## See Also
 

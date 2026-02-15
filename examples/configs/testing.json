@@ -1,0 +1,36 @@
+{
+  "api": {
+    "model": "leon:balanced",
+    "temperature": 0.5
+  },
+  "tools": {
+    "filesystem": {
+      "enabled": true
+    },
+    "search": {
+      "enabled": true
+    },
+    "command": {
+      "enabled": true,
+      "tools": {
+        "run_command": {
+          "enabled": true,
+          "default_timeout": 300
+        }
+      }
+    },
+    "web": {
+      "enabled": false
+    }
+  },
+  "memory": {
+    "pruning": {
+      "enabled": true,
+      "keep_recent": 10
+    },
+    "compaction": {
+      "enabled": false
+    }
+  },
+  "system_prompt": "You are a testing expert. Focus on comprehensive test coverage, edge cases, and quality assurance. Write clear, maintainable tests."
+}
