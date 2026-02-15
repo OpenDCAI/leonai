@@ -261,6 +261,14 @@ class ChatSessionManager:
             for idx_name in unique_indexes:
                 info_rows = conn.execute(f"PRAGMA index_info({idx_name})").fetchall()
                 unique_index_columns[idx_name] = {str(info_row[2]) for info_row in info_rows}
+            # If a legacy schema left a UNIQUE(thread_id) constraint, drop it in-place.
+            # This is a safe migration: it does not delete data, only removes an incorrect constraint.
+            to_drop = [idx_name for idx_name, idx_cols in unique_index_columns.items() if idx_cols == {"thread_id"}]
+            for idx_name in to_drop:
+                # @@@migration-drop-thread-unique - legacy unique(thread_id) breaks multi-terminal model.
+                conn.execute(f'DROP INDEX IF EXISTS "{idx_name}"')
+                unique_index_columns.pop(idx_name, None)
+            conn.commit()
         missing = REQUIRED_CHAT_SESSION_COLUMNS - cols
         if missing:
             raise RuntimeError(
@@ -269,8 +277,8 @@ class ChatSessionManager:
         # @@@single-active-per-terminal - multi-terminal model allows many active sessions per thread, one per terminal.
         if any(idx_cols == {"thread_id"} for idx_cols in unique_index_columns.values()):
             raise RuntimeError(
-                "chat_sessions still has UNIQUE index on thread_id from old schema. "
-                "Purge ~/.leon/sandbox.db and retry."
+                "chat_sessions still has UNIQUE index on thread_id from old schema even after migration. "
+                "Inspect ~/.leon/sandbox.db indexes and retry."
             )
 
     def _build_runtime(self, terminal: AbstractTerminal, lease: SandboxLease) -> PhysicalTerminalRuntime:
