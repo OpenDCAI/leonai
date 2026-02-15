@@ -1,4 +1,4 @@
-import { MoreHorizontal, Plus, Search, Trash2 } from "lucide-react";
+import { MoreHorizontal, Plus, Search, Settings, Trash2 } from "lucide-react";
 import { Link, useParams } from "react-router-dom";
 import type { ThreadSummary } from "../api";
 import { Skeleton } from "./ui/skeleton";
@@ -155,6 +155,17 @@ export default function Sidebar({
             </>
           )}
         </div>
+      </div>
+
+      {/* Settings */}
+      <div className="px-3 pb-3 border-t border-[#e5e5e5] pt-3">
+        <Link
+          to="/settings"
+          className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-[#525252] hover:bg-[#f0f0f0] hover:text-[#171717]"
+        >
+          <Settings className="w-4 h-4" />
+          <span>设置</span>
+        </Link>
       </div>
     </div>
   );

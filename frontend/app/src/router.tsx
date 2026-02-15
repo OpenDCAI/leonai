@@ -2,6 +2,7 @@ import { createBrowserRouter, Navigate } from 'react-router-dom';
 import AppLayout from './pages/AppLayout';
 import ChatPage from './pages/ChatPage';
 import NewChatPage from './pages/NewChatPage';
+import SettingsPage from './pages/SettingsPage';
 
 export const router = createBrowserRouter([
   {
@@ -21,5 +22,9 @@ export const router = createBrowserRouter([
         element: <ChatPage />,
       },
     ],
+  },
+  {
+    path: '/settings',
+    element: <SettingsPage />,
   },
 ]);

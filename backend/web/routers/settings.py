@@ -12,9 +12,18 @@ router = APIRouter(prefix="/api/settings", tags=["settings"])
 SETTINGS_FILE = Path.home() / ".leon" / "settings.json"
 
 
+class ProviderConfig(BaseModel):
+    api_key: str | None = None
+    base_url: str | None = None
+
+
 class UserSettings(BaseModel):
     default_workspace: str | None = None
     recent_workspaces: list[str] = []
+    model_mapping: dict[str, str] = {}
+    enabled_models: list[str] = []
+    custom_models: list[str] = []
+    providers: dict[str, ProviderConfig] = {}
 
 
 class WorkspaceRequest(BaseModel):
@@ -148,3 +157,124 @@ async def update_model_config(request: ModelConfigRequest, req: Request) -> dict
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to update config: {str(e)}")
+
+
+@router.get("/available-models")
+async def get_available_models() -> dict[str, Any]:
+    """Get all available models and virtual models."""
+    from pathlib import Path
+
+    # Load pricing data to get all available models
+    pricing_file = Path(__file__).parent.parent.parent.parent / "core" / "monitor" / "pricing_bundled.json"
+    virtual_models_file = Path(__file__).parent.parent.parent.parent / "config" / "defaults" / "available_models.json"
+
+    if not pricing_file.exists():
+        raise HTTPException(status_code=500, detail="Pricing data not found")
+
+    try:
+        # Load all models from pricing data
+        with open(pricing_file, encoding="utf-8") as f:
+            pricing_data = json.load(f)
+
+        pricing_ids = set(pricing_data["models"].keys())
+
+        # Convert to model list
+        models = [{"id": model_id, "name": model_id} for model_id in pricing_ids]
+
+        # Merge custom_models and orphaned enabled_models not in pricing
+        settings = load_settings()
+        extra_ids = set(settings.custom_models) | (set(settings.enabled_models) - pricing_ids)
+        for model_id in sorted(extra_ids):
+            models.append({"id": model_id, "name": model_id, "custom": True})
+
+        # Load virtual models definition
+        virtual_models = []
+        if virtual_models_file.exists():
+            with open(virtual_models_file, encoding="utf-8") as f:
+                vm_data = json.load(f)
+                virtual_models = vm_data.get("virtual_models", [])
+
+        return {"models": models, "virtual_models": virtual_models}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load available models: {str(e)}")
+
+
+class ModelMappingRequest(BaseModel):
+    mapping: dict[str, str]
+
+
+@router.post("/model-mapping")
+async def update_model_mapping(request: ModelMappingRequest) -> dict[str, Any]:
+    """Update virtual model mapping."""
+    settings = load_settings()
+    settings.model_mapping = request.mapping
+    save_settings(settings)
+    return {"success": True, "model_mapping": settings.model_mapping}
+
+
+class ModelToggleRequest(BaseModel):
+    model_id: str
+    enabled: bool
+
+
+@router.post("/models/toggle")
+async def toggle_model(request: ModelToggleRequest) -> dict[str, Any]:
+    """Enable or disable a model."""
+    settings = load_settings()
+
+    if request.enabled:
+        if request.model_id not in settings.enabled_models:
+            settings.enabled_models.append(request.model_id)
+    else:
+        if request.model_id in settings.enabled_models:
+            settings.enabled_models.remove(request.model_id)
+
+    save_settings(settings)
+    return {"success": True, "enabled_models": settings.enabled_models}
+
+
+class ProviderRequest(BaseModel):
+    provider: str
+    api_key: str | None = None
+    base_url: str | None = None
+
+
+class CustomModelRequest(BaseModel):
+    model_id: str
+
+
+@router.post("/models/custom")
+async def add_custom_model(request: CustomModelRequest) -> dict[str, Any]:
+    """Add a custom model to the pool and auto-enable it."""
+    settings = load_settings()
+
+    if request.model_id not in settings.custom_models:
+        settings.custom_models.append(request.model_id)
+    if request.model_id not in settings.enabled_models:
+        settings.enabled_models.append(request.model_id)
+
+    save_settings(settings)
+    return {"success": True, "custom_models": settings.custom_models, "enabled_models": settings.enabled_models}
+
+
+@router.delete("/models/custom")
+async def remove_custom_model(request: CustomModelRequest) -> dict[str, Any]:
+    """Remove a custom model from the pool."""
+    settings = load_settings()
+
+    if request.model_id in settings.custom_models:
+        settings.custom_models.remove(request.model_id)
+
+    save_settings(settings)
+    return {"success": True, "custom_models": settings.custom_models}
+
+
+@router.post("/providers")
+async def update_provider(request: ProviderRequest) -> dict[str, Any]:
+    """Update provider configuration."""
+    settings = load_settings()
+
+    settings.providers[request.provider] = ProviderConfig(api_key=request.api_key, base_url=request.base_url)
+
+    save_settings(settings)
+    return {"success": True, "provider": request.provider}
