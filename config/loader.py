@@ -14,7 +14,7 @@ Example usage:
     >>> from config.loader import load_config
     >>> config = load_config(workspace_root="/path/to/project")
     >>> print(config.api.model)
-    'claude-sonnet-4-5-20250929'
+    'claude-sonnet-4-5-20250929'  # DEFAULT_MODEL from config.schema
 
 Example with CLI overrides:
     >>> config = load_config(

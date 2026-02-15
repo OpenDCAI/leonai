@@ -21,6 +21,8 @@ from langchain.agents import create_agent
 from langchain.chat_models import init_chat_model
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
+from config.schema import DEFAULT_MODEL
+
 # Load .env file
 _env_file = Path(__file__).parent / ".env"
 if _env_file.exists():
@@ -1368,7 +1370,7 @@ When NOT to use Todo:
 
 
 def create_leon_agent(
-    model_name: str = "claude-sonnet-4-5-20250929",
+    model_name: str = DEFAULT_MODEL,
     api_key: str | None = None,
     workspace_root: str | Path | None = None,
     sandbox: Any = None,

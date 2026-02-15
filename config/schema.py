@@ -15,6 +15,9 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+# Default model used across the codebase — single source of truth
+DEFAULT_MODEL = "claude-sonnet-4-5-20250929"
+
 # ============================================================================
 # API Configuration
 # ============================================================================
@@ -32,7 +35,7 @@ class ModelSpec(BaseModel):
 class APIConfig(BaseModel):
     """API configuration for LLM providers."""
 
-    model: str = Field("claude-sonnet-4-5-20250929", description="Default model name")
+    model: str = Field(DEFAULT_MODEL, description="Default model name")
     model_provider: str | None = Field(None, description="Explicit provider (openai/anthropic/etc)")
     api_key: str | None = Field(None, description="API key (falls back to env vars)")
     base_url: str | None = Field(None, description="Base URL for API (falls back to env vars)")
@@ -275,7 +278,7 @@ class LeonSettings(BaseModel):
     model_mapping: dict[str, ModelSpec] = Field(
         default_factory=lambda: {
             "leon:mini": ModelSpec(model="claude-haiku-4-5-20250929", provider="anthropic"),
-            "leon:medium": ModelSpec(model="claude-sonnet-4-5-20250929", provider="anthropic"),
+            "leon:medium": ModelSpec(model=DEFAULT_MODEL, provider="anthropic"),
             "leon:large": ModelSpec(model="claude-opus-4-6", provider="anthropic"),
             "leon:max": ModelSpec(model="claude-opus-4-6", provider="anthropic", temperature=0.0),
         },

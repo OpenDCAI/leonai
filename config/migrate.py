@@ -40,6 +40,8 @@ from typing import Any
 
 import yaml
 
+from config.schema import DEFAULT_MODEL
+
 
 class ConfigMigrationError(Exception):
     """Configuration migration error."""
@@ -183,7 +185,7 @@ class ConfigMigrator:
         if "agent" in old_config:
             agent = old_config["agent"]
             new_config["api"] = {
-                "model": agent.get("model", "claude-sonnet-4-5-20250929"),
+                "model": agent.get("model", DEFAULT_MODEL),
                 "model_provider": agent.get("model_provider"),
                 "api_key": agent.get("api_key"),
                 "base_url": agent.get("base_url"),

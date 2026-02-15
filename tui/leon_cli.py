@@ -12,6 +12,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
+from config.schema import DEFAULT_MODEL
 from tui.config import ConfigManager, interactive_config, show_config
 from tui.session import SessionManager
 
@@ -764,7 +765,7 @@ def _launch_tui(args) -> None:
 
     try:
         agent = create_leon_agent(
-            model_name=model_name or "claude-sonnet-4-5-20250929",
+            model_name=model_name or DEFAULT_MODEL,
             profile=args.profile,
             workspace_root=workspace,
             sandbox=sandbox_arg,
