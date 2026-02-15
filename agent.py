@@ -294,6 +294,9 @@ class LeonAgent:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
 
+            # Store the loop for later use
+            self._event_loop = loop
+
             # Initialize components
             conn = loop.run_until_complete(self._init_checkpointer())
             mcp_tools = loop.run_until_complete(self._init_mcp_tools())
@@ -1277,7 +1280,12 @@ When NOT to use Todo:
             )
 
         try:
-            return asyncio.run(_ainvoke())
+            # Reuse the event loop created during initialization
+            if hasattr(self, "_event_loop") and self._event_loop:
+                return self._event_loop.run_until_complete(_ainvoke())
+            else:
+                # Fallback to asyncio.run() if no loop exists
+                return asyncio.run(_ainvoke())
         except Exception as e:
             self._monitor_middleware.mark_error(e)
             raise
