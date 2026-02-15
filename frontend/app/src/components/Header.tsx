@@ -1,4 +1,4 @@
-import { Monitor, PanelLeft, Pause, Play, Settings } from "lucide-react";
+import { Activity, Monitor, PanelLeft, Pause, Play, Settings } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { SandboxInfo } from "../api";
 
@@ -19,6 +19,7 @@ interface HeaderProps {
   onPauseSandbox: () => void;
   onResumeSandbox: () => void;
   onToggleQueue: () => void;
+  onOpenOperator: () => void;
 }
 
 export default function Header({
@@ -30,6 +31,7 @@ export default function Header({
   onPauseSandbox,
   onResumeSandbox,
   onToggleQueue,
+  onOpenOperator,
 }: HeaderProps) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const settingsRef = useRef<HTMLDivElement>(null);
@@ -98,6 +100,14 @@ export default function Header({
       </div>
 
       <div className="flex items-center gap-1.5">
+        <button
+          className="px-3 py-1.5 rounded-lg text-xs flex items-center gap-2 border border-[#e5e5e5] text-[#525252] hover:bg-[#f5f5f5] hover:text-[#171717]"
+          onClick={onOpenOperator}
+          title="打开中台"
+        >
+          <Activity className="w-3.5 h-3.5" />
+          中台
+        </button>
         {hasRemote && sandboxInfo?.status === "running" && (
           <button
             className="px-3 py-1.5 rounded-lg text-xs flex items-center gap-2 border border-[#e5e5e5] text-[#525252] hover:bg-[#f5f5f5] hover:text-[#171717]"

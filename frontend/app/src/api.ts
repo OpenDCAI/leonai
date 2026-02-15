@@ -671,3 +671,120 @@ export async function streamTaskAgent(
     }
   }
 }
+
+// --- Data Platform (Operator Console) ---
+
+export interface DpRun {
+  run_id: string;
+  thread_id: string;
+  sandbox: string;
+  input_message: string;
+  status: string;
+  started_at: string;
+  finished_at: string | null;
+  error: string | null;
+}
+
+export interface DpRunEvent {
+  event_id: number;
+  run_id: string;
+  thread_id: string;
+  event_type: string;
+  payload: unknown;
+  created_at: string;
+}
+
+export interface OperatorSearchHit {
+  type: string;
+  id: string;
+  summary?: string;
+  updated_at?: string;
+  thread_id?: string;
+  run_id?: string;
+  provider?: string;
+  terminal_id?: string;
+  instance_id?: string;
+}
+
+export interface OperatorSandboxSession {
+  thread_id: string;
+  chat_session_id: string;
+  terminal_id: string;
+  lease_id: string;
+  chat_status: string;
+  started_at: string;
+  last_active_at: string;
+  provider_name: string;
+  observed_state: string;
+  last_error: string | null;
+  cwd: string;
+  last_command:
+    | {
+        command_id: string;
+        status: string;
+        exit_code: number | null;
+      }
+    | null;
+}
+
+export async function operatorSearch(opts: {
+  q: string;
+  limit?: number;
+}): Promise<{ q: string; items: OperatorSearchHit[]; count: number }> {
+  const q = opts.q.trim();
+  if (!q) throw new Error("operatorSearch: q is required");
+  const limit = opts.limit ?? 50;
+  return request(`/api/operator/search?q=${encodeURIComponent(q)}&limit=${encodeURIComponent(String(limit))}`);
+}
+
+export async function operatorSandboxes(opts?: {
+  limit?: number;
+}): Promise<{ items: OperatorSandboxSession[]; count: number }> {
+  const limit = opts?.limit ?? 50;
+  return request(`/api/operator/sandboxes?limit=${encodeURIComponent(String(limit))}`);
+}
+
+export async function operatorThreadDiagnostics(opts: { thread_id: string }): Promise<unknown> {
+  const threadId = opts.thread_id.trim();
+  if (!threadId) throw new Error("operatorThreadDiagnostics: thread_id is required");
+  return request(`/api/operator/threads/${encodeURIComponent(threadId)}/diagnostics`);
+}
+
+export async function operatorDashboardsOverview(opts?: {
+  window_hours?: number;
+  stuck_after_sec?: number;
+}): Promise<unknown> {
+  const windowHours = opts?.window_hours ?? 24;
+  const stuckAfterSec = opts?.stuck_after_sec ?? 600;
+  return request(
+    `/api/operator/dashboards/overview?window_hours=${encodeURIComponent(String(windowHours))}&stuck_after_sec=${encodeURIComponent(String(stuckAfterSec))}`,
+  );
+}
+
+export async function listDpThreadRuns(opts: {
+  thread_id: string;
+  limit?: number;
+  offset?: number;
+}): Promise<{ thread_id: string; items: DpRun[] }> {
+  const threadId = opts.thread_id.trim();
+  if (!threadId) throw new Error("listDpThreadRuns: thread_id is required");
+  const limit = opts.limit ?? 50;
+  const offset = opts.offset ?? 0;
+  return request(
+    `/api/threads/${encodeURIComponent(threadId)}/runs?limit=${encodeURIComponent(String(limit))}&offset=${encodeURIComponent(String(offset))}`,
+  );
+}
+
+export async function getDpRunEvents(opts: {
+  run_id: string;
+  after_event_id?: number;
+  limit?: number;
+}): Promise<{ run_id: string; items: DpRunEvent[]; next_after_event_id: number }> {
+  const runId = opts.run_id.trim();
+  if (!runId) throw new Error("getDpRunEvents: run_id is required");
+  const after = opts.after_event_id ?? 0;
+  const limit = opts.limit ?? 200;
+  return request(
+    `/api/runs/${encodeURIComponent(runId)}/events?after_event_id=${encodeURIComponent(String(after))}&limit=${encodeURIComponent(String(limit))}`,
+  );
+}
