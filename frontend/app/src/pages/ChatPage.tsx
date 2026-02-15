@@ -6,6 +6,7 @@ import { DragHandle } from "../components/DragHandle";
 import Header from "../components/Header";
 import InputBox from "../components/InputBox";
 import TaskProgress from "../components/TaskProgress";
+import TokenStats from "../components/TokenStats";
 import { useAppActions } from "../hooks/use-app-actions";
 import { useResizableX } from "../hooks/use-resizable-x";
 import { useSandboxManager } from "../hooks/use-sandbox-manager";
@@ -26,7 +27,11 @@ export default function ChatPage() {
   const { tm, setSidebarCollapsed } = useOutletContext<OutletContext>();
   const initialMessageSent = useRef(false);
 
-  const { entries, activeSandbox, loading, setEntries, setActiveSandbox, refreshThread } = useThreadData(threadId);
+  // Check if we have an initial message to send
+  const state = location.state as { initialMessage?: string; selectedModel?: string } | null;
+  const hasInitialMessage = !!state?.initialMessage;
+
+  const { entries, activeSandbox, loading, setEntries, setActiveSandbox, refreshThread } = useThreadData(threadId, hasInitialMessage);
 
   const { isStreaming, streamTurnId, runtimeStatus, handleSendMessage, handleStopStreaming } =
     useStreamHandler({
@@ -34,15 +39,16 @@ export default function ChatPage() {
       refreshThreads: tm.refreshThreads,
     });
 
-  // Handle initial message from location state
+  // Handle initial message - send immediately without waiting for loading
   useEffect(() => {
-    const state = location.state as { initialMessage?: string; selectedModel?: string } | null;
     if (state?.initialMessage && threadId && !initialMessageSent.current) {
       initialMessageSent.current = true;
+      const message = state.initialMessage;
+      console.log('[ChatPage] Sending initial message immediately:', message);
       window.history.replaceState({}, document.title);
-      void handleSendMessage(state.initialMessage, (updater) => setEntries(updater));
+      void handleSendMessage(message, (updater) => setEntries(updater));
     }
-  }, [location.state, threadId, handleSendMessage, setEntries]);
+  }, [state?.initialMessage, threadId, handleSendMessage, setEntries]);
 
   const { sandboxActionError, handlePauseSandbox, handleResumeSandbox } =
     useSandboxManager({
@@ -111,6 +117,7 @@ export default function ChatPage() {
             onSendQueueMessage={handleSendQueueMessage}
             onStop={handleStopStreaming}
           />
+          <TokenStats runtimeStatus={runtimeStatus} />
         </div>
 
         {computerOpen && (

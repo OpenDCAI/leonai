@@ -89,7 +89,9 @@ async def set_default_workspace(request: WorkspaceRequest) -> dict[str, Any]:
     # Validate path exists
     workspace_path = Path(request.workspace).expanduser().resolve()
     if not workspace_path.exists():
-        raise HTTPException(status_code=400, detail="Workspace path does not exist") not workspace_path.is_dir():
+        raise HTTPException(status_code=400, detail="Workspace path does not exist")
+
+    if not workspace_path.is_dir():
         raise HTTPException(status_code=400, detail="Workspace path is not a directory")
 
     settings = load_settings()

@@ -1,7 +1,6 @@
 export { AssistantBlock } from "./AssistantBlock";
 export { ChatSkeleton } from "./ChatSkeleton";
 export { CopyButton } from "./CopyButton";
-export { EmptyState } from "./EmptyState";
 export { StreamingIndicator } from "./StreamingIndicator";
 export { ToolStepBlock } from "./ToolStepBlock";
 export { UserBubble } from "./UserBubble";

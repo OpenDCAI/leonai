@@ -60,6 +60,7 @@ export function useWorkspaceSettings() {
     loading,
     setDefaultWorkspace,
     addRecentWorkspace,
+    refreshSettings: loadSettings,
     hasWorkspace: settings?.default_workspace != null,
   };
 }

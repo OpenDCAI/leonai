@@ -15,7 +15,7 @@ export default function SettingsPanel({
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [workspaceModalOpen, setWorkspaceModalOpen] = useState(false);
   const settingsRef = useRef<HTMLDivElement>(null);
-  const { settings, setDefaultWorkspace } = useWorkspaceSettings();
+  const { settings, refreshSettings } = useWorkspaceSettings();
 
   // Close popover on outside click
   useEffect(() => {
@@ -29,7 +29,8 @@ export default function SettingsPanel({
     return () => document.removeEventListener("mousedown", handler);
   }, [settingsOpen]);
 
-  function handleWorkspaceSet(workspace: string) {
+  async function handleWorkspaceSet(workspace: string) {
+    await refreshSettings();
     setWorkspaceModalOpen(false);
     setSettingsOpen(false);
   }

@@ -28,6 +28,7 @@ export default function NewChatPage() {
 
     const cwd = workspace || settings?.default_workspace || undefined;
     const threadId = await handleCreateThread(sandbox, cwd);
+    console.log('[NewChatPage] Created thread:', threadId, 'navigating with message:', message);
     navigate(`/app/${threadId}`, {
       state: { initialMessage: message, selectedModel: model },
     });

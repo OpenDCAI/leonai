@@ -1,9 +1,13 @@
-import { createBrowserRouter } from 'react-router-dom';
+import { createBrowserRouter, Navigate } from 'react-router-dom';
 import AppLayout from './pages/AppLayout';
 import ChatPage from './pages/ChatPage';
 import NewChatPage from './pages/NewChatPage';
 
 export const router = createBrowserRouter([
+  {
+    path: '/',
+    element: <Navigate to="/app" replace />,
+  },
   {
     path: '/app',
     element: <AppLayout />,

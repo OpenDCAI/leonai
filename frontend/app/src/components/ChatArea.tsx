@@ -2,7 +2,6 @@ import { useEffect, useRef } from "react";
 import type { AssistantTurn, ChatEntry, StreamStatus } from "../api";
 import { AssistantBlock } from "./chat-area/AssistantBlock";
 import { ChatSkeleton } from "./chat-area/ChatSkeleton";
-import { EmptyState } from "./chat-area/EmptyState";
 import { StreamingIndicator } from "./chat-area/StreamingIndicator";
 import { UserBubble } from "./chat-area/UserBubble";
 
@@ -30,7 +29,6 @@ export default function ChatArea({ entries, isStreaming, streamTurnId, runtimeSt
     );
   }
 
-  const showEmptyState = !isStreaming && entries.length === 0;
   const assistantEntries = entries.filter(e => e.role === "assistant") as AssistantTurn[];
 
   return (
@@ -51,8 +49,6 @@ export default function ChatArea({ entries, isStreaming, streamTurnId, runtimeSt
         })}
 
         {isStreaming && <StreamingIndicator entries={assistantEntries} runtimeStatus={runtimeStatus} />}
-
-        {showEmptyState && <EmptyState />}
 
         <div ref={bottomRef} />
       </div>

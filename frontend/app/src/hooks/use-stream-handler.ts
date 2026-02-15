@@ -47,12 +47,16 @@ export function useStreamHandler(deps: StreamHandlerDeps): StreamHandlerState & 
         timestamp: Date.now(),
       };
 
+      console.log('[handleSendMessage] Adding user message:', message);
       // Initialize entries with user message and assistant turn
-      onUpdate((prev) => [...prev, userEntry, assistantTurn]);
+      onUpdate((prev) => {
+        console.log('[handleSendMessage] Previous entries count:', prev.length);
+        return [...prev, userEntry, assistantTurn];
+      });
 
       setStreamTurnId(turnId);
       setIsStreaming(true);
-      setRuntimeStatus(null);
+      // Don't reset runtimeStatus here - keep previous status if exists
 
       const abortController = new AbortController();
       abortControllerRef.current = abortController;

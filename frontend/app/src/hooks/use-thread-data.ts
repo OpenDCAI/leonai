@@ -19,7 +19,7 @@ export interface ThreadDataActions {
   refreshThread: () => Promise<void>;
 }
 
-export function useThreadData(threadId: string | undefined): ThreadDataState & ThreadDataActions {
+export function useThreadData(threadId: string | undefined, skipInitialLoad = false): ThreadDataState & ThreadDataActions {
   const [entries, setEntries] = useState<ChatEntry[]>([]);
   const [activeSandbox, setActiveSandbox] = useState<SandboxInfo | null>(null);
   const [loading, setLoading] = useState(true);
@@ -28,7 +28,9 @@ export function useThreadData(threadId: string | undefined): ThreadDataState & T
     setLoading(true);
     try {
       const thread = await getThread(id);
-      setEntries(mapBackendEntries(thread.messages));
+      const mappedEntries = mapBackendEntries(thread.messages);
+      console.log('[useThreadData] Loaded thread:', id, 'messages:', thread.messages.length, 'entries:', mappedEntries.length);
+      setEntries(mappedEntries);
       setActiveSandbox(thread.sandbox);
     } finally {
       setLoading(false);
@@ -49,8 +51,13 @@ export function useThreadData(threadId: string | undefined): ThreadDataState & T
       setLoading(false);
       return;
     }
+    if (skipInitialLoad) {
+      console.log('[useThreadData] Skipping initial load for new thread');
+      setLoading(false);
+      return;
+    }
     void loadThread(threadId);
-  }, [threadId, loadThread]);
+  }, [threadId, loadThread, skipInitialLoad]);
 
   return {
     entries,
