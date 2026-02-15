@@ -30,8 +30,10 @@ export async function search(q: string) {
   return await http<any>(u.pathname + u.search);
 }
 
-export async function listSandboxes() {
-  return await http<any>("/api/operator/sandboxes");
+export async function listSandboxes(status?: string) {
+  const u = new URL("/api/operator/sandboxes", window.location.origin);
+  if (status) u.searchParams.set("status", status);
+  return await http<any>(u.pathname + u.search);
 }
 
 export async function listThreadRuns(threadId: string) {

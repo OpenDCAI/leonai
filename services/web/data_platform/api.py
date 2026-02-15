@@ -69,8 +69,11 @@ def create_operator_router(*, dp_db_path: Path) -> APIRouter:
         return {"q": q, "items": items, "count": len(items)}
 
     @router.get("/api/operator/sandboxes")
-    async def operator_sandboxes(limit: int = Query(default=50, ge=1, le=200)) -> dict[str, Any]:
-        items = list_active_sessions(limit=limit)
+    async def operator_sandboxes(
+        limit: int = Query(default=50, ge=1, le=200),
+        status: str | None = Query(default=None),
+    ) -> dict[str, Any]:
+        items = list_active_sessions(limit=limit, status_filter=status)
         return {"items": items, "count": len(items)}
 
     @router.get("/api/operator/threads/{thread_id}/commands")

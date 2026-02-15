@@ -17,7 +17,7 @@ def _connect(db_path: Path) -> sqlite3.Connection:
     return conn
 
 
-def list_active_sessions(*, limit: int = 50) -> list[dict[str, Any]]:
+def list_active_sessions(*, limit: int = 50, status_filter: str | None = None) -> list[dict[str, Any]]:
     # @@@e2e-evidence - See `teams/log/leonai/data_platform/2026-02-15_e2e_operator_search_and_sandboxes.md`
     db_path = _sandbox_db_path()
     if not db_path.exists():
@@ -29,8 +29,16 @@ def list_active_sessions(*, limit: int = 50) -> list[dict[str, Any]]:
         if not required.issubset(tables):
             raise RuntimeError(f"sandbox db missing tables: {sorted(required - tables)}")
 
+        # Build WHERE clause based on status_filter
+        if status_filter == "all":
+            where_clause = "1=1"  # No filter, show all
+        elif status_filter:
+            where_clause = f"cs.status = '{status_filter}'"
+        else:
+            where_clause = "cs.status IN ('active', 'idle', 'paused')"
+
         rows = conn.execute(
-            """
+            f"""
             SELECT
               cs.thread_id,
               cs.chat_session_id,
@@ -67,7 +75,7 @@ def list_active_sessions(*, limit: int = 50) -> list[dict[str, Any]]:
             FROM chat_sessions cs
             JOIN sandbox_leases sl ON sl.lease_id = cs.lease_id
             JOIN abstract_terminals at ON at.terminal_id = cs.terminal_id
-            WHERE cs.status IN ('active', 'idle', 'paused')
+            WHERE {where_clause}
             ORDER BY cs.last_active_at DESC
             LIMIT ?
             """,
