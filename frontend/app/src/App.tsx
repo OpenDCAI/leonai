@@ -52,7 +52,6 @@ import ComputerPanel from "./components/ComputerPanel";
 import Header from "./components/Header";
 import InputBox from "./components/InputBox";
 import NewThreadModal from "./components/NewThreadModal";
-import OperatorConsoleModal from "./components/OperatorConsoleModal";
 
 import SandboxSessionsModal from "./components/SandboxSessionsModal";
 import SearchModal from "./components/SearchModal";
@@ -92,7 +91,6 @@ export default function App() {
   const [focusedAgentStepId, setFocusedAgentStepId] = useState<string | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [sessionsOpen, setSessionsOpen] = useState(false);
-  const [operatorOpen, setOperatorOpen] = useState(false);
   const [newThreadOpen, setNewThreadOpen] = useState(false);
   const [queueEnabled, setQueueEnabled] = useState(false);
 
@@ -144,18 +142,6 @@ export default function App() {
       }
     })();
   }, [refreshThreads]);
-
-  useEffect(() => {
-    function onKeyDown(e: KeyboardEvent) {
-      // Cmd/Ctrl+Shift+O opens Operator console.
-      if (e.key.toLowerCase() === "o" && (e.metaKey || e.ctrlKey) && e.shiftKey) {
-        e.preventDefault();
-        setOperatorOpen(true);
-      }
-    }
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
 
   useEffect(() => {
     if (!activeThreadId) {
@@ -562,7 +548,6 @@ export default function App() {
           onPauseSandbox={() => void handlePauseSandbox()}
           onResumeSandbox={() => void handleResumeSandbox()}
           onToggleQueue={() => void handleToggleQueue()}
-          onOpenOperator={() => setOperatorOpen(true)}
         />
 
         <div className="flex-1 flex min-h-0">
@@ -640,12 +625,6 @@ export default function App() {
           }
           void refreshThreads();
         }}
-      />
-
-      <OperatorConsoleModal
-        isOpen={operatorOpen}
-        onClose={() => setOperatorOpen(false)}
-        activeThreadId={activeThreadId}
       />
     </div>
   );
