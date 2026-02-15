@@ -279,16 +279,28 @@ class LeonAgent:
     def _init_async_components(self) -> tuple[Any, list]:
         """Initialize async components (checkpointer and MCP tools).
 
-        Uses asyncio.run() with proper cleanup to avoid event loop issues.
+        Note: We don't use asyncio.run() here because it closes the event loop,
+        which causes issues with aiosqlite cleanup. Instead, we create a persistent
+        event loop that will be cleaned up when the process exits.
         """
         import asyncio
 
-        async def _init():
-            conn = await self._init_checkpointer()
-            mcp_tools = await self._init_mcp_tools()
-            return conn, mcp_tools
+        try:
+            # Check if we're already in an async context
+            loop = asyncio.get_running_loop()
+            return None, []
+        except RuntimeError:
+            # Create a new event loop and keep it running
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
 
-        return asyncio.run(_init())
+            # Initialize components
+            conn = loop.run_until_complete(self._init_checkpointer())
+            mcp_tools = loop.run_until_complete(self._init_mcp_tools())
+
+            # DON'T close the loop - let it persist for aiosqlite
+            # The loop will be cleaned up when Python exits
+            return conn, mcp_tools
 
     def _has_middleware_tools(self, middleware: list) -> bool:
         """Check if any middleware has BaseTool instances."""
@@ -672,23 +684,29 @@ class LeonAgent:
         self._mcp_client = None
 
     def _cleanup_sqlite_connection(self) -> None:
-        """Clean up SQLite connection."""
+        """Clean up SQLite connection.
+
+        Properly closes aiosqlite connection using asyncio.run() to avoid
+        hanging on process exit.
+        """
         if not hasattr(self, "_aiosqlite_conn") or not self._aiosqlite_conn:
             return
 
         try:
-            # Try synchronous close first (works if connection is not busy)
-            import sys
+            import asyncio
 
-            if sys.meta_path is None:
-                # Python is shutting down, skip cleanup
-                return
+            # Close the connection asynchronously
+            async def _close():
+                if self._aiosqlite_conn:
+                    await self._aiosqlite_conn.close()
 
-            self._run_async_cleanup(lambda: self._aiosqlite_conn.close(), "SQLite connection")
+            # Use asyncio.run() to properly close the connection
+            asyncio.run(_close())
         except Exception:
-            # Ignore cleanup errors during shutdown
+            # Ignore errors during cleanup
             pass
-        self._aiosqlite_conn = None
+        finally:
+            self._aiosqlite_conn = None
 
     def __del__(self):
         self.close()
