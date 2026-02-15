@@ -139,7 +139,7 @@ async def update_model_config(request: ModelConfigRequest, req: Request) -> dict
     Supports dynamic model switching with virtual model names (leon:*).
     Updates are applied immediately without recreating the agent.
     """
-    from ..services.agent_pool import update_agent_config
+    from backend.web.services.agent_pool import update_agent_config
 
     try:
         result = await update_agent_config(app_obj=req.app, model=request.model, thread_id=request.thread_id)

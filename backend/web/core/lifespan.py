@@ -6,9 +6,8 @@ from typing import Any
 
 from fastapi import FastAPI
 
+from backend.web.services.idle_reaper import idle_reaper_loop
 from tui.config import ConfigManager
-
-from ..services.idle_reaper import idle_reaper_loop
 
 
 @asynccontextmanager

@@ -5,10 +5,9 @@ import json
 from collections.abc import AsyncGenerator
 from typing import Any
 
+from backend.web.utils.serializers import extract_text_content
 from core.monitor import AgentState
 from sandbox.thread_context import set_current_thread_id
-
-from ..utils.serializers import extract_text_content
 
 
 async def prime_sandbox(agent: Any, thread_id: str) -> None:
@@ -319,7 +318,7 @@ async def stream_task_agent_execution(
     try:
         set_current_thread_id(thread_id)
         # Import here to avoid circular dependency
-        from ..services.agent_pool import get_or_create_agent
+        from services.agent_pool import get_or_create_agent
 
         agent = await get_or_create_agent(app, sandbox_type, thread_id=thread_id)
 

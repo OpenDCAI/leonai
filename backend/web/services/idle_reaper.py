@@ -4,7 +4,8 @@ import asyncio
 
 from fastapi import FastAPI
 
-from ..core.config import IDLE_REAPER_INTERVAL_SEC
+from backend.web.core.config import IDLE_REAPER_INTERVAL_SEC
+
 from .sandbox_service import init_providers_and_managers
 
 

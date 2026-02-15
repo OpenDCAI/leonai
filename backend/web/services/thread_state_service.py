@@ -4,7 +4,7 @@ import asyncio
 from datetime import timedelta
 from typing import Any
 
-from ..utils.helpers import get_lease_timestamps, get_terminal_timestamps
+from backend.web.utils.helpers import get_lease_timestamps, get_terminal_timestamps
 
 
 def get_sandbox_info(agent: Any, thread_id: str, sandbox_type: str) -> dict[str, Any]:

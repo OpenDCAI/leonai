@@ -5,12 +5,11 @@ import uuid
 from datetime import datetime
 from typing import Any
 
+from backend.web.core.config import LOCAL_WORKSPACE_ROOT, SANDBOXES_DIR
+from backend.web.utils.helpers import is_virtual_thread_id
 from sandbox.config import SandboxConfig
 from sandbox.db import DEFAULT_DB_PATH as SANDBOX_DB_PATH
 from sandbox.manager import SandboxManager
-
-from ..core.config import LOCAL_WORKSPACE_ROOT, SANDBOXES_DIR
-from ..utils.helpers import is_virtual_thread_id
 
 
 def available_sandbox_types() -> list[dict[str, Any]]:

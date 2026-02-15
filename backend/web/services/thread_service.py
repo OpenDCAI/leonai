@@ -3,9 +3,8 @@
 import sqlite3
 from typing import Any
 
+from backend.web.core.config import DB_PATH
 from sandbox.db import DEFAULT_DB_PATH as SANDBOX_DB_PATH
-
-from ..core.config import DB_PATH
 
 
 def list_threads_from_db() -> list[dict[str, Any]]:

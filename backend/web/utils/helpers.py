@@ -7,9 +7,8 @@ from typing import Any
 
 from fastapi import HTTPException
 
+from backend.web.core.config import DB_PATH
 from sandbox.db import DEFAULT_DB_PATH as SANDBOX_DB_PATH
-
-from ..core.config import DB_PATH
 
 
 def is_virtual_thread_id(thread_id: str | None) -> bool:
@@ -72,7 +71,7 @@ def resolve_local_workspace_path(
     local_workspace_root: Path | None = None,
 ) -> Path:
     """Resolve a workspace path relative to thread-specific or global workspace root."""
-    from .config import LOCAL_WORKSPACE_ROOT
+    from backend.web.core.config import LOCAL_WORKSPACE_ROOT
 
     if local_workspace_root is None:
         local_workspace_root = LOCAL_WORKSPACE_ROOT

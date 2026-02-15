@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .schema import LeonSettings
+from config.schema import LeonSettings
 
 
 class ModelResolver:

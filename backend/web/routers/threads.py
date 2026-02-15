@@ -7,25 +7,29 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException
 from sse_starlette.sse import EventSourceResponse
 
-from core.monitor import AgentState
-from core.queue import QueueMode, get_queue_manager
-from sandbox.thread_context import set_current_thread_id
-
-from ..core.dependencies import get_app, get_thread_agent, get_thread_lock
-from ..models.requests import (
+from backend.web.core.dependencies import get_app, get_thread_agent, get_thread_lock
+from backend.web.models.requests import (
     CreateThreadRequest,
     QueueModeRequest,
     RunRequest,
     SteerRequest,
     TaskAgentRequest,
 )
-from ..services.agent_pool import get_or_create_agent, resolve_thread_sandbox
-from ..services.sandbox_service import destroy_thread_resources_sync
-from ..services.streaming_service import stream_agent_execution, stream_task_agent_execution
-from ..services.thread_service import list_threads_from_db
-from ..services.thread_state_service import get_lease_status, get_sandbox_info, get_session_status, get_terminal_status
-from ..utils.helpers import delete_thread_in_db
-from ..utils.serializers import serialize_message
+from backend.web.services.agent_pool import get_or_create_agent, resolve_thread_sandbox
+from backend.web.services.sandbox_service import destroy_thread_resources_sync
+from backend.web.services.streaming_service import stream_agent_execution, stream_task_agent_execution
+from backend.web.services.thread_service import list_threads_from_db
+from backend.web.services.thread_state_service import (
+    get_lease_status,
+    get_sandbox_info,
+    get_session_status,
+    get_terminal_status,
+)
+from backend.web.utils.helpers import delete_thread_in_db
+from backend.web.utils.serializers import serialize_message
+from core.monitor import AgentState
+from core.queue import QueueMode, get_queue_manager
+from sandbox.thread_context import set_current_thread_id
 
 router = APIRouter(prefix="/api/threads", tags=["threads"])
 

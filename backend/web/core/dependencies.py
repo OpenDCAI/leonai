@@ -5,9 +5,8 @@ from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 
+from backend.web.services.agent_pool import get_or_create_agent, resolve_thread_sandbox
 from sandbox.thread_context import set_current_thread_id
-
-from ..services.agent_pool import get_or_create_agent, resolve_thread_sandbox
 
 
 async def get_app(request: Request) -> FastAPI:

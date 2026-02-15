@@ -7,7 +7,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 
-from ..services.sandbox_service import (
+from backend.web.services.sandbox_service import (
     available_sandbox_types,
     find_session_and_manager,
     init_providers_and_managers,

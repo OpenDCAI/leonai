@@ -5,11 +5,10 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from backend.web.core.dependencies import get_app
+from backend.web.services.agent_pool import resolve_thread_sandbox
+from backend.web.utils.helpers import resolve_local_workspace_path
 from sandbox.thread_context import set_current_thread_id
-
-from ..core.dependencies import get_app
-from ..services.agent_pool import resolve_thread_sandbox
-from ..utils.helpers import resolve_local_workspace_path
 
 router = APIRouter(prefix="/api/threads/{thread_id}/workspace", tags=["workspace"])
 
@@ -44,7 +43,7 @@ async def list_workspace_path(
         }
 
     # Remote sandbox
-    from ..services.agent_pool import get_or_create_agent
+    from backend.web.services.agent_pool import get_or_create_agent
 
     try:
         set_current_thread_id(thread_id)
@@ -103,7 +102,7 @@ async def read_workspace_file(
         return {"thread_id": thread_id, "path": str(target), "content": data.content, "size": data.size}
 
     # Remote sandbox
-    from ..services.agent_pool import get_or_create_agent
+    from backend.web.services.agent_pool import get_or_create_agent
 
     try:
         set_current_thread_id(thread_id)
