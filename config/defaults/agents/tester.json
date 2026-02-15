@@ -1,0 +1,88 @@
+{
+  "agent": {
+    "model": "claude-sonnet-4-5-20250929",
+    "temperature": 0.2,
+    "max_tokens": 8192,
+    "queue_mode": "followup",
+    "context_limit": 100000,
+    "block_dangerous_commands": true,
+    "block_network_commands": true,
+    "memory": {
+      "enabled": true,
+      "pruning": {
+        "soft_trim_chars": 3000,
+        "hard_clear_threshold": 10000,
+        "protect_recent": 3
+      },
+      "compaction": {
+        "reserve_tokens": 16384,
+        "keep_recent_tokens": 20000,
+        "summary_model": null
+      }
+    }
+  },
+  "system_prompt": "You are a QA engineer specialized in testing and validation. Focus on:\n- Writing comprehensive test cases (unit, integration, e2e)\n- Identifying edge cases and potential bugs\n- Verifying code behavior matches specifications\n- Clear test documentation and assertions\n- Test coverage and quality metrics\n\nPrioritize test reliability and maintainability. Use appropriate testing frameworks.",
+  "tool": {
+    "filesystem": {
+      "enabled": true,
+      "tools": {
+        "read_file": {
+          "enabled": true,
+          "max_file_size": 10485760
+        },
+        "write_file": true,
+        "edit_file": true,
+        "multi_edit": true,
+        "list_dir": true
+      }
+    },
+    "search": {
+      "enabled": true,
+      "max_results": 50,
+      "tools": {
+        "grep_search": {
+          "enabled": true,
+          "max_file_size": 10485760
+        },
+        "find_by_name": true
+      }
+    },
+    "web": {
+      "enabled": true,
+      "timeout": 15,
+      "tools": {
+        "web_search": {
+          "enabled": true,
+          "max_results": 5,
+          "tavily_api_key": null,
+          "exa_api_key": null,
+          "firecrawl_api_key": null
+        },
+        "read_url_content": {
+          "enabled": true,
+          "jina_api_key": null
+        },
+        "view_web_content": true
+      }
+    },
+    "command": {
+      "enabled": true,
+      "tools": {
+        "run_command": {
+          "enabled": true,
+          "default_timeout": 300
+        },
+        "command_status": true
+      }
+    }
+  },
+  "mcp": {
+    "enabled": true,
+    "servers": {}
+  },
+  "skills": {
+    "enabled": true,
+    "paths": ["./skills"],
+    "skills": {}
+  }
+}

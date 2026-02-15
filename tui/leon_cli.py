@@ -605,6 +605,10 @@ def main():
         _handle_run_command(args, unknown)
         return
 
+    if args.command == "migrate-config":
+        _handle_migrate_command(args, unknown)
+        return
+
     # Default: launch TUI
     _launch_tui(args)
 
@@ -644,6 +648,11 @@ def _show_main_help() -> None:
     print("  leonai sandbox resume <id>     恢复会话")
     print("  leonai sandbox rm <id>         删除会话")
     print("  leonai sandbox metrics <id>    查看会话资源指标")
+    print()
+    print("配置迁移:")
+    print("  leonai migrate-config           迁移旧配置到新格式")
+    print("  leonai migrate-config --dry-run 预览迁移（不写入文件）")
+    print("  leonai migrate-config --rollback 回滚迁移")
 
 
 def _handle_config_command(args) -> None:
@@ -652,6 +661,28 @@ def _handle_config_command(args) -> None:
         show_config()
     else:
         interactive_config()
+
+
+def _handle_migrate_command(args, unknown: list[str]) -> None:
+    """Handle migrate-config command"""
+    from tui.commands.migrate import migrate_config_command
+
+    # Parse flags from unknown args
+    dry_run = "--dry-run" in unknown
+    rollback = "--rollback" in unknown
+
+    # Parse config-dir
+    config_dir = None
+    if "--config-dir" in unknown:
+        idx = unknown.index("--config-dir")
+        if idx + 1 < len(unknown):
+            config_dir = Path(unknown[idx + 1])
+
+    # Call the migrate command
+    try:
+        migrate_config_command.callback(dry_run=dry_run, config_dir=config_dir, rollback=rollback)
+    except SystemExit:
+        pass
 
 
 def _handle_thread_command(args, unknown: list[str]) -> None:

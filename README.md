@@ -18,9 +18,11 @@ leonai                      # 启动
 ```bash
 leonai config            # 修改配置
 leonai config show       # 查看当前配置
+leonai --agent coder     # 使用预设配置
+leonai --model leon:powerful  # 使用虚拟模型名
 ```
 
-配置保存在 `~/.leon/config.env`。
+配置保存在 `~/.leon/config.json`（用户配置）或 `.leon/config.json`（项目配置）。
 
 ## 最小基座
 
@@ -33,67 +35,65 @@ LEON 认为一个真正可工作的 Agent，至少应具备三类基础能力：
 ## 架构方式
 
 - Middleware-first：tool schema 注入、参数/路径校验（Fail Fast）、hooks/policy 拦截、结果整形、可观测性
-- Profile-driven（推进中）：用 Profile 描述 Agent 的 `system_prompt` 与 tools/mcp/skill 开关
+- 三层配置系统：系统默认 + 用户配置 + 项目配置，支持虚拟模型映射和 Agent 预设
 
 ## 核心特性
 
-### Profile 配置系统
+### 配置系统
 
-LEON 采用 Profile-driven 架构，通过 YAML/JSON/TOML 配置文件统一管理 Agent 能力：
+LEON 采用三层配置系统，通过 JSON 配置文件统一管理 Agent 能力：
 
-```yaml
-# ~/.leon/profile.yaml
-agent:
-  model: "claude-sonnet-4-5-20250929"
-  workspace_root: null
-  enable_audit_log: true
-
-tool:
-  filesystem:
-    enabled: true
-    tools:
-      read_file:
-        enabled: true
-        max_file_size: 10485760
-      write_file: true
-      edit_file: true
-  search:
-    enabled: true
-    max_results: 50
-  web:
-    enabled: true
-    tools:
-      web_search:
-        enabled: true
-        tavily_api_key: ${TAVILY_API_KEY}
-  command:
-    enabled: true
-    tools:
-      run_command:
-        enabled: true
-        default_timeout: 120
-
-mcp:
-  enabled: true
-  servers:
-    filesystem:
-      command: npx
-      args: ["-y", "@modelcontextprotocol/server-filesystem", "/workspace"]
-
-skills:
-  enabled: true
-  paths:
-    - ./skills
-  skills:
-    example-skill: true
+```json
+// ~/.leon/config.json (用户配置)
+{
+  "api": {
+    "model": "claude-sonnet-4-5-20250929",
+    "api_key": "${OPENAI_API_KEY}",
+    "temperature": 0.5,
+    "enable_audit_log": true
+  },
+  "tools": {
+    "filesystem": {
+      "enabled": true,
+      "tools": {
+        "read_file": { "enabled": true, "max_file_size": 10485760 },
+        "write_file": true,
+        "edit_file": true
+      }
+    },
+    "web": {
+      "enabled": true,
+      "tools": {
+        "web_search": {
+          "enabled": true,
+          "tavily_api_key": "${TAVILY_API_KEY}"
+        }
+      }
+    }
+  },
+  "mcp": {
+    "enabled": true,
+    "servers": {
+      "github": {
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-github"],
+        "env": { "GITHUB_TOKEN": "${GITHUB_TOKEN}" }
+      }
+    }
+  }
+}
 ```
 
 **特性**：
-- 支持 YAML/JSON/TOML 格式
+- 三层配置合并（系统默认 + 用户配置 + 项目配置）
+- 虚拟模型映射（`leon:fast/balanced/powerful/coding/research/creative`）
 - 环境变量展开 (`${VAR}`)
 - Pydantic 强类型验证
 - 工具级别的细粒度控制
-- CLI 参数可覆盖 Profile 设置
+- CLI 参数可覆盖配置
+- 内置 Agent 预设（default/coder/researcher/tester）
+
+详见 [配置文档](docs/configuration.md) 和 [迁移指南](docs/migration-guide.md)
 
 ### Skills 系统
 

@@ -27,6 +27,11 @@ class DirectoryItem(BaseModel):
     is_dir: bool
 
 
+class ModelConfigRequest(BaseModel):
+    model: str
+    thread_id: str | None = None
+
+
 def load_settings() -> UserSettings:
     """Load user settings from disk."""
     if not SETTINGS_FILE.exists():
@@ -125,3 +130,21 @@ async def add_recent_workspace(request: WorkspaceRequest) -> dict[str, Any]:
 
     save_settings(settings)
     return {"success": True}
+
+
+@router.post("/config")
+async def update_model_config(request: ModelConfigRequest, req: Request) -> dict[str, Any]:
+    """Update model configuration for agent.
+
+    Supports dynamic model switching with virtual model names (leon:*).
+    Updates are applied immediately without recreating the agent.
+    """
+    from ..services.agent_pool import update_agent_config
+
+    try:
+        result = await update_agent_config(app_obj=req.app, model=request.model, thread_id=request.thread_id)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to update config: {str(e)}")

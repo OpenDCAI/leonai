@@ -1,0 +1,42 @@
+{
+  "mappings": {
+    "leon:fast": {
+      "model": "claude-sonnet-4-5-20250929",
+      "temperature": 0.7,
+      "max_tokens": 4096,
+      "description": "Fast, cost-effective model for simple tasks"
+    },
+    "leon:balanced": {
+      "model": "claude-sonnet-4-5-20250929",
+      "temperature": 0.5,
+      "max_tokens": 8192,
+      "description": "Balanced performance and cost for general use"
+    },
+    "leon:powerful": {
+      "model": "claude-opus-4-6",
+      "temperature": 0.3,
+      "max_tokens": 16384,
+      "description": "Most capable model for complex reasoning tasks"
+    },
+    "leon:coding": {
+      "model": "claude-opus-4-6",
+      "temperature": 0.0,
+      "max_tokens": 16384,
+      "description": "Optimized for code generation and analysis"
+    },
+    "leon:research": {
+      "model": "claude-sonnet-4-5-20250929",
+      "temperature": 0.3,
+      "max_tokens": 8192,
+      "description": "Optimized for research and information gathering"
+    },
+    "leon:creative": {
+      "model": "claude-sonnet-4-5-20250929",
+      "temperature": 0.9,
+      "max_tokens": 8192,
+      "description": "Higher temperature for creative tasks"
+    }
+  },
+  "default_mapping": "leon:balanced",
+  "fallback_model": "claude-sonnet-4-5-20250929"
+}

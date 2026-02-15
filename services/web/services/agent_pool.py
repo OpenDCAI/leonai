@@ -10,6 +10,9 @@ from agent import create_leon_agent
 from sandbox.manager import lookup_sandbox_for_thread
 from sandbox.thread_context import set_current_thread_id
 
+# Thread lock for config updates
+_config_update_locks: dict[str, asyncio.Lock] = {}
+
 
 def create_agent_sync(sandbox_name: str, workspace_root: Path | None = None) -> Any:
     """Create a LeonAgent with the given sandbox. Runs in a thread."""
@@ -60,3 +63,71 @@ def resolve_thread_sandbox(app_obj: FastAPI, thread_id: str) -> str:
         mapping[thread_id] = detected
         return detected
     return "local"
+
+
+async def update_agent_config(app_obj: FastAPI, model: str, thread_id: str | None = None) -> dict[str, Any]:
+    """Update agent configuration with hot-reload.
+
+    Args:
+        app_obj: FastAPI application instance
+        model: New model name (supports leon:* virtual names)
+        thread_id: Optional thread ID to update specific agent
+
+    Returns:
+        Dict with success status and current config
+
+    Raises:
+        ValueError: If model validation fails or agent not found
+    """
+    # Get or create lock for this thread
+    lock_key = thread_id or "global"
+    if lock_key not in _config_update_locks:
+        _config_update_locks[lock_key] = asyncio.Lock()
+
+    async with _config_update_locks[lock_key]:
+        if thread_id:
+            # Update specific thread's agent
+            sandbox_type = resolve_thread_sandbox(app_obj, thread_id)
+            pool_key = f"{thread_id}:{sandbox_type}"
+            pool = app_obj.state.agent_pool
+
+            if pool_key not in pool:
+                raise ValueError(f"Agent not found for thread {thread_id}")
+
+            agent = pool[pool_key]
+
+            # Validate model before applying
+            try:
+                # Run update_config in thread (it's synchronous)
+                await asyncio.to_thread(agent.update_config, model=model)
+            except Exception as e:
+                raise ValueError(f"Failed to update model config: {str(e)}")
+
+            return {
+                "success": True,
+                "thread_id": thread_id,
+                "model": agent.model_name,
+                "message": f"Model updated to {agent.model_name}",
+            }
+        else:
+            # Global update: update all existing agents
+            pool = app_obj.state.agent_pool
+            updated_count = 0
+            errors = []
+
+            for pool_key, agent in pool.items():
+                try:
+                    await asyncio.to_thread(agent.update_config, model=model)
+                    updated_count += 1
+                except Exception as e:
+                    errors.append(f"{pool_key}: {str(e)}")
+
+            if errors:
+                raise ValueError(f"Failed to update some agents: {'; '.join(errors)}")
+
+            return {
+                "success": True,
+                "updated_count": updated_count,
+                "model": model,
+                "message": f"Updated {updated_count} agent(s) to model {model}",
+            }

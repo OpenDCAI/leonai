@@ -75,6 +75,7 @@ class LeonAgent:
         workspace_root: str | Path | None = None,
         *,
         profile: AgentProfile | str | Path | None = None,
+        agent: str | None = None,
         allowed_file_extensions: list[str] | None = None,
         block_dangerous_commands: bool | None = None,
         block_network_commands: bool | None = None,
@@ -91,48 +92,83 @@ class LeonAgent:
         Initialize Leon Agent
 
         Args:
-            model_name: Anthropic 模型名称
-            api_key: API key (默认从环境变量读取)
-            workspace_root: 工作目录（所有操作限制在此目录内）
-            profile: Agent Profile (配置文件路径或对象)
-            allowed_file_extensions: 允许的文件扩展名（None 表示全部允许）
-            block_dangerous_commands: 是否拦截危险命令
-            block_network_commands: 是否拦截网络命令
-            enable_audit_log: 是否启用审计日志
-            enable_web_tools: 是否启用 Web 搜索和内容获取工具
-            tavily_api_key: Tavily API key（Web 搜索）
-            exa_api_key: Exa API key（Web 搜索）
-            firecrawl_api_key: Firecrawl API key（Web 搜索）
-            jina_api_key: Jina API key（URL 内容获取）
+            model_name: Model name (supports leon:mini/medium/large/max virtual names)
+            api_key: API key (defaults to environment variables)
+            workspace_root: Workspace directory (all operations restricted to this directory)
+            profile: DEPRECATED - use agent parameter instead. Agent Profile (config file path or object)
+            agent: Agent name for new config system (e.g., "default", "coder", "researcher")
+            allowed_file_extensions: Allowed file extensions (None means all allowed)
+            block_dangerous_commands: Whether to block dangerous commands
+            block_network_commands: Whether to block network commands
+            enable_audit_log: Whether to enable audit logging
+            enable_web_tools: Whether to enable web search and content fetching tools
+            tavily_api_key: Tavily API key (web search)
+            exa_api_key: Exa API key (web search)
+            firecrawl_api_key: Firecrawl API key (web search)
+            jina_api_key: Jina API key (URL content fetching)
             sandbox: Sandbox instance, name string, or None for local
-            verbose: 是否输出详细日志（默认 True）
+            verbose: Whether to output detailed logs (default False)
         """
         self.verbose = verbose
 
-        # Load profile
-        self.profile = self._load_profile(profile)
+        # Detect configuration mode (new vs old)
+        if profile is not None and agent is not None:
+            raise ValueError("Cannot specify both 'profile' (deprecated) and 'agent' parameters")
 
-        # Apply CLI parameter overrides
-        self._apply_cli_overrides(
-            model_name=model_name,
-            workspace_root=workspace_root,
-            allowed_file_extensions=allowed_file_extensions,
-            block_dangerous_commands=block_dangerous_commands,
-            block_network_commands=block_network_commands,
-            enable_audit_log=enable_audit_log,
-            enable_web_tools=enable_web_tools,
-        )
-        self.model_name = self.profile.agent.model
+        if profile is not None:
+            # Old profile.yaml mode - emit deprecation warning
+            warnings.warn(
+                "The 'profile' parameter is deprecated. Use 'agent' parameter instead. "
+                "See documentation for migration guide.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            self.profile = self._load_profile(profile)
+            self.config = None  # Old mode doesn't use new config
+            self._apply_cli_overrides(
+                model_name=model_name,
+                workspace_root=workspace_root,
+                allowed_file_extensions=allowed_file_extensions,
+                block_dangerous_commands=block_dangerous_commands,
+                block_network_commands=block_network_commands,
+                enable_audit_log=enable_audit_log,
+                enable_web_tools=enable_web_tools,
+            )
+            self.model_name = self.profile.agent.model
+        else:
+            # New config system mode
+            self.profile = None
+            self.config = self._load_config(
+                agent_name=agent,
+                workspace_root=workspace_root,
+                model_name=model_name,
+                api_key=api_key,
+                allowed_file_extensions=allowed_file_extensions,
+                block_dangerous_commands=block_dangerous_commands,
+                block_network_commands=block_network_commands,
+                enable_audit_log=enable_audit_log,
+                enable_web_tools=enable_web_tools,
+            )
+            # Resolve virtual model name
+            resolved_model, model_overrides = self.config.resolve_model(self.config.api.model)
+            self.model_name = resolved_model
+            self._model_overrides = model_overrides
 
         # Resolve API key
-        self.api_key = api_key or self.profile.agent.api_key or self._resolve_env_api_key()
+        if self.config:
+            # New config mode
+            self.api_key = api_key or self.config.api.api_key
+        else:
+            # Old profile mode
+            self.api_key = api_key or self.profile.agent.api_key or self._resolve_env_api_key()
+
         if not self.api_key:
             raise ValueError(
                 "API key must be set via:\n"
                 "  - OPENAI_API_KEY environment variable (recommended for proxy)\n"
                 "  - ANTHROPIC_API_KEY environment variable\n"
                 "  - api_key parameter\n"
-                "  - profile agent.api_key field"
+                "  - config api.api_key field"
             )
 
         # Initialize workspace and configuration
@@ -166,8 +202,9 @@ class LeonAgent:
 
         # Build system prompt
         self.system_prompt = self._build_system_prompt()
-        if self.profile.system_prompt:
-            self.system_prompt += f"\n\n**Custom Instructions:**\n{self.profile.system_prompt}"
+        custom_prompt = self.config.system_prompt if self.config else self.profile.system_prompt
+        if custom_prompt:
+            self.system_prompt += f"\n\n**Custom Instructions:**\n{custom_prompt}"
 
         # Create agent
         self.agent = create_agent(
@@ -225,6 +262,56 @@ class LeonAgent:
 
         return _placeholder
 
+    def _load_config(
+        self,
+        agent_name: str | None,
+        workspace_root: str | Path | None,
+        model_name: str | None,
+        api_key: str | None,
+        allowed_file_extensions: list[str] | None,
+        block_dangerous_commands: bool | None,
+        block_network_commands: bool | None,
+        enable_audit_log: bool | None,
+        enable_web_tools: bool | None,
+    ) -> LeonSettings:
+        """Load configuration using new config system."""
+        # Build CLI overrides
+        cli_overrides = {}
+
+        if model_name is not None:
+            cli_overrides.setdefault("api", {})["model"] = model_name
+        if api_key is not None:
+            cli_overrides.setdefault("api", {})["api_key"] = api_key
+        if workspace_root is not None:
+            cli_overrides["workspace_root"] = str(workspace_root)
+
+        # Tool overrides
+        if allowed_file_extensions is not None:
+            cli_overrides.setdefault("tools", {}).setdefault("filesystem", {})["allowed_extensions"] = (
+                allowed_file_extensions
+            )
+        if block_dangerous_commands is not None:
+            cli_overrides.setdefault("tools", {}).setdefault("command", {})["block_dangerous_commands"] = (
+                block_dangerous_commands
+            )
+        if block_network_commands is not None:
+            cli_overrides.setdefault("tools", {}).setdefault("command", {})["block_network_commands"] = (
+                block_network_commands
+            )
+        if enable_audit_log is not None:
+            cli_overrides.setdefault("api", {})["enable_audit_log"] = enable_audit_log
+        if enable_web_tools is not None:
+            cli_overrides.setdefault("tools", {}).setdefault("web", {})["enabled"] = enable_web_tools
+
+        # Load config with agent name
+        loader = ConfigLoader(workspace_root=workspace_root)
+        config = loader.load(cli_overrides=cli_overrides if cli_overrides else None)
+
+        if self.verbose:
+            print(f"[LeonAgent] Config: agent={agent_name or 'default'}, model={config.api.model}")
+
+        return config
+
     def _load_profile(self, profile: AgentProfile | str | Path | None) -> AgentProfile:
         """Load agent profile from file or create default."""
         if isinstance(profile, (str, Path)):
@@ -275,19 +362,36 @@ class LeonAgent:
             self.profile.tools.web.enabled = enable_web_tools
 
     def _resolve_workspace_root(self) -> Path:
-        """Resolve workspace root from profile or current directory."""
-        if self.profile.agent.workspace_root:
-            return Path(self.profile.agent.workspace_root).expanduser().resolve()
+        """Resolve workspace root from config or current directory."""
+        if self.config:
+            # New config mode
+            if self.config.workspace_root:
+                return Path(self.config.workspace_root).expanduser().resolve()
+        else:
+            # Old profile mode
+            if self.profile.agent.workspace_root:
+                return Path(self.profile.agent.workspace_root).expanduser().resolve()
         return Path.cwd()
 
     def _init_config_attributes(self) -> None:
-        """Initialize configuration attributes from profile."""
-        self.allowed_file_extensions = self.profile.agent.allowed_extensions
-        self.block_dangerous_commands = self.profile.agent.block_dangerous_commands
-        self.block_network_commands = self.profile.agent.block_network_commands
-        self.enable_audit_log = self.profile.agent.enable_audit_log
-        self.enable_web_tools = self.profile.tool.web.enabled
-        self.queue_mode = self.profile.agent.queue_mode
+        """Initialize configuration attributes from config or profile."""
+        if self.config:
+            # New config mode
+            self.allowed_file_extensions = self.config.api.allowed_extensions
+            self.block_dangerous_commands = self.config.api.block_dangerous_commands
+            self.block_network_commands = self.config.api.block_network_commands
+            self.enable_audit_log = self.config.api.enable_audit_log
+            self.enable_web_tools = self.config.tools.web.enabled
+            self.queue_mode = self.config.api.queue_mode
+        else:
+            # Old profile mode
+            self.allowed_file_extensions = self.profile.agent.allowed_extensions
+            self.block_dangerous_commands = self.profile.agent.block_dangerous_commands
+            self.block_network_commands = self.profile.agent.block_network_commands
+            self.enable_audit_log = self.profile.agent.enable_audit_log
+            self.enable_web_tools = self.profile.tool.web.enabled
+            self.queue_mode = self.profile.agent.queue_mode
+
         self._session_pool: dict[str, Any] = {}
         env_db_path = os.getenv("LEON_DB_PATH")
         env_sandbox_db_path = os.getenv("LEON_SANDBOX_DB_PATH")
@@ -319,7 +423,11 @@ class LeonAgent:
 
     def _resolve_env_api_key(self) -> str | None:
         """Resolve API key from environment variables based on model_provider."""
-        provider = self.profile.agent.model_provider
+        if self.config:
+            provider = self.config.api.model_provider
+        else:
+            provider = self.profile.agent.model_provider
+
         if not provider:
             return os.getenv("OPENAI_API_KEY") or os.getenv("ANTHROPIC_API_KEY")
 
@@ -334,7 +442,11 @@ class LeonAgent:
 
     def _resolve_env_base_url(self) -> str | None:
         """Resolve base URL from environment variables based on model_provider."""
-        provider = self.profile.agent.model_provider
+        if self.config:
+            provider = self.config.api.model_provider
+        else:
+            provider = self.profile.agent.model_provider
+
         if not provider:
             return os.getenv("OPENAI_BASE_URL")
 
@@ -351,20 +463,112 @@ class LeonAgent:
         """Build model parameters for model initialization and sub-agents."""
         kwargs = {}
 
-        if self.profile.agent.model_provider:
-            kwargs["model_provider"] = self.profile.agent.model_provider
+        if self.config:
+            # New config mode - include virtual model overrides
+            if hasattr(self, "_model_overrides"):
+                kwargs.update(self._model_overrides)
 
-        base_url = self.profile.agent.base_url or self._resolve_env_base_url()
-        if base_url:
-            kwargs["base_url"] = base_url
+            if self.config.api.model_provider:
+                kwargs["model_provider"] = self.config.api.model_provider
 
-        if self.profile.agent.temperature is not None:
-            kwargs["temperature"] = self.profile.agent.temperature
-        if self.profile.agent.max_tokens is not None:
-            kwargs["max_tokens"] = self.profile.agent.max_tokens
+            base_url = self.config.api.base_url or self._resolve_env_base_url()
+            if base_url:
+                kwargs["base_url"] = base_url
 
-        kwargs.update(self.profile.agent.model_kwargs)
+            if self.config.api.temperature is not None:
+                kwargs["temperature"] = self.config.api.temperature
+            if self.config.api.max_tokens is not None:
+                kwargs["max_tokens"] = self.config.api.max_tokens
+
+            kwargs.update(self.config.api.model_kwargs)
+        else:
+            # Old profile mode
+            if self.profile.agent.model_provider:
+                kwargs["model_provider"] = self.profile.agent.model_provider
+
+            base_url = self.profile.agent.base_url or self._resolve_env_base_url()
+            if base_url:
+                kwargs["base_url"] = base_url
+
+            if self.profile.agent.temperature is not None:
+                kwargs["temperature"] = self.profile.agent.temperature
+            if self.profile.agent.max_tokens is not None:
+                kwargs["max_tokens"] = self.profile.agent.max_tokens
+
+            kwargs.update(self.profile.agent.model_kwargs)
+
         return kwargs
+
+    def update_config(self, model: str | None = None, **tool_overrides) -> None:
+        """Hot-reload configuration (model and tools).
+
+        Args:
+            model: New model name (supports leon:* virtual names)
+            **tool_overrides: Tool configuration overrides
+
+        Example:
+            agent.update_config(model="leon:large")
+            agent.update_config(model="gpt-4", tools={"web": {"enabled": False}})
+        """
+        if self.profile:
+            raise RuntimeError("Hot-reload only supported with new config system (use agent= parameter)")
+
+        # Build overrides
+        cli_overrides = {}
+        if model is not None:
+            cli_overrides.setdefault("api", {})["model"] = model
+        if tool_overrides:
+            cli_overrides["tools"] = tool_overrides
+
+        # Reload config
+        loader = ConfigLoader(workspace_root=self.workspace_root)
+        self.config = loader.load(cli_overrides=cli_overrides)
+
+        # Resolve virtual model
+        resolved_model, model_overrides = self.config.resolve_model(self.config.api.model)
+        self.model_name = resolved_model
+        self._model_overrides = model_overrides
+
+        # Recreate LLM
+        self.model = self._create_model()
+
+        # Rebuild middleware stack (preserve checkpointer)
+        middleware = self._build_middleware_stack()
+
+        # Reconfigure TaskMiddleware
+        if hasattr(self, "_task_middleware"):
+            self._task_middleware.set_parent_middleware(middleware)
+            self._task_middleware.set_checkpointer(self.checkpointer)
+
+        # Rebuild system prompt
+        self.system_prompt = self._build_system_prompt()
+        if self.config.system_prompt:
+            self.system_prompt += f"\n\n**Custom Instructions:**\n{self.config.system_prompt}"
+
+        # Recreate agent (preserve checkpointer)
+        mcp_tools = []  # MCP tools require async init, skip for hot-reload
+        if not mcp_tools and not self._has_middleware_tools(middleware):
+            mcp_tools = [self._create_placeholder_tool()]
+
+        self.agent = create_agent(
+            model=self.model,
+            tools=mcp_tools,
+            system_prompt=self.system_prompt,
+            middleware=middleware,
+            checkpointer=self.checkpointer,
+        )
+
+        # Update runtime reference
+        self.runtime = self._monitor_middleware.runtime
+        self._task_middleware.set_agent(self)
+
+        # Inject runtime/model into MemoryMiddleware
+        if hasattr(self, "_memory_middleware"):
+            self._memory_middleware.set_runtime(self.runtime)
+            self._memory_middleware.set_model(self.model)
+
+        if self.verbose:
+            print(f"[LeonAgent] Config updated: model={self.model_name}")
 
     def close(self):
         """Clean up resources."""
@@ -513,30 +717,39 @@ tool:
         middleware.append(SteeringMiddleware())
 
         # 1. Memory (context pruning + compaction)
-        if self.profile.agent.memory.enabled:
+        memory_enabled = self.config.memory.enabled if self.config else self.profile.agent.memory.enabled
+        if memory_enabled:
             self._add_memory_middleware(middleware)
 
         # 2. Prompt Caching
         middleware.append(PromptCachingMiddleware(ttl="5m", min_messages_to_cache=0))
 
         # 3. FileSystem
-        if self.profile.tool.filesystem.enabled:
+        fs_enabled = self.config.tools.filesystem.enabled if self.config else self.profile.tool.filesystem.enabled
+        if fs_enabled:
             self._add_filesystem_middleware(middleware, fs_backend)
 
         # 4. Search
-        if self.profile.tool.search.enabled:
+        search_enabled = self.config.tools.search.enabled if self.config else self.profile.tool.search.enabled
+        if search_enabled:
             self._add_search_middleware(middleware)
 
         # 5. Web
-        if self.profile.tool.web.enabled:
+        web_enabled = self.config.tools.web.enabled if self.config else self.profile.tool.web.enabled
+        if web_enabled:
             self._add_web_middleware(middleware)
 
         # 6. Command
-        if self.profile.tool.command.enabled:
+        cmd_enabled = self.config.tools.command.enabled if self.config else self.profile.tool.command.enabled
+        if cmd_enabled:
             self._add_command_middleware(middleware, cmd_executor)
 
         # 7. Skills
-        if self.profile.skills.enabled and self.profile.skills.paths:
+        if self.config:
+            skills_enabled = self.config.skills.enabled and self.config.skills.paths
+        else:
+            skills_enabled = self.profile.skills.enabled and self.profile.skills.paths
+        if skills_enabled:
             self._add_skills_middleware(middleware)
 
         # 8. Todo
@@ -554,8 +767,9 @@ tool:
         middleware.append(self._task_middleware)
 
         # 10. Monitor (last to capture all requests/responses)
+        context_limit = self.config.api.context_limit if self.config else self.profile.agent.context_limit
         self._monitor_middleware = MonitorMiddleware(
-            context_limit=self.profile.agent.context_limit,
+            context_limit=context_limit,
             model_name=self.model_name,
             verbose=self.verbose,
         )
@@ -565,10 +779,16 @@ tool:
 
     def _add_memory_middleware(self, middleware: list) -> None:
         """Add memory middleware to stack."""
-        cfg = self.profile.agent.memory
+        if self.config:
+            cfg = self.config.memory
+            context_limit = self.config.api.context_limit
+        else:
+            cfg = self.profile.agent.memory
+            context_limit = self.profile.agent.context_limit
+
         db_path = Path.home() / ".leon" / "leon.db"
         self._memory_middleware = MemoryMiddleware(
-            context_limit=self.profile.agent.context_limit,
+            context_limit=context_limit,
             pruning_config=cfg.pruning,
             compaction_config=cfg.compaction,
             db_path=db_path,
@@ -596,18 +816,29 @@ tool:
                 )
             )
 
-        fs_tools = {
-            "read_file": self.profile.tool.filesystem.tools.read_file.enabled,
-            "write_file": self.profile.tool.filesystem.tools.write_file,
-            "edit_file": self.profile.tool.filesystem.tools.edit_file,
-            "multi_edit": self.profile.tool.filesystem.tools.multi_edit,
-            "list_dir": self.profile.tool.filesystem.tools.list_dir,
-        }
+        if self.config:
+            fs_tools = {
+                "read_file": self.config.tools.filesystem.tools.read_file.enabled,
+                "write_file": self.config.tools.filesystem.tools.write_file,
+                "edit_file": self.config.tools.filesystem.tools.edit_file,
+                "multi_edit": self.config.tools.filesystem.tools.multi_edit,
+                "list_dir": self.config.tools.filesystem.tools.list_dir,
+            }
+            max_file_size = self.config.tools.filesystem.tools.read_file.max_file_size
+        else:
+            fs_tools = {
+                "read_file": self.profile.tool.filesystem.tools.read_file.enabled,
+                "write_file": self.profile.tool.filesystem.tools.write_file,
+                "edit_file": self.profile.tool.filesystem.tools.edit_file,
+                "multi_edit": self.profile.tool.filesystem.tools.multi_edit,
+                "list_dir": self.profile.tool.filesystem.tools.list_dir,
+            }
+            max_file_size = self.profile.tool.filesystem.tools.read_file.max_file_size
 
         middleware.append(
             FileSystemMiddleware(
                 workspace_root=self.workspace_root,
-                max_file_size=self.profile.tool.filesystem.tools.read_file.max_file_size,
+                max_file_size=max_file_size,
                 allowed_extensions=self.allowed_file_extensions,
                 hooks=file_hooks,
                 enabled_tools=fs_tools,
@@ -619,15 +850,26 @@ tool:
 
     def _add_search_middleware(self, middleware: list) -> None:
         """Add search middleware to stack."""
-        search_tools = {
-            "grep_search": self.profile.tool.search.tools.grep_search.enabled,
-            "find_by_name": self.profile.tool.search.tools.find_by_name,
-        }
+        if self.config:
+            search_tools = {
+                "grep_search": self.config.tools.search.tools.grep_search.enabled,
+                "find_by_name": self.config.tools.search.tools.find_by_name,
+            }
+            max_results = self.config.tools.search.max_results
+            max_file_size = self.config.tools.search.tools.grep_search.max_file_size
+        else:
+            search_tools = {
+                "grep_search": self.profile.tool.search.tools.grep_search.enabled,
+                "find_by_name": self.profile.tool.search.tools.find_by_name,
+            }
+            max_results = self.profile.tool.search.max_results
+            max_file_size = self.profile.tool.search.tools.grep_search.max_file_size
+
         middleware.append(
             SearchMiddleware(
                 workspace_root=self.workspace_root,
-                max_results=self.profile.tool.search.max_results,
-                max_file_size=self.profile.tool.search.tools.grep_search.max_file_size,
+                max_results=max_results,
+                max_file_size=max_file_size,
                 prefer_system_tools=True,
                 enabled_tools=search_tools,
                 verbose=self.verbose,
@@ -636,20 +878,39 @@ tool:
 
     def _add_web_middleware(self, middleware: list) -> None:
         """Add web middleware to stack."""
-        web_tools = {
-            "web_search": self.profile.tool.web.tools.web_search.enabled,
-            "read_url_content": self.profile.tool.web.tools.read_url_content.enabled,
-            "view_web_content": self.profile.tool.web.tools.view_web_content,
-        }
+        if self.config:
+            web_tools = {
+                "web_search": self.config.tools.web.tools.web_search.enabled,
+                "read_url_content": self.config.tools.web.tools.read_url_content.enabled,
+                "view_web_content": self.config.tools.web.tools.view_web_content,
+            }
+            tavily_key = self.config.tools.web.tools.web_search.tavily_api_key or os.getenv("TAVILY_API_KEY")
+            exa_key = self.config.tools.web.tools.web_search.exa_api_key or os.getenv("EXA_API_KEY")
+            firecrawl_key = self.config.tools.web.tools.web_search.firecrawl_api_key or os.getenv("FIRECRAWL_API_KEY")
+            jina_key = self.config.tools.web.tools.read_url_content.jina_api_key or os.getenv("JINA_AI_API_KEY")
+            max_search_results = self.config.tools.web.tools.web_search.max_results
+            timeout = self.config.tools.web.timeout
+        else:
+            web_tools = {
+                "web_search": self.profile.tool.web.tools.web_search.enabled,
+                "read_url_content": self.profile.tool.web.tools.read_url_content.enabled,
+                "view_web_content": self.profile.tool.web.tools.view_web_content,
+            }
+            tavily_key = self.profile.tool.web.tools.web_search.tavily_api_key or os.getenv("TAVILY_API_KEY")
+            exa_key = self.profile.tool.web.tools.web_search.exa_api_key or os.getenv("EXA_API_KEY")
+            firecrawl_key = self.profile.tool.web.tools.web_search.firecrawl_api_key or os.getenv("FIRECRAWL_API_KEY")
+            jina_key = self.profile.tool.web.tools.read_url_content.jina_api_key or os.getenv("JINA_AI_API_KEY")
+            max_search_results = self.profile.tool.web.tools.web_search.max_results
+            timeout = self.profile.tool.web.timeout
+
         middleware.append(
             WebMiddleware(
-                tavily_api_key=self.profile.tool.web.tools.web_search.tavily_api_key or os.getenv("TAVILY_API_KEY"),
-                exa_api_key=self.profile.tool.web.tools.web_search.exa_api_key or os.getenv("EXA_API_KEY"),
-                firecrawl_api_key=self.profile.tool.web.tools.web_search.firecrawl_api_key
-                or os.getenv("FIRECRAWL_API_KEY"),
-                jina_api_key=self.profile.tool.web.tools.read_url_content.jina_api_key or os.getenv("JINA_AI_API_KEY"),
-                max_search_results=self.profile.tool.web.tools.web_search.max_results,
-                timeout=self.profile.tool.web.timeout,
+                tavily_api_key=tavily_key,
+                exa_api_key=exa_key,
+                firecrawl_api_key=firecrawl_key,
+                jina_api_key=jina_key,
+                max_search_results=max_search_results,
+                timeout=timeout,
                 enabled_tools=web_tools,
                 verbose=self.verbose,
             )
@@ -669,14 +930,23 @@ tool:
                 )
             command_hooks.append(PathSecurityHook(workspace_root=self.workspace_root))
 
-        command_tools = {
-            "run_command": self.profile.tool.command.tools.run_command.enabled,
-            "command_status": self.profile.tool.command.tools.command_status,
-        }
+        if self.config:
+            command_tools = {
+                "run_command": self.config.tools.command.tools.run_command.enabled,
+                "command_status": self.config.tools.command.tools.command_status,
+            }
+            default_timeout = self.config.tools.command.tools.run_command.default_timeout
+        else:
+            command_tools = {
+                "run_command": self.profile.tool.command.tools.run_command.enabled,
+                "command_status": self.profile.tool.command.tools.command_status,
+            }
+            default_timeout = self.profile.tool.command.tools.run_command.default_timeout
+
         middleware.append(
             CommandMiddleware(
                 workspace_root=self.workspace_root,
-                default_timeout=self.profile.tool.command.tools.run_command.default_timeout,
+                default_timeout=default_timeout,
                 hooks=command_hooks,
                 enabled_tools=command_tools,
                 executor=cmd_executor,
@@ -686,22 +956,36 @@ tool:
 
     def _add_skills_middleware(self, middleware: list) -> None:
         """Add skills middleware to stack."""
+        if self.config:
+            skill_paths = self.config.skills.paths
+            enabled_skills = self.config.skills.skills
+        else:
+            skill_paths = self.profile.skills.paths
+            enabled_skills = self.profile.skills.skills
+
         middleware.append(
             SkillsMiddleware(
-                skill_paths=self.profile.skills.paths,
-                enabled_skills=self.profile.skills.skills,
+                skill_paths=skill_paths,
+                enabled_skills=enabled_skills,
                 verbose=self.verbose,
             )
         )
 
     async def _init_mcp_tools(self) -> list:
-        if not self.profile.mcp.enabled or not self.profile.mcp.servers:
+        if self.config:
+            mcp_enabled = self.config.mcp.enabled
+            mcp_servers = self.config.mcp.servers
+        else:
+            mcp_enabled = self.profile.mcp.enabled
+            mcp_servers = self.profile.mcp.servers
+
+        if not mcp_enabled or not mcp_servers:
             return []
 
         from langchain_mcp_adapters.client import MultiServerMCPClient
 
         configs = {}
-        for name, cfg in self.profile.mcp.servers.items():
+        for name, cfg in mcp_servers.items():
             if cfg.url:
                 config = {"transport": "streamable_http", "url": cfg.url}
             else:
@@ -726,7 +1010,7 @@ tool:
                 if server_name:
                     tool.name = f"mcp__{server_name}__{tool.name}"
 
-            if any(cfg.allowed_tools for cfg in self.profile.mcp.servers.values()):
+            if any(cfg.allowed_tools for cfg in mcp_servers.values()):
                 tools = [t for t in tools if self._is_tool_allowed(t)]
 
             if self.verbose:
@@ -757,7 +1041,12 @@ tool:
             if len(parts) == 3:
                 tool_name = parts[2]
 
-        for cfg in self.profile.mcp.servers.values():
+        if self.config:
+            mcp_servers = self.config.mcp.servers
+        else:
+            mcp_servers = self.profile.mcp.servers
+
+        for cfg in mcp_servers.values():
             if cfg.allowed_tools:
                 return tool_name in cfg.allowed_tools
         return True

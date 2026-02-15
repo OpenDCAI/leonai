@@ -62,6 +62,7 @@ Issues = "https://github.com/Ju-Yi-AI-Lab/leonai/issues"
 [tool.setuptools]
 packages = [
     "agents",
+    "config",
     "middleware",
     "middleware.command",
     "middleware.command.hooks",
