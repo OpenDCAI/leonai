@@ -139,6 +139,10 @@ class SkillsMiddleware(AgentMiddleware):
 
         tools = list(request.tools or [])
         tools.append(self._get_tool_schema())
+
+        if self.verbose:
+            print(f"[SkillsMiddleware] Injected load_skill tool (total tools: {len(tools)})")
+
         return handler(request.override(tools=tools))
 
     async def awrap_model_call(
@@ -152,6 +156,10 @@ class SkillsMiddleware(AgentMiddleware):
 
         tools = list(request.tools or [])
         tools.append(self._get_tool_schema())
+
+        if self.verbose:
+            print(f"[SkillsMiddleware] Injected load_skill tool (total tools: {len(tools)})")
+
         return await handler(request.override(tools=tools))
 
     def wrap_tool_call(

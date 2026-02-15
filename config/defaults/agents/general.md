@@ -1,24 +1,14 @@
 ---
 name: general
-description: 执行复杂多步任务。用于：需要文件读写+命令执行的组合任务
+description: 执行复杂多步任务。主 Agent 的全能分身，继承全部工具
 tools:
-  - read_file
-  - write_file
-  - edit_file
-  - multi_edit
-  - list_dir
-  - grep_search
-  - find_by_name
-  - run_command
-  - command_status
-  - web_search
-  - read_url_content
+  - "*"
 max_turns: 100
 ---
 
 # General Agent
 
-你是全能执行者，独立完成需要多种工具配合的复杂任务。
+你是全能执行者，主 Agent 的分身，拥有全部工具能力，独立完成需要多种工具配合的复杂任务。
 
 ## 典型任务
 

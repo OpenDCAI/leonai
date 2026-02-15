@@ -101,7 +101,7 @@ class LeonAgent:
             api_key: API key (defaults to environment variables)
             workspace_root: Workspace directory (all operations restricted to this directory)
             profile: DEPRECATED - use agent parameter instead. Agent Profile (config file path or object)
-            agent: Agent name for new config system (e.g., "default", "coder", "researcher")
+            agent: Task Agent name to run as (e.g., "bash", "explore", "general", "plan")
             allowed_file_extensions: Allowed file extensions (None means all allowed)
             block_dangerous_commands: Whether to block dangerous commands
             block_network_commands: Whether to block network commands
@@ -363,9 +363,23 @@ class LeonAgent:
         if enable_web_tools is not None:
             cli_overrides.setdefault("tools", {}).setdefault("web", {})["enabled"] = enable_web_tools
 
-        # Load config with agent name
-        loader = ConfigLoader(workspace_root=workspace_root, agent_name=agent_name)
+        # Load config (always loads default.json, no agent_name parameter)
+        loader = ConfigLoader(workspace_root=workspace_root)
         config = loader.load(cli_overrides=cli_overrides if cli_overrides else None)
+
+        # If agent specified, load Task Agent definition to override system_prompt and tools
+        if agent_name:
+            from core.task.loader import AgentLoader
+
+            agent_loader = AgentLoader(workspace_root=Path(workspace_root) if workspace_root else None)
+            all_agents = agent_loader.load_all()
+            agent_def = all_agents.get(agent_name)
+            if not agent_def:
+                available = ", ".join(sorted(all_agents.keys()))
+                raise ValueError(f"Unknown agent: {agent_name}. Available: {available}")
+            self._agent_override = agent_def
+        else:
+            self._agent_override = None
 
         if self.verbose:
             print(f"[LeonAgent] Config: agent={agent_name or 'default'}, model={config.api.model}")
@@ -1172,6 +1186,10 @@ tool:
 
     def _build_system_prompt(self) -> str:
         """Build system prompt based on sandbox mode."""
+        # If agent override is set, use Task Agent's system_prompt
+        if hasattr(self, "_agent_override") and self._agent_override:
+            return self._agent_override.system_prompt
+
         import platform
 
         os_name = platform.system()
@@ -1249,7 +1267,7 @@ tool:
 
     def _build_common_prompt_sections(self) -> str:
         """Build common prompt sections for both sandbox and local modes."""
-        return """
+        prompt = """
 **Task Tool (Sub-agent Orchestration):**
 
 Use the Task tool to launch specialized sub-agents for complex tasks:
@@ -1285,6 +1303,31 @@ When NOT to use Todo:
 - Single, straightforward tasks
 - Trivial operations that don't need tracking
 """
+
+        # Add Skills section if skills are enabled
+        if self.config:
+            skills_enabled = self.config.skills.enabled and self.config.skills.paths
+        else:
+            skills_enabled = self.profile.skills.enabled and self.profile.skills.paths
+
+        if skills_enabled:
+            prompt += """
+**Skills (Specialized Knowledge):**
+
+Use the `load_skill` tool to access specialized domain knowledge and workflows:
+- Skills provide focused instructions for specific tasks (e.g., TDD, debugging, git workflows)
+- Call `load_skill(skill_name)` to load a skill's content into context
+- Available skills are listed in the load_skill tool description
+
+When to use load_skill:
+- When you need specialized guidance for a specific workflow
+- To access domain-specific best practices
+- When the user mentions a skill by name (e.g., "use TDD skill")
+
+Progressive disclosure: Skills are loaded on-demand to save tokens.
+"""
+
+        return prompt
 
     def invoke(self, message: str, thread_id: str = "default") -> dict:
         """Invoke agent with a message (sync version).

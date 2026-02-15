@@ -574,7 +574,7 @@ def main():
     parser = argparse.ArgumentParser(description="Leon AI - 你的 AI 编程助手", add_help=False)
     parser.add_argument("--profile", type=str, help="Profile 配置文件路径")
     parser.add_argument("--model", type=str, help="模型名称（覆盖 profile 和环境变量）")
-    parser.add_argument("--agent", type=str, default=None, help="Agent preset name (default/coder/researcher/tester)")
+    parser.add_argument("--agent", type=str, default=None, help="Task Agent name (bash/explore/general/plan)")
     parser.add_argument("--workspace", type=str, help="工作目录")
     parser.add_argument("--sandbox", type=str, help="Sandbox 名称 (从 ~/.leon/sandboxes/<name>.json 加载，默认 local)")
     parser.add_argument("--thread", type=str, help="Thread ID (恢复对话)")

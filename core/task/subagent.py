@@ -57,6 +57,10 @@ class SubagentRunner:
         from core.search import SearchMiddleware
         from core.web import WebMiddleware
 
+        # Wildcard: inherit all parent middleware (General Agent = main Agent clone)
+        if "*" in config.tools:
+            return [mw for mw in all_middleware]
+
         # Tool name to middleware class mapping
         tool_middleware_map = {
             "read_file": FileSystemMiddleware,
@@ -452,6 +456,22 @@ class SubagentRunner:
 
     def _build_system_prompt(self, config: AgentConfig) -> str:
         """Build system prompt for subagent."""
+        # Wildcard agent: don't list tools (inherits all)
+        if "*" in config.tools:
+            return f"""You are a sub-agent: {config.name}
+
+{config.system_prompt}
+
+**Context:**
+- Workspace: `{self.workspace_root}`
+
+**Important Rules:**
+1. All file paths must be absolute paths.
+2. File operations are restricted to the workspace.
+3. Complete your task efficiently and report your findings.
+"""
+
+        # Regular agent: list available tools
         prompt = f"""You are a specialized sub-agent: {config.name}
 
 {config.system_prompt}

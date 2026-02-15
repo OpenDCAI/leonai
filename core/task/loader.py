@@ -17,7 +17,7 @@ class AgentLoader:
     def load_all(self) -> dict[str, AgentConfig]:
         """Load all agents by priority (low -> high, later overrides earlier)."""
         # 1. Built-in agents (lowest priority)
-        builtin_dir = Path(__file__).parent.parent.parent / "agents"
+        builtin_dir = Path(__file__).parent.parent.parent / "config" / "defaults" / "agents"
         self._load_from_dir(builtin_dir)
 
         # 2. User-level agents

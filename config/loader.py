@@ -38,15 +38,13 @@ from config.schema import LeonSettings
 class ConfigLoader:
     """Three-tier configuration loader."""
 
-    def __init__(self, workspace_root: str | None = None, agent_name: str | None = None):
+    def __init__(self, workspace_root: str | None = None):
         """Initialize loader.
 
         Args:
             workspace_root: Project workspace root (for .leon/config.json)
-            agent_name: Agent preset name (e.g., "default", "coder", "researcher", "tester")
         """
         self.workspace_root = Path(workspace_root).resolve() if workspace_root else None
-        self.agent_name = agent_name or "default"
         self._system_defaults_dir = Path(__file__).parent / "defaults"
 
     def load(self, cli_overrides: dict[str, Any] | None = None) -> LeonSettings:
@@ -157,9 +155,7 @@ class ConfigLoader:
 
     def _load_system_defaults(self) -> dict[str, Any]:
         """Load system default configuration."""
-        path = self._system_defaults_dir / "agents" / f"{self.agent_name}.json"
-        if not path.exists():
-            path = self._system_defaults_dir / "agents" / "default.json"
+        path = self._system_defaults_dir / "default.json"
         if not path.exists():
             return {}
 
@@ -292,17 +288,15 @@ class ConfigLoader:
 def load_config(
     workspace_root: str | None = None,
     cli_overrides: dict[str, Any] | None = None,
-    agent_name: str | None = None,
 ) -> LeonSettings:
     """Convenience function to load configuration.
 
     Args:
         workspace_root: Project workspace root
         cli_overrides: CLI overrides
-        agent_name: Agent preset name (e.g., "default", "coder", "researcher", "tester")
 
     Returns:
         Loaded LeonSettings instance
     """
-    loader = ConfigLoader(workspace_root=workspace_root, agent_name=agent_name)
+    loader = ConfigLoader(workspace_root=workspace_root)
     return loader.load(cli_overrides=cli_overrides)
