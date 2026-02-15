@@ -2,16 +2,12 @@ import { Bot, ChevronDown, ChevronRight, FileText, Folder, FolderOpen, Loader2, 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   getThreadLease,
-  getThreadSession,
-  getThreadTerminal,
   listWorkspace,
   pauseThreadSandbox,
   readWorkspaceFile,
   resumeThreadSandbox,
   type ChatEntry,
   type LeaseStatus,
-  type SessionStatus,
-  type TerminalStatus,
   type ToolStep,
   type WorkspaceEntry,
 } from "../api";
@@ -514,10 +510,7 @@ export default function ComputerPanel({ isOpen, onClose, threadId, sandboxType, 
   const [internalTab, setInternalTab] = useState<"terminal" | "files" | "agents">("terminal");
   const activeTab = controlledTab ?? internalTab;
   const setActiveTab = onTabChange ?? setInternalTab;
-  const [session, setSession] = useState<SessionStatus | null>(null);
-  const [terminal, setTerminal] = useState<TerminalStatus | null>(null);
   const [lease, setLease] = useState<LeaseStatus | null>(null);
-  const [statusError, setStatusError] = useState<string | null>(null);
 
   const [currentPath, setCurrentPath] = useState<string>("");
   const [workspaceRoot, setWorkspaceRoot] = useState<string>("");
@@ -534,25 +527,15 @@ export default function ComputerPanel({ isOpen, onClose, threadId, sandboxType, 
 
   async function refreshStatus() {
     if (!threadId) return;
-    setStatusError(null);
     if (!isRemote) {
-      setSession(null);
       setLease(null);
-      setTerminal(null);
       return;
     }
     try {
-      const [s, t, l] = await Promise.all([
-        getThreadSession(threadId),
-        getThreadTerminal(threadId),
-        getThreadLease(threadId),
-      ]);
-      setSession(s);
-      setTerminal(t);
+      const l = await getThreadLease(threadId);
       setLease(l);
-      if (!currentPath) setCurrentPath(t.cwd);
-    } catch (e) {
-      setStatusError(e instanceof Error ? e.message : String(e));
+    } catch {
+      // status banner not implemented; keep fail-loud in backend and keep UI minimal.
     }
   }
 
