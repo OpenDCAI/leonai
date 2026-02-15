@@ -69,13 +69,29 @@ class ConfigLoader:
         )
 
         # Load API credentials from environment if not in config
+        # Priority: ANTHROPIC > OPENAI > OPENROUTER
+        # Track which provider's env var was used to auto-detect provider
+        provider_from_env = None
+
         if not merged_api.get("api_key"):
-            api_key = os.getenv("OPENAI_API_KEY") or os.getenv("ANTHROPIC_API_KEY") or os.getenv("OPENROUTER_API_KEY")
-            if api_key:
-                merged_api["api_key"] = api_key
+            # Check in priority order
+            if os.getenv("ANTHROPIC_API_KEY"):
+                merged_api["api_key"] = os.getenv("ANTHROPIC_API_KEY")
+                provider_from_env = "anthropic"
+            elif os.getenv("OPENAI_API_KEY"):
+                merged_api["api_key"] = os.getenv("OPENAI_API_KEY")
+                provider_from_env = "openai"
+            elif os.getenv("OPENROUTER_API_KEY"):
+                merged_api["api_key"] = os.getenv("OPENROUTER_API_KEY")
+                provider_from_env = "openai"  # OpenRouter uses OpenAI format
 
         if not merged_api.get("base_url"):
-            base_url = os.getenv("OPENAI_BASE_URL") or os.getenv("ANTHROPIC_BASE_URL")
+            # Match base_url with the detected provider
+            if provider_from_env == "anthropic":
+                base_url = os.getenv("ANTHROPIC_BASE_URL")
+            else:
+                base_url = os.getenv("OPENAI_BASE_URL")
+
             if base_url:
                 merged_api["base_url"] = base_url
 
@@ -83,6 +99,11 @@ class ConfigLoader:
             model = os.getenv("MODEL")
             if model:
                 merged_api["model"] = model
+
+        # Auto-detect model_provider from environment variable
+        # Environment variable detection overrides config file to allow easy switching
+        if provider_from_env:
+            merged_api["model_provider"] = provider_from_env
 
         # Merge memory configs (deep merge)
         merged_memory = self._deep_merge(
