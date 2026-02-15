@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import httpx
+
 from core.web.searchers.base import BaseSearcher
 from core.web.types import SearchItem, SearchResult
 

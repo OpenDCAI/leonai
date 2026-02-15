@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # ============================================================================
 # API Configuration
@@ -250,28 +249,20 @@ class SkillsConfig(BaseModel):
 # ============================================================================
 
 
-class LeonSettings(BaseSettings):
-    """Main Leon configuration with environment variable support.
+class LeonSettings(BaseModel):
+    """Main Leon configuration.
 
     Configuration priority (highest to lowest):
-    1. Explicitly set values in code
-    2. Environment variables (with LEON__ prefix)
-    3. .env file
-    4. Default values
+    1. CLI overrides
+    2. Project config (.leon/config.json)
+    3. User config (~/.leon/config.json)
+    4. System defaults (config/defaults/)
+    5. Environment variables (for API keys)
 
-    Environment variable format:
-    - Use double underscore for nesting: LEON__API__MODEL=gpt-4
-    - Use JSON for complex types: LEON__API__MODEL_KWARGS='{"top_p": 0.9}'
+    Note: This uses BaseModel instead of BaseSettings to avoid
+    automatic environment variable loading conflicts with our
+    three-tier config system.
     """
-
-    model_config = SettingsConfigDict(
-        env_prefix="LEON__",
-        env_nested_delimiter="__",
-        env_file=".env",
-        env_file_encoding="utf-8",
-        case_sensitive=False,
-        extra="ignore",
-    )
 
     # Core configuration groups
     api: APIConfig = Field(default_factory=APIConfig, description="API configuration")
@@ -320,12 +311,19 @@ class LeonSettings(BaseSettings):
         if self.api.api_key is None:
             # Check common API key environment variables
             api_key = os.getenv("OPENAI_API_KEY") or os.getenv("ANTHROPIC_API_KEY") or os.getenv("OPENROUTER_API_KEY")
-            if api_key is None:
+            if api_key:
+                self.api.api_key = api_key
+            else:
                 raise ValueError(
                     "No API key found. Set LEON__API__API_KEY, OPENAI_API_KEY, "
                     "ANTHROPIC_API_KEY, or OPENROUTER_API_KEY environment variable."
                 )
-            self.api.api_key = api_key
+
+        # Also check base_url from environment if not set
+        if self.api.base_url is None:
+            base_url = os.getenv("OPENAI_BASE_URL") or os.getenv("ANTHROPIC_BASE_URL")
+            if base_url:
+                self.api.base_url = base_url
 
         return self
 

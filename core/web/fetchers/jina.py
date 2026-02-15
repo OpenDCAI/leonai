@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import httpx
+
 from core.web.fetchers.base import BaseFetcher
 from core.web.types import ContentChunk, FetchLimits, FetchResult
 

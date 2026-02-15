@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+
 from core.memory.summary_store import SummaryStore
 
 

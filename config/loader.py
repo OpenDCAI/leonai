@@ -68,6 +68,22 @@ class ConfigLoader:
             project_config.get("api", {}),
         )
 
+        # Load API credentials from environment if not in config
+        if not merged_api.get("api_key"):
+            api_key = os.getenv("OPENAI_API_KEY") or os.getenv("ANTHROPIC_API_KEY") or os.getenv("OPENROUTER_API_KEY")
+            if api_key:
+                merged_api["api_key"] = api_key
+
+        if not merged_api.get("base_url"):
+            base_url = os.getenv("OPENAI_BASE_URL") or os.getenv("ANTHROPIC_BASE_URL")
+            if base_url:
+                merged_api["base_url"] = base_url
+
+        if not merged_api.get("model"):
+            model = os.getenv("MODEL")
+            if model:
+                merged_api["model"] = model
+
         # Merge memory configs (deep merge)
         merged_memory = self._deep_merge(
             system_config.get("memory", {}),
@@ -107,8 +123,11 @@ class ConfigLoader:
         if cli_overrides:
             final_config = self._deep_merge(final_config, cli_overrides)
 
-        # Expand environment variables
+        # Expand environment variables in string values
         final_config = self._expand_env_vars(final_config)
+
+        # Remove None values to allow defaults
+        final_config = self._remove_none_values(final_config)
 
         # Convert to LeonSettings (validates schema)
         return LeonSettings(**final_config)
@@ -227,6 +246,21 @@ class ConfigLoader:
             expanded = os.path.expanduser(obj)
             expanded = os.path.expandvars(expanded)
             return expanded
+        return obj
+
+    def _remove_none_values(self, obj: Any) -> Any:
+        """Recursively remove None values from dict to allow env var fallback.
+
+        Args:
+            obj: Object to clean (dict/list/other)
+
+        Returns:
+            Cleaned object without None values
+        """
+        if isinstance(obj, dict):
+            return {k: self._remove_none_values(v) for k, v in obj.items() if v is not None}
+        elif isinstance(obj, list):
+            return [self._remove_none_values(v) for v in obj if v is not None]
         return obj
 
 

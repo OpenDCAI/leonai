@@ -24,6 +24,7 @@ from langchain.agents.middleware.types import (
     ToolCallRequest,
 )
 from langchain_core.messages import ToolMessage
+
 from core.web.fetchers.jina import JinaFetcher
 from core.web.fetchers.markdownify import MarkdownifyFetcher
 from core.web.searchers.exa import ExaSearcher

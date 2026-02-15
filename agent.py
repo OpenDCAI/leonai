@@ -191,13 +191,21 @@ class LeonAgent:
         # Initialize checkpointer and MCP tools
         self._aiosqlite_conn, mcp_tools = self._init_async_components()
 
+        # If in async context, mark as needing async initialization
+        self._needs_async_init = self._aiosqlite_conn is None
+
+        # Set checkpointer to None if in async context (will be initialized later)
+        if self._needs_async_init:
+            self.checkpointer = None
+
         # Build middleware stack
         middleware = self._build_middleware_stack()
 
         # Configure TaskMiddleware with parent context
         if hasattr(self, "_task_middleware"):
             self._task_middleware.set_parent_middleware(middleware)
-            self._task_middleware.set_checkpointer(self.checkpointer)
+            if not self._needs_async_init:
+                self._task_middleware.set_checkpointer(self.checkpointer)
 
         # Ensure ToolNode is created (middleware tools need at least one BaseTool)
         if not mcp_tools and not self._has_middleware_tools(middleware):
@@ -215,7 +223,7 @@ class LeonAgent:
             tools=mcp_tools,
             system_prompt=self.system_prompt,
             middleware=middleware,
-            checkpointer=self.checkpointer,
+            checkpointer=self.checkpointer if not self._needs_async_init else None,
         )
 
         # Get runtime from MonitorMiddleware
@@ -233,22 +241,54 @@ class LeonAgent:
             print("[LeonAgent] Initialized successfully")
             print(f"[LeonAgent] Workspace: {self.workspace_root}")
             print(f"[LeonAgent] Audit log: {self.enable_audit_log}")
+            if self._needs_async_init:
+                print("[LeonAgent] Note: Async components need initialization via ainit()")
 
-        # Mark agent as ready
+        # Mark agent as ready (if not needing async init)
+        if not self._needs_async_init:
+            self._monitor_middleware.mark_ready()
+
+    async def ainit(self):
+        """Complete async initialization (call this if initialized in async context).
+
+        Example:
+            agent = LeonAgent(sandbox=sandbox)
+            await agent.ainit()
+        """
+        if not self._needs_async_init:
+            return  # Already initialized
+
+        # Initialize async components
+        self._aiosqlite_conn = await self._init_checkpointer()
+        mcp_tools = await self._init_mcp_tools()
+
+        # Update agent with checkpointer
+        self.agent.checkpointer = self.checkpointer
+
+        # Update TaskMiddleware
+        if hasattr(self, "_task_middleware"):
+            self._task_middleware.set_checkpointer(self.checkpointer)
+
+        # Mark as initialized
+        self._needs_async_init = False
         self._monitor_middleware.mark_ready()
 
+        if self.verbose:
+            print("[LeonAgent] Async initialization completed")
+
     def _init_async_components(self) -> tuple[Any, list]:
-        """Initialize async components (checkpointer and MCP tools)."""
+        """Initialize async components (checkpointer and MCP tools).
+
+        Uses asyncio.run() with proper cleanup to avoid event loop issues.
+        """
         import asyncio
 
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            conn = loop.run_until_complete(self._init_checkpointer())
-            mcp_tools = loop.run_until_complete(self._init_mcp_tools())
+        async def _init():
+            conn = await self._init_checkpointer()
+            mcp_tools = await self._init_mcp_tools()
             return conn, mcp_tools
-        finally:
-            loop.close()
+
+        return asyncio.run(_init())
 
     def _has_middleware_tools(self, middleware: list) -> bool:
         """Check if any middleware has BaseTool instances."""
@@ -637,9 +677,17 @@ class LeonAgent:
             return
 
         try:
+            # Try synchronous close first (works if connection is not busy)
+            import sys
+
+            if sys.meta_path is None:
+                # Python is shutting down, skip cleanup
+                return
+
             self._run_async_cleanup(lambda: self._aiosqlite_conn.close(), "SQLite connection")
-        except Exception as e:
-            print(f"[LeonAgent] SQLite cleanup error: {e}")
+        except Exception:
+            # Ignore cleanup errors during shutdown
+            pass
         self._aiosqlite_conn = None
 
     def __del__(self):
@@ -1193,7 +1241,7 @@ When NOT to use Todo:
 """
 
     def invoke(self, message: str, thread_id: str = "default") -> dict:
-        """Invoke agent with a message.
+        """Invoke agent with a message (sync version).
 
         Args:
             message: User message
@@ -1212,6 +1260,25 @@ When NOT to use Todo:
 
         try:
             return asyncio.run(_ainvoke())
+        except Exception as e:
+            self._monitor_middleware.mark_error(e)
+            raise
+
+    async def ainvoke(self, message: str, thread_id: str = "default") -> dict:
+        """Invoke agent with a message (async version).
+
+        Args:
+            message: User message
+            thread_id: Thread ID
+
+        Returns:
+            Agent response (includes messages and state)
+        """
+        try:
+            return await self.agent.ainvoke(
+                {"messages": [{"role": "user", "content": message}]},
+                config={"configurable": {"thread_id": thread_id}},
+            )
         except Exception as e:
             self._monitor_middleware.mark_error(e)
             raise
