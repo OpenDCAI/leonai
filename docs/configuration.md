@@ -387,6 +387,61 @@ export LEON__TOOLS__COMMAND__ENABLED=false
 
 Use double underscore (`__`) for nesting.
 
+### Provider Auto-Detection
+
+Leon automatically detects the model provider based on which API key environment variable is set:
+
+**Priority**: `ANTHROPIC_API_KEY` > `OPENAI_API_KEY` > `OPENROUTER_API_KEY`
+
+```bash
+# Use Anthropic format (supports prompt caching)
+export ANTHROPIC_API_KEY=sk-ant-xxx
+export ANTHROPIC_BASE_URL=https://api.anthropic.com
+export MODEL=claude-sonnet-4-5-20250929
+
+# Use OpenAI format
+export OPENAI_API_KEY=sk-xxx
+export OPENAI_BASE_URL=https://api.openai.com
+export MODEL=gpt-4o
+
+# Use OpenRouter
+export OPENROUTER_API_KEY=sk-or-xxx
+export OPENAI_BASE_URL=https://openrouter.ai/api
+export MODEL=anthropic/claude-3.5-sonnet
+```
+
+The system will:
+1. Detect which API key is set
+2. Automatically set `model_provider` (anthropic/openai)
+3. Create the correct ChatModel instance (ChatAnthropic/ChatOpenAI)
+
+**Note**: Environment variable detection overrides config file settings, allowing easy switching between providers.
+
+### Base URL Normalization
+
+Leon automatically normalizes `base_url` based on the provider to handle different API conventions:
+
+- **OpenAI/OpenRouter**: Adds `/v1` suffix if not present
+  - User config: `https://api.openai.com` or `https://api.openai.com/v1`
+  - Actual usage: `https://api.openai.com/v1`
+
+- **Anthropic**: Removes `/v1` suffix (SDK adds `/v1/messages` automatically)
+  - User config: `https://api.anthropic.com` or `https://api.anthropic.com/v1`
+  - Actual usage: `https://api.anthropic.com`
+
+**Example with proxy**:
+
+```json
+{
+  "api": {
+    "model": "claude-haiku-4-5-20251001",
+    "base_url": "https://proxy.example.com"
+  }
+}
+```
+
+You don't need to worry about the `/v1` suffix - the system handles it automatically based on the detected provider.
+
 ## Agent Presets
 
 Leon includes four built-in agent presets:
