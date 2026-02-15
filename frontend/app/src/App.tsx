@@ -76,7 +76,6 @@ import {
   type SandboxInfo,
   type SandboxType,
   type StreamStatus,
-  type TextSegment,
   type ThreadSummary,
   type ToolSegment,
 } from "./api";
