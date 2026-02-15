@@ -67,7 +67,7 @@ class NonInteractiveRunner:
 
         # 状态转移：→ ACTIVE
         if hasattr(self.agent, "runtime"):
-            from middleware.monitor import AgentState
+            from core.monitor import AgentState
 
             self.agent.runtime.transition(AgentState.ACTIVE)
 
@@ -90,7 +90,7 @@ class NonInteractiveRunner:
         finally:
             # 状态转移：→ IDLE
             if hasattr(self.agent, "runtime"):
-                from middleware.monitor import AgentState
+                from core.monitor import AgentState
 
                 if self.agent.runtime.current_state == AgentState.ACTIVE:
                     self.agent.runtime.transition(AgentState.IDLE)
@@ -253,7 +253,7 @@ class NonInteractiveRunner:
             return
 
         try:
-            from middleware.queue import get_queue_manager
+            from core.queue import get_queue_manager
 
             mgr = get_queue_manager()
             sizes = mgr.queue_sizes()

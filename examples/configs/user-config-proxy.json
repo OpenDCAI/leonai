@@ -1,0 +1,18 @@
+{
+  "api": {
+    "model": "claude-opus-4-6",
+    "model_provider": "openai",
+    "base_url": "${OPENAI_BASE_URL}",
+    "api_key": "${OPENAI_API_KEY}",
+    "temperature": 0.5
+  },
+  "tools": {
+    "web": {
+      "tools": {
+        "web_search": {
+          "tavily_api_key": "${TAVILY_API_KEY}"
+        }
+      }
+    }
+  }
+}

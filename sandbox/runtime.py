@@ -15,25 +15,25 @@ import asyncio
 import json
 import os
 import pty
-import sqlite3
 import re
 import select
 import shlex
+import sqlite3
 import subprocess
 import time
 import uuid
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from sandbox.lease import SandboxLease
     from sandbox.provider import SandboxProvider
     from sandbox.terminal import AbstractTerminal, TerminalState
 
-from sandbox.interfaces.executor import ExecuteResult
-from sandbox.interfaces.executor import AsyncCommand
+from sandbox.interfaces.executor import AsyncCommand, ExecuteResult
 from sandbox.shell_output import normalize_pty_result
 
 ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -1037,11 +1037,15 @@ class DaytonaSessionRuntime(_RemoteRuntimeBase):
                             stderr=f"Error: snapshot failed: {exc}",
                         )
                 else:
-                    return ExecuteResult(exit_code=1, stdout="", stderr=f"Error: snapshot failed: {self._snapshot_error}")
+                    return ExecuteResult(
+                        exit_code=1, stdout="", stderr=f"Error: snapshot failed: {self._snapshot_error}"
+                    )
             try:
                 first = await asyncio.to_thread(self._execute_once_sync, command, timeout, on_stdout_chunk)
             except TimeoutError:
-                return ExecuteResult(exit_code=-1, stdout="", stderr=f"Command timed out after {timeout}s", timed_out=True)
+                return ExecuteResult(
+                    exit_code=-1, stdout="", stderr=f"Command timed out after {timeout}s", timed_out=True
+                )
             except Exception as exc:
                 if not self._looks_like_infra_error(str(exc)):
                     return ExecuteResult(exit_code=1, stdout="", stderr=f"Error: {exc}")
@@ -1168,7 +1172,9 @@ class DockerPtyRuntime(_RemoteRuntimeBase):
             try:
                 return await asyncio.to_thread(self._execute_once_sync, command, timeout, on_stdout_chunk)
             except TimeoutError:
-                return ExecuteResult(exit_code=-1, stdout="", stderr=f"Command timed out after {timeout}s", timed_out=True)
+                return ExecuteResult(
+                    exit_code=-1, stdout="", stderr=f"Command timed out after {timeout}s", timed_out=True
+                )
             except Exception as exc:
                 if self._looks_like_infra_error(str(exc)):
                     self._recover_infra()
@@ -1308,7 +1314,9 @@ class E2BPtyRuntime(_RemoteRuntimeBase):
             try:
                 return await asyncio.to_thread(self._execute_once_sync, command, timeout)
             except TimeoutError:
-                return ExecuteResult(exit_code=-1, stdout="", stderr=f"Command timed out after {timeout}s", timed_out=True)
+                return ExecuteResult(
+                    exit_code=-1, stdout="", stderr=f"Command timed out after {timeout}s", timed_out=True
+                )
             except Exception as exc:
                 if self._looks_like_infra_error(str(exc)):
                     self._recover_infra()

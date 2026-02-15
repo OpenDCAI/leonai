@@ -1,6 +1,6 @@
 """Tests for model parameter normalization."""
 
-from middleware.model_params import normalize_model_kwargs
+from core.model_params import normalize_model_kwargs
 
 
 def test_openai_gpt5_moves_max_tokens_to_max_completion_tokens() -> None:

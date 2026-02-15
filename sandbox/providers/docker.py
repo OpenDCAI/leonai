@@ -265,9 +265,7 @@ class DockerProvider(SandboxProvider):
                 timeout=effective_timeout,
             )
         except subprocess.TimeoutExpired as exc:
-            raise RuntimeError(
-                f"Docker command timed out after {effective_timeout}s: {' '.join(cmd)}"
-            ) from exc
+            raise RuntimeError(f"Docker command timed out after {effective_timeout}s: {' '.join(cmd)}") from exc
         if check and result.returncode != 0:
             raise RuntimeError(result.stderr.strip() or "Docker command failed")
         return result

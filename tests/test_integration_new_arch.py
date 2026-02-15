@@ -460,7 +460,8 @@ class TestSessionLifecycle:
         assert sandbox_manager.destroy_session(thread_id)
         assert sandbox_manager.terminal_store.list_by_thread(thread_id) == []
         assert all(
-            sandbox_manager.session_manager.get(thread_id, terminal.terminal_id) is None for terminal in terminals_before
+            sandbox_manager.session_manager.get(thread_id, terminal.terminal_id) is None
+            for terminal in terminals_before
         )
 
 
