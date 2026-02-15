@@ -9,12 +9,10 @@ interface ModelOption {
 }
 
 const VIRTUAL_MODELS: ModelOption[] = [
-  { id: "leon:fast", name: "Fast", description: "快速响应，适合简单任务" },
-  { id: "leon:balanced", name: "Balanced", description: "平衡性能与成本" },
-  { id: "leon:powerful", name: "Powerful", description: "强大推理能力" },
-  { id: "leon:coding", name: "Coding", description: "代码生成优化" },
-  { id: "leon:research", name: "Research", description: "深度分析研究" },
-  { id: "leon:creative", name: "Creative", description: "创意内容生成" },
+  { id: "leon:mini", name: "Mini", description: "快速响应，简单任务" },
+  { id: "leon:medium", name: "Medium", description: "平衡性能，日常任务" },
+  { id: "leon:large", name: "Large", description: "复杂推理，困难任务" },
+  { id: "leon:max", name: "Max", description: "极限性能，最难任务" },
 ];
 
 interface ModelSelectorProps {

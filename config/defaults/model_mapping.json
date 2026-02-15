@@ -1,42 +1,27 @@
 {
   "mappings": {
-    "leon:fast": {
+    "leon:mini": {
+      "model": "claude-haiku-4-5-20250929",
+      "provider": "anthropic",
+      "description": "快速响应，简单任务"
+    },
+    "leon:medium": {
       "model": "claude-sonnet-4-5-20250929",
-      "temperature": 0.7,
-      "max_tokens": 4096,
-      "description": "Fast, cost-effective model for simple tasks"
+      "provider": "anthropic",
+      "description": "平衡性能，日常任务"
     },
-    "leon:balanced": {
-      "model": "claude-sonnet-4-5-20250929",
-      "temperature": 0.5,
-      "max_tokens": 8192,
-      "description": "Balanced performance and cost for general use"
-    },
-    "leon:powerful": {
+    "leon:large": {
       "model": "claude-opus-4-6",
-      "temperature": 0.3,
-      "max_tokens": 16384,
-      "description": "Most capable model for complex reasoning tasks"
+      "provider": "anthropic",
+      "description": "复杂推理，困难任务"
     },
-    "leon:coding": {
+    "leon:max": {
       "model": "claude-opus-4-6",
+      "provider": "anthropic",
       "temperature": 0.0,
-      "max_tokens": 16384,
-      "description": "Optimized for code generation and analysis"
-    },
-    "leon:research": {
-      "model": "claude-sonnet-4-5-20250929",
-      "temperature": 0.3,
-      "max_tokens": 8192,
-      "description": "Optimized for research and information gathering"
-    },
-    "leon:creative": {
-      "model": "claude-sonnet-4-5-20250929",
-      "temperature": 0.9,
-      "max_tokens": 8192,
-      "description": "Higher temperature for creative tasks"
+      "description": "极限性能，最难任务"
     }
   },
-  "default_mapping": "leon:balanced",
+  "default_mapping": "leon:medium",
   "fallback_model": "claude-sonnet-4-5-20250929"
 }

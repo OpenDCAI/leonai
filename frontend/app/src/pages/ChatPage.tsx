@@ -26,7 +26,7 @@ export default function ChatPage() {
   const location = useLocation();
   const { tm, setSidebarCollapsed } = useOutletContext<OutletContext>();
   const initialMessageSent = useRef(false);
-  const [currentModel, setCurrentModel] = useState<string>("leon:balanced");
+  const [currentModel, setCurrentModel] = useState<string>("leon:medium");
 
   // Check if we have an initial message to send
   const state = location.state as { initialMessage?: string; selectedModel?: string } | null;

@@ -27,12 +27,10 @@ interface CenteredInputBoxProps {
 }
 
 const MODELS = [
-  { value: "leon:fast", label: "Fast" },
-  { value: "leon:balanced", label: "Balanced" },
-  { value: "leon:powerful", label: "Powerful" },
-  { value: "leon:coding", label: "Coding" },
-  { value: "leon:research", label: "Research" },
-  { value: "leon:creative", label: "Creative" },
+  { value: "leon:mini", label: "Mini" },
+  { value: "leon:medium", label: "Medium" },
+  { value: "leon:large", label: "Large" },
+  { value: "leon:max", label: "Max" },
 ];
 
 export default function CenteredInputBox({
@@ -44,7 +42,7 @@ export default function CenteredInputBox({
 }: CenteredInputBoxProps) {
   const [message, setMessage] = useState("");
   const [sandbox, setSandbox] = useState(defaultSandbox);
-  const [model, setModel] = useState("leon:balanced");
+  const [model, setModel] = useState("leon:medium");
   const [workspace, setWorkspace] = useState(defaultWorkspace || "");
   const [customWorkspace, setCustomWorkspace] = useState("");
   const [sending, setSending] = useState(false);

@@ -29,7 +29,7 @@ export default function Header({
   threadPreview,
   sandboxInfo,
   queueEnabled,
-  currentModel = "leon:balanced",
+  currentModel = "leon:medium",
   onToggleSidebar,
   onPauseSandbox,
   onResumeSandbox,

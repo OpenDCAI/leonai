@@ -19,10 +19,10 @@ Example usage:
 Example with CLI overrides:
     >>> config = load_config(
     ...     workspace_root="/path/to/project",
-    ...     cli_overrides={"api": {"model": "leon:powerful"}}
+    ...     cli_overrides={"api": {"model": "leon:large"}}
     ... )
     >>> print(config.api.model)
-    'claude-opus-4-6'  # Resolved from virtual model mapping
+    'claude-opus-4-6'  # Resolved from leon:large virtual model
 """
 
 from __future__ import annotations
