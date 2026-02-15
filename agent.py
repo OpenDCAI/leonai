@@ -512,6 +512,40 @@ class LeonAgent:
         env_var = env_map.get(provider)
         return os.getenv(env_var) if env_var else None
 
+    def _normalize_base_url(self, base_url: str, provider: str | None) -> str:
+        """Normalize base_url based on provider requirements.
+
+        Different providers have different URL conventions:
+        - OpenAI/OpenRouter: expects base_url with /v1 (e.g., https://api.openai.com/v1)
+        - Anthropic: expects base_url WITHOUT /v1 (SDK adds /v1/messages automatically)
+
+        This method ensures user can provide base URL without /v1, and we add it when needed.
+
+        Args:
+            base_url: User-provided base URL (e.g., https://yunwu.ai)
+            provider: Model provider (openai, anthropic, etc.)
+
+        Returns:
+            Normalized base URL
+        """
+        # Remove trailing slash
+        base_url = base_url.rstrip("/")
+
+        # Remove /v1 suffix if present (we'll add it back if needed)
+        if base_url.endswith("/v1"):
+            base_url = base_url[:-3]
+
+        # Add /v1 for OpenAI-compatible providers
+        if provider in ("openai", None):  # None defaults to OpenAI
+            return f"{base_url}/v1"
+
+        # Anthropic doesn't need /v1 (SDK adds /v1/messages automatically)
+        if provider == "anthropic":
+            return base_url
+
+        # Default: add /v1
+        return f"{base_url}/v1"
+
     def _create_model(self):
         """Initialize model with all parameters passed to init_chat_model."""
         kwargs = normalize_model_kwargs(self.model_name, self._build_model_kwargs())
@@ -531,7 +565,8 @@ class LeonAgent:
 
             base_url = self.config.api.base_url or self._resolve_env_base_url()
             if base_url:
-                kwargs["base_url"] = base_url
+                # Normalize base_url based on provider
+                kwargs["base_url"] = self._normalize_base_url(base_url, self.config.api.model_provider)
 
             if self.config.api.temperature is not None:
                 kwargs["temperature"] = self.config.api.temperature
@@ -546,7 +581,8 @@ class LeonAgent:
 
             base_url = self.profile.agent.base_url or self._resolve_env_base_url()
             if base_url:
-                kwargs["base_url"] = base_url
+                # Normalize base_url based on provider
+                kwargs["base_url"] = self._normalize_base_url(base_url, self.profile.agent.model_provider)
 
             if self.profile.agent.temperature is not None:
                 kwargs["temperature"] = self.profile.agent.temperature
