@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import httpx
-from middleware.web.searchers.base import BaseSearcher
-from middleware.web.types import SearchItem, SearchResult
+from core.web.searchers.base import BaseSearcher
+from core.web.types import SearchItem, SearchResult
 
 
 class TavilySearcher(BaseSearcher):

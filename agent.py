@@ -30,28 +30,27 @@ if _env_file.exists():
             key, value = line.split("=", 1)
             os.environ[key] = value
 
-from middleware.command import CommandMiddleware
-
-# 导入 hooks
-from middleware.command.hooks.dangerous_commands import DangerousCommandsHook
-from middleware.command.hooks.file_access_logger import FileAccessLoggerHook
-from middleware.command.hooks.file_permission import FilePermissionHook
-from middleware.command.hooks.path_security import PathSecurityHook
-from middleware.filesystem import FileSystemMiddleware
-from middleware.memory import MemoryMiddleware
-from middleware.model_params import normalize_model_kwargs
-from middleware.monitor import MonitorMiddleware
-from middleware.prompt_caching import PromptCachingMiddleware
-from middleware.queue import SteeringMiddleware
-from middleware.search import SearchMiddleware
-from middleware.skills import SkillsMiddleware
-from middleware.task import TaskMiddleware
-from middleware.todo import TodoMiddleware
-from middleware.web import WebMiddleware
-
 from agent_profile import AgentProfile
 from config import LeonSettings
 from config.loader import ConfigLoader
+from core.command import CommandMiddleware
+
+# 导入 hooks
+from core.command.hooks.dangerous_commands import DangerousCommandsHook
+from core.command.hooks.file_access_logger import FileAccessLoggerHook
+from core.command.hooks.file_permission import FilePermissionHook
+from core.command.hooks.path_security import PathSecurityHook
+from core.filesystem import FileSystemMiddleware
+from core.memory import MemoryMiddleware
+from core.model_params import normalize_model_kwargs
+from core.monitor import MonitorMiddleware
+from core.prompt_caching import PromptCachingMiddleware
+from core.queue import SteeringMiddleware
+from core.search import SearchMiddleware
+from core.skills import SkillsMiddleware
+from core.task import TaskMiddleware
+from core.todo import TodoMiddleware
+from core.web import WebMiddleware
 
 # Import file operation recorder for time travel
 from tui.operations import get_recorder

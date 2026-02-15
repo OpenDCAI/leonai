@@ -1,12 +1,12 @@
 """Middleware for Leon Agent."""
 
-from middleware.command import CommandMiddleware
-from middleware.filesystem import FileSystemMiddleware
-from middleware.prompt_caching import PromptCachingMiddleware
-from middleware.search import SearchMiddleware
-from middleware.task import TaskMiddleware
-from middleware.todo import TodoMiddleware
-from middleware.web import WebMiddleware
+from core.command import CommandMiddleware
+from core.filesystem import FileSystemMiddleware
+from core.prompt_caching import PromptCachingMiddleware
+from core.search import SearchMiddleware
+from core.task import TaskMiddleware
+from core.todo import TodoMiddleware
+from core.web import WebMiddleware
 
 __all__ = [
     "CommandMiddleware",

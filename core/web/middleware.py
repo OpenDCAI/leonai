@@ -24,12 +24,12 @@ from langchain.agents.middleware.types import (
     ToolCallRequest,
 )
 from langchain_core.messages import ToolMessage
-from middleware.web.fetchers.jina import JinaFetcher
-from middleware.web.fetchers.markdownify import MarkdownifyFetcher
-from middleware.web.searchers.exa import ExaSearcher
-from middleware.web.searchers.firecrawl import FirecrawlSearcher
-from middleware.web.searchers.tavily import TavilySearcher
-from middleware.web.types import FetchLimits, FetchResult, SearchResult
+from core.web.fetchers.jina import JinaFetcher
+from core.web.fetchers.markdownify import MarkdownifyFetcher
+from core.web.searchers.exa import ExaSearcher
+from core.web.searchers.firecrawl import FirecrawlSearcher
+from core.web.searchers.tavily import TavilySearcher
+from core.web.types import FetchLimits, FetchResult, SearchResult
 
 
 class WebMiddleware(AgentMiddleware):

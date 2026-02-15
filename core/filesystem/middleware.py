@@ -24,9 +24,9 @@ from langchain.agents.middleware.types import (
     ToolCallRequest,
 )
 from langchain_core.messages import ToolMessage
-from middleware.filesystem.backend import FileSystemBackend
-from middleware.filesystem.read import ReadLimits, ReadResult
-from middleware.filesystem.read import read_file as read_file_dispatch
+from core.filesystem.backend import FileSystemBackend
+from core.filesystem.read import ReadLimits, ReadResult
+from core.filesystem.read import read_file as read_file_dispatch
 
 if TYPE_CHECKING:
     from tui.operations import FileOperationRecorder
@@ -73,7 +73,7 @@ class FileSystemMiddleware(AgentMiddleware):
             verbose: Whether to output detailed logs
         """
         if backend is None:
-            from middleware.filesystem.local_backend import LocalBackend
+            from core.filesystem.local_backend import LocalBackend
 
             backend = LocalBackend()
 
@@ -208,7 +208,7 @@ class FileSystemMiddleware(AgentMiddleware):
                 error=f"File too large: {file_size} bytes (max: {self.max_file_size})",
             )
 
-        from middleware.filesystem.local_backend import LocalBackend
+        from core.filesystem.local_backend import LocalBackend
 
         if isinstance(self.backend, LocalBackend):
             limits = ReadLimits(max_lines=1000, max_chars=100_000, max_line_length=2000)

@@ -5,7 +5,7 @@ import json
 from collections.abc import AsyncGenerator
 from typing import Any
 
-from middleware.monitor import AgentState
+from core.monitor import AgentState
 
 from sandbox.thread_context import set_current_thread_id
 

@@ -6,7 +6,7 @@ import base64
 import mimetypes
 from pathlib import Path
 
-from middleware.filesystem.read.types import FileType, ReadResult
+from core.filesystem.read.types import FileType, ReadResult
 
 IMAGE_EXTENSIONS: set[str] = {
     "png",

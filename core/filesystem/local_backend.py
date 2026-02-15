@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from middleware.filesystem.backend import (
+from core.filesystem.backend import (
     DirEntry,
     DirListResult,
     FileReadResult,

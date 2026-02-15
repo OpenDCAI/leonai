@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from middleware.filesystem.read.types import FileType, ReadLimits, ReadResult
+from core.filesystem.read.types import FileType, ReadLimits, ReadResult
 
 
 def read_notebook(

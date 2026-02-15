@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from middleware.web.types import FetchLimits, FetchResult
+from core.web.types import FetchLimits, FetchResult
 
 
 class BaseFetcher(ABC):

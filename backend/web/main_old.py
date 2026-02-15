@@ -14,8 +14,8 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from middleware.monitor import AgentState
-from middleware.queue import QueueMode, get_queue_manager
+from core.monitor import AgentState
+from core.queue import QueueMode, get_queue_manager
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
@@ -1019,7 +1019,7 @@ async def get_thread_lease_status(thread_id: str) -> dict[str, Any]:
 async def list_workspace_path(thread_id: str, path: str | None = Query(default=None)) -> dict[str, Any]:
     sandbox_type = _resolve_thread_sandbox(app, thread_id)
     if sandbox_type == "local":
-        from middleware.filesystem.local_backend import LocalBackend
+        from core.filesystem.local_backend import LocalBackend
 
         backend = LocalBackend()
         target = _resolve_local_workspace_path(path, thread_id=thread_id)
@@ -1063,7 +1063,7 @@ async def list_workspace_path(thread_id: str, path: str | None = Query(default=N
 async def read_workspace_file(thread_id: str, path: str = Query(...)) -> dict[str, Any]:
     sandbox_type = _resolve_thread_sandbox(app, thread_id)
     if sandbox_type == "local":
-        from middleware.filesystem.local_backend import LocalBackend
+        from core.filesystem.local_backend import LocalBackend
 
         backend = LocalBackend()
         target = _resolve_local_workspace_path(path, thread_id=thread_id)
@@ -1534,7 +1534,7 @@ async def stream_task_agent(thread_id: str, payload: TaskAgentRequest) -> EventS
                 return
 
             # Build task params
-            from middleware.task.types import TaskParams
+            from core.task.types import TaskParams
 
             params: TaskParams = {
                 "SubagentType": payload.subagent_type,

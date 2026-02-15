@@ -5,8 +5,8 @@ import uuid
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException
-from middleware.monitor import AgentState
-from middleware.queue import QueueMode, get_queue_manager
+from core.monitor import AgentState
+from core.queue import QueueMode, get_queue_manager
 from sse_starlette.sse import EventSourceResponse
 
 from sandbox.thread_context import set_current_thread_id

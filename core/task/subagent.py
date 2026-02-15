@@ -10,7 +10,7 @@ from typing import Any
 from langchain.agents import create_agent
 from langchain.chat_models import init_chat_model
 from langchain_core.tools import tool
-from middleware.model_params import normalize_model_kwargs
+from core.model_params import normalize_model_kwargs
 
 from .types import AgentConfig, TaskParams, TaskResult
 
@@ -51,10 +51,10 @@ class SubagentRunner:
 
     def _build_subagent_middleware(self, config: AgentConfig, all_middleware: list[Any]) -> list[Any]:
         """Build middleware stack for subagent based on allowed tools."""
-        from middleware.command import CommandMiddleware
-        from middleware.filesystem import FileSystemMiddleware
-        from middleware.search import SearchMiddleware
-        from middleware.web import WebMiddleware
+        from core.command import CommandMiddleware
+        from core.filesystem import FileSystemMiddleware
+        from core.search import SearchMiddleware
+        from core.web import WebMiddleware
 
         # Tool name to middleware class mapping
         tool_middleware_map = {
