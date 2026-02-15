@@ -1,30 +1,29 @@
-"""Firecrawl searcher - web crawling and search."""
+"""Tavily searcher - AI-optimized search."""
 
 from __future__ import annotations
 
 import httpx
-
 from middleware.web.searchers.base import BaseSearcher
 from middleware.web.types import SearchItem, SearchResult
 
 
-class FirecrawlSearcher(BaseSearcher):
+class TavilySearcher(BaseSearcher):
     """
-    Searcher using Firecrawl API.
+    Searcher using Tavily API.
 
     Features:
-    - Web crawling capabilities
-    - Can search and extract content
-    - Good fallback option
+    - AI-optimized search results
+    - Returns relevant snippets
+    - Supports domain filtering
     """
 
-    API_URL = "https://api.firecrawl.dev/v1/search"
+    API_URL = "https://api.tavily.com/search"
 
     def __init__(
         self,
         api_key: str,
         max_results: int = 5,
-        timeout: int = 15,
+        timeout: int = 10,
     ):
         super().__init__(max_results, timeout)
         self.api_key = api_key
@@ -36,42 +35,36 @@ class FirecrawlSearcher(BaseSearcher):
         include_domains: list[str] | None = None,
         exclude_domains: list[str] | None = None,
     ) -> SearchResult:
-        """Search using Firecrawl API."""
+        """Search using Tavily API."""
         result = SearchResult(query=query)
 
         try:
-            headers = {
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
+            payload = {
+                "api_key": self.api_key,
+                "query": query,
+                "max_results": max_results or self.max_results,
+                "search_depth": "basic",
             }
 
-            payload = {
-                "query": query,
-                "limit": max_results or self.max_results,
-            }
+            if include_domains:
+                payload["include_domains"] = include_domains
+
+            if exclude_domains:
+                payload["exclude_domains"] = exclude_domains
 
             async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.post(self.API_URL, headers=headers, json=payload)
+                response = await client.post(self.API_URL, json=payload)
                 response.raise_for_status()
 
             data = response.json()
 
-            for item in data.get("data", []):
-                url = item.get("url", "")
-
-                if include_domains:
-                    if not any(domain in url for domain in include_domains):
-                        continue
-
-                if exclude_domains:
-                    if any(domain in url for domain in exclude_domains):
-                        continue
-
+            for item in data.get("results", []):
                 result.results.append(
                     SearchItem(
-                        title=item.get("title", item.get("metadata", {}).get("title", "")),
-                        url=url,
-                        snippet=item.get("description", item.get("markdown", "")[:300]),
+                        title=item.get("title", ""),
+                        url=item.get("url", ""),
+                        snippet=item.get("content", ""),
+                        score=item.get("score"),
                     )
                 )
 
@@ -80,7 +73,7 @@ class FirecrawlSearcher(BaseSearcher):
         except httpx.TimeoutException:
             result.error = f"Timeout searching: {query}"
         except httpx.HTTPStatusError as e:
-            result.error = f"Firecrawl API error {e.response.status_code}"
+            result.error = f"Tavily API error {e.response.status_code}"
         except httpx.RequestError as e:
             result.error = f"Search error: {e}"
         except Exception as e:

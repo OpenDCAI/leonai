@@ -15,7 +15,6 @@ import time
 from pathlib import Path
 
 import pytest
-
 from middleware.memory.summary_store import SummaryStore
 
 

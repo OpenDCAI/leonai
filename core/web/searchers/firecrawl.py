@@ -1,30 +1,29 @@
-"""Exa searcher - semantic AI search."""
+"""Firecrawl searcher - web crawling and search."""
 
 from __future__ import annotations
 
 import httpx
-
 from middleware.web.searchers.base import BaseSearcher
 from middleware.web.types import SearchItem, SearchResult
 
 
-class ExaSearcher(BaseSearcher):
+class FirecrawlSearcher(BaseSearcher):
     """
-    Searcher using Exa API.
+    Searcher using Firecrawl API.
 
     Features:
-    - Semantic AI-powered search
-    - Good for academic/deep content
-    - Neural search capabilities
+    - Web crawling capabilities
+    - Can search and extract content
+    - Good fallback option
     """
 
-    API_URL = "https://api.exa.ai/search"
+    API_URL = "https://api.firecrawl.dev/v1/search"
 
     def __init__(
         self,
         api_key: str,
         max_results: int = 5,
-        timeout: int = 10,
+        timeout: int = 15,
     ):
         super().__init__(max_results, timeout)
         self.api_key = api_key
@@ -36,7 +35,7 @@ class ExaSearcher(BaseSearcher):
         include_domains: list[str] | None = None,
         exclude_domains: list[str] | None = None,
     ) -> SearchResult:
-        """Search using Exa API."""
+        """Search using Firecrawl API."""
         result = SearchResult(query=query)
 
         try:
@@ -47,19 +46,8 @@ class ExaSearcher(BaseSearcher):
 
             payload = {
                 "query": query,
-                "numResults": max_results or self.max_results,
-                "type": "neural",
-                "useAutoprompt": True,
-                "contents": {
-                    "text": {"maxCharacters": 500},
-                },
+                "limit": max_results or self.max_results,
             }
-
-            if include_domains:
-                payload["includeDomains"] = include_domains
-
-            if exclude_domains:
-                payload["excludeDomains"] = exclude_domains
 
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 response = await client.post(self.API_URL, headers=headers, json=payload)
@@ -67,13 +55,22 @@ class ExaSearcher(BaseSearcher):
 
             data = response.json()
 
-            for item in data.get("results", []):
+            for item in data.get("data", []):
+                url = item.get("url", "")
+
+                if include_domains:
+                    if not any(domain in url for domain in include_domains):
+                        continue
+
+                if exclude_domains:
+                    if any(domain in url for domain in exclude_domains):
+                        continue
+
                 result.results.append(
                     SearchItem(
-                        title=item.get("title", ""),
-                        url=item.get("url", ""),
-                        snippet=item.get("text", ""),
-                        score=item.get("score"),
+                        title=item.get("title", item.get("metadata", {}).get("title", "")),
+                        url=url,
+                        snippet=item.get("description", item.get("markdown", "")[:300]),
                     )
                 )
 
@@ -82,7 +79,7 @@ class ExaSearcher(BaseSearcher):
         except httpx.TimeoutException:
             result.error = f"Timeout searching: {query}"
         except httpx.HTTPStatusError as e:
-            result.error = f"Exa API error {e.response.status_code}"
+            result.error = f"Firecrawl API error {e.response.status_code}"
         except httpx.RequestError as e:
             result.error = f"Search error: {e}"
         except Exception as e:

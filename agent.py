@@ -30,9 +30,6 @@ if _env_file.exists():
             key, value = line.split("=", 1)
             os.environ[key] = value
 
-from agent_profile import AgentProfile
-from config import LeonSettings
-from config.loader import ConfigLoader
 from middleware.command import CommandMiddleware
 
 # 导入 hooks
@@ -51,6 +48,10 @@ from middleware.skills import SkillsMiddleware
 from middleware.task import TaskMiddleware
 from middleware.todo import TodoMiddleware
 from middleware.web import WebMiddleware
+
+from agent_profile import AgentProfile
+from config import LeonSettings
+from config.loader import ConfigLoader
 
 # Import file operation recorder for time travel
 from tui.operations import get_recorder

@@ -1,24 +1,23 @@
-"""Tavily searcher - AI-optimized search."""
+"""Exa searcher - semantic AI search."""
 
 from __future__ import annotations
 
 import httpx
-
 from middleware.web.searchers.base import BaseSearcher
 from middleware.web.types import SearchItem, SearchResult
 
 
-class TavilySearcher(BaseSearcher):
+class ExaSearcher(BaseSearcher):
     """
-    Searcher using Tavily API.
+    Searcher using Exa API.
 
     Features:
-    - AI-optimized search results
-    - Returns relevant snippets
-    - Supports domain filtering
+    - Semantic AI-powered search
+    - Good for academic/deep content
+    - Neural search capabilities
     """
 
-    API_URL = "https://api.tavily.com/search"
+    API_URL = "https://api.exa.ai/search"
 
     def __init__(
         self,
@@ -36,25 +35,33 @@ class TavilySearcher(BaseSearcher):
         include_domains: list[str] | None = None,
         exclude_domains: list[str] | None = None,
     ) -> SearchResult:
-        """Search using Tavily API."""
+        """Search using Exa API."""
         result = SearchResult(query=query)
 
         try:
+            headers = {
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            }
+
             payload = {
-                "api_key": self.api_key,
                 "query": query,
-                "max_results": max_results or self.max_results,
-                "search_depth": "basic",
+                "numResults": max_results or self.max_results,
+                "type": "neural",
+                "useAutoprompt": True,
+                "contents": {
+                    "text": {"maxCharacters": 500},
+                },
             }
 
             if include_domains:
-                payload["include_domains"] = include_domains
+                payload["includeDomains"] = include_domains
 
             if exclude_domains:
-                payload["exclude_domains"] = exclude_domains
+                payload["excludeDomains"] = exclude_domains
 
             async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.post(self.API_URL, json=payload)
+                response = await client.post(self.API_URL, headers=headers, json=payload)
                 response.raise_for_status()
 
             data = response.json()
@@ -64,7 +71,7 @@ class TavilySearcher(BaseSearcher):
                     SearchItem(
                         title=item.get("title", ""),
                         url=item.get("url", ""),
-                        snippet=item.get("content", ""),
+                        snippet=item.get("text", ""),
                         score=item.get("score"),
                     )
                 )
@@ -74,7 +81,7 @@ class TavilySearcher(BaseSearcher):
         except httpx.TimeoutException:
             result.error = f"Timeout searching: {query}"
         except httpx.HTTPStatusError as e:
-            result.error = f"Tavily API error {e.response.status_code}"
+            result.error = f"Exa API error {e.response.status_code}"
         except httpx.RequestError as e:
             result.error = f"Search error: {e}"
         except Exception as e:

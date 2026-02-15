@@ -24,7 +24,6 @@ from langchain.agents.middleware.types import (
     ToolCallRequest,
 )
 from langchain_core.messages import ToolMessage
-
 from middleware.filesystem.backend import FileSystemBackend
 from middleware.filesystem.read import ReadLimits, ReadResult
 from middleware.filesystem.read import read_file as read_file_dispatch

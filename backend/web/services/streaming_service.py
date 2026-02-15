@@ -6,6 +6,7 @@ from collections.abc import AsyncGenerator
 from typing import Any
 
 from middleware.monitor import AgentState
+
 from sandbox.thread_context import set_current_thread_id
 
 from ..utils.serializers import extract_text_content

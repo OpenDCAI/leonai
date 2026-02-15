@@ -5,7 +5,6 @@ from __future__ import annotations
 import re
 
 import httpx
-
 from middleware.web.fetchers.base import BaseFetcher
 from middleware.web.types import ContentChunk, FetchLimits, FetchResult
 
