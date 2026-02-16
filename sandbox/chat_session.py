@@ -269,8 +269,7 @@ class ChatSessionManager:
         # @@@single-active-per-terminal - multi-terminal model allows many active sessions per thread, one per terminal.
         if any(cols == {"thread_id"} for cols in unique_index_columns.values()):
             raise RuntimeError(
-                "chat_sessions still has UNIQUE index on thread_id from old schema. "
-                "Purge ~/.leon/sandbox.db and retry."
+                "chat_sessions still has UNIQUE index on thread_id from old schema. Purge ~/.leon/sandbox.db and retry."
             )
 
     def _build_runtime(self, terminal: AbstractTerminal, lease: SandboxLease) -> PhysicalTerminalRuntime:

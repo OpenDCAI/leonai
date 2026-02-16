@@ -1,6 +1,7 @@
-import { Monitor, PanelLeft, Pause, Play, Settings } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { Monitor, PanelLeft, Pause, Play } from "lucide-react";
 import type { SandboxInfo } from "../api";
+import SettingsPanel from "./SettingsPanel";
+import ModelSelector from "./ModelSelector";
 
 const sandboxTypeLabels: Record<string, string> = {
   local: "本地",
@@ -15,10 +16,12 @@ interface HeaderProps {
   threadPreview: string | null;
   sandboxInfo: SandboxInfo | null;
   queueEnabled: boolean;
+  currentModel?: string;
   onToggleSidebar: () => void;
   onPauseSandbox: () => void;
   onResumeSandbox: () => void;
   onToggleQueue: () => void;
+  onModelChange?: (model: string) => void;
 }
 
 export default function Header({
@@ -26,26 +29,13 @@ export default function Header({
   threadPreview,
   sandboxInfo,
   queueEnabled,
+  currentModel = "leon:medium",
   onToggleSidebar,
   onPauseSandbox,
   onResumeSandbox,
   onToggleQueue,
+  onModelChange,
 }: HeaderProps) {
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const settingsRef = useRef<HTMLDivElement>(null);
-
-  // Close popover on outside click
-  useEffect(() => {
-    if (!settingsOpen) return;
-    const handler = (e: MouseEvent) => {
-      if (settingsRef.current && !settingsRef.current.contains(e.target as Node)) {
-        setSettingsOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [settingsOpen]);
-
   const hasRemote = sandboxInfo && sandboxInfo.type !== "local";
   const sandboxLabel = sandboxTypeLabels[sandboxInfo?.type ?? "local"] ?? sandboxInfo?.type ?? "本地";
   const hasKnownStatus = sandboxInfo?.status === "running" || sandboxInfo?.status === "paused";
@@ -98,6 +88,12 @@ export default function Header({
       </div>
 
       <div className="flex items-center gap-1.5">
+        <ModelSelector
+          currentModel={currentModel}
+          threadId={activeThreadId}
+          onModelChange={onModelChange}
+        />
+
         {hasRemote && sandboxInfo?.status === "running" && (
           <button
             className="px-3 py-1.5 rounded-lg text-xs flex items-center gap-2 border border-[#e5e5e5] text-[#525252] hover:bg-[#f5f5f5] hover:text-[#171717]"
@@ -117,45 +113,7 @@ export default function Header({
           </button>
         )}
 
-        {/* Settings */}
-        <div className="relative" ref={settingsRef}>
-          <button
-            onClick={() => setSettingsOpen((v) => !v)}
-            className="w-8 h-8 rounded-lg flex items-center justify-center text-[#737373] hover:bg-[#f5f5f5] hover:text-[#171717]"
-          >
-            <Settings className="w-4 h-4" />
-          </button>
-
-          {settingsOpen && (
-            <div className="absolute right-0 top-10 w-64 bg-white rounded-xl border border-[#e5e5e5] shadow-lg z-50 py-2">
-              <div className="px-4 py-2">
-                <div className="text-xs font-medium text-[#a3a3a3] uppercase tracking-wider mb-3">消息设置</div>
-                <button
-                  onClick={onToggleQueue}
-                  className="w-full flex items-center justify-between py-2 group"
-                >
-                  <div className="text-left">
-                    <div className="text-sm text-[#171717]">队列模式</div>
-                    <div className="text-[11px] text-[#a3a3a3] mt-0.5">
-                      {queueEnabled ? "消息排队，等当前任务完成后执行" : "消息立即插入当前对话"}
-                    </div>
-                  </div>
-                  <div
-                    className={`w-9 h-5 rounded-full relative flex-shrink-0 ml-3 transition-all ${
-                      queueEnabled ? "bg-amber-400" : "bg-[#d4d4d4]"
-                    }`}
-                  >
-                    <div
-                      className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-all ${
-                        queueEnabled ? "left-[18px]" : "left-0.5"
-                      }`}
-                    />
-                  </div>
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
+        <SettingsPanel queueEnabled={queueEnabled} onToggleQueue={onToggleQueue} />
       </div>
     </header>
   );

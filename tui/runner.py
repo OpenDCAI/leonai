@@ -15,6 +15,8 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from config.schema import DEFAULT_MODEL
+
 
 class NonInteractiveRunner:
     """Non-interactive runner supporting multi-turn conversations"""
@@ -67,7 +69,7 @@ class NonInteractiveRunner:
 
         # 状态转移：→ ACTIVE
         if hasattr(self.agent, "runtime"):
-            from middleware.monitor import AgentState
+            from core.monitor import AgentState
 
             self.agent.runtime.transition(AgentState.ACTIVE)
 
@@ -90,7 +92,7 @@ class NonInteractiveRunner:
         finally:
             # 状态转移：→ IDLE
             if hasattr(self.agent, "runtime"):
-                from middleware.monitor import AgentState
+                from core.monitor import AgentState
 
                 if self.agent.runtime.current_state == AgentState.ACTIVE:
                     self.agent.runtime.transition(AgentState.IDLE)
@@ -253,7 +255,7 @@ class NonInteractiveRunner:
             return
 
         try:
-            from middleware.queue import get_queue_manager
+            from core.queue import get_queue_manager
 
             mgr = get_queue_manager()
             sizes = mgr.queue_sizes()
@@ -493,7 +495,7 @@ def _create_agent(args, workspace: Path, sandbox_arg: str | None, debug: bool):
 
     from agent import create_leon_agent
 
-    model_name = getattr(args, "model", None) or os.getenv("MODEL_NAME") or "claude-sonnet-4-5-20250929"
+    model_name = getattr(args, "model", None) or os.getenv("MODEL_NAME") or DEFAULT_MODEL
 
     try:
         agent = create_leon_agent(

@@ -12,6 +12,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
+from config.schema import DEFAULT_MODEL
 from tui.config import ConfigManager, interactive_config, show_config
 from tui.session import SessionManager
 
@@ -573,6 +574,7 @@ def main():
     parser = argparse.ArgumentParser(description="Leon AI - 你的 AI 编程助手", add_help=False)
     parser.add_argument("--profile", type=str, help="Profile 配置文件路径")
     parser.add_argument("--model", type=str, help="模型名称（覆盖 profile 和环境变量）")
+    parser.add_argument("--agent", type=str, default=None, help="Task Agent name (bash/explore/general/plan)")
     parser.add_argument("--workspace", type=str, help="工作目录")
     parser.add_argument("--sandbox", type=str, help="Sandbox 名称 (从 ~/.leon/sandboxes/<name>.json 加载，默认 local)")
     parser.add_argument("--thread", type=str, help="Thread ID (恢复对话)")
@@ -605,6 +607,10 @@ def main():
         _handle_run_command(args, unknown)
         return
 
+    if args.command == "migrate-config":
+        _handle_migrate_command(args, unknown)
+        return
+
     # Default: launch TUI
     _launch_tui(args)
 
@@ -616,6 +622,7 @@ def _show_main_help() -> None:
     print("  leonai                    启动 Leon (新对话)")
     print("  leonai -c                 继续上次对话")
     print("  leonai --model <name>     使用指定模型")
+    print("  leonai --agent <name>     使用指定 agent 预设 (default/coder/researcher/tester)")
     print("  leonai --profile <path>   使用指定 profile 启动")
     print("  leonai --workspace <dir>  指定工作目录")
     print("  leonai --sandbox <name>   使用指定 sandbox 配置")
@@ -644,6 +651,11 @@ def _show_main_help() -> None:
     print("  leonai sandbox resume <id>     恢复会话")
     print("  leonai sandbox rm <id>         删除会话")
     print("  leonai sandbox metrics <id>    查看会话资源指标")
+    print()
+    print("配置迁移:")
+    print("  leonai migrate-config           迁移旧配置到新格式")
+    print("  leonai migrate-config --dry-run 预览迁移（不写入文件）")
+    print("  leonai migrate-config --rollback 回滚迁移")
 
 
 def _handle_config_command(args) -> None:
@@ -652,6 +664,28 @@ def _handle_config_command(args) -> None:
         show_config()
     else:
         interactive_config()
+
+
+def _handle_migrate_command(args, unknown: list[str]) -> None:
+    """Handle migrate-config command"""
+    from tui.commands.migrate import migrate_config_command
+
+    # Parse flags from unknown args
+    dry_run = "--dry-run" in unknown
+    rollback = "--rollback" in unknown
+
+    # Parse config-dir
+    config_dir = None
+    if "--config-dir" in unknown:
+        idx = unknown.index("--config-dir")
+        if idx + 1 < len(unknown):
+            config_dir = Path(unknown[idx + 1])
+
+    # Call the migrate command
+    try:
+        migrate_config_command.callback(dry_run=dry_run, config_dir=config_dir, rollback=rollback)
+    except SystemExit:
+        pass
 
 
 def _handle_thread_command(args, unknown: list[str]) -> None:
@@ -733,10 +767,11 @@ def _launch_tui(args) -> None:
 
     try:
         agent = create_leon_agent(
-            model_name=model_name or "claude-sonnet-4-5-20250929",
+            model_name=model_name or DEFAULT_MODEL,
             profile=args.profile,
             workspace_root=workspace,
             sandbox=sandbox_arg,
+            agent=args.agent,
             verbose=False,
         )
     except Exception as e:
