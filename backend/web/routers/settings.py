@@ -278,3 +278,44 @@ async def update_provider(request: ProviderRequest) -> dict[str, Any]:
 
     save_settings(settings)
     return {"success": True, "provider": request.provider}
+
+
+SANDBOXES_DIR = Path.home() / ".leon" / "sandboxes"
+
+
+class SandboxConfigRequest(BaseModel):
+    name: str
+    config: dict
+
+
+def _load_json(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+@router.get("/sandboxes")
+async def list_sandbox_configs() -> dict[str, Any]:
+    """List all sandbox configurations from ~/.leon/sandboxes/."""
+    sandboxes: dict[str, Any] = {}
+    if SANDBOXES_DIR.exists():
+        for f in SANDBOXES_DIR.glob("*.json"):
+            sandboxes[f.stem] = _load_json(f)
+    return {"sandboxes": sandboxes}
+
+
+@router.post("/sandboxes")
+async def save_sandbox_config(request: SandboxConfigRequest) -> dict[str, Any]:
+    """Save a sandbox configuration to ~/.leon/sandboxes/<name>.json."""
+    from sandbox.config import SandboxConfig
+
+    try:
+        cfg = SandboxConfig(**request.config)
+        path = cfg.save(request.name)
+        return {"success": True, "path": str(path)}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
