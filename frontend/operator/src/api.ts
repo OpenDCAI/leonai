@@ -58,3 +58,10 @@ export async function getThreadCommands(threadId: string) {
   return await http<any>(`/api/operator/threads/${encodeURIComponent(threadId)}/commands`);
 }
 
+export async function getProviderEvents(threadId?: string, provider?: string) {
+  const u = new URL("/api/operator/provider-events", window.location.origin);
+  if (threadId) u.searchParams.set("thread_id", threadId);
+  if (provider) u.searchParams.set("provider", provider);
+  return await http<any>(u.pathname + u.search);
+}
+

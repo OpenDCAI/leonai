@@ -141,26 +141,52 @@
 - All components work as-is
 - `StatusBadge`, `EventItem`, `TimeAgo`, etc.
 
-## What's Still Missing
+## What's Still Missing (V1 Requirements)
 
-### No Actions
-- Can't restart stuck runs
-- Can't kill sandboxes
-- Can't clear errors
+**IMPORTANT:** V4 is a UI layout improvement only. It does NOT implement the full V1 requirements.
 
-### No History
-- Only shows active sandboxes (backend limitation)
-- No "recent threads" list (backend limitation)
-- Overview only has aggregate stats
+See `V1_GAP_ANALYSIS.md` and `V1_IMPLEMENTATION_PLAN.md` for complete details.
 
-### No Persistence
-- No URL state
-- No saved searches
-- No bookmarks
+### P0 Features Not Yet Implemented
 
-### No Types
-- All API responses are `any`
-- No TypeScript safety
+1. **Ground Truth Table** - Missing fields:
+   - chat_session_id, lease_id, instance_id
+   - desired_state (vs observed_state)
+   - source (api/cli/resume)
+   - No stable refresh (flickers on reload)
+
+2. **Orphan Resource Panel** - Not implemented:
+   - No orphan detection
+   - No adopt/destroy actions
+   - Can't see untracked instances
+
+3. **Session Operations** - Not implemented:
+   - No pause/resume/destroy buttons
+   - No convergence tracking
+   - No operation feedback
+
+4. **Provider Event View** - Not implemented:
+   - No webhook/event history
+   - Can't trace state changes
+   - No troubleshooting timeline
+
+### P1 Features Not Yet Implemented
+
+5. **Alert Visualization** - Backend exists, frontend missing:
+   - No alert panel
+   - No alert history
+   - No acknowledgment/mute actions
+
+6. **Explore Mode** - Not implemented:
+   - No ad-hoc query builder
+   - No saved queries
+   - Only hard-coded views
+
+### Other Gaps
+
+- No URL state persistence
+- No TypeScript types (all `any`)
+- No action buttons (restart/kill/clear)
 
 ## Testing Checklist
 

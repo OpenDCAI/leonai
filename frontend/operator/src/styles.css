@@ -74,6 +74,21 @@ body { margin: 0; font-family: var(--sans); background: var(--bg); color: var(--
 .tableMono { font-family: var(--mono); font-size: 12px; }
 .tableDim { color: var(--dim); }
 
+/* Stable refresh - no flash */
+.table tbody { transition: opacity 0.15s; }
+.table-loading tbody { opacity: 0.6; }
+
+/* State convergence indicators */
+.stateConverged { color: var(--green); }
+.stateDiverged {
+  color: var(--yellow);
+  animation: pulse 2s infinite;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+
 /* ---- search ---- */
 .searchBox { display: flex; gap: 8px; margin-bottom: 12px; }
 .searchInput { flex: 1; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
@@ -164,6 +179,8 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .evt-cancelled::before { background: var(--yellow); }
 .evt-status { opacity: .6; }
 .evt-status::before { background: var(--dim); }
+.evt-provider { background: rgba(210,153,34,.06); }
+.evt-provider::before { background: var(--yellow); }
 
 /* ---- collapsible ---- */
 .collapsible { margin-top: 4px; }

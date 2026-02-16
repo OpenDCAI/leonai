@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   getOverview,
+  getProviderEvents,
   getRun,
   getRunEvents,
   getThreadCommands,
@@ -74,6 +75,7 @@ function Dashboard({ openThread }: { openThread: (id: string) => void }) {
   const [err, setErr] = useState<unknown>(null);
   const [loading, setLoading] = useState(false);
 
+  // @@@stable-refresh - Preserve old data until new data arrives (no flash)
   const loadData = async () => {
     setLoading(true);
     setErr(null);
@@ -83,10 +85,12 @@ function Dashboard({ openThread }: { openThread: (id: string) => void }) {
         getOverview(),
         listSandboxes(statusParam),
       ]);
+      // Only update state after successful fetch
       setOverview(ov);
       setSandboxes(sb);
     } catch (e) {
       setErr(e);
+      // Keep old data on error - don't clear
     } finally {
       setLoading(false);
     }
@@ -255,11 +259,14 @@ function Dashboard({ openThread }: { openThread: (id: string) => void }) {
             {sandboxItems.length === 0 ? (
               <div className="emptyState">No sandboxes</div>
             ) : (
-              <table className="table">
+              <table className={`table ${loading ? "table-loading" : ""}`}>
                 <thead>
                   <tr>
                     <th>Status</th>
                     <th>Thread</th>
+                    <th>Session</th>
+                    <th>Lease</th>
+                    <th>Instance</th>
                     <th>Provider</th>
                     <th>State</th>
                     <th>Last Active</th>
@@ -267,16 +274,27 @@ function Dashboard({ openThread }: { openThread: (id: string) => void }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {sandboxItems.map((s: any) => (
-                    <tr key={s.thread_id} onClick={() => openThread(s.thread_id)} className="tableRow-clickable">
-                      <td><StatusBadge status={s.chat_status} /></td>
-                      <td className="tableMono">{truncId(s.thread_id)}</td>
-                      <td>{s.provider_name}</td>
-                      <td>{s.observed_state}</td>
-                      <td><TimeAgo iso={s.last_active_at} /></td>
-                      <td className="tableMono tableDim">{s.cwd}</td>
-                    </tr>
-                  ))}
+                  {sandboxItems.map((s: any) => {
+                    const converged = s.desired_state === s.observed_state;
+                    return (
+                      <tr key={s.thread_id} onClick={() => openThread(s.thread_id)} className="tableRow-clickable">
+                        <td><StatusBadge status={s.chat_status} /></td>
+                        <td className="tableMono">{truncId(s.thread_id)}</td>
+                        <td className="tableMono tableDim">{truncId(s.chat_session_id)}</td>
+                        <td className="tableMono tableDim">{truncId(s.lease_id)}</td>
+                        <td className="tableMono tableDim">{s.instance_id ? truncId(s.instance_id) : "-"}</td>
+                        <td>{s.provider_name}</td>
+                        <td>
+                          <span className={converged ? "stateConverged" : "stateDiverged"}>
+                            {s.observed_state}
+                            {!converged && ` → ${s.desired_state}`}
+                          </span>
+                        </td>
+                        <td><TimeAgo iso={s.last_active_at} /></td>
+                        <td className="tableMono tableDim">{s.cwd}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             )}
@@ -296,6 +314,7 @@ function ThreadDetail({ threadId }: { threadId: string }) {
   const [selectedRun, setSelectedRun] = useState<string>("");
   const [run, setRun] = useState<any>(null);
   const [events, setEvents] = useState<any[]>([]);
+  const [providerEvents, setProviderEvents] = useState<any>(null);
   const [err, setErr] = useState<unknown>(null);
   const [loading, setLoading] = useState(false);
   const [tailing, setTailing] = useState(false);
@@ -324,6 +343,19 @@ function ThreadDetail({ threadId }: { threadId: string }) {
     };
     void loadRuns();
     return () => stopTail();
+  }, [threadId]);
+
+  // Load provider events for this thread
+  useEffect(() => {
+    const loadProviderEvents = async () => {
+      try {
+        setProviderEvents(await getProviderEvents(threadId));
+      } catch (e) {
+        // Don't set error - provider events are optional
+        console.warn("Failed to load provider events:", e);
+      }
+    };
+    void loadProviderEvents();
   }, [threadId]);
 
   const selectRun = async (rid: string) => {
@@ -423,6 +455,28 @@ function ThreadDetail({ threadId }: { threadId: string }) {
               <EventItem key={ev.event_id ?? ev.id ?? i} event={ev} />
             ))}
             <div ref={eventsEndRef} />
+          </div>
+        </div>
+      )}
+
+      {providerEvents && providerEvents.count > 0 && (
+        <div style={{ marginTop: 24 }}>
+          <h3>Provider Events ({providerEvents.count})</h3>
+          <div className="timeline">
+            {providerEvents.items.map((ev: any) => (
+              <div key={ev.event_id} className="evt evt-provider">
+                <div className="evtLabel">
+                  <strong>{ev.event_type}</strong> · {ev.provider}
+                </div>
+                {ev.payload && (
+                  <div className="evtPre">{JSON.stringify(JSON.parse(ev.payload), null, 2)}</div>
+                )}
+                <span className="evtMeta">
+                  {ev.instance_id && <span>Instance: {truncId(ev.instance_id)} · </span>}
+                  <TimeAgo iso={ev.received_at} />
+                </span>
+              </div>
+            ))}
           </div>
         </div>
       )}

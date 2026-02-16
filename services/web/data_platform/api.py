@@ -9,6 +9,7 @@ from . import store
 from .dashboards import overview as dashboards_overview
 from .search import search_all
 from .sandbox_views import list_active_sessions, list_thread_commands
+from .provider_events import list_provider_events
 
 
 def create_router(*, db_path: Path) -> APIRouter:
@@ -145,5 +146,14 @@ def create_operator_router(*, dp_db_path: Path) -> APIRouter:
         stuck_after_sec: int = Query(default=600, ge=1, le=24 * 3600),
     ) -> dict[str, Any]:
         return dashboards_overview(dp_db_path=dp_db_path, window_hours=window_hours, stuck_after_sec=stuck_after_sec)
+
+    @router.get("/api/operator/provider-events")
+    async def operator_provider_events(
+        thread_id: str = Query(None),
+        provider: str = Query(None),
+        limit: int = Query(default=100, ge=1, le=500),
+    ) -> dict[str, Any]:
+        items = list_provider_events(thread_id=thread_id, provider=provider, limit=limit)
+        return {"items": items, "count": len(items)}
 
     return router
