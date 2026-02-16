@@ -65,3 +65,27 @@ export async function getProviderEvents(threadId?: string, provider?: string) {
   return await http<any>(u.pathname + u.search);
 }
 
+export async function getOrphans() {
+  return await http<any>("/api/operator/orphans");
+}
+
+export async function adoptOrphan(instanceId: string, provider: string, threadId: string) {
+  return await http<any>(`/api/operator/orphans/${encodeURIComponent(instanceId)}/adopt?provider=${encodeURIComponent(provider)}&thread_id=${encodeURIComponent(threadId)}`, { method: "POST" });
+}
+
+export async function destroyOrphan(instanceId: string, provider: string) {
+  return await http<any>(`/api/operator/orphans/${encodeURIComponent(instanceId)}/destroy?provider=${encodeURIComponent(provider)}`, { method: "POST" });
+}
+
+export async function pauseSession(threadId: string) {
+  return await http<any>(`/api/operator/sessions/${encodeURIComponent(threadId)}/pause`, { method: "POST" });
+}
+
+export async function resumeSession(threadId: string) {
+  return await http<any>(`/api/operator/sessions/${encodeURIComponent(threadId)}/resume`, { method: "POST" });
+}
+
+export async function destroySession(threadId: string) {
+  return await http<any>(`/api/operator/sessions/${encodeURIComponent(threadId)}/destroy`, { method: "POST" });
+}
+

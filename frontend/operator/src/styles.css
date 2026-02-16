@@ -117,6 +117,11 @@ button { border: 1px solid var(--border); background: var(--surface2); color: va
 button:hover:not(:disabled) { background: #21262d; border-color: #444c56; }
 button:disabled { opacity: .5; cursor: not-allowed; }
 
+.btn-xs { padding: 4px 8px; font-size: 11px; }
+.btn-sm { padding: 6px 10px; font-size: 12px; }
+.btn-danger { background: rgba(248,81,73,.15); border-color: var(--red); color: var(--red); }
+.btn-danger:hover:not(:disabled) { background: rgba(248,81,73,.25); }
+
 /* ---- badges ---- */
 .badge { display: inline-flex; align-items: center; padding: 3px 8px; border-radius: 4px;
   font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .4px; }

@@ -10,6 +10,8 @@ from .dashboards import overview as dashboards_overview
 from .search import search_all
 from .sandbox_views import list_active_sessions, list_thread_commands
 from .provider_events import list_provider_events
+from .orphan_detection import detect_orphans, adopt_orphan, destroy_orphan
+from .session_operations import pause_session, resume_session, destroy_session
 
 
 def create_router(*, db_path: Path) -> APIRouter:
@@ -155,5 +157,42 @@ def create_operator_router(*, dp_db_path: Path) -> APIRouter:
     ) -> dict[str, Any]:
         items = list_provider_events(thread_id=thread_id, provider=provider, limit=limit)
         return {"items": items, "count": len(items)}
+
+    @router.get("/api/operator/orphans")
+    async def operator_orphans() -> dict[str, Any]:
+        items = detect_orphans()
+        return {"items": items, "count": len(items)}
+
+    @router.post("/api/operator/orphans/{instance_id}/adopt")
+    async def operator_adopt_orphan(
+        instance_id: str,
+        provider: str = Query(...),
+        thread_id: str = Query(...),
+    ) -> dict[str, Any]:
+        result = await adopt_orphan(provider, instance_id, thread_id)
+        return result
+
+    @router.post("/api/operator/orphans/{instance_id}/destroy")
+    async def operator_destroy_orphan(
+        instance_id: str,
+        provider: str = Query(...),
+    ) -> dict[str, Any]:
+        result = await destroy_orphan(provider, instance_id)
+        return result
+
+    @router.post("/api/operator/sessions/{thread_id}/pause")
+    async def operator_pause_session(thread_id: str) -> dict[str, Any]:
+        result = await pause_session(thread_id)
+        return result
+
+    @router.post("/api/operator/sessions/{thread_id}/resume")
+    async def operator_resume_session(thread_id: str) -> dict[str, Any]:
+        result = await resume_session(thread_id)
+        return result
+
+    @router.post("/api/operator/sessions/{thread_id}/destroy")
+    async def operator_destroy_session(thread_id: str) -> dict[str, Any]:
+        result = await destroy_session(thread_id)
+        return result
 
     return router

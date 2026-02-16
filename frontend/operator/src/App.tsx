@@ -1,5 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
+  adoptOrphan,
+  destroyOrphan,
+  destroySession,
+  getOrphans,
   getOverview,
   getProviderEvents,
   getRun,
@@ -8,6 +12,8 @@ import {
   getThreadDiagnostics,
   listSandboxes,
   listThreadRuns,
+  pauseSession,
+  resumeSession,
   search,
 } from "./api";
 import {
@@ -69,6 +75,7 @@ export default function App() {
 function Dashboard({ openThread }: { openThread: (id: string) => void }) {
   const [overview, setOverview] = useState<any>(null);
   const [sandboxes, setSandboxes] = useState<any>(null);
+  const [orphans, setOrphans] = useState<any>(null);
   const [sandboxFilter, setSandboxFilter] = useState<string>("active");
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<any>(null);
@@ -81,13 +88,15 @@ function Dashboard({ openThread }: { openThread: (id: string) => void }) {
     setErr(null);
     try {
       const statusParam = sandboxFilter === "active" ? undefined : sandboxFilter;
-      const [ov, sb] = await Promise.all([
+      const [ov, sb, orp] = await Promise.all([
         getOverview(),
         listSandboxes(statusParam),
+        getOrphans(),
       ]);
       // Only update state after successful fetch
       setOverview(ov);
       setSandboxes(sb);
+      setOrphans(orp);
     } catch (e) {
       setErr(e);
       // Keep old data on error - don't clear
@@ -112,6 +121,34 @@ function Dashboard({ openThread }: { openThread: (id: string) => void }) {
       setErr(e);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handlePause = async (threadId: string) => {
+    try {
+      await pauseSession(threadId);
+      await loadData();
+    } catch (e) {
+      alert(`Failed to pause: ${e}`);
+    }
+  };
+
+  const handleResume = async (threadId: string) => {
+    try {
+      await resumeSession(threadId);
+      await loadData();
+    } catch (e) {
+      alert(`Failed to resume: ${e}`);
+    }
+  };
+
+  const handleDestroy = async (threadId: string) => {
+    if (!confirm(`Destroy session for thread ${threadId}?`)) return;
+    try {
+      await destroySession(threadId);
+      await loadData();
+    } catch (e) {
+      alert(`Failed to destroy: ${e}`);
     }
   };
 
@@ -271,15 +308,18 @@ function Dashboard({ openThread }: { openThread: (id: string) => void }) {
                     <th>State</th>
                     <th>Last Active</th>
                     <th>CWD</th>
+                    <th>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {sandboxItems.map((s: any) => {
                     const converged = s.desired_state === s.observed_state;
                     return (
-                      <tr key={s.thread_id} onClick={() => openThread(s.thread_id)} className="tableRow-clickable">
+                      <tr key={s.thread_id}>
                         <td><StatusBadge status={s.chat_status} /></td>
-                        <td className="tableMono">{truncId(s.thread_id)}</td>
+                        <td className="tableMono" onClick={() => openThread(s.thread_id)} style={{ cursor: "pointer", textDecoration: "underline" }}>
+                          {truncId(s.thread_id)}
+                        </td>
                         <td className="tableMono tableDim">{truncId(s.chat_session_id)}</td>
                         <td className="tableMono tableDim">{truncId(s.lease_id)}</td>
                         <td className="tableMono tableDim">{s.instance_id ? truncId(s.instance_id) : "-"}</td>
@@ -292,6 +332,17 @@ function Dashboard({ openThread }: { openThread: (id: string) => void }) {
                         </td>
                         <td><TimeAgo iso={s.last_active_at} /></td>
                         <td className="tableMono tableDim">{s.cwd}</td>
+                        <td>
+                          <div style={{ display: "flex", gap: 4 }}>
+                            {s.chat_status === "active" && (
+                              <button className="btn-xs" onClick={() => handlePause(s.thread_id)}>Pause</button>
+                            )}
+                            {(s.chat_status === "paused" || s.chat_status === "idle") && (
+                              <button className="btn-xs" onClick={() => handleResume(s.thread_id)}>Resume</button>
+                            )}
+                            <button className="btn-xs btn-danger" onClick={() => handleDestroy(s.thread_id)}>Destroy</button>
+                          </div>
+                        </td>
                       </tr>
                     );
                   })}
@@ -299,6 +350,54 @@ function Dashboard({ openThread }: { openThread: (id: string) => void }) {
               </table>
             )}
           </div>
+
+          {/* Orphan Resources Panel */}
+          {orphans && orphans.count > 0 && (
+            <div className="dashSection" style={{ marginTop: 24 }}>
+              <h2 style={{ color: "var(--yellow)" }}>⚠️ Orphan Resources ({orphans.count})</h2>
+              <p style={{ fontSize: 13, color: "var(--dim)", marginBottom: 12 }}>
+                Instances running in providers but not tracked in sandbox.db
+              </p>
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Provider</th>
+                    <th>Instance ID</th>
+                    <th>State</th>
+                    <th>Created</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {orphans.items.map((o: any) => (
+                    <tr key={o.instance_id}>
+                      <td>{o.provider}</td>
+                      <td className="tableMono">{truncId(o.instance_id)}</td>
+                      <td>{o.state || "unknown"}</td>
+                      <td>{o.created_at ? <TimeAgo iso={o.created_at} /> : "-"}</td>
+                      <td>
+                        <button
+                          className="btn-sm btn-danger"
+                          onClick={async () => {
+                            if (confirm(`Destroy orphan ${o.instance_id}?`)) {
+                              try {
+                                await destroyOrphan(o.instance_id, o.provider);
+                                await loadData();
+                              } catch (e) {
+                                alert(`Failed: ${e}`);
+                              }
+                            }
+                          }}
+                        >
+                          Destroy
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       </div>
     </>
