@@ -5,8 +5,6 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from services.sandbox.providers import get_provider
-
 
 def _sandbox_db_path() -> Path:
     return Path(os.getenv("LEON_SANDBOX_DB_PATH") or (Path.home() / ".leon" / "sandbox.db"))
@@ -49,7 +47,8 @@ def detect_orphans() -> list[dict[str, Any]]:
     # Query each provider for all instances
     for provider_name in providers:
         try:
-            provider = get_provider(provider_name)
+            # @@@todo - Import provider dynamically or use registry
+            # provider = get_provider(provider_name)
             # @@@todo - Add list_all_instances() method to provider interface
             # For now, return empty list as providers don't expose this yet
             # instances = provider.list_all_instances()
@@ -95,8 +94,8 @@ async def destroy_orphan(provider: str, instance_id: str) -> dict[str, Any]:
     Do NOT create a session record.
     """
     try:
-        provider_obj = get_provider(provider)
-        # @@@todo - Add destroy_instance() method to provider interface
+        # @@@todo - Import provider dynamically and call destroy
+        # provider_obj = get_provider(provider)
         # result = await provider_obj.destroy_instance(instance_id)
         raise NotImplementedError("Provider destroy_instance() not yet implemented")
     except Exception as e:

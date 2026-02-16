@@ -6,8 +6,6 @@ import time
 from pathlib import Path
 from typing import Any
 
-from services.sandbox.providers import get_provider
-
 
 def _sandbox_db_path() -> Path:
     return Path(os.getenv("LEON_SANDBOX_DB_PATH") or (Path.home() / ".leon" / "sandbox.db"))
@@ -59,8 +57,8 @@ async def pause_session(thread_id: str) -> dict[str, Any]:
 
     # Call provider pause API
     try:
-        provider = get_provider(provider_name)
-        # @@@todo - Add pause_instance() method to provider interface
+        # @@@todo - Import provider dynamically and call pause
+        # provider = get_provider(provider_name)
         # await provider.pause_instance(instance_id)
 
         # Poll for convergence (max 30s)
@@ -119,8 +117,8 @@ async def resume_session(thread_id: str) -> dict[str, Any]:
         conn.commit()
 
     try:
-        provider = get_provider(provider_name)
-        # @@@todo - Add resume_instance() method to provider interface
+        # @@@todo - Import provider dynamically and call resume
+        # provider = get_provider(provider_name)
         # await provider.resume_instance(instance_id)
 
         converged = False
@@ -185,8 +183,8 @@ async def destroy_session(thread_id: str) -> dict[str, Any]:
         conn.commit()
 
     try:
-        provider = get_provider(provider_name)
-        # @@@todo - Add destroy_instance() method to provider interface
+        # @@@todo - Import provider dynamically and call destroy
+        # provider = get_provider(provider_name)
         # await provider.destroy_instance(instance_id)
 
         return {
