@@ -89,3 +89,15 @@ export async function destroySession(threadId: string) {
   return await http<any>(`/api/operator/sessions/${encodeURIComponent(threadId)}/destroy`, { method: "POST" });
 }
 
+export async function getThreadTrace(threadId: string) {
+  return await http<any>(`/api/operator/trace/${encodeURIComponent(threadId)}`);
+}
+
+export async function getDivergedLeases() {
+  return await http<any>("/api/operator/diverged-leases");
+}
+
+export async function getProviderEventsLog(limit: number = 100) {
+  return await http<any>(`/api/operator/provider-events-log?limit=${limit}`);
+}
+

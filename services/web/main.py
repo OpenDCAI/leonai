@@ -23,6 +23,7 @@ from middleware.queue import QueueMode, get_queue_manager
 from services.web.data_platform.api import create_operator_router as _dp_create_operator_router
 from services.web.data_platform.api import create_router as _dp_create_router
 from services.web.data_platform.store import ensure_tables as _dp_ensure_tables
+from services.web.operator_v2 import router as operator_v2_router
 from sandbox.config import SandboxConfig
 from sandbox.lease import LeaseStore
 from sandbox.manager import SandboxManager, lookup_sandbox_for_thread
@@ -324,6 +325,7 @@ async def lifespan(app: FastAPI):
     if not getattr(app.state, "_dp_routes_included", False):
         app.include_router(_dp_create_router(db_path=dp_db_path))
         app.include_router(_dp_create_operator_router(dp_db_path=dp_db_path))
+        app.include_router(operator_v2_router)
         app.state._dp_routes_included = True
 
     app.state.agent_pool: dict[str, Any] = {}
