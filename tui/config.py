@@ -10,8 +10,6 @@ from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.text import Text
 
-from config.schema import DEFAULT_MODEL
-
 console = Console()
 
 
@@ -168,7 +166,7 @@ def interactive_config():
 
         # 3. MODEL_NAME（可选）
         current_model = manager.get("MODEL_NAME") or ""
-        default_model = current_model or DEFAULT_MODEL
+        default_model = current_model or "claude-sonnet-4-5-20250929"
         model_name = Prompt.ask(
             "  [bright_cyan]3.[/] MODEL_NAME",
             default=default_model,

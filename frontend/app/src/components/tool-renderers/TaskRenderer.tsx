@@ -1,23 +1,8 @@
-import { memo } from "react";
+import { GitBranch } from "lucide-react";
 import type { ToolRendererProps } from "./types";
 
-function parseArgs(args: unknown): {
-  description?: string;
-  prompt?: string;
-  subject?: string;
-  taskId?: string;
-  status?: string;
-  subagent_type?: string;
-} {
-  if (args && typeof args === "object")
-    return args as {
-      description?: string;
-      prompt?: string;
-      subject?: string;
-      taskId?: string;
-      status?: string;
-      subagent_type?: string;
-    };
+function parseArgs(args: unknown): { description?: string; prompt?: string; subject?: string; taskId?: string; status?: string } {
+  if (args && typeof args === "object") return args as { description?: string; prompt?: string; subject?: string; taskId?: string; status?: string };
   return {};
 }
 
@@ -31,29 +16,21 @@ function getTaskLabel(name: string, args: ReturnType<typeof parseArgs>): string 
       return "查看任务列表";
     case "TaskGet":
       return `查看任务 #${args.taskId ?? "?"}`;
-    case "Task": {
-      const agentType = args.subagent_type || "agent";
-      const desc = args.description?.slice(0, 40) || args.prompt?.slice(0, 40) || "子任务";
-      return `${agentType} · ${desc}`;
-    }
     default:
       return args.description?.slice(0, 60) || args.prompt?.slice(0, 60) || "执行子任务";
   }
 }
 
-export default memo(function TaskRenderer({ step, expanded }: ToolRendererProps) {
+export default function TaskRenderer({ step, expanded }: ToolRendererProps) {
   const args = parseArgs(step.args);
   const label = getTaskLabel(step.name, args);
-  const stream = step.subagent_stream;
 
   if (!expanded) {
     return (
-      <div className="flex items-center gap-2 text-xs text-[#737373]">
+      <div className="flex items-center gap-2 text-xs text-[#a3a3a3]">
+        <GitBranch className="w-3 h-3 text-violet-400 flex-shrink-0" />
         <span className="truncate max-w-[320px]">{label}</span>
-        {step.status === "calling" && stream?.status === "running" && (
-          <span className="text-[#a3a3a3]">streaming...</span>
-        )}
-        {step.status === "calling" && !stream && <span className="text-[#a3a3a3]">...</span>}
+        {step.status === "calling" && <span>...</span>}
       </div>
     );
   }
@@ -65,39 +42,6 @@ export default memo(function TaskRenderer({ step, expanded }: ToolRendererProps)
           {args.prompt}
         </div>
       )}
-
-      {/* Real-time streaming output */}
-      {stream && (
-        <div className="p-3 rounded-lg text-xs bg-[#f0f9ff] border border-[#bae6fd] space-y-2">
-          <div className="flex items-center gap-2 text-[#0369a1] font-medium">
-            <span>Sub-agent: {stream.thread_id}</span>
-            {stream.status === "running" && (
-              <span className="inline-block w-2 h-2 bg-[#0369a1] rounded-full animate-pulse" />
-            )}
-            {stream.status === "completed" && <span className="text-green-600">✓</span>}
-            {stream.status === "error" && <span className="text-red-600">✗</span>}
-          </div>
-
-          {stream.text && (
-            <div className="text-[#525252] whitespace-pre-wrap">{stream.text}</div>
-          )}
-
-          {stream.tool_calls.length > 0 && (
-            <div className="space-y-1">
-              {stream.tool_calls.map((tc, idx) => (
-                <div key={idx} className="text-[#737373] text-[11px] font-mono">
-                  → {tc.name}
-                </div>
-              ))}
-            </div>
-          )}
-
-          {stream.error && (
-            <div className="text-red-600 text-xs">{stream.error}</div>
-          )}
-        </div>
-      )}
-
       {step.result && (
         <pre className="p-3 rounded-lg text-xs overflow-x-auto max-h-[200px] overflow-y-auto font-mono bg-[#fafafa] border border-[#e5e5e5] text-[#525252]">
           {step.result}
@@ -105,4 +49,4 @@ export default memo(function TaskRenderer({ step, expanded }: ToolRendererProps)
       )}
     </div>
   );
-});
+}

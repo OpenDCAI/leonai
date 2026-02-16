@@ -1,28 +1,19 @@
 """Unit tests for PhysicalTerminalRuntime."""
 
-import asyncio
 import re
 import tempfile
-import time
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
 
-from sandbox.chat_session import ChatSessionManager
 from sandbox.lease import LeaseStore, SandboxInstance
 from sandbox.provider import ProviderExecResult
 from sandbox.runtime import (
-    DockerPtyRuntime,
-    ExecuteResult,
     LocalPersistentShellRuntime,
     RemoteWrappedRuntime,
-    _extract_state_from_output,
-    _normalize_pty_result,
-    create_runtime,
 )
-from sandbox.terminal import TerminalState, TerminalStore
+from sandbox.terminal import TerminalStore
 
 
 @pytest.fixture
@@ -52,28 +43,6 @@ def mock_provider():
     provider = MagicMock()
     provider.name = "test-provider"
     return provider
-
-
-def _wrap_remote_state_output(
-    wrapped_command: str,
-    command_stdout: str,
-    *,
-    cwd: str,
-    env: dict[str, str] | None = None,
-) -> str:
-    start_match = re.search(r"__LEON_STATE_START_[a-f0-9]{8}__", wrapped_command)
-    end_match = re.search(r"__LEON_STATE_END_[a-f0-9]{8}__", wrapped_command)
-    if not start_match or not end_match:
-        raise AssertionError("Wrapped command missing state markers")
-    env_map = env or {"PWD": cwd, "PATH": "/usr/bin"}
-    lines: list[str] = []
-    if command_stdout:
-        lines.append(command_stdout)
-    lines.append(start_match.group(0))
-    lines.append(cwd)
-    lines.extend(f"{k}={v}" for k, v in env_map.items())
-    lines.append(end_match.group(0))
-    return "\n".join(lines) + "\n"
 
 
 class TestLocalPersistentShellRuntime:
@@ -193,11 +162,12 @@ class TestRemoteWrappedRuntime:
         )
         lease.ensure_active_instance = MagicMock(return_value=instance)
 
-        def mock_execute(_instance_id, wrapped_command, **_kwargs):
-            output = _wrap_remote_state_output(wrapped_command, "hello world", cwd="/root")
-            return ProviderExecResult(exit_code=0, output=output, error=None)
-
-        mock_provider.execute.side_effect = mock_execute
+        # Mock provider execute
+        mock_provider.execute.return_value = ProviderExecResult(
+            exit_code=0,
+            output="hello world",
+            error=None,
+        )
 
         runtime = RemoteWrappedRuntime(terminal, lease, mock_provider)
 
@@ -222,11 +192,12 @@ class TestRemoteWrappedRuntime:
         )
         lease.ensure_active_instance = MagicMock(return_value=instance)
 
-        def mock_execute(_instance_id, wrapped_command, **_kwargs):
-            output = _wrap_remote_state_output(wrapped_command, "", cwd="/home/user")
-            return ProviderExecResult(exit_code=0, output=output, error=None)
-
-        mock_provider.execute.side_effect = mock_execute
+        # Mock provider execute
+        mock_provider.execute.return_value = ProviderExecResult(
+            exit_code=0,
+            output="",
+            error=None,
+        )
 
         runtime = RemoteWrappedRuntime(terminal, lease, mock_provider)
 
@@ -296,17 +267,10 @@ class TestRemoteWrappedRuntime:
         lease.ensure_active_instance = MagicMock(return_value=instance)
         lease.refresh_instance_status = MagicMock(return_value="detached")
 
-        execute_calls = 0
-
-        def mock_execute(_instance_id, wrapped_command, **_kwargs):
-            nonlocal execute_calls
-            execute_calls += 1
-            if execute_calls == 1:
-                return ProviderExecResult(exit_code=1, output="", error="session not found")
-            output = _wrap_remote_state_output(wrapped_command, "ok", cwd="/root")
-            return ProviderExecResult(exit_code=0, output=output, error=None)
-
-        mock_provider.execute.side_effect = mock_execute
+        mock_provider.execute.side_effect = [
+            ProviderExecResult(exit_code=1, output="", error="session not found"),
+            ProviderExecResult(exit_code=0, output="ok", error=None),
+        ]
 
         runtime = RemoteWrappedRuntime(terminal, lease, mock_provider)
         result = await runtime.execute("echo ok")
@@ -330,12 +294,7 @@ class TestRemoteWrappedRuntime:
         )
         lease.ensure_active_instance = MagicMock(return_value=instance)
         lease.refresh_instance_status = MagicMock(return_value="running")
-
-        def mock_execute(_instance_id, wrapped_command, **_kwargs):
-            output = _wrap_remote_state_output(wrapped_command, "grep: bad regex", cwd="/root")
-            return ProviderExecResult(exit_code=2, output=output, error="")
-
-        mock_provider.execute.side_effect = mock_execute
+        mock_provider.execute.return_value = ProviderExecResult(exit_code=2, output="grep: bad regex", error="")
 
         runtime = RemoteWrappedRuntime(terminal, lease, mock_provider)
         result = await runtime.execute("grep")
@@ -343,44 +302,6 @@ class TestRemoteWrappedRuntime:
         assert result.exit_code == 2
         assert mock_provider.execute.call_count == 1
         assert lease.refresh_instance_status.call_count == 0
-
-    @pytest.mark.asyncio
-    async def test_daytona_transient_no_ip_error_retries_once(self, terminal_store, lease_store, mock_provider):
-        """Transient Daytona PTY bootstrap error should be treated as infra and retried once."""
-        terminal = terminal_store.create("term-1", "thread-1", "lease-1", "/root")
-        lease = lease_store.create("lease-1", "test-provider")
-
-        instance = SandboxInstance(
-            instance_id="inst-123",
-            provider_name="test-provider",
-            status="running",
-            created_at=None,
-        )
-        lease.ensure_active_instance = MagicMock(return_value=instance)
-        lease.refresh_instance_status = MagicMock(return_value="running")
-
-        execute_calls = 0
-
-        def mock_execute(_instance_id, wrapped_command, **_kwargs):
-            nonlocal execute_calls
-            execute_calls += 1
-            if execute_calls == 1:
-                return ProviderExecResult(
-                    exit_code=1,
-                    output="",
-                    error="Failed to create PTY session: bad request: no IP address found. Is the Sandbox started?",
-                )
-            output = _wrap_remote_state_output(wrapped_command, "ok", cwd="/root")
-            return ProviderExecResult(exit_code=0, output=output, error=None)
-
-        mock_provider.execute.side_effect = mock_execute
-
-        runtime = RemoteWrappedRuntime(terminal, lease, mock_provider)
-        result = await runtime.execute("echo ok")
-
-        assert result.exit_code == 0
-        assert "ok" in result.stdout
-        assert mock_provider.execute.call_count == 2
 
 
 class TestRuntimeIntegration:
@@ -434,274 +355,3 @@ class TestRuntimeIntegration:
         assert "/" in result.stdout
 
         await runtime2.close()
-
-
-def test_create_runtime_selects_docker_pty(terminal_store, lease_store):
-    terminal = terminal_store.create("term-1", "thread-1", "lease-1", "/tmp")
-    lease = lease_store.create("lease-1", "docker")
-    provider = MagicMock()
-    provider.get_capability.return_value = SimpleNamespace(runtime_kind="docker_pty")
-
-    runtime = create_runtime(provider, terminal, lease)
-    assert isinstance(runtime, DockerPtyRuntime)
-
-
-@pytest.mark.asyncio
-async def test_daytona_runtime_streams_running_output(terminal_store, lease_store):
-    terminal = terminal_store.create("term-2", "thread-2", "lease-2", "/tmp")
-    lease = lease_store.create("lease-2", "daytona")
-    provider = MagicMock()
-    provider.get_capability.return_value = SimpleNamespace(runtime_kind="daytona_pty")
-    ChatSessionManager(provider=provider, db_path=terminal_store.db_path)
-
-    runtime = create_runtime(provider, terminal, lease)
-
-    def _fake_execute_once(command: str, timeout: float | None = None, on_stdout_chunk=None):
-        if on_stdout_chunk is not None:
-            on_stdout_chunk("tick-1\n")
-            time.sleep(0.2)
-            on_stdout_chunk("tick-2\n")
-        return ExecuteResult(exit_code=0, stdout="tick-1\ntick-2\n", stderr="")
-
-    runtime._execute_once_sync = _fake_execute_once  # type: ignore[attr-defined]
-    runtime._sync_terminal_state_snapshot_sync = lambda timeout=None: None  # type: ignore[attr-defined]
-
-    async_cmd = await runtime.start_command("echo test", "/tmp")
-    await asyncio.sleep(0.05)
-    status = await runtime.get_command(async_cmd.command_id)
-    assert status is not None
-    assert "tick-1" in "".join(status.stdout_buffer)
-
-    done = await runtime.wait_for_command(async_cmd.command_id, timeout=2.0)
-    assert done is not None
-    assert done.exit_code == 0
-    assert "tick-2" in done.stdout
-    await runtime.close()
-
-
-@pytest.mark.asyncio
-async def test_running_command_survives_runtime_reload_without_false_failure(terminal_store, lease_store):
-    terminal = terminal_store.create("term-running-db", "thread-running-db", "lease-running-db", "/tmp")
-    lease = lease_store.create("lease-running-db", "local")
-    provider = MagicMock()
-    provider.get_capability.return_value = SimpleNamespace(runtime_kind="local")
-    ChatSessionManager(provider=provider, db_path=terminal_store.db_path)
-
-    runtime1 = create_runtime(provider, terminal, lease)
-    async_cmd = await runtime1.start_command("for i in 1 2 3; do echo tick-$i; sleep 1; done", "/tmp")
-    await asyncio.sleep(0.4)
-
-    # Simulate command_status query from another runtime/session that has no in-memory task.
-    runtime2 = create_runtime(provider, terminal, lease)
-    status_running = await runtime2.get_command(async_cmd.command_id)
-    assert status_running is not None
-    assert not status_running.done
-    assert "Runtime restarted before command completion" not in "".join(status_running.stderr_buffer)
-
-    cross_wait = await runtime2.wait_for_command(async_cmd.command_id, timeout=5.0)
-    assert cross_wait is not None
-    assert cross_wait.exit_code == 0
-    assert "tick-3" in cross_wait.stdout
-
-    await runtime1.close()
-
-
-@pytest.mark.asyncio
-async def test_daytona_runtime_hydrates_once_per_pty_session(terminal_store, lease_store):
-    terminal = terminal_store.create("term-3", "thread-3", "lease-3", "/tmp")
-    lease = lease_store.create("lease-3", "daytona")
-    instance = SandboxInstance(
-        instance_id="inst-daytona-test",
-        provider_name="daytona",
-        status="running",
-        created_at=None,
-    )
-    lease.ensure_active_instance = MagicMock(return_value=instance)  # type: ignore[method-assign]
-
-    provider = MagicMock()
-    provider.get_capability.return_value = SimpleNamespace(runtime_kind="daytona_pty")
-    ChatSessionManager(provider=provider, db_path=terminal_store.db_path)
-
-    runtime = create_runtime(provider, terminal, lease)
-
-    class _FakeHandle:
-        def wait_for_connection(self, timeout=10.0):
-            return None
-
-        def disconnect(self):
-            return None
-
-        def send_input(self, _):
-            return None
-
-    fake_handle = _FakeHandle()
-
-    class _FakeProcess:
-        def connect_pty_session(self, _):
-            return fake_handle
-
-        def create_pty_session(self, **_kwargs):
-            return fake_handle
-
-        def kill_pty_session(self, _):
-            return None
-
-    class _FakeSandbox:
-        process = _FakeProcess()
-
-    runtime._provider_sandbox = lambda _instance_id: _FakeSandbox()  # type: ignore[attr-defined]
-
-    init_count = 0
-
-    def _fake_run(handle, command: str, timeout: float | None, on_stdout_chunk=None):
-        nonlocal init_count
-        if command.startswith("cd ") and "|| exit 1" in command:
-            init_count += 1
-            return "", "", 0
-        if command == "env":
-            return "PATH=/usr/bin\n", "", 0
-        if "__LEON_STATE_START_" in command and "__LEON_STATE_END_" in command:
-            start = re.search(r"__LEON_STATE_START_[a-f0-9]{8}__", command)
-            end = re.search(r"__LEON_STATE_END_[a-f0-9]{8}__", command)
-            assert start and end
-            return f"{start.group(0)}\n/tmp\nPATH=/usr/bin\n{end.group(0)}\n", "", 0
-        if on_stdout_chunk is not None:
-            on_stdout_chunk("ok\n")
-        return "ok\n", "", 0
-
-    runtime._run_pty_command_sync = _fake_run  # type: ignore[attr-defined]
-
-    result1 = await runtime.execute("echo first")
-    result2 = await runtime.execute("echo second")
-    assert result1.exit_code == 0
-    assert result2.exit_code == 0
-
-    # Let background snapshot complete.
-    await asyncio.sleep(0.05)
-    if runtime._snapshot_task is not None:  # type: ignore[attr-defined]
-        await runtime._snapshot_task  # type: ignore[attr-defined]
-
-    assert init_count == 1
-    await runtime.close()
-
-
-def test_extract_state_from_output_ignores_prompt_noise():
-    start = "__LEON_STATE_START_deadbeef__"
-    end = "__LEON_STATE_END_deadbeef__"
-    raw = (
-        "noise before\n"
-        f"% prompt \x1b[0m{start}\n"
-        "% abc\x08cd\n"
-        "/home/daytona/snake-fullstack\n"
-        "PWD=/home/daytona/snake-fullstack\n"
-        "OLDPWD=/home/daytona\n"
-        f"{end}\n"
-        "noise after\n"
-    )
-    cwd, env_map, cleaned = _extract_state_from_output(
-        raw,
-        start,
-        end,
-        cwd_fallback="/home/daytona",
-        env_fallback={},
-    )
-    assert cwd == "/home/daytona/snake-fullstack"
-    assert env_map.get("PWD") == "/home/daytona/snake-fullstack"
-    assert all("\x1b" not in key for key in env_map)
-    assert start not in cleaned
-    assert end not in cleaned
-
-
-def test_normalize_pty_result_strips_prompt_echo_and_tail_prompt():
-    output = (
-        "%                                                                                                                        =eecho api-existing-thread-after-fix>\n"
-        "api-existing-thread-after-fix\n"
-        "%                                                                                                                        =pprintf '\\n__LEON_PTY_END_71d24aee__ %s\\n' $?>\n"
-        "\n"
-        "%                                                                                                                        \n"
-    )
-    cleaned = _normalize_pty_result(output, "echo api-existing-thread-after-fix")
-    assert cleaned == "api-existing-thread-after-fix"
-
-
-@pytest.mark.asyncio
-async def test_daytona_runtime_sanitizes_corrupted_terminal_state_before_create(terminal_store, lease_store):
-    terminal = terminal_store.create("term-4", "thread-4", "lease-4", "/tmp")
-    # Simulate legacy-corrupted snapshot.
-    terminal.update_state(
-        TerminalState(
-            cwd="\x1b>",
-            env_delta={
-                "% bad\x1b": "x",
-                "PWD": "/home/daytona/snake-fullstack",
-                "OLDPWD": "/home/daytona",
-            },
-        )
-    )
-    lease = lease_store.create("lease-4", "daytona")
-    instance = SandboxInstance(
-        instance_id="inst-daytona-sanitize",
-        provider_name="daytona",
-        status="running",
-        created_at=None,
-    )
-    lease.ensure_active_instance = MagicMock(return_value=instance)  # type: ignore[method-assign]
-
-    provider = MagicMock()
-    provider.get_capability.return_value = SimpleNamespace(runtime_kind="daytona_pty")
-    ChatSessionManager(provider=provider, db_path=terminal_store.db_path)
-    runtime = create_runtime(provider, terminal, lease)
-
-    created_kwargs: dict[str, object] = {}
-
-    class _FakeHandle:
-        def wait_for_connection(self, timeout=10.0):
-            return None
-
-        def disconnect(self):
-            return None
-
-        def send_input(self, _):
-            return None
-
-    fake_handle = _FakeHandle()
-
-    class _FakeProcess:
-        def connect_pty_session(self, _):
-            raise RuntimeError("missing")
-
-        def create_pty_session(self, **kwargs):
-            created_kwargs.update(kwargs)
-            return fake_handle
-
-        def kill_pty_session(self, _):
-            return None
-
-    class _FakeSandbox:
-        process = _FakeProcess()
-
-    runtime._provider_sandbox = lambda _instance_id: _FakeSandbox()  # type: ignore[attr-defined]
-
-    def _fake_run(_handle, command: str, timeout: float | None, on_stdout_chunk=None):
-        if command == "env":
-            return "PATH=/usr/bin\nPWD=/home/daytona/snake-fullstack\n", "", 0
-        if "__LEON_STATE_START_" in command and "__LEON_STATE_END_" in command:
-            start = re.search(r"__LEON_STATE_START_[a-f0-9]{8}__", command)
-            end = re.search(r"__LEON_STATE_END_[a-f0-9]{8}__", command)
-            assert start and end
-            return (
-                f"{start.group(0)}\n/home/daytona/snake-fullstack\nPWD=/home/daytona/snake-fullstack\n{end.group(0)}\n",
-                "",
-                0,
-            )
-        if on_stdout_chunk is not None:
-            on_stdout_chunk("ok\n")
-        return "ok\n", "", 0
-
-    runtime._run_pty_command_sync = _fake_run  # type: ignore[attr-defined]
-
-    result = await runtime.execute("echo test")
-    assert result.exit_code == 0
-    assert created_kwargs.get("cwd") == "/home/daytona/snake-fullstack"
-    assert created_kwargs.get("envs") is None
-    await runtime.close()

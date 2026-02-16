@@ -26,7 +26,7 @@ def test_queue_mode_steer():
     4. Verify steer message is injected
     """
     from agent import create_leon_agent
-    from core.queue import QueueMode, get_queue_manager, reset_queue_manager
+    from middleware.queue import QueueMode, get_queue_manager, reset_queue_manager
 
     # Reset queue state
     reset_queue_manager()

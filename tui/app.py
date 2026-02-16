@@ -23,8 +23,8 @@ try:
     from sandbox.thread_context import set_current_thread_id as set_sandbox_thread_id
 except ImportError:
     set_sandbox_thread_id = None
-from core.monitor import AgentState
-from core.queue import QueueMode, get_queue_manager
+from middleware.monitor import AgentState
+from middleware.queue import QueueMode, get_queue_manager
 
 
 class WelcomeBanner(Static):

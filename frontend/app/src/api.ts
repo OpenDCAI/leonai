@@ -1,72 +1,9 @@
-export type StreamEventType = "text" | "tool_call" | "tool_result" | "status" | "done" | "error" | "cancelled" | "task_start" | "task_text" | "task_tool_call" | "task_tool_result" | "task_done" | "task_error" | "subagent_task_start" | "subagent_task_text" | "subagent_task_tool_call" | "subagent_task_tool_result" | "subagent_task_done" | "subagent_task_error";
+export type StreamEventType = "text" | "tool_call" | "tool_result" | "status" | "done" | "error";
 
 export interface StreamEvent {
   type: StreamEventType;
   data?: unknown;
 }
-
-// Task agent streaming event data types
-export interface TaskStartData {
-  task_id: string;
-  subagent_type: string;
-  description: string;
-}
-
-export interface TaskTextData {
-  task_id: string;
-  content: string;
-}
-
-export interface TaskToolCallData {
-  task_id: string;
-  id: string;
-  name: string;
-  args: unknown;
-}
-
-export interface TaskToolResultData {
-  task_id: string;
-  tool_call_id: string;
-  name: string;
-  content: string;
-}
-
-export interface TaskDoneData {
-  task_id: string;
-  thread_id?: string;
-  status: string;
-}
-
-export interface SubagentTaskStartData extends TaskStartData {
-  parent_tool_call_id: string;
-}
-
-export interface SubagentTaskTextData extends TaskTextData {
-  parent_tool_call_id: string;
-}
-
-export interface SubagentTaskToolCallData extends TaskToolCallData {
-  parent_tool_call_id: string;
-}
-
-export interface SubagentTaskToolResultData extends TaskToolResultData {
-  parent_tool_call_id: string;
-}
-
-export interface SubagentTaskDoneData extends TaskDoneData {
-  parent_tool_call_id: string;
-}
-
-export interface SubagentTaskErrorData extends TaskErrorData {
-  parent_tool_call_id: string;
-}
-
-export interface TaskErrorData {
-  task_id: string;
-  error: string;
-}
-
-export type QueueMode = "steer" | "followup" | "collect" | "steer_backlog" | "interrupt";
 
 export interface ThreadSummary {
   thread_id: string;
@@ -131,16 +68,8 @@ export interface ToolStep {
   name: string;
   args: unknown;
   result?: string;
-  status: "calling" | "done" | "error" | "cancelled";
+  status: "calling" | "done" | "error";
   timestamp: number;
-  subagent_stream?: {
-    task_id: string;
-    thread_id: string;
-    text: string;
-    tool_calls: Array<{ id: string; name: string; args: unknown }>;
-    status: "running" | "completed" | "error";
-    error?: string;
-  };
 }
 
 export interface TextSegment {
@@ -427,17 +356,6 @@ export async function listSandboxTypes(): Promise<SandboxType[]> {
   return payload.types;
 }
 
-export async function pickFolder(): Promise<string | null> {
-  try {
-    const payload = await request<{ path: string }>("/api/sandbox/pick-folder");
-    return payload.path;
-  } catch (err) {
-    // User cancelled or error occurred
-    console.log("Folder selection cancelled or failed:", err);
-    return null;
-  }
-}
-
 export async function listSandboxSessions(): Promise<SandboxSession[]> {
   const payload = await request<{ sessions: SandboxSession[] }>("/api/sandbox/sessions");
   const toTs = (value?: string): number => {
@@ -516,42 +434,8 @@ export async function getThreadRuntime(threadId: string): Promise<StreamStatus> 
   return request(`/api/threads/${encodeURIComponent(threadId)}/runtime`);
 }
 
-export async function steerThread(threadId: string, message: string): Promise<void> {
-  await request(`/api/threads/${encodeURIComponent(threadId)}/steer`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message }),
-  });
-}
-
-export async function setQueueMode(threadId: string, mode: QueueMode): Promise<void> {
-  await request(`/api/threads/${encodeURIComponent(threadId)}/queue-mode`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ mode }),
-  });
-}
-
-export async function getQueueMode(threadId: string): Promise<{ mode: QueueMode }> {
-  return request(`/api/threads/${encodeURIComponent(threadId)}/queue-mode`);
-}
-
 function normalizeStreamType(raw: string): StreamEventType {
-  if (
-    raw === "text" ||
-    raw === "tool_call" ||
-    raw === "tool_result" ||
-    raw === "status" ||
-    raw === "done" ||
-    raw === "error" ||
-    raw === "cancelled" ||
-    raw === "task_start" ||
-    raw === "task_text" ||
-    raw === "task_tool_call" ||
-    raw === "task_tool_result" ||
-    raw === "task_done" ||
-    raw === "task_error"
-  ) {
+  if (raw === "text" || raw === "tool_call" || raw === "tool_result" || raw === "status" || raw === "done" || raw === "error") {
     return raw;
   }
   return "text";
@@ -565,12 +449,11 @@ function tryParse(value: string): unknown {
   }
 }
 
-export async function startRun(threadId: string, message: string, onEvent: (event: StreamEvent) => void, signal?: AbortSignal): Promise<void> {
+export async function startRun(threadId: string, message: string, onEvent: (event: StreamEvent) => void): Promise<void> {
   const response = await fetch(`/api/threads/${encodeURIComponent(threadId)}/runs`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ message }),
-    signal,
   });
   if (!response.ok) {
     const body = await response.text();
@@ -590,69 +473,6 @@ export async function startRun(threadId: string, message: string, onEvent: (even
     const decoded = decoder.decode(value, { stream: true });
     buffer += decoded;
     // SSE events are separated by blank lines; handle both \r\n and \n line endings
-    const chunks = buffer.split(/\r?\n\r?\n/);
-    buffer = chunks.pop() ?? "";
-    for (const chunk of chunks) {
-      if (!chunk.trim()) continue;
-      let eventType = "text";
-      const dataLines: string[] = [];
-      for (const line of chunk.split("\n")) {
-        if (line.startsWith("event:")) {
-          eventType = line.slice(6).trim();
-        } else if (line.startsWith("data:")) {
-          dataLines.push(line.slice(5).trim());
-        }
-      }
-      const dataRaw = dataLines.join("\n");
-      onEvent({ type: normalizeStreamType(eventType), data: tryParse(dataRaw) });
-    }
-  }
-}
-
-export async function cancelRun(threadId: string): Promise<void> {
-  const response = await fetch(`/api/threads/${encodeURIComponent(threadId)}/runs/cancel`, {
-    method: "POST",
-  });
-  if (!response.ok) {
-    throw new Error(`Failed to cancel run: ${response.statusText}`);
-  }
-}
-
-export interface TaskAgentRequest {
-  subagent_type: string;
-  prompt: string;
-  description?: string;
-  model?: string;
-  max_turns?: number;
-}
-
-export async function streamTaskAgent(
-  threadId: string,
-  request: TaskAgentRequest,
-  onEvent: (event: StreamEvent) => void
-): Promise<void> {
-  const response = await fetch(`/api/threads/${encodeURIComponent(threadId)}/task-agent/stream`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(request),
-  });
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`Task agent stream failed ${response.status}: ${body || response.statusText}`);
-  }
-  if (!response.body) {
-    throw new Error("Task agent response has no body stream");
-  }
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    const decoded = decoder.decode(value, { stream: true });
-    buffer += decoded;
     const chunks = buffer.split(/\r?\n\r?\n/);
     buffer = chunks.pop() ?? "";
     for (const chunk of chunks) {

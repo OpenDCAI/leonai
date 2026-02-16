@@ -1,6 +1,6 @@
 import { FolderOpen, Server, X } from "lucide-react";
 import { useState } from "react";
-import { pickFolder, type SandboxType } from "../api";
+import type { SandboxType } from "../api";
 
 interface NewThreadModalProps {
   open: boolean;
@@ -33,17 +33,6 @@ export default function NewThreadModal({ open, sandboxTypes, onClose, onCreate }
     const cwd = cwdInput.trim() || undefined;
     handleClose();
     onCreate("local", cwd);
-  };
-
-  const handleBrowseFolder = async () => {
-    try {
-      const path = await pickFolder();
-      if (path) {
-        setCwdInput(path);
-      }
-    } catch (err) {
-      console.error('Failed to pick folder:', err);
-    }
   };
 
   return (
@@ -112,14 +101,6 @@ export default function NewThreadModal({ open, sandboxTypes, onClose, onCreate }
                             className="flex-1 text-sm px-3 py-1.5 rounded-lg border border-[#e5e5e5] bg-[#fafafa] text-[#171717] placeholder:text-[#d4d4d4] focus:outline-none focus:border-[#a3a3a3] transition-colors"
                             autoFocus
                           />
-                          <button
-                            className="px-3 py-1.5 text-xs rounded-lg border border-[#e5e5e5] bg-white text-[#525252] hover:bg-[#fafafa] hover:border-[#d4d4d4] transition-colors flex items-center gap-1.5"
-                            onClick={handleBrowseFolder}
-                            title="选择文件夹"
-                          >
-                            <FolderOpen className="w-3.5 h-3.5" />
-                            浏览
-                          </button>
                         </div>
                         <div className="flex items-center justify-between mt-2">
                           <span className="text-[10px] text-[#d4d4d4]">留空则使用默认目录</span>

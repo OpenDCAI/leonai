@@ -10,8 +10,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
-from core.memory.middleware import MemoryMiddleware
-from core.memory.summary_store import SummaryStore
+from middleware.memory.middleware import MemoryMiddleware
+from middleware.memory.summary_store import SummaryStore
 
 
 @pytest.fixture

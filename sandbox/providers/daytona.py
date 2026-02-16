@@ -1,9 +1,13 @@
 """
 Daytona sandbox provider.
 
-Uses Daytona's Python SDK for sandbox lifecycle, filesystem, and process execution.
+Implements SandboxProvider using Daytona's cloud sandbox SDK.
 
-Important: runtime semantics remain PTY-backed (`daytona_pty`) for both SaaS and self-hosted.
+Key differences from E2B:
+- Docker containers (not microVMs)
+- Stop/start with disk persistence (not pause/resume with memory)
+- FUSE volumes backed by S3 for cross-session persistence
+- ~5x cheaper than E2B (~$0.067/hour vs ~$0.35/hour)
 """
 
 from __future__ import annotations
@@ -11,7 +15,13 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from sandbox.provider import Metrics, ProviderCapability, ProviderExecResult, SandboxProvider, SessionInfo
+from sandbox.provider import (
+    Metrics,
+    ProviderCapability,
+    ProviderExecResult,
+    SandboxProvider,
+    SessionInfo,
+)
 
 
 class DaytonaProvider(SandboxProvider):
@@ -25,7 +35,6 @@ class DaytonaProvider(SandboxProvider):
             can_resume=True,
             can_destroy=True,
             supports_webhook=True,
-            runtime_kind="daytona_pty",
         )
 
     def __init__(
@@ -55,7 +64,12 @@ class DaytonaProvider(SandboxProvider):
         params = CreateSandboxFromSnapshotParams(auto_stop_interval=0)
         sb = self.client.create(params)
         self._sandboxes[sb.id] = sb
-        return SessionInfo(session_id=sb.id, provider=self.name, status="running")
+
+        return SessionInfo(
+            session_id=sb.id,
+            provider=self.name,
+            status="running",
+        )
 
     def destroy_session(self, session_id: str, sync: bool = True) -> bool:
         sb = self._get_sandbox(session_id)
@@ -75,14 +89,19 @@ class DaytonaProvider(SandboxProvider):
 
     def get_session_status(self, session_id: str) -> str:
         # @@@status-refresh - Always refetch sandbox before reading state to avoid stale cached status.
-        sb = self.client.find_one(session_id)
-        self._sandboxes[session_id] = sb
-        state = sb.state.value
-        if state == "started":
-            return "running"
-        if state == "stopped":
-            return "paused"
-        return "unknown"
+        try:
+            sb = self.client.find_one(session_id)
+            self._sandboxes[session_id] = sb
+            state = sb.state.value  # "started", "stopped", etc.
+            if state == "started":
+                return "running"
+            elif state == "stopped":
+                return "paused"
+            return "unknown"
+        except Exception as e:
+            if "not found" in str(e).lower():
+                return "deleted"
+            return "unknown"
 
     # ==================== Execution ====================
 
@@ -96,9 +115,12 @@ class DaytonaProvider(SandboxProvider):
         sb = self._get_sandbox(session_id)
         try:
             result = sb.process.exec(command, cwd=cwd or self.default_cwd, timeout=timeout_ms // 1000)
-            return ProviderExecResult(output=result.result or "", exit_code=int(result.exit_code or 0))
+            return ProviderExecResult(
+                output=result.result or "",
+                exit_code=result.exit_code or 0,
+            )
         except Exception as e:
-            return ProviderExecResult(output="", exit_code=1, error=str(e))
+            return ProviderExecResult(output="", error=str(e))
 
     # ==================== Filesystem ====================
 
@@ -117,26 +139,38 @@ class DaytonaProvider(SandboxProvider):
 
     def list_dir(self, session_id: str, path: str) -> list[dict]:
         sb = self._get_sandbox(session_id)
-        entries = sb.fs.list_files(path)
-        return [
-            {"name": e.name, "type": "directory" if e.is_dir else "file", "size": e.size or 0} for e in (entries or [])
-        ]
+        try:
+            entries = sb.fs.list_files(path)
+            return [
+                {
+                    "name": e.name,
+                    "type": "directory" if e.is_dir else "file",
+                    "size": e.size or 0,
+                }
+                for e in (entries or [])
+            ]
+        except Exception:
+            return []
 
     # ==================== Batch Status ====================
 
     def list_provider_sessions(self) -> list[SessionInfo]:
-        result = self.client.list()
-        sessions: list[SessionInfo] = []
-        for sb in result.items:
-            state = sb.state.value
-            if state == "started":
-                status = "running"
-            elif state == "stopped":
-                status = "paused"
-            else:
-                status = "unknown"
-            sessions.append(SessionInfo(session_id=sb.id, provider=self.name, status=status))
-        return sessions
+        """List all sandboxes from Daytona API (including orphans not in DB)."""
+        try:
+            result = self.client.list()
+            sessions = []
+            for sb in result.items:
+                state = sb.state.value
+                if state == "started":
+                    status = "running"
+                elif state == "stopped":
+                    status = "paused"
+                else:
+                    status = "unknown"
+                sessions.append(SessionInfo(session_id=sb.id, provider=self.name, status=status))
+            return sessions
+        except Exception:
+            return []
 
     # ==================== Inspection ====================
 
@@ -149,7 +183,3 @@ class DaytonaProvider(SandboxProvider):
         if session_id not in self._sandboxes:
             self._sandboxes[session_id] = self.client.find_one(session_id)
         return self._sandboxes[session_id]
-
-    def get_runtime_sandbox(self, session_id: str):
-        """Expose native SDK sandbox for runtime-level persistent terminal handling."""
-        return self._get_sandbox(session_id)

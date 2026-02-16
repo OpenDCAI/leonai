@@ -1,30 +1,13 @@
-import { memo } from "react";
+import { FileText } from "lucide-react";
 import type { ToolRendererProps } from "./types";
 
-function summarizeArgs(args: unknown): string {
-  if (!args) return "";
-  if (typeof args === "string") return args.slice(0, 80);
-  if (typeof args === "object") {
-    const obj = args as Record<string, unknown>;
-    const keys = Object.keys(obj);
-    if (keys.length === 0) return "";
-    // Show first meaningful value
-    for (const k of keys) {
-      const v = obj[k];
-      if (typeof v === "string" && v.length > 0) return v.slice(0, 80);
-    }
-    return keys.join(", ");
-  }
-  return "";
-}
-
-export default memo(function DefaultRenderer({ step, expanded }: ToolRendererProps) {
+export default function DefaultRenderer({ step, expanded }: ToolRendererProps) {
   if (!expanded) {
-    const summary = summarizeArgs(step.args);
     return (
-      <div className="flex items-center gap-2 text-xs text-[#737373]">
-        {summary && <span className="truncate max-w-[320px]">{summary}</span>}
-        {step.status === "calling" && <span className="text-[#a3a3a3]">...</span>}
+      <div className="flex items-center gap-2 text-xs text-[#a3a3a3]">
+        <FileText className="w-3 h-3 text-[#d4d4d4] flex-shrink-0" />
+        <span>{step.name}</span>
+        {step.status === "calling" && <span>...</span>}
       </div>
     );
   }
@@ -43,4 +26,4 @@ export default memo(function DefaultRenderer({ step, expanded }: ToolRendererPro
       )}
     </div>
   );
-});
+}

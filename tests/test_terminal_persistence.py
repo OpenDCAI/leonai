@@ -2,8 +2,8 @@
 
 import asyncio
 
-from core.command.bash.executor import BashExecutor
-from core.command.zsh.executor import ZshExecutor
+from middleware.command.bash.executor import BashExecutor
+from middleware.command.zsh.executor import ZshExecutor
 
 
 def test_bash_env_persistence():

@@ -1,0 +1,135 @@
+"""Agent 运行时状态聚合"""
+
+from typing import Any
+
+from .context_monitor import ContextMonitor
+from .state_monitor import AgentFlags, AgentState, StateMonitor
+from .token_monitor import TokenMonitor
+
+
+class AgentRuntime:
+    """聚合所有 Monitor 的数据，提供统一的状态访问接口"""
+
+    def __init__(
+        self,
+        token_monitor: TokenMonitor,
+        context_monitor: ContextMonitor,
+        state_monitor: StateMonitor,
+    ):
+        self.token = token_monitor
+        self.context = context_monitor
+        self.state = state_monitor
+
+    # ========== 状态代理 ==========
+
+    @property
+    def current_state(self) -> AgentState:
+        return self.state.state
+
+    @property
+    def flags(self) -> AgentFlags:
+        return self.state.flags
+
+    def transition(self, new_state: AgentState) -> bool:
+        return self.state.transition(new_state)
+
+    def set_flag(self, name: str, value: bool) -> None:
+        self.state.set_flag(name, value)
+
+    def can_accept_task(self) -> bool:
+        return self.state.can_accept_task()
+
+    def is_running(self) -> bool:
+        return self.state.is_running()
+
+    # ========== Token 代理 ==========
+
+    @property
+    def total_tokens(self) -> int:
+        return self.token.total_tokens
+
+    @property
+    def input_tokens(self) -> int:
+        return self.token.input_tokens
+
+    @property
+    def output_tokens(self) -> int:
+        return self.token.output_tokens
+
+    @property
+    def reasoning_tokens(self) -> int:
+        return self.token.reasoning_tokens
+
+    @property
+    def cache_read_tokens(self) -> int:
+        return self.token.cache_read_tokens
+
+    @property
+    def cache_write_tokens(self) -> int:
+        return self.token.cache_write_tokens
+
+    # 向后兼容
+    @property
+    def prompt_tokens(self) -> int:
+        return self.token.prompt_tokens
+
+    @property
+    def completion_tokens(self) -> int:
+        return self.token.completion_tokens
+
+    # ========== 成本代理 ==========
+
+    @property
+    def cost(self) -> float:
+        """当前累计成本（USD）"""
+        return float(self.token.get_cost().get("total", 0))
+
+    # ========== 上下文代理 ==========
+
+    @property
+    def message_count(self) -> int:
+        return self.context.message_count
+
+    @property
+    def estimated_context_tokens(self) -> int:
+        return self.context.estimated_tokens
+
+    def is_context_near_limit(self) -> bool:
+        return self.context.is_near_limit()
+
+    # ========== 聚合输出 ==========
+
+    def get_status_dict(self) -> dict[str, Any]:
+        """返回完整状态字典"""
+        return {
+            "state": self.state.get_metrics(),
+            "tokens": self.token.get_metrics(),
+            "context": self.context.get_metrics(),
+        }
+
+    def get_status_line(self) -> str:
+        """返回单行状态，用于 TUI 状态栏"""
+        parts = [f"[{self.current_state.value.upper()}]"]
+
+        flag_names = [
+            ("isStreaming", "streaming"),
+            ("isCompacting", "compacting"),
+            ("isWaiting", "waiting"),
+            ("isBlocked", "blocked"),
+            ("hasError", "error"),
+        ]
+        for flag_attr, label in flag_names:
+            if getattr(self.flags, flag_attr):
+                parts.append(label)
+
+        if self.total_tokens > 0:
+            parts.append(f"tokens:{self.total_tokens}")
+
+        if self.cost > 0:
+            parts.append(f"${self.cost:.2f}")
+
+        ctx = self.context.get_metrics()
+        if ctx["usage_percent"] > 0:
+            parts.append(f"ctx:{ctx['usage_percent']:.0f}%")
+
+        return " | ".join(parts)

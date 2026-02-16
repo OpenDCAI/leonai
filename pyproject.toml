@@ -48,8 +48,8 @@ pptx = ["python-pptx>=1.0.0"]
 docs = ["pymupdf>=1.24.0", "python-pptx>=1.0.0"]
 sandbox = ["wuying-agentbay-sdk>=0.10.0"]
 e2b = ["e2b>=2.13.0"]
-daytona = ["daytona-sdk>=0.10.0", "python-socks>=2.7.0"]
-all = ["pymupdf>=1.24.0", "python-pptx>=1.0.0", "wuying-agentbay-sdk>=0.10.0", "e2b>=2.13.0", "daytona-sdk>=0.10.0", "python-socks>=2.7.0"]
+daytona = ["daytona-sdk>=0.10.0"]
+all = ["pymupdf>=1.24.0", "python-pptx>=1.0.0", "wuying-agentbay-sdk>=0.10.0", "e2b>=2.13.0", "daytona-sdk>=0.10.0"]
 
 [project.scripts]
 leonai = "tui.leon_cli:main"
@@ -62,25 +62,24 @@ Issues = "https://github.com/Ju-Yi-AI-Lab/leonai/issues"
 [tool.setuptools]
 packages = [
     "agents",
-    "config",
-    "core",
-    "core.command",
-    "core.command.hooks",
-    "core.command.bash",
-    "core.command.zsh",
-    "core.command.powershell",
-    "core.filesystem",
-    "core.filesystem.read",
-    "core.filesystem.read.readers",
-    "core.queue",
-    "core.memory",
-    "core.skills",
-    "core.monitor",
-    "core.task",
-    "core.todo",
-    "core.web",
-    "core.web.fetchers",
-    "core.web.searchers",
+    "middleware",
+    "middleware.command",
+    "middleware.command.hooks",
+    "middleware.command.bash",
+    "middleware.command.zsh",
+    "middleware.command.powershell",
+    "middleware.filesystem",
+    "middleware.filesystem.read",
+    "middleware.filesystem.read.readers",
+    "middleware.queue",
+    "middleware.memory",
+    "middleware.skills",
+    "middleware.monitor",
+    "middleware.task",
+    "middleware.todo",
+    "middleware.web",
+    "middleware.web.fetchers",
+    "middleware.web.searchers",
     "sandbox",
     "sandbox.interfaces",
     "sandbox.providers",

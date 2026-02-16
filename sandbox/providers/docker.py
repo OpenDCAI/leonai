@@ -31,13 +31,11 @@ class DockerProvider(SandboxProvider):
             can_resume=True,
             can_destroy=True,
             supports_webhook=False,
-            runtime_kind="docker_pty",
         )
 
-    def __init__(self, image: str, mount_path: str = "/workspace", command_timeout_sec: float = 20.0):
+    def __init__(self, image: str, mount_path: str = "/workspace"):
         self.image = image
         self.mount_path = mount_path
-        self.command_timeout_sec = command_timeout_sec
         self._sessions: dict[str, str] = {}  # session_id -> container_id
 
     def create_session(self, context_id: str | None = None) -> SessionInfo:
@@ -60,7 +58,7 @@ class DockerProvider(SandboxProvider):
 
         cmd.extend(["-w", self.mount_path, self.image, "sleep", "infinity"])
 
-        result = self._run(cmd, timeout=self.command_timeout_sec)
+        result = self._run(cmd)
         container_id = result.stdout.strip()
         if not container_id:
             raise RuntimeError("Failed to create docker container session")
@@ -70,7 +68,7 @@ class DockerProvider(SandboxProvider):
 
     def destroy_session(self, session_id: str, sync: bool = True) -> bool:
         container_id = self._get_container_id(session_id)
-        result = self._run(["docker", "rm", "-f", container_id], timeout=self.command_timeout_sec, check=False)
+        result = self._run(["docker", "rm", "-f", container_id], check=False)
         if result.returncode == 0:
             self._sessions.pop(session_id, None)
             return True
@@ -78,26 +76,22 @@ class DockerProvider(SandboxProvider):
 
     def pause_session(self, session_id: str) -> bool:
         container_id = self._get_container_id(session_id)
-        result = self._run(["docker", "pause", container_id], timeout=self.command_timeout_sec, check=False)
+        result = self._run(["docker", "pause", container_id], check=False)
         return result.returncode == 0
 
     def resume_session(self, session_id: str) -> bool:
         container_id = self._get_container_id(session_id)
-        result = self._run(["docker", "unpause", container_id], timeout=self.command_timeout_sec, check=False)
+        result = self._run(["docker", "unpause", container_id], check=False)
         return result.returncode == 0
 
     def get_session_status(self, session_id: str) -> str:
         container_id = self._get_container_id(session_id, allow_missing=True)
         if not container_id:
             return "deleted"
-        try:
-            result = self._run(
-                ["docker", "inspect", "-f", "{{.State.Status}}", container_id],
-                timeout=self.command_timeout_sec,
-                check=False,
-            )
-        except RuntimeError:
-            return "unknown"
+        result = self._run(
+            ["docker", "inspect", "-f", "{{.State.Status}}", container_id],
+            check=False,
+        )
         status = result.stdout.strip().lower()
         if status in {"running", "paused", "exited", "dead"}:
             return "paused" if status == "paused" else "running" if status == "running" else "deleted"
@@ -115,7 +109,7 @@ class DockerProvider(SandboxProvider):
         shell_cmd = f"cd {shlex.quote(workdir)} && {command}"
         result = self._run(
             ["docker", "exec", container_id, "/bin/sh", "-lc", shell_cmd],
-            timeout=max(timeout_ms / 1000, self.command_timeout_sec),
+            timeout=timeout_ms / 1000,
             check=False,
         )
         return ProviderExecResult(
@@ -128,7 +122,6 @@ class DockerProvider(SandboxProvider):
         container_id = self._get_container_id(session_id)
         result = self._run(
             ["docker", "exec", container_id, "cat", path],
-            timeout=self.command_timeout_sec,
             check=False,
         )
         if result.returncode != 0:
@@ -138,7 +131,7 @@ class DockerProvider(SandboxProvider):
     def write_file(self, session_id: str, path: str, content: str) -> str:
         container_id = self._get_container_id(session_id)
         cmd = ["docker", "exec", "-i", container_id, "/bin/sh", "-lc", f"cat > {shlex.quote(path)}"]
-        result = self._run(cmd, input_text=content, timeout=self.command_timeout_sec, check=False)
+        result = self._run(cmd, input_text=content, check=False)
         if result.returncode != 0:
             raise OSError(result.stderr.strip() or "Failed to write file")
         return f"Written: {path}"
@@ -155,7 +148,6 @@ class DockerProvider(SandboxProvider):
         )
         result = self._run(
             ["docker", "exec", container_id, "/bin/sh", "-lc", script],
-            timeout=self.command_timeout_sec,
             check=False,
         )
         if result.returncode != 0:
@@ -175,22 +167,14 @@ class DockerProvider(SandboxProvider):
 
     def upload(self, session_id: str, local_path: str, remote_path: str) -> str:
         container_id = self._get_container_id(session_id)
-        result = self._run(
-            ["docker", "cp", local_path, f"{container_id}:{remote_path}"],
-            timeout=self.command_timeout_sec,
-            check=False,
-        )
+        result = self._run(["docker", "cp", local_path, f"{container_id}:{remote_path}"], check=False)
         if result.returncode != 0:
             raise OSError(result.stderr.strip() or "Failed to upload file")
         return f"Uploaded: {local_path} -> {remote_path}"
 
     def download(self, session_id: str, remote_path: str, local_path: str) -> str:
         container_id = self._get_container_id(session_id)
-        result = self._run(
-            ["docker", "cp", f"{container_id}:{remote_path}", local_path],
-            timeout=self.command_timeout_sec,
-            check=False,
-        )
+        result = self._run(["docker", "cp", f"{container_id}:{remote_path}", local_path], check=False)
         if result.returncode != 0:
             raise OSError(result.stderr.strip() or "Failed to download file")
         return f"Downloaded: {remote_path} -> {local_path}"
@@ -208,7 +192,6 @@ class DockerProvider(SandboxProvider):
                 "{{.CPUPerc}}\t{{.MemUsage}}\t{{.NetIO}}\t{{.BlockIO}}",
                 container_id,
             ],
-            timeout=self.command_timeout_sec,
             check=False,
         )
         if result.returncode != 0:
@@ -236,7 +219,6 @@ class DockerProvider(SandboxProvider):
             return container_id
         result = self._run(
             ["docker", "ps", "-aq", "--filter", f"label=leon.session_id={session_id}"],
-            timeout=self.command_timeout_sec,
             check=False,
         )
         container_id = result.stdout.strip()
@@ -255,17 +237,13 @@ class DockerProvider(SandboxProvider):
         input_text: str | None = None,
         check: bool = True,
     ) -> subprocess.CompletedProcess[str]:
-        effective_timeout = timeout if timeout is not None else self.command_timeout_sec
-        try:
-            result = subprocess.run(
-                cmd,
-                input=input_text,
-                text=True,
-                capture_output=True,
-                timeout=effective_timeout,
-            )
-        except subprocess.TimeoutExpired as exc:
-            raise RuntimeError(f"Docker command timed out after {effective_timeout}s: {' '.join(cmd)}") from exc
+        result = subprocess.run(
+            cmd,
+            input=input_text,
+            text=True,
+            capture_output=True,
+            timeout=timeout,
+        )
         if check and result.returncode != 0:
             raise RuntimeError(result.stderr.strip() or "Docker command failed")
         return result

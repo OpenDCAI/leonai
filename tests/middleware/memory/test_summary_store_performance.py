@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from core.memory.summary_store import SummaryStore
+from middleware.memory.summary_store import SummaryStore
 
 
 @pytest.fixture
