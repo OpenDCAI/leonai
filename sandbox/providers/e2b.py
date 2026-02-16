@@ -35,6 +35,7 @@ class E2BProvider(SandboxProvider):
             can_resume=True,
             can_destroy=True,
             supports_webhook=False,
+            runtime_kind="e2b_pty",
         )
 
     def __init__(
@@ -225,3 +226,7 @@ class E2BProvider(SandboxProvider):
             )
             self._sandboxes[session_id] = sandbox
         return self._sandboxes[session_id]
+
+    def get_runtime_sandbox(self, session_id: str):
+        """Expose native SDK sandbox for runtime-level persistent terminal handling."""
+        return self._get_sandbox(session_id)

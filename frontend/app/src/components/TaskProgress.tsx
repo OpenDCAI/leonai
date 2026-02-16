@@ -118,9 +118,6 @@ function ToggleButton({ expanded, onClick }: { expanded: boolean; onClick?: () =
 }
 
 export default function TaskProgress({ isStreaming, runtimeStatus, sandboxType, sandboxStatus, computerOpen = false, onToggleComputer }: TaskProgressProps) {
-  const tokens = runtimeStatus?.tokens;
-  const context = runtimeStatus?.context;
-
   return (
     <div className="bg-white">
       <div className="max-w-3xl mx-auto px-4">
@@ -133,30 +130,19 @@ export default function TaskProgress({ isStreaming, runtimeStatus, sandboxType, 
               <div className="flex items-center gap-2 text-sm">
                 <span className="w-2 h-2 rounded-full" style={{ background: statusColor(sandboxStatus) }} />
                 <span className="text-[#171717]">
-                  {sandboxTypeLabels[sandboxType ?? "local"] ?? sandboxType ?? "本地"}{" "}
-                  {sandboxStatus === "running" ? "运行中" : sandboxStatus === "paused" ? "已暂停" : sandboxStatus === "detached" ? "已断开" : sandboxStatus ?? "未知"}
+                  {sandboxTypeLabels[sandboxType ?? "local"] ?? sandboxType ?? "本地"}
+                  {sandboxStatus && (
+                    <>
+                      {" "}
+                      {sandboxStatus === "running" ? "运行中" : sandboxStatus === "paused" ? "已暂停" : sandboxStatus === "detached" ? "已断开" : sandboxStatus}
+                    </>
+                  )}
                 </span>
                 <span className="text-[#e5e5e5]">&middot;</span>
                 <span className={isStreaming ? "text-[#171717] font-medium" : "text-[#a3a3a3]"}>
                   {isStreaming ? "Leon 正在工作" : "Leon 待命中"}
                 </span>
               </div>
-
-              {/* Token / context stats row */}
-              {tokens && (
-                <div className="flex items-center gap-3 mt-1 text-[10px] text-[#a3a3a3]">
-                  <span>Tokens: {formatTokens(tokens.total_tokens)}</span>
-                  <span>费用: {formatCost(tokens.cost)}</span>
-                  {context && (
-                    <>
-                      <span>上下文: {context.usage_percent}%</span>
-                      {context.near_limit && (
-                        <span className="text-amber-500 font-medium">接近上限</span>
-                      )}
-                    </>
-                  )}
-                </div>
-              )}
             </div>
             <ToggleButton expanded={computerOpen} onClick={onToggleComputer} />
           </div>

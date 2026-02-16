@@ -1,4 +1,4 @@
-import { Search } from "lucide-react";
+import { memo } from "react";
 import type { ToolRendererProps } from "./types";
 
 function parseArgs(args: unknown): { pattern?: string; path?: string; glob?: string } {
@@ -6,17 +6,18 @@ function parseArgs(args: unknown): { pattern?: string; path?: string; glob?: str
   return {};
 }
 
-export default function SearchRenderer({ step, expanded }: ToolRendererProps) {
+export default memo(function SearchRenderer({ step, expanded }: ToolRendererProps) {
   const { pattern, path, glob: globPattern } = parseArgs(step.args);
   const query = pattern || globPattern || "";
   const shortPath = path?.split("/").filter(Boolean).pop() ?? "";
 
   if (!expanded) {
     return (
-      <div className="flex items-center gap-2 text-xs text-[#a3a3a3]">
-        <Search className="w-3 h-3 text-[#d4d4d4] flex-shrink-0" />
-        <span>搜索 {query}{shortPath ? ` in ${shortPath}` : ""}</span>
-        {step.status === "calling" && <span>...</span>}
+      <div className="flex items-center gap-2 text-xs text-[#737373]">
+        <span className="text-[#525252]">搜索</span>
+        {query && <code className="font-mono text-[#737373] truncate max-w-[240px]">{query}</code>}
+        {shortPath && <span className="text-[#a3a3a3]">in {shortPath}</span>}
+        {step.status === "calling" && <span className="text-[#a3a3a3]">...</span>}
       </div>
     );
   }
@@ -30,4 +31,4 @@ export default function SearchRenderer({ step, expanded }: ToolRendererProps) {
       )}
     </div>
   );
-}
+});

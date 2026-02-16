@@ -4,6 +4,8 @@ import os
 from pathlib import Path
 from typing import Any
 
+from config.schema import DEFAULT_MODEL
+
 try:
     from pydantic import BaseModel, ConfigDict, Field, field_validator
 except ImportError:
@@ -29,7 +31,7 @@ class MemoryConfig(BaseModel):
 
 
 class AgentConfig(BaseModel):
-    model: str = "claude-sonnet-4-5-20250929"
+    model: str = DEFAULT_MODEL
     model_provider: str | None = None  # 显式指定 provider（openai/anthropic/bedrock 等）
     api_key: str | None = None  # 通用 API key
     base_url: str | None = None  # 通用 base URL

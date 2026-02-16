@@ -1,13 +1,14 @@
 """Tests for CommandMiddleware."""
 
 import asyncio
+from dataclasses import dataclass
 
 import pytest
 
-from middleware.command import CommandMiddleware
-from middleware.command.base import ExecuteResult
-from middleware.command.dispatcher import get_executor, get_shell_info
-from middleware.command.hooks.dangerous_commands import DangerousCommandsHook
+from core.command import CommandMiddleware
+from core.command.base import AsyncCommand, BaseExecutor, ExecuteResult
+from core.command.dispatcher import get_executor, get_shell_info
+from core.command.hooks.dangerous_commands import DangerousCommandsHook
 
 
 class TestExecuteResult:
@@ -151,3 +152,75 @@ class TestCommandMiddleware:
         allowed, error = middleware._check_hooks("echo hello")
         assert allowed
         assert error == ""
+
+
+@dataclass
+class _StatusFixture:
+    status: AsyncCommand
+
+
+class _StatusOnlyExecutor(BaseExecutor):
+    runtime_owns_cwd = True
+    shell_name = "bash"
+
+    def __init__(self, fixture: _StatusFixture):
+        super().__init__(default_cwd=None)
+        self.fixture = fixture
+
+    async def execute(self, command: str, cwd: str | None = None, timeout: float | None = None, env=None):
+        raise NotImplementedError
+
+    async def execute_async(self, command: str, cwd: str | None = None, env=None):
+        raise NotImplementedError
+
+    async def get_status(self, command_id: str):
+        if command_id == self.fixture.status.command_id:
+            return self.fixture.status
+        return None
+
+    async def wait_for(self, command_id: str, timeout: float | None = None):
+        return None
+
+    def store_completed_result(self, command_id: str, command_line: str, cwd: str, result: ExecuteResult) -> None:
+        return None
+
+
+class TestCommandStatusFormatting:
+    @pytest.mark.asyncio
+    async def test_running_status_strips_pty_prompt_echo_noise(self, tmp_path):
+        status = AsyncCommand(
+            command_id="cmd_noise",
+            command_line="for i in 1 2 3; do echo tick-$i; sleep 1; done",
+            cwd=str(tmp_path),
+            stdout_buffer=[
+                "ffor i in 1 2 3; do echo tick-$i; sleep 1; done>\n",
+                "tick-1\n",
+            ],
+            done=False,
+        )
+        executor = _StatusOnlyExecutor(_StatusFixture(status=status))
+        middleware = CommandMiddleware(workspace_root=tmp_path, executor=executor, verbose=False)
+
+        out = await middleware._get_command_status("cmd_noise", wait_seconds=0, max_chars=10000)
+        assert "Status: running" in out
+        assert "tick-1" in out
+        assert "ffor i in 1 2 3" not in out
+
+    @pytest.mark.asyncio
+    async def test_running_status_includes_stderr_chunks(self, tmp_path):
+        status = AsyncCommand(
+            command_id="cmd_stderr",
+            command_line='python -c \'import sys,time; print("out"); sys.stderr.write("err\\n"); time.sleep(3)\'',
+            cwd=str(tmp_path),
+            stdout_buffer=["out\n"],
+            stderr_buffer=["err\n"],
+            done=False,
+        )
+        executor = _StatusOnlyExecutor(_StatusFixture(status=status))
+        middleware = CommandMiddleware(workspace_root=tmp_path, executor=executor, verbose=False)
+
+        out = await middleware._get_command_status("cmd_stderr", wait_seconds=0, max_chars=10000)
+        assert "Status: running" in out
+        output_block = out.split("Output so far:\n", 1)[1]
+        assert "out" in output_block
+        assert "err" in output_block

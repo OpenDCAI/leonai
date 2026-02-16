@@ -30,7 +30,7 @@ from sandbox.lifecycle import (
 if TYPE_CHECKING:
     from sandbox.provider import SandboxProvider
 
-LEASE_FRESHNESS_TTL_SEC = 3.0
+LEASE_FRESHNESS_TTL_SEC = 60.0
 
 REQUIRED_LEASE_COLUMNS = {
     "lease_id",
@@ -426,11 +426,6 @@ class SQLiteLease(SandboxLease):
         self.needs_refresh = other.needs_refresh
         self.refresh_hint_at = other.refresh_hint_at
 
-    def _no_probe_instance_or_raise(self) -> SandboxInstance:
-        if self.observed_state == "paused":
-            raise RuntimeError(f"Sandbox lease {self.lease_id} is paused. Resume before executing commands.")
-        return self._current_instance  # type: ignore[return-value]
-
     def apply(
         self,
         provider: SandboxProvider,
@@ -458,9 +453,12 @@ class SQLiteLease(SandboxLease):
                         raise RuntimeError(f"Provider {provider.name} does not support pause")
                     if not self._current_instance:
                         raise RuntimeError(f"Lease {self.lease_id} has no instance to pause")
-                    ok = provider.pause_session(self._current_instance.instance_id)
+                    try:
+                        ok = provider.pause_session(self._current_instance.instance_id)
+                    except Exception as exc:
+                        raise RuntimeError(f"Failed to pause lease {self.lease_id}: {exc}") from exc
                     if not ok:
-                        raise RuntimeError(f"Provider pause_session returned false for lease {self.lease_id}")
+                        raise RuntimeError(f"Failed to pause lease {self.lease_id}")
                     self.desired_state = "paused"
                     self._set_observed_state("paused", reason="intent.pause")
                     self.status = "active"
@@ -474,9 +472,12 @@ class SQLiteLease(SandboxLease):
                         raise RuntimeError(f"Provider {provider.name} does not support resume")
                     if not self._current_instance:
                         raise RuntimeError(f"Lease {self.lease_id} has no instance to resume")
-                    ok = provider.resume_session(self._current_instance.instance_id)
+                    try:
+                        ok = provider.resume_session(self._current_instance.instance_id)
+                    except Exception as exc:
+                        raise RuntimeError(f"Failed to resume lease {self.lease_id}: {exc}") from exc
                     if not ok:
-                        raise RuntimeError(f"Provider resume_session returned false for lease {self.lease_id}")
+                        raise RuntimeError(f"Failed to resume lease {self.lease_id}")
                     self.desired_state = "running"
                     self._set_observed_state("running", reason="intent.resume")
                     self.status = "active"
@@ -489,9 +490,12 @@ class SQLiteLease(SandboxLease):
                     if not capability.can_destroy:
                         raise RuntimeError(f"Provider {provider.name} does not support destroy")
                     if self._current_instance:
-                        ok = provider.destroy_session(self._current_instance.instance_id)
+                        try:
+                            ok = provider.destroy_session(self._current_instance.instance_id)
+                        except Exception as exc:
+                            raise RuntimeError(f"Failed to destroy lease {self.lease_id}: {exc}") from exc
                         if not ok:
-                            raise RuntimeError(f"Provider destroy_session returned false for lease {self.lease_id}")
+                            raise RuntimeError(f"Failed to destroy lease {self.lease_id}")
                     self.desired_state = "destroyed"
                     self._set_observed_state("detached", reason="intent.destroy")
                     self.status = "expired"
@@ -561,9 +565,21 @@ class SQLiteLease(SandboxLease):
         if self._current_instance and self.observed_state == "running" and self._is_fresh() and not self.needs_refresh:
             return self._current_instance
 
+        def _resolve_no_probe_instance() -> SandboxInstance | None:
+            if not self._current_instance:
+                return None
+            if self.observed_state == "paused":
+                raise RuntimeError(f"Sandbox lease {self.lease_id} is paused. Resume before executing commands.")
+            if self.observed_state == "running" and not self.needs_refresh:
+                return self._current_instance
+            self._current_instance = None
+            return None
+
         if self._current_instance:
             if not capability.supports_status_probe:
-                return self._no_probe_instance_or_raise()
+                resolved = _resolve_no_probe_instance()
+                if resolved:
+                    return resolved
             try:
                 status = provider.get_session_status(self._current_instance.instance_id)
                 self.apply(
@@ -588,7 +604,9 @@ class SQLiteLease(SandboxLease):
 
             if self._current_instance:
                 if not capability.supports_status_probe:
-                    return self._no_probe_instance_or_raise()
+                    resolved = _resolve_no_probe_instance()
+                    if resolved:
+                        return resolved
                 try:
                     status = provider.get_session_status(self._current_instance.instance_id)
                     self.apply(

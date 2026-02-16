@@ -1,5 +1,5 @@
-import { Check, Copy, TerminalSquare } from "lucide-react";
-import { useCallback, useState } from "react";
+import { Check, Copy } from "lucide-react";
+import { memo, useCallback, useState } from "react";
 import type { ToolRendererProps } from "./types";
 
 function parseArgs(args: unknown): { command?: string; cwd?: string; description?: string } {
@@ -36,19 +36,17 @@ function CopyInline({ text }: { text: string }) {
   );
 }
 
-export default function RunCommandRenderer({ step, expanded }: ToolRendererProps) {
+export default memo(function RunCommandRenderer({ step, expanded }: ToolRendererProps) {
   const { command, description } = parseArgs(step.args);
 
   if (!expanded) {
     return (
       <div className="group flex items-center gap-2 text-xs text-[#737373]">
-        <TerminalSquare className="w-3 h-3 text-blue-500 flex-shrink-0" />
-        <span className="font-medium text-[#525252]">执行命令</span>
         {command && (
-          <code className="font-mono text-[#737373] truncate max-w-[280px]">{command}</code>
+          <code className="font-mono text-[#737373] truncate max-w-[320px]">{command}</code>
         )}
         {!command && description && (
-          <span className="text-[#a3a3a3] truncate max-w-[200px]">{description}</span>
+          <span className="text-[#a3a3a3] truncate max-w-[280px]">{description}</span>
         )}
         {step.status === "calling" && <span className="text-[#a3a3a3]">...</span>}
         {command && (
@@ -79,4 +77,4 @@ export default function RunCommandRenderer({ step, expanded }: ToolRendererProps
       )}
     </div>
   );
-}
+});
