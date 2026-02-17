@@ -117,10 +117,18 @@ async def get_settings() -> UserSettings:
     mapping = {k: v.model for k, v in models.mapping.items()}
     providers = {k: ProviderConfig(api_key=v.api_key, base_url=v.base_url) for k, v in models.providers.items()}
 
+    # Reverse-map: if active_model is a raw name that matches a virtual model target, return the virtual name
+    active = models.active.model
+    if not active.startswith("leon:"):
+        for vname, spec in models.mapping.items():
+            if spec.model == active:
+                active = vname
+                break
+
     return UserSettings(
         default_workspace=ws.default_workspace,
         recent_workspaces=ws.recent_workspaces,
-        active_model=models.active.model,
+        active_model=active,
         model_mapping=mapping,
         enabled_models=models.pool.enabled,
         custom_models=models.pool.custom,
@@ -208,13 +216,15 @@ async def update_model_config(request: ModelConfigRequest, req: Request) -> dict
     """Update model configuration for agent (hot-reload) and persist to models.json."""
     from backend.web.services.agent_pool import update_agent_config
 
-    # Persist active model to models.json so new threads use it
+    # Persist the original model name (could be virtual like leon:medium)
     data = load_models()
     data.setdefault("active", {})["model"] = request.model
     save_models(data)
 
     try:
         result = await update_agent_config(app_obj=req.app, model=request.model, thread_id=request.thread_id)
+        # Always return the original requested model name, not the resolved one
+        result["model"] = request.model
         return result
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
