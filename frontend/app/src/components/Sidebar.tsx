@@ -70,22 +70,21 @@ export default function Sidebar({
       </div>
 
       {/* Actions */}
-      <div className="px-3 pb-3">
-        <div className="flex items-center gap-2">
-          <Link
-            to="/app"
-            className="flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm border border-[#e5e5e5] text-[#525252] hover:bg-[#f0f0f0] hover:text-[#171717]"
-          >
-            <Plus className="w-4 h-4" />
-            <span>新建会话</span>
-          </Link>
-          <button
-            className="w-9 h-9 rounded-lg flex items-center justify-center text-[#737373] hover:bg-[#f0f0f0] hover:text-[#171717]"
-            onClick={onSearchClick}
-          >
-            <Search className="w-4 h-4" />
-          </button>
-        </div>
+      <div className="px-3 pb-3 space-y-2">
+        <Link
+          to="/app"
+          className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm border border-[#e5e5e5] text-[#525252] hover:bg-[#f0f0f0] hover:text-[#171717]"
+        >
+          <Plus className="w-4 h-4" />
+          <span>新建会话</span>
+        </Link>
+        <button
+          className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-[#a3a3a3] hover:bg-[#f0f0f0] hover:text-[#525252]"
+          onClick={onSearchClick}
+        >
+          <Search className="w-4 h-4" />
+          <span>搜索对话...</span>
+        </button>
       </div>
 
       {/* Divider */}
