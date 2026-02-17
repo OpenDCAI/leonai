@@ -3,7 +3,6 @@
 Merge priority: system defaults → user (~/.leon/models.json) → project (.leon/models.json) → CLI overrides
 
 Merge strategies:
-- active: last wins
 - providers: deep merge (per-provider)
 - mapping: deep merge (per-key)
 - pool: last wins (no list merge)
@@ -72,7 +71,7 @@ class ModelsLoader:
 
         result = base.copy()
 
-        # active: last wins
+        # active: last wins (only from CLI overrides, not persisted)
         if "active" in override:
             result["active"] = override["active"]
 

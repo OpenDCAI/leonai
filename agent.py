@@ -158,7 +158,12 @@ class LeonAgent:
                 enable_web_tools=enable_web_tools,
             )
             # Resolve virtual model name
-            resolved_model, model_overrides = self.models_config.resolve_model(self.models_config.active.model)
+            active_model = self.models_config.active.model if self.models_config.active else model_name
+            if not active_model:
+                from config.schema import DEFAULT_MODEL as _fallback
+
+                active_model = _fallback
+            resolved_model, model_overrides = self.models_config.resolve_model(active_model)
             self.model_name = resolved_model
             self._model_overrides = model_overrides
 
@@ -390,7 +395,8 @@ class LeonAgent:
             self._agent_override = None
 
         if self.verbose:
-            print(f"[LeonAgent] Config: agent={agent_name or 'default'}, model={models_config.active.model}")
+            active_name = models_config.active.model if models_config.active else model_name
+            print(f"[LeonAgent] Config: agent={agent_name or 'default'}, model={active_name}")
 
         return config, models_config
 
@@ -642,7 +648,8 @@ class LeonAgent:
         self.models_config = models_loader.load(cli_overrides=models_cli if models_cli else None)
 
         # Resolve virtual model
-        resolved_model, model_overrides = self.models_config.resolve_model(self.models_config.active.model)
+        active_model = self.models_config.active.model if self.models_config.active else (model or self.model_name)
+        resolved_model, model_overrides = self.models_config.resolve_model(active_model)
         self.model_name = resolved_model
         self._model_overrides = model_overrides
 
