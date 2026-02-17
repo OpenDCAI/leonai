@@ -215,11 +215,16 @@ class ModelConfigRequest(BaseModel):
 async def update_model_config(request: ModelConfigRequest, req: Request) -> dict[str, Any]:
     """Update model configuration for agent (hot-reload) and persist to models.json."""
     from backend.web.services.agent_pool import update_agent_config
+    from backend.web.utils.helpers import save_thread_model
 
-    # Persist the original model name (could be virtual like leon:medium)
+    # Persist active model to models.json so new threads use it
     data = load_models()
     data.setdefault("active", {})["model"] = request.model
     save_models(data)
+
+    # Persist model per-thread if thread_id provided
+    if request.thread_id:
+        save_thread_model(request.thread_id, request.model)
 
     try:
         result = await update_agent_config(app_obj=req.app, model=request.model, thread_id=request.thread_id)
