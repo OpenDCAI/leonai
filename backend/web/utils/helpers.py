@@ -69,13 +69,51 @@ def save_thread_metadata(thread_id: str, sandbox_type: str, cwd: str | None) -> 
     with sqlite3.connect(str(DB_PATH)) as conn:
         conn.execute(
             "CREATE TABLE IF NOT EXISTS thread_metadata"
-            "(thread_id TEXT PRIMARY KEY, sandbox_type TEXT NOT NULL, cwd TEXT)"
+            "(thread_id TEXT PRIMARY KEY, sandbox_type TEXT NOT NULL, cwd TEXT, model TEXT)"
         )
+        # Add model column if missing (migration)
+        try:
+            conn.execute("ALTER TABLE thread_metadata ADD COLUMN model TEXT")
+        except sqlite3.OperationalError:
+            pass
         conn.execute(
             "INSERT OR REPLACE INTO thread_metadata (thread_id, sandbox_type, cwd) VALUES (?, ?, ?)",
             (thread_id, sandbox_type, cwd),
         )
         conn.commit()
+
+
+def save_thread_model(thread_id: str, model: str) -> None:
+    """Persist the selected model for a thread."""
+    with sqlite3.connect(str(DB_PATH)) as conn:
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS thread_metadata"
+            "(thread_id TEXT PRIMARY KEY, sandbox_type TEXT NOT NULL, cwd TEXT, model TEXT)"
+        )
+        try:
+            conn.execute("ALTER TABLE thread_metadata ADD COLUMN model TEXT")
+        except sqlite3.OperationalError:
+            pass
+        conn.execute(
+            "UPDATE thread_metadata SET model = ? WHERE thread_id = ?",
+            (model, thread_id),
+        )
+        conn.commit()
+
+
+def lookup_thread_model(thread_id: str) -> str | None:
+    """Look up persisted model for a thread."""
+    if not DB_PATH.exists():
+        return None
+    try:
+        with sqlite3.connect(str(DB_PATH)) as conn:
+            row = conn.execute(
+                "SELECT model FROM thread_metadata WHERE thread_id = ?",
+                (thread_id,),
+            ).fetchone()
+            return row[0] if row and row[0] else None
+    except sqlite3.OperationalError:
+        return None
 
 
 def lookup_thread_metadata(thread_id: str) -> tuple[str, str | None] | None:

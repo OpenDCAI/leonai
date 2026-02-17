@@ -32,17 +32,35 @@ export default function ChatPage() {
   const state = location.state as { initialMessage?: string; selectedModel?: string } | null;
   const hasInitialMessage = !!state?.initialMessage;
 
-  // Set initial model from location state or fetch from API
+  // Set initial model from location state, then thread runtime, then global settings
   useEffect(() => {
     if (state?.selectedModel) {
       setCurrentModel(state.selectedModel);
-    } else if (!currentModel) {
-      fetch("http://127.0.0.1:8001/api/settings")
+      // Persist to thread metadata
+      if (threadId) {
+        void fetch("http://127.0.0.1:8001/api/settings/config", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model: state.selectedModel, thread_id: threadId }),
+        });
+      }
+    } else if (threadId) {
+      // Try thread-specific model first
+      fetch(`http://127.0.0.1:8001/api/threads/${threadId}/runtime`)
         .then((r) => r.json())
-        .then((d) => setCurrentModel(d.active_model || "leon:medium"))
+        .then((d) => {
+          if (d.model) {
+            setCurrentModel(d.model);
+          } else {
+            // Fallback to global active model
+            return fetch("http://127.0.0.1:8001/api/settings")
+              .then((r) => r.json())
+              .then((d) => setCurrentModel(d.active_model || "leon:medium"));
+          }
+        })
         .catch(() => setCurrentModel("leon:medium"));
     }
-  }, [state?.selectedModel]);
+  }, [state?.selectedModel, threadId]);
 
   const { entries, activeSandbox, loading, setEntries, setActiveSandbox, refreshThread } = useThreadData(threadId, hasInitialMessage);
 

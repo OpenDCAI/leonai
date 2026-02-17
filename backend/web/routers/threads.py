@@ -153,11 +153,16 @@ async def get_thread_runtime(
     app: Annotated[Any, Depends(get_app)] = None,
 ) -> dict[str, Any]:
     """Get runtime status for a thread."""
+    from backend.web.utils.helpers import lookup_thread_model
+
     sandbox_type = resolve_thread_sandbox(app, thread_id)
     agent = await get_or_create_agent(app, sandbox_type, thread_id=thread_id)
     if not hasattr(agent, "runtime"):
         raise HTTPException(status_code=404, detail="Agent has no runtime monitor")
-    return agent.runtime.get_status_dict()
+    status = agent.runtime.get_status_dict()
+    # Include per-thread model
+    status["model"] = lookup_thread_model(thread_id)
+    return status
 
 
 # Sandbox control endpoints for threads
