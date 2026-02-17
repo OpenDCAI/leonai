@@ -259,7 +259,9 @@ async def run_thread(
         if hasattr(agent, "runtime") and not agent.runtime.transition(AgentState.ACTIVE):
             raise HTTPException(status_code=409, detail="Thread is already running")
 
-    return EventSourceResponse(stream_agent_execution(agent, thread_id, payload.message, app))
+    return EventSourceResponse(
+        stream_agent_execution(agent, thread_id, payload.message, app, payload.enable_trajectory)
+    )
 
 
 @router.post("/{thread_id}/runs/cancel")

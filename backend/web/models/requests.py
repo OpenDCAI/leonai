@@ -10,6 +10,7 @@ class CreateThreadRequest(BaseModel):
 
 class RunRequest(BaseModel):
     message: str
+    enable_trajectory: bool = False
 
 
 class SteerRequest(BaseModel):
