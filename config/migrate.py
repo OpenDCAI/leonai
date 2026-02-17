@@ -104,7 +104,9 @@ class ConfigMigrator:
         # 4. Migrate providers.json → models.json
         if "providers.json" in old_files:
             with open(old_files["providers.json"], encoding="utf-8") as f:
-                providers = json.load(f)
+                raw = json.load(f)
+            # providers.json may be {"providers": {...}} or flat {"openai": {...}}
+            providers = raw.get("providers", raw) if isinstance(raw, dict) else {}
             for name, cfg in providers.items():
                 if isinstance(cfg, dict):
                     models_data.setdefault("providers", {})[name] = cfg
