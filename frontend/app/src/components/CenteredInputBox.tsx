@@ -70,19 +70,31 @@ export default function CenteredInputBox({
   function handleSelectWorkspace(path: string) {
     setWorkspace(path);
     setCustomWorkspace("");
+    void persistWorkspace(path);
   }
 
   function handleBrowserSelect(path: string) {
     setWorkspace(path);
     setCustomWorkspace("");
     setWorkspacePopoverOpen(false);
+    void persistWorkspace(path);
   }
 
   function handleCustomWorkspace() {
     if (customWorkspace.trim()) {
-      setWorkspace(customWorkspace.trim());
+      const path = customWorkspace.trim();
+      setWorkspace(path);
       setWorkspacePopoverOpen(false);
+      void persistWorkspace(path);
     }
+  }
+
+  function persistWorkspace(path: string) {
+    return fetch("http://127.0.0.1:8001/api/settings/workspace", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ workspace: path }),
+    }).catch(() => {});
   }
 
   // ============================================================
@@ -205,8 +217,8 @@ export default function CenteredInputBox({
           )}
 
           <Select value={model} onValueChange={setModel}>
-            <SelectTrigger className="w-[200px] h-9 text-sm overflow-hidden">
-              <span className="truncate">{MODELS.find((m) => m.value === model)?.label || model}</span>
+            <SelectTrigger className="w-[200px] h-9 text-sm">
+              <SelectValue />
             </SelectTrigger>
             <SelectContent>
               {MODELS.map((m) => (
