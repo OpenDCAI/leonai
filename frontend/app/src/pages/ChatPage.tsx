@@ -52,13 +52,13 @@ export default function ChatPage() {
           if (d.model) {
             setCurrentModel(d.model);
           } else {
-            // Fallback to global active model
+            // Fallback to global default model
             return fetch("http://127.0.0.1:8001/api/settings")
               .then((r) => r.json())
-              .then((d) => setCurrentModel(d.active_model || "leon:medium"));
+              .then((d) => setCurrentModel(d.default_model || "leon:large"));
           }
         })
-        .catch(() => setCurrentModel("leon:medium"));
+        .catch(() => setCurrentModel("leon:large"));
     }
   }, [state?.selectedModel, threadId]);
 

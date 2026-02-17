@@ -1,7 +1,7 @@
 """User settings management endpoints.
 
 Model-related settings (providers, mapping, pool) are stored in ~/.leon/models.json.
-Workspace settings remain in ~/.leon/settings.json.
+User preferences (workspace, default model) are stored in ~/.leon/preferences.json.
 """
 
 import json
@@ -16,18 +16,19 @@ from config.models_schema import ModelsConfig
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
-SETTINGS_FILE = Path.home() / ".leon" / "settings.json"
+SETTINGS_FILE = Path.home() / ".leon" / "preferences.json"
 MODELS_FILE = Path.home() / ".leon" / "models.json"
 
 
 # ============================================================================
-# Workspace settings (settings.json — slim)
+# User preferences (preferences.json)
 # ============================================================================
 
 
 class WorkspaceSettings(BaseModel):
     default_workspace: str | None = None
     recent_workspaces: list[str] = []
+    default_model: str = "leon:large"
 
 
 class WorkspaceRequest(BaseModel):
@@ -100,6 +101,7 @@ class UserSettings(BaseModel):
 
     default_workspace: str | None = None
     recent_workspaces: list[str] = []
+    default_model: str = "leon:large"
     active_model: str = ""
     model_mapping: dict[str, str] = {}
     enabled_models: list[str] = []
@@ -109,7 +111,7 @@ class UserSettings(BaseModel):
 
 @router.get("")
 async def get_settings() -> UserSettings:
-    """Get combined settings (workspace from settings.json, models from models.json)."""
+    """Get combined settings (workspace + default_model from preferences.json, models from models.json)."""
     ws = load_settings()
     models = load_merged_models()
 
@@ -128,6 +130,7 @@ async def get_settings() -> UserSettings:
     return UserSettings(
         default_workspace=ws.default_workspace,
         recent_workspaces=ws.recent_workspaces,
+        default_model=ws.default_model,
         active_model=active,
         model_mapping=mapping,
         enabled_models=models.pool.enabled,
@@ -199,6 +202,19 @@ async def add_recent_workspace(request: WorkspaceRequest) -> dict[str, Any]:
 
     save_settings(settings)
     return {"success": True}
+
+
+class DefaultModelRequest(BaseModel):
+    model: str
+
+
+@router.post("/default-model")
+async def set_default_model(request: DefaultModelRequest) -> dict[str, Any]:
+    """Set default virtual model preference."""
+    settings = load_settings()
+    settings.default_model = request.model
+    save_settings(settings)
+    return {"success": True, "default_model": request.model}
 
 
 # ============================================================================

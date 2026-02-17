@@ -5,6 +5,7 @@ Migrates from old formats to new models.json + runtime.json:
 - config.json → models.json (api.model, api_key, base_url, model_provider)
 - settings.json → models.json (providers, model_mapping, enabled_models, custom_models)
 - providers.json → models.json (provider credentials)
+- settings.json workspace fields → preferences.json
 """
 
 from __future__ import annotations
@@ -99,7 +100,7 @@ class ConfigMigrator:
                 models_data.setdefault("pool", {})["enabled"] = settings["enabled_models"]
             if settings.get("custom_models"):
                 models_data.setdefault("pool", {})["custom"] = settings["custom_models"]
-            report["changes"].append("settings.json → models.json + settings.json (workspace only)")
+            report["changes"].append("settings.json → models.json + preferences.json (workspace only)")
 
         # 4. Migrate providers.json → models.json
         if "providers.json" in old_files:
@@ -134,7 +135,7 @@ class ConfigMigrator:
                 json.dump(runtime_data, f, indent=2, ensure_ascii=False)
             report["new_files"]["runtime.json"] = str(runtime_path)
 
-        # Preserve workspace-only settings.json
+        # Preserve workspace-only preferences.json (renamed from settings.json)
         if "settings.json" in old_files:
             with open(old_files["settings.json"], encoding="utf-8") as f:
                 settings = json.load(f)
@@ -144,7 +145,7 @@ class ConfigMigrator:
             if settings.get("recent_workspaces"):
                 slim["recent_workspaces"] = settings["recent_workspaces"]
             if slim:
-                with open(self.config_dir / "settings.json", "w", encoding="utf-8") as f:
+                with open(self.config_dir / "preferences.json", "w", encoding="utf-8") as f:
                     json.dump(slim, f, indent=2, ensure_ascii=False)
 
         # Migrate config.env → .env
