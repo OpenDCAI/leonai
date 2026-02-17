@@ -19,6 +19,8 @@ export default function ModelPoolSection({ models, enabledModels, onToggle, onAd
   const [searchQuery, setSearchQuery] = useState("");
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  const [testStatus, setTestStatus] = useState<Record<string, "idle" | "testing" | "ok" | "fail">>({});
+  const [testError, setTestError] = useState<Record<string, string>>({});
 
   const handleToggle = async (modelId: string, enabled: boolean) => {
     setToggling(modelId);
@@ -39,6 +41,29 @@ export default function ModelPoolSection({ models, enabledModels, onToggle, onAd
     } finally {
       setToggling(null);
     }
+  };
+
+  const handleTest = async (modelId: string) => {
+    setTestStatus((s) => ({ ...s, [modelId]: "testing" }));
+    setTestError((s) => ({ ...s, [modelId]: "" }));
+    try {
+      const res = await fetch("http://127.0.0.1:8001/api/settings/models/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model_id: modelId }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setTestStatus((s) => ({ ...s, [modelId]: "ok" }));
+      } else {
+        setTestStatus((s) => ({ ...s, [modelId]: "fail" }));
+        setTestError((s) => ({ ...s, [modelId]: data.error || "Unknown error" }));
+      }
+    } catch {
+      setTestStatus((s) => ({ ...s, [modelId]: "fail" }));
+      setTestError((s) => ({ ...s, [modelId]: "Network error" }));
+    }
+    setTimeout(() => setTestStatus((s) => ({ ...s, [modelId]: "idle" })), 5000);
   };
 
   const filteredModels = models.filter((model) =>
@@ -131,7 +156,7 @@ export default function ModelPoolSection({ models, enabledModels, onToggle, onAd
                   />
                 </button>
 
-                <span className={`text-sm font-mono transition-colors duration-200 ${
+                <span className={`text-sm font-mono transition-colors duration-200 flex-1 ${
                   isEnabled ? 'text-[#0ea5e9] font-medium' : 'text-[#64748b]'
                 }`}>
                   {model.id}
@@ -139,6 +164,28 @@ export default function ModelPoolSection({ models, enabledModels, onToggle, onAd
                 {model.custom && (
                   <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#f1f5f9] text-[#94a3b8] font-medium">custom</span>
                 )}
+
+                {/* Test button */}
+                {(() => {
+                  const status = testStatus[model.id] || "idle";
+                  if (status === "testing") {
+                    return <span className="text-[11px] text-[#94a3b8] animate-pulse flex-shrink-0">Testing...</span>;
+                  }
+                  if (status === "ok") {
+                    return <span className="text-[11px] text-[#10b981] flex-shrink-0" title="Model is reachable">OK</span>;
+                  }
+                  if (status === "fail") {
+                    return <span className="text-[11px] text-[#ef4444] flex-shrink-0" title={testError[model.id]}>Fail</span>;
+                  }
+                  return (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); void handleTest(model.id); }}
+                      className="text-[11px] text-[#94a3b8] hover:text-[#0ea5e9] opacity-0 group-hover:opacity-100 transition-all flex-shrink-0"
+                    >
+                      Test
+                    </button>
+                  );
+                })()}
               </div>
             );
           })}
