@@ -311,6 +311,7 @@ async def toggle_model(request: ModelToggleRequest) -> dict[str, Any]:
 
 class CustomModelRequest(BaseModel):
     model_id: str
+    provider: str | None = None
 
 
 @router.post("/models/custom")
@@ -325,6 +326,11 @@ async def add_custom_model(request: CustomModelRequest) -> dict[str, Any]:
         custom.append(request.model_id)
     if request.model_id not in enabled:
         enabled.append(request.model_id)
+
+    # Store provider mapping if specified
+    if request.provider:
+        custom_providers = pool.setdefault("custom_providers", {})
+        custom_providers[request.model_id] = request.provider
 
     save_models(data)
     return {"success": True, "custom_models": custom, "enabled_models": enabled}
@@ -344,6 +350,12 @@ async def test_model(request: ModelTestRequest) -> dict[str, Any]:
     # Resolve virtual model
     resolved, overrides = mc.resolve_model(request.model_id)
     provider_name = overrides.get("model_provider") or mc.active.provider
+
+    # Check custom_providers mapping
+    data = load_models()
+    custom_providers = data.get("pool", {}).get("custom_providers", {})
+    if request.model_id in custom_providers:
+        provider_name = custom_providers[request.model_id]
 
     # Get credentials from specific provider, fallback to any available
     p = mc.get_provider(provider_name) if provider_name else None
