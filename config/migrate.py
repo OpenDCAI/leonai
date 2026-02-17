@@ -1,34 +1,10 @@
-"""Configuration migration tool for old profile.yaml format.
+"""Configuration migration tool.
 
-Migrates from old format:
-- profile.yaml (agent/tool/mcp/skills sections)
-- config.env (environment variables)
-- sandboxes/*.json (sandbox configs)
-
-To new format:
-- config.json (unified configuration)
-- .env (environment variables)
-
-Example usage:
-    >>> from config.migrate import migrate_config
-    >>> from pathlib import Path
-    >>>
-    >>> # Dry run to preview changes
-    >>> report = migrate_config("~/.leon", dry_run=True)
-    >>> print(report['changes'])
-    {'renamed_sections': ['agent → api', 'tool → tools']}
-    >>>
-    >>> # Actual migration
-    >>> report = migrate_config("~/.leon")
-    >>> print(f"Migrated to {report['new_files']['config.json']}")
-    'Migrated to /Users/username/.leon/config.json'
-
-Key changes:
-- agent.* → api.* (renamed section)
-- tool.* → tools.* (pluralized)
-- agent.workspace_root → workspace_root (moved to root)
-- agent.memory → memory (moved to root)
-- Memory config fields renamed (see migration guide)
+Migrates from old formats to new models.json + runtime.json:
+- profile.yaml → runtime.json (old agent/tool sections)
+- config.json → models.json (api.model, api_key, base_url, model_provider)
+- settings.json → models.json (providers, model_mapping, enabled_models, custom_models)
+- providers.json → models.json (provider credentials)
 """
 
 from __future__ import annotations
@@ -40,12 +16,8 @@ from typing import Any
 
 import yaml
 
-from config.schema import DEFAULT_MODEL
-
 
 class ConfigMigrationError(Exception):
-    """Configuration migration error."""
-
     pass
 
 
@@ -53,104 +25,127 @@ class ConfigMigrator:
     """Migrate old configuration format to new format."""
 
     def __init__(self, config_dir: Path):
-        """Initialize migrator.
-
-        Args:
-            config_dir: Configuration directory (~/.leon or .leon/)
-        """
         self.config_dir = Path(config_dir)
         self.backup_suffix = ".bak"
 
     def detect_old_config(self) -> dict[str, Path]:
-        """Detect old configuration files.
-
-        Returns:
-            Dict of {file_type: path} for found old config files
-
-        Example:
-            >>> migrator = ConfigMigrator(Path("~/.leon"))
-            >>> old_files = migrator.detect_old_config()
-            >>> old_files
-            {'profile.yaml': Path('/Users/username/.leon/profile.yaml')}
-        """
+        """Detect old configuration files."""
         old_files = {}
 
-        # Check for profile.yaml
-        profile_yaml = self.config_dir / "profile.yaml"
-        if profile_yaml.exists():
-            old_files["profile.yaml"] = profile_yaml
+        for name in ("profile.yaml", "config.json", "settings.json", "providers.json", "config.env"):
+            path = self.config_dir / name
+            if path.exists():
+                old_files[name] = path
 
-        # Check for config.env
-        config_env = self.config_dir / "config.env"
-        if config_env.exists():
-            old_files["config.env"] = config_env
-
-        # Check for sandboxes/*.json
         sandboxes_dir = self.config_dir / "sandboxes"
-        if sandboxes_dir.exists() and sandboxes_dir.is_dir():
-            sandbox_files = list(sandboxes_dir.glob("*.json"))
-            if sandbox_files:
-                old_files["sandboxes"] = sandboxes_dir
+        if sandboxes_dir.exists() and list(sandboxes_dir.glob("*.json")):
+            old_files["sandboxes"] = sandboxes_dir
 
         return old_files
 
     def migrate(self, dry_run: bool = False) -> dict[str, Any]:
-        """Migrate old configuration to new format.
-
-        Args:
-            dry_run: If True, only validate without writing files
-
-        Returns:
-            Migration report with changes and validation results
-
-        Raises:
-            ConfigMigrationError: If migration fails
-        """
-        # Detect old files
+        """Migrate old configuration to new format."""
         old_files = self.detect_old_config()
         if not old_files:
             raise ConfigMigrationError("No old configuration files found")
 
-        report = {
+        report: dict[str, Any] = {
             "old_files": {k: str(v) for k, v in old_files.items()},
             "new_files": {},
-            "changes": {},
-            "validation": {},
+            "changes": [],
         }
 
-        # Load old configuration
-        old_config = {}
+        models_data: dict[str, Any] = {}
+        runtime_data: dict[str, Any] = {}
+
+        # 1. Migrate profile.yaml → runtime.json
         if "profile.yaml" in old_files:
             with open(old_files["profile.yaml"]) as f:
                 old_config = yaml.safe_load(f) or {}
+            runtime_data, profile_models = self._convert_profile(old_config)
+            models_data.update(profile_models)
+            report["changes"].append("profile.yaml → runtime.json + models.json")
 
-        # Convert to new format
-        new_config = self._convert_profile(old_config)
+        # 2. Migrate config.json → models.json (api section)
+        if "config.json" in old_files:
+            with open(old_files["config.json"], encoding="utf-8") as f:
+                config_json = json.load(f)
+            api = config_json.get("api", {})
+            if api.get("model"):
+                models_data.setdefault("active", {})["model"] = api["model"]
+            if api.get("model_provider"):
+                models_data.setdefault("active", {})["provider"] = api["model_provider"]
+            if api.get("api_key") or api.get("base_url"):
+                provider_name = api.get("model_provider", "default")
+                p: dict[str, Any] = {}
+                if api.get("api_key"):
+                    p["api_key"] = api["api_key"]
+                if api.get("base_url"):
+                    p["base_url"] = api["base_url"]
+                models_data.setdefault("providers", {})[provider_name] = p
+            report["changes"].append("config.json api.* → models.json")
 
-        # Validate new config
-        validation_errors = self._validate_config(new_config)
-        report["validation"]["errors"] = validation_errors
-        if validation_errors:
-            raise ConfigMigrationError(f"Validation failed: {validation_errors}")
+        # 3. Migrate settings.json → models.json
+        if "settings.json" in old_files:
+            with open(old_files["settings.json"], encoding="utf-8") as f:
+                settings = json.load(f)
+            if settings.get("providers"):
+                for name, cfg in settings["providers"].items():
+                    models_data.setdefault("providers", {})[name] = cfg
+            if settings.get("model_mapping"):
+                for vname, model_id in settings["model_mapping"].items():
+                    models_data.setdefault("mapping", {})[vname] = {"model": model_id}
+            if settings.get("enabled_models"):
+                models_data.setdefault("pool", {})["enabled"] = settings["enabled_models"]
+            if settings.get("custom_models"):
+                models_data.setdefault("pool", {})["custom"] = settings["custom_models"]
+            report["changes"].append("settings.json → models.json + settings.json (workspace only)")
 
-        # Generate change summary
-        report["changes"] = self._generate_changes(old_config, new_config)
+        # 4. Migrate providers.json → models.json
+        if "providers.json" in old_files:
+            with open(old_files["providers.json"], encoding="utf-8") as f:
+                providers = json.load(f)
+            for name, cfg in providers.items():
+                if isinstance(cfg, dict):
+                    models_data.setdefault("providers", {})[name] = cfg
+            report["changes"].append("providers.json → models.json providers")
 
         if dry_run:
             report["dry_run"] = True
+            report["models_data"] = models_data
+            report["runtime_data"] = runtime_data
             return report
 
         # Backup old files
         self._backup_files(old_files)
-        report["backups"] = {k: f"{v}{self.backup_suffix}" for k, v in old_files.items()}
 
-        # Write new config
-        new_config_path = self.config_dir / "config.json"
-        with open(new_config_path, "w") as f:
-            json.dump(new_config, f, indent=2)
-        report["new_files"]["config.json"] = str(new_config_path)
+        # Write new files
+        if models_data:
+            models_path = self.config_dir / "models.json"
+            with open(models_path, "w", encoding="utf-8") as f:
+                json.dump(models_data, f, indent=2, ensure_ascii=False)
+            report["new_files"]["models.json"] = str(models_path)
 
-        # Migrate config.env to .env if exists
+        if runtime_data:
+            runtime_path = self.config_dir / "runtime.json"
+            with open(runtime_path, "w", encoding="utf-8") as f:
+                json.dump(runtime_data, f, indent=2, ensure_ascii=False)
+            report["new_files"]["runtime.json"] = str(runtime_path)
+
+        # Preserve workspace-only settings.json
+        if "settings.json" in old_files:
+            with open(old_files["settings.json"], encoding="utf-8") as f:
+                settings = json.load(f)
+            slim = {}
+            if settings.get("default_workspace"):
+                slim["default_workspace"] = settings["default_workspace"]
+            if settings.get("recent_workspaces"):
+                slim["recent_workspaces"] = settings["recent_workspaces"]
+            if slim:
+                with open(self.config_dir / "settings.json", "w", encoding="utf-8") as f:
+                    json.dump(slim, f, indent=2, ensure_ascii=False)
+
+        # Migrate config.env → .env
         if "config.env" in old_files:
             new_env_path = self.config_dir / ".env"
             shutil.copy2(old_files["config.env"], new_env_path)
@@ -158,98 +153,64 @@ class ConfigMigrator:
 
         return report
 
-    def _convert_profile(self, old_config: dict[str, Any]) -> dict[str, Any]:
-        """Convert old profile.yaml format to new config.json format.
+    def _convert_profile(self, old_config: dict[str, Any]) -> tuple[dict, dict]:
+        """Convert profile.yaml → (runtime_data, models_data)."""
+        runtime: dict[str, Any] = {}
+        models: dict[str, Any] = {}
 
-        Old format:
-            agent:
-              model: ...
-              model_provider: ...
-            tool:
-              filesystem: ...
-            mcp: ...
-            skills: ...
-
-        New format:
-            api:
-              model: ...
-              model_provider: ...
-            tools:
-              filesystem: ...
-            mcp: ...
-            skills: ...
-        """
-        new_config: dict[str, Any] = {}
-
-        # Convert agent.* → api.*
         if "agent" in old_config:
             agent = old_config["agent"]
-            new_config["api"] = {
-                "model": agent.get("model", DEFAULT_MODEL),
-                "model_provider": agent.get("model_provider"),
-                "api_key": agent.get("api_key"),
-                "base_url": agent.get("base_url"),
-                "temperature": agent.get("temperature"),
-                "max_tokens": agent.get("max_tokens"),
-                "model_kwargs": agent.get("model_kwargs", {}),
-                "context_limit": agent.get("context_limit", 100000),
-                "enable_audit_log": agent.get("enable_audit_log", True),
-                "allowed_extensions": agent.get("allowed_extensions"),
-                "block_dangerous_commands": agent.get("block_dangerous_commands", True),
-                "block_network_commands": agent.get("block_network_commands", False),
-                "queue_mode": agent.get("queue_mode", "steer"),
-            }
+            # Model identity → models_data
+            if agent.get("model"):
+                models.setdefault("active", {})["model"] = agent["model"]
+            if agent.get("model_provider"):
+                models.setdefault("active", {})["provider"] = agent["model_provider"]
+            if agent.get("api_key") or agent.get("base_url"):
+                p: dict[str, Any] = {}
+                if agent.get("api_key"):
+                    p["api_key"] = agent["api_key"]
+                if agent.get("base_url"):
+                    p["base_url"] = agent["base_url"]
+                provider_name = agent.get("model_provider", "default")
+                models.setdefault("providers", {})[provider_name] = p
 
-            # Convert memory config if exists
+            # Runtime behavior → runtime_data
+            rt: dict[str, Any] = {}
+            for key in (
+                "temperature",
+                "max_tokens",
+                "model_kwargs",
+                "context_limit",
+                "enable_audit_log",
+                "allowed_extensions",
+                "block_dangerous_commands",
+                "block_network_commands",
+                "queue_mode",
+            ):
+                if key in agent:
+                    rt[key] = agent[key]
+            if rt:
+                runtime["runtime"] = rt
+
+            # Memory
             if "memory" in agent:
-                new_config["memory"] = self._convert_memory_config(agent["memory"])
+                runtime["memory"] = self._convert_memory_config(agent["memory"])
 
-        # Convert tool.* → tools.*
+        # Tools
         if "tool" in old_config:
-            new_config["tools"] = old_config["tool"]
+            runtime["tools"] = old_config["tool"]
 
-        # Copy mcp as-is
-        if "mcp" in old_config:
-            new_config["mcp"] = old_config["mcp"]
+        # MCP / Skills / system_prompt
+        for key in ("mcp", "skills", "system_prompt"):
+            if key in old_config:
+                runtime[key] = old_config[key]
 
-        # Copy skills as-is
-        if "skills" in old_config:
-            new_config["skills"] = old_config["skills"]
-
-        # Copy system_prompt if exists
-        if "system_prompt" in old_config:
-            new_config["system_prompt"] = old_config["system_prompt"]
-
-        return new_config
+        return runtime, models
 
     def _convert_memory_config(self, old_memory: dict[str, Any]) -> dict[str, Any]:
-        """Convert old memory config to new format.
-
-        Old format (profile.yaml) used runtime names directly:
-            pruning:
-              soft_trim_chars: 3000
-              hard_clear_threshold: 10000
-              protect_recent: 3
-            compaction:
-              reserve_tokens: 16384
-              keep_recent_tokens: 20000
-
-        New format preserves the same field names (schema now matches runtime):
-            pruning:
-              enabled: true
-              soft_trim_chars: 3000
-              hard_clear_threshold: 10000
-              protect_recent: 3
-              trim_tool_results: true
-            compaction:
-              enabled: true
-              reserve_tokens: 16384
-              keep_recent_tokens: 20000
-              min_messages: 20
-        """
+        """Convert old memory config to new format."""
         new_memory: dict[str, Any] = {}
 
-        # Convert pruning config — field names preserved, add enabled/trim_tool_results
         if "pruning" in old_memory:
             old_pruning = old_memory["pruning"]
             new_memory["pruning"] = {
@@ -260,7 +221,6 @@ class ConfigMigrator:
                 "trim_tool_results": True,
             }
 
-        # Convert compaction config — field names preserved, add min_messages
         if "compaction" in old_memory:
             old_compaction = old_memory["compaction"]
             new_memory["compaction"] = {
@@ -272,109 +232,24 @@ class ConfigMigrator:
 
         return new_memory
 
-    def _validate_config(self, config: dict[str, Any]) -> list[str]:
-        """Validate migrated configuration.
-
-        Args:
-            config: New configuration dict
-
-        Returns:
-            List of validation error messages (empty if valid)
-        """
-        errors = []
-
-        # Validate required fields
-        if "api" not in config:
-            errors.append("Missing 'api' section")
-        else:
-            api = config["api"]
-            if "model" not in api:
-                errors.append("Missing 'api.model' field")
-
-        # Validate tools structure
-        if "tools" in config:
-            tools = config["tools"]
-            valid_tools = ["filesystem", "search", "web", "command"]
-            for tool_name in tools:
-                if tool_name not in valid_tools:
-                    errors.append(f"Unknown tool: {tool_name}")
-
-        # Validate mcp structure
-        if "mcp" in config:
-            mcp = config["mcp"]
-            if "servers" in mcp:
-                for server_name, server_config in mcp["servers"].items():
-                    if not isinstance(server_config, dict):
-                        errors.append(f"Invalid MCP server config: {server_name}")
-                    elif "command" not in server_config:
-                        errors.append(f"Missing 'command' in MCP server: {server_name}")
-
-        return errors
-
-    def _generate_changes(self, old_config: dict[str, Any], new_config: dict[str, Any]) -> dict[str, Any]:
-        """Generate summary of changes between old and new config.
-
-        Args:
-            old_config: Old configuration
-            new_config: New configuration
-
-        Returns:
-            Dict describing changes
-        """
-        changes = {
-            "renamed_sections": [],
-            "new_fields": [],
-            "removed_fields": [],
-        }
-
-        # Track renamed sections
-        if "agent" in old_config and "api" in new_config:
-            changes["renamed_sections"].append("agent → api")
-        if "tool" in old_config and "tools" in new_config:
-            changes["renamed_sections"].append("tool → tools")
-
-        # Track memory config changes (field names now preserved, only location changed)
-        if "agent" in old_config and "memory" in old_config["agent"]:
-            changes["new_fields"].append("memory (moved from agent.memory to root level)")
-
-        return changes
-
     def _backup_files(self, old_files: dict[str, Path]) -> None:
-        """Backup old configuration files.
-
-        Args:
-            old_files: Dict of {file_type: path}
-        """
+        """Backup old configuration files."""
         for file_type, path in old_files.items():
             if file_type == "sandboxes":
-                # Backup entire sandboxes directory
                 backup_path = path.parent / f"{path.name}{self.backup_suffix}"
                 if backup_path.exists():
                     shutil.rmtree(backup_path)
                 shutil.copytree(path, backup_path)
             else:
-                # Backup individual file
                 backup_path = path.parent / f"{path.name}{self.backup_suffix}"
                 shutil.copy2(path, backup_path)
 
     def rollback(self) -> None:
-        """Rollback migration by restoring backup files.
-
-        Restores all .bak files and removes new config.json.
-
-        Raises:
-            ConfigMigrationError: If rollback fails (no backups found)
-
-        Example:
-            >>> migrator = ConfigMigrator(Path("~/.leon"))
-            >>> migrator.rollback()  # Restores profile.yaml.bak → profile.yaml
-        """
-        # Find backup files
+        """Rollback migration by restoring backup files."""
         backup_files = list(self.config_dir.glob(f"*{self.backup_suffix}"))
         if not backup_files:
             raise ConfigMigrationError("No backup files found")
 
-        # Restore backups
         for backup_path in backup_files:
             original_path = backup_path.parent / backup_path.name.replace(self.backup_suffix, "")
             if backup_path.is_dir():
@@ -384,24 +259,14 @@ class ConfigMigrator:
             else:
                 shutil.copy2(backup_path, original_path)
 
-        # Remove new config.json
-        new_config_path = self.config_dir / "config.json"
-        if new_config_path.exists():
-            new_config_path.unlink()
+        # Remove new files
+        for name in ("models.json", "runtime.json"):
+            new_path = self.config_dir / name
+            if new_path.exists():
+                new_path.unlink()
 
 
 def migrate_config(config_dir: str | Path, dry_run: bool = False) -> dict[str, Any]:
-    """Migrate old configuration to new format.
-
-    Args:
-        config_dir: Configuration directory (~/.leon or .leon/)
-        dry_run: If True, only validate without writing files
-
-    Returns:
-        Migration report
-
-    Raises:
-        ConfigMigrationError: If migration fails
-    """
+    """Migrate old configuration to new format."""
     migrator = ConfigMigrator(config_dir)
     return migrator.migrate(dry_run=dry_run)

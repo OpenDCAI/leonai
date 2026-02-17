@@ -1,0 +1,157 @@
+"""Models configuration schema for Leon.
+
+Defines the unified models.json structure:
+- active: current model selection
+- providers: API credentials per provider
+- mapping: virtual model (leon:*) → concrete model
+- pool: enabled/custom model lists
+- catalog: available model definitions (system-only)
+- virtual_models: virtual model UI metadata (system-only)
+"""
+
+from __future__ import annotations
+
+import os
+from typing import Any
+
+from pydantic import BaseModel, Field
+
+
+class ProviderConfig(BaseModel):
+    """Provider API credentials."""
+
+    api_key: str | None = None
+    base_url: str | None = None
+
+
+class ModelSpec(BaseModel):
+    """Virtual model mapping entry."""
+
+    model: str
+    provider: str | None = None
+    temperature: float | None = Field(None, ge=0.0, le=2.0)
+    max_tokens: int | None = Field(None, gt=0)
+    description: str | None = None
+
+
+class ActiveModel(BaseModel):
+    """Currently active model selection."""
+
+    model: str = "claude-sonnet-4-5-20250929"
+    provider: str | None = None
+
+
+class PoolConfig(BaseModel):
+    """Model pool configuration."""
+
+    enabled: list[str] = Field(default_factory=list)
+    custom: list[str] = Field(default_factory=list)
+
+
+class CatalogEntry(BaseModel):
+    """Model catalog entry (system-only)."""
+
+    id: str
+    name: str
+    provider: str | None = None
+    description: str | None = None
+
+
+class VirtualModelEntry(BaseModel):
+    """Virtual model UI metadata (system-only)."""
+
+    id: str
+    name: str
+    icon: str | None = None
+    description: str | None = None
+
+
+class ModelsConfig(BaseModel):
+    """Unified models configuration.
+
+    Merge priority: system defaults → user (~/.leon/models.json) → project (.leon/models.json) → CLI
+    """
+
+    active: ActiveModel = Field(default_factory=ActiveModel)
+    providers: dict[str, ProviderConfig] = Field(default_factory=dict)
+    mapping: dict[str, ModelSpec] = Field(default_factory=dict)
+    pool: PoolConfig = Field(default_factory=PoolConfig)
+    catalog: list[CatalogEntry] = Field(default_factory=list)
+    virtual_models: list[VirtualModelEntry] = Field(default_factory=list)
+
+    def resolve_model(self, name: str) -> tuple[str, dict[str, Any]]:
+        """Resolve virtual model name to (actual_model, overrides).
+
+        Args:
+            name: Model name (can be leon:* virtual name)
+
+        Returns:
+            (actual_model_name, kwargs_dict)
+
+        Raises:
+            ValueError: If virtual model name not found in mapping
+        """
+        if not name.startswith("leon:"):
+            return name, {}
+
+        if name not in self.mapping:
+            available = ", ".join(self.mapping.keys())
+            raise ValueError(f"Unknown virtual model: {name}. Available: {available}")
+
+        spec = self.mapping[name]
+        kwargs: dict[str, Any] = {}
+        if spec.provider:
+            kwargs["model_provider"] = spec.provider
+        if spec.temperature is not None:
+            kwargs["temperature"] = spec.temperature
+        if spec.max_tokens is not None:
+            kwargs["max_tokens"] = spec.max_tokens
+        return spec.model, kwargs
+
+    def get_provider(self, name: str) -> ProviderConfig | None:
+        """Get provider credentials by name."""
+        return self.providers.get(name)
+
+    def get_active_provider(self) -> ProviderConfig | None:
+        """Get provider credentials for the active model's provider."""
+        if self.active.provider:
+            return self.providers.get(self.active.provider)
+        return None
+
+    def get_api_key(self) -> str | None:
+        """Get API key: active provider → any provider → env vars."""
+        # From active provider
+        p = self.get_active_provider()
+        if p and p.api_key:
+            return p.api_key
+
+        # From any provider with a key
+        for pc in self.providers.values():
+            if pc.api_key:
+                return pc.api_key
+
+        # From environment variables
+        return os.getenv("ANTHROPIC_API_KEY") or os.getenv("OPENAI_API_KEY") or os.getenv("OPENROUTER_API_KEY")
+
+    def get_base_url(self) -> str | None:
+        """Get base URL: active provider → env vars."""
+        p = self.get_active_provider()
+        if p and p.base_url:
+            return p.base_url
+
+        # From environment
+        return os.getenv("ANTHROPIC_BASE_URL") or os.getenv("OPENAI_BASE_URL")
+
+    def get_model_provider(self) -> str | None:
+        """Get model provider: active.provider → auto-detect from env."""
+        if self.active.provider:
+            return self.active.provider
+
+        # Auto-detect from environment
+        if os.getenv("ANTHROPIC_API_KEY"):
+            return "anthropic"
+        if os.getenv("OPENAI_API_KEY"):
+            return "openai"
+        if os.getenv("OPENROUTER_API_KEY"):
+            return "openai"
+        return None

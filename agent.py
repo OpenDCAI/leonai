@@ -35,6 +35,8 @@ if _env_file.exists():
 from agent_profile import AgentProfile
 from config import LeonSettings
 from config.loader import ConfigLoader
+from config.models_loader import ModelsLoader
+from config.models_schema import ModelsConfig
 from core.command import CommandMiddleware
 
 # 导入 hooks
@@ -130,6 +132,7 @@ class LeonAgent:
             )
             self.profile = self._load_profile(profile)
             self.config = None  # Old mode doesn't use new config
+            self.models_config = None
             self._apply_cli_overrides(
                 model_name=model_name,
                 workspace_root=workspace_root,
@@ -143,7 +146,7 @@ class LeonAgent:
         else:
             # New config system mode
             self.profile = None
-            self.config = self._load_config(
+            self.config, self.models_config = self._load_config(
                 agent_name=agent,
                 workspace_root=workspace_root,
                 model_name=model_name,
@@ -155,17 +158,17 @@ class LeonAgent:
                 enable_web_tools=enable_web_tools,
             )
             # Resolve virtual model name
-            resolved_model, model_overrides = self.config.resolve_model(self.config.api.model)
+            resolved_model, model_overrides = self.models_config.resolve_model(self.models_config.active.model)
             self.model_name = resolved_model
             self._model_overrides = model_overrides
 
         # Resolve API key
-        if self.config:
-            # New config mode
-            self.api_key = api_key or self.config.api.api_key
-        else:
-            # Old profile mode
+        if self.models_config:
+            self.api_key = api_key or self.models_config.get_api_key()
+        elif self.profile:
             self.api_key = api_key or self.profile.agent.api_key or self._resolve_env_api_key()
+        else:
+            self.api_key = api_key
 
         if not self.api_key:
             raise ValueError(
@@ -173,7 +176,7 @@ class LeonAgent:
                 "  - OPENAI_API_KEY environment variable (recommended for proxy)\n"
                 "  - ANTHROPIC_API_KEY environment variable\n"
                 "  - api_key parameter\n"
-                "  - config api.api_key field"
+                "  - models.json providers section"
             )
 
         # Initialize workspace and configuration
@@ -333,39 +336,44 @@ class LeonAgent:
         block_network_commands: bool | None,
         enable_audit_log: bool | None,
         enable_web_tools: bool | None,
-    ) -> LeonSettings:
-        """Load configuration using new config system."""
-        # Build CLI overrides
-        cli_overrides = {}
+    ) -> tuple[LeonSettings, ModelsConfig]:
+        """Load configuration using new config system.
 
-        if model_name is not None:
-            cli_overrides.setdefault("api", {})["model"] = model_name
-        if api_key is not None:
-            cli_overrides.setdefault("api", {})["api_key"] = api_key
+        Returns:
+            Tuple of (LeonSettings for runtime, ModelsConfig for model identity)
+        """
+        # Build CLI overrides for runtime config
+        cli_overrides: dict = {}
+
         if workspace_root is not None:
             cli_overrides["workspace_root"] = str(workspace_root)
 
-        # Tool overrides
+        # Runtime overrides go into "runtime" section
+        runtime_overrides: dict = {}
         if allowed_file_extensions is not None:
-            cli_overrides.setdefault("tools", {}).setdefault("filesystem", {})["allowed_extensions"] = (
-                allowed_file_extensions
-            )
+            runtime_overrides["allowed_extensions"] = allowed_file_extensions
         if block_dangerous_commands is not None:
-            cli_overrides.setdefault("tools", {}).setdefault("command", {})["block_dangerous_commands"] = (
-                block_dangerous_commands
-            )
+            runtime_overrides["block_dangerous_commands"] = block_dangerous_commands
         if block_network_commands is not None:
-            cli_overrides.setdefault("tools", {}).setdefault("command", {})["block_network_commands"] = (
-                block_network_commands
-            )
+            runtime_overrides["block_network_commands"] = block_network_commands
         if enable_audit_log is not None:
-            cli_overrides.setdefault("api", {})["enable_audit_log"] = enable_audit_log
+            runtime_overrides["enable_audit_log"] = enable_audit_log
+        if runtime_overrides:
+            cli_overrides["runtime"] = runtime_overrides
+
         if enable_web_tools is not None:
             cli_overrides.setdefault("tools", {}).setdefault("web", {})["enabled"] = enable_web_tools
 
-        # Load config (always loads default.json, no agent_name parameter)
+        # Load runtime config
         loader = ConfigLoader(workspace_root=workspace_root)
         config = loader.load(cli_overrides=cli_overrides if cli_overrides else None)
+
+        # Load models config
+        models_cli: dict = {}
+        if model_name is not None:
+            models_cli["active"] = {"model": model_name}
+        models_loader = ModelsLoader(workspace_root=workspace_root)
+        models_config = models_loader.load(cli_overrides=models_cli if models_cli else None)
 
         # If agent specified, load Task Agent definition to override system_prompt and tools
         if agent_name:
@@ -382,9 +390,9 @@ class LeonAgent:
             self._agent_override = None
 
         if self.verbose:
-            print(f"[LeonAgent] Config: agent={agent_name or 'default'}, model={config.api.model}")
+            print(f"[LeonAgent] Config: agent={agent_name or 'default'}, model={models_config.active.model}")
 
-        return config
+        return config, models_config
 
     def _load_profile(self, profile: AgentProfile | str | Path | None) -> AgentProfile:
         """Load agent profile from file or create default."""
@@ -451,12 +459,12 @@ class LeonAgent:
         """Initialize configuration attributes from config or profile."""
         if self.config:
             # New config mode
-            self.allowed_file_extensions = self.config.api.allowed_extensions
-            self.block_dangerous_commands = self.config.api.block_dangerous_commands
-            self.block_network_commands = self.config.api.block_network_commands
-            self.enable_audit_log = self.config.api.enable_audit_log
+            self.allowed_file_extensions = self.config.runtime.allowed_extensions
+            self.block_dangerous_commands = self.config.runtime.block_dangerous_commands
+            self.block_network_commands = self.config.runtime.block_network_commands
+            self.enable_audit_log = self.config.runtime.enable_audit_log
             self.enable_web_tools = self.config.tools.web.enabled
-            self.queue_mode = self.config.api.queue_mode
+            self.queue_mode = self.config.runtime.queue_mode
         else:
             # Old profile mode
             self.allowed_file_extensions = self.profile.agent.allowed_extensions
@@ -497,10 +505,10 @@ class LeonAgent:
 
     def _resolve_env_api_key(self) -> str | None:
         """Resolve API key from environment variables based on model_provider."""
-        if self.config:
-            provider = self.config.api.model_provider
-        else:
-            provider = self.profile.agent.model_provider
+        if self.models_config:
+            return self.models_config.get_api_key()
+
+        provider = self.profile.agent.model_provider if self.profile else None
 
         if not provider:
             return os.getenv("OPENAI_API_KEY") or os.getenv("ANTHROPIC_API_KEY")
@@ -516,10 +524,10 @@ class LeonAgent:
 
     def _resolve_env_base_url(self) -> str | None:
         """Resolve base URL from environment variables based on model_provider."""
-        if self.config:
-            provider = self.config.api.model_provider
-        else:
-            provider = self.profile.agent.model_provider
+        if self.models_config:
+            return self.models_config.get_base_url()
+
+        provider = self.profile.agent.model_provider if self.profile else None
 
         if not provider:
             return os.getenv("OPENAI_BASE_URL")
@@ -576,20 +584,20 @@ class LeonAgent:
             if hasattr(self, "_model_overrides"):
                 kwargs.update(self._model_overrides)
 
-            if self.config.api.model_provider:
-                kwargs["model_provider"] = self.config.api.model_provider
+            provider = self.models_config.get_model_provider()
+            if provider:
+                kwargs["model_provider"] = provider
 
-            base_url = self.config.api.base_url or self._resolve_env_base_url()
+            base_url = self.models_config.get_base_url()
             if base_url:
-                # Normalize base_url based on provider
-                kwargs["base_url"] = self._normalize_base_url(base_url, self.config.api.model_provider)
+                kwargs["base_url"] = self._normalize_base_url(base_url, provider)
 
-            if self.config.api.temperature is not None:
-                kwargs["temperature"] = self.config.api.temperature
-            if self.config.api.max_tokens is not None:
-                kwargs["max_tokens"] = self.config.api.max_tokens
+            if self.config.runtime.temperature is not None:
+                kwargs["temperature"] = self.config.runtime.temperature
+            if self.config.runtime.max_tokens is not None:
+                kwargs["max_tokens"] = self.config.runtime.max_tokens
 
-            kwargs.update(self.config.api.model_kwargs)
+            kwargs.update(self.config.runtime.model_kwargs)
         else:
             # Old profile mode
             if self.profile.agent.model_provider:
@@ -615,29 +623,31 @@ class LeonAgent:
         Args:
             model: New model name (supports leon:* virtual names)
             **tool_overrides: Tool configuration overrides
-
-        Example:
-            agent.update_config(model="leon:large")
-            agent.update_config(model="gpt-4", tools={"web": {"enabled": False}})
         """
         if self.profile:
             raise RuntimeError("Hot-reload only supported with new config system (use agent= parameter)")
 
-        # Build overrides
+        # Reload runtime config
         cli_overrides = {}
-        if model is not None:
-            cli_overrides.setdefault("api", {})["model"] = model
         if tool_overrides:
             cli_overrides["tools"] = tool_overrides
-
-        # Reload config
         loader = ConfigLoader(workspace_root=self.workspace_root)
-        self.config = loader.load(cli_overrides=cli_overrides)
+        self.config = loader.load(cli_overrides=cli_overrides if cli_overrides else None)
+
+        # Reload models config
+        models_cli = {}
+        if model is not None:
+            models_cli["active"] = {"model": model}
+        models_loader = ModelsLoader(workspace_root=self.workspace_root)
+        self.models_config = models_loader.load(cli_overrides=models_cli if models_cli else None)
 
         # Resolve virtual model
-        resolved_model, model_overrides = self.config.resolve_model(self.config.api.model)
+        resolved_model, model_overrides = self.models_config.resolve_model(self.models_config.active.model)
         self.model_name = resolved_model
         self._model_overrides = model_overrides
+
+        # Update API key
+        self.api_key = self.models_config.get_api_key()
 
         # Recreate LLM
         self.model = self._create_model()
@@ -896,7 +906,7 @@ tool:
         middleware.append(self._task_middleware)
 
         # 10. Monitor (last to capture all requests/responses)
-        context_limit = self.config.api.context_limit if self.config else self.profile.agent.context_limit
+        context_limit = self.config.runtime.context_limit if self.config else self.profile.agent.context_limit
         self._monitor_middleware = MonitorMiddleware(
             context_limit=context_limit,
             model_name=self.model_name,
@@ -910,7 +920,7 @@ tool:
         """Add memory middleware to stack."""
         if self.config:
             # New config schema — field names match runtime constructors directly
-            context_limit = self.config.api.context_limit
+            context_limit = self.config.runtime.context_limit
             pruning_config = self.config.memory.pruning
             compaction_config = self.config.memory.compaction
         else:

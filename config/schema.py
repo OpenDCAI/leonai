@@ -1,64 +1,40 @@
-"""Core configuration schema for Leon using Pydantic.
+"""Core runtime configuration schema for Leon using Pydantic.
 
-This module defines the complete configuration structure with:
-- Nested config groups (API, Memory, Tools, MCP, Skills)
-- Virtual model mapping (leon:mini/medium/large/max)
-- Field validators for API keys, paths, extensions
-- Environment variable loading with nested delimiter
+This module defines the runtime configuration structure with:
+- Nested config groups (Memory, Tools, MCP, Skills)
+- Runtime behavior parameters (temperature, max_tokens, context_limit, etc.)
+- Field validators for paths, extensions
+
+Model identity (model name, provider, API keys) lives in ModelsConfig (models_schema.py).
 """
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator
 
 # Default model used across the codebase — single source of truth
 DEFAULT_MODEL = "claude-sonnet-4-5-20250929"
 
 # ============================================================================
-# API Configuration
+# Runtime Configuration (non-model behavior parameters)
 # ============================================================================
 
 
-class ModelSpec(BaseModel):
-    """Virtual model specification for leon:* model names."""
+class RuntimeConfig(BaseModel):
+    """Runtime behavior configuration (non-model identity)."""
 
-    model: str = Field(..., description="Actual model name to use")
-    provider: str | None = Field(None, description="Model provider (openai/anthropic/etc)")
-    temperature: float | None = Field(None, ge=0.0, le=2.0, description="Temperature override")
-    max_tokens: int | None = Field(None, gt=0, description="Max tokens override")
-
-
-class APIConfig(BaseModel):
-    """API configuration for LLM providers."""
-
-    model: str = Field(DEFAULT_MODEL, description="Default model name")
-    model_provider: str | None = Field(None, description="Explicit provider (openai/anthropic/etc)")
-    api_key: str | None = Field(None, description="API key (falls back to env vars)")
-    base_url: str | None = Field(None, description="Base URL for API (falls back to env vars)")
     temperature: float | None = Field(None, ge=0.0, le=2.0, description="Temperature")
     max_tokens: int | None = Field(None, gt=0, description="Max tokens")
     model_kwargs: dict[str, Any] = Field(default_factory=dict, description="Extra kwargs for init_chat_model")
     context_limit: int = Field(100000, gt=0, description="Context window limit in tokens")
     enable_audit_log: bool = Field(True, description="Enable audit logging")
-    allowed_extensions: list[str] | None = Field(None, description="Alle extensions (None = all)")
+    allowed_extensions: list[str] | None = Field(None, description="Allowed extensions (None = all)")
     block_dangerous_commands: bool = Field(True, description="Block dangerous commands")
     block_network_commands: bool = Field(False, description="Block network commands")
     queue_mode: str = Field("steer", description="Queue mode: steer/followup/collect/steer_backlog/interrupt")
-
-    @field_validator("base_url")
-    @classmethod
-    def normalize_base_url(cls, v: str | None) -> str | None:
-        """Ensure base_url ends with /v1 for OpenAI-compatible APIs."""
-        if not v:
-            return v
-        v = v.rstrip("/")
-        if v.endswith("/v1") or "/v1/" in v:
-            return v
-        return f"{v}/v1"
 
 
 # ============================================================================
@@ -220,9 +196,11 @@ class ToolsConfig(BaseModel):
 class MCPServerConfig(BaseModel):
     """Configuration for a single MCP server."""
 
-    command: str = Field(..., description="Command to run the MCP server")
+    command: str | None = Field(None, description="Command to run the MCP server")
     args: list[str] = Field(default_factory=list, description="Command arguments")
     env: dict[str, str] = Field(default_factory=dict, description="Environment variables")
+    url: str | None = Field(None, description="URL for streamable HTTP transport")
+    allowed_tools: list[str] | None = Field(None, description="Allowed tool names (None = all)")
 
 
 class MCPConfig(BaseModel):
@@ -261,37 +239,26 @@ class SkillsConfig(BaseModel):
 
 
 class LeonSettings(BaseModel):
-    """Main Leon configuration.
+    """Main Leon runtime configuration.
+
+    Contains non-model runtime settings: memory, tools, mcp, skills, behavior params.
+    Model identity (model name, provider, API keys) lives in ModelsConfig.
 
     Configuration priority (highest to lowest):
     1. CLI overrides
-    2. Project config (.leon/config.json)
-    3. User config (~/.leon/config.json)
-    4. System defaults (config/defaults/)
-    5. Environment variables (for API keys)
-
-    Note: This uses BaseModel instead of BaseSettings to avoid
-    automatic environment variable loading conflicts with our
-    three-tier config system.
+    2. Project config (.leon/runtime.json)
+    3. User config (~/.leon/runtime.json)
+    4. System defaults (config/defaults/runtime.json)
     """
 
+    # Runtime behavior (replaces APIConfig model-identity fields)
+    runtime: RuntimeConfig = Field(default_factory=RuntimeConfig, description="Runtime behavior config")
+
     # Core configuration groups
-    api: APIConfig = Field(default_factory=APIConfig, description="API configuration")
     memory: MemoryConfig = Field(default_factory=MemoryConfig, description="Memory management")
     tools: ToolsConfig = Field(default_factory=ToolsConfig, description="Tools configuration")
     mcp: MCPConfig = Field(default_factory=MCPConfig, description="MCP configuration")
     skills: SkillsConfig = Field(default_factory=SkillsConfig, description="Skills configuration")
-
-    # Virtual model mapping
-    model_mapping: dict[str, ModelSpec] = Field(
-        default_factory=lambda: {
-            "leon:mini": ModelSpec(model="claude-haiku-4-5-20250929", provider="anthropic"),
-            "leon:medium": ModelSpec(model=DEFAULT_MODEL, provider="anthropic"),
-            "leon:large": ModelSpec(model="claude-opus-4-6", provider="anthropic"),
-            "leon:max": ModelSpec(model="claude-opus-4-6", provider="anthropic", temperature=0.0),
-        },
-        description="Virtual model name mapping",
-    )
 
     # Agent configuration
     system_prompt: str | None = Field(None, description="Custom system prompt")
@@ -309,60 +276,3 @@ class LeonSettings(BaseModel):
         if not path.is_dir():
             raise ValueError(f"Workspace root is not a directory: {path}")
         return str(path)
-
-    @model_validator(mode="after")
-    def validate_api_keys(self) -> LeonSettings:
-        """Validate API key dependencies.
-
-        If api_key is not set, check environment variables:
-        - OPENAI_API_KEY
-        - ANTHROPIC_API_KEY
-        - OPENROUTER_API_KEY
-        """
-        if self.api.api_key is None:
-            # Check common API key environment variables
-            api_key = os.getenv("OPENAI_API_KEY") or os.getenv("ANTHROPIC_API_KEY") or os.getenv("OPENROUTER_API_KEY")
-            if api_key:
-                self.api.api_key = api_key
-            else:
-                raise ValueError(
-                    "No API key found. Set LEON__API__API_KEY, OPENAI_API_KEY, "
-                    "ANTHROPIC_API_KEY, or OPENROUTER_API_KEY environment variable."
-                )
-
-        # Also check base_url from environment if not set
-        if self.api.base_url is None:
-            base_url = os.getenv("OPENAI_BASE_URL") or os.getenv("ANTHROPIC_BASE_URL")
-            if base_url:
-                self.api.base_url = base_url
-
-        return self
-
-    def resolve_model(self, model_name: str) -> tuple[str, dict[str, Any]]:
-        """Resolve virtual model name to actual model and config.
-
-        Args:
-            model_name: Model name (can be leon:* virtual name)
-
-        Returns:
-            Tuple of (actual_model_name, model_kwargs)
-
-        Raises:
-            ValueError: If virtual model name not found in mapping
-        """
-        if not model_name.startswith("leon:"):
-            return model_name, {}
-
-        if model_name not in self.model_mapping:
-            raise ValueError(f"Unknown virtual model: {model_name}. Available: {', '.join(self.model_mapping.keys())}")
-
-        spec = self.model_mapping[model_name]
-        kwargs = {}
-        if spec.provider:
-            kwargs["model_provider"] = spec.provider
-        if spec.temperature is not None:
-            kwargs["temperature"] = spec.temperature
-        if spec.max_tokens is not None:
-            kwargs["max_tokens"] = spec.max_tokens
-
-        return spec.model, kwargs

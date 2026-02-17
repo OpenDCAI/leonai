@@ -1,4 +1,8 @@
-"""User settings management endpoints."""
+"""User settings management endpoints.
+
+Model-related settings (providers, mapping, pool) are stored in ~/.leon/models.json.
+Workspace settings remain in ~/.leon/settings.json.
+"""
 
 import json
 from pathlib import Path
@@ -7,23 +11,23 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 
+from config.models_loader import ModelsLoader
+from config.models_schema import ModelsConfig
+
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 SETTINGS_FILE = Path.home() / ".leon" / "settings.json"
+MODELS_FILE = Path.home() / ".leon" / "models.json"
 
 
-class ProviderConfig(BaseModel):
-    api_key: str | None = None
-    base_url: str | None = None
+# ============================================================================
+# Workspace settings (settings.json — slim)
+# ============================================================================
 
 
-class UserSettings(BaseModel):
+class WorkspaceSettings(BaseModel):
     default_workspace: str | None = None
     recent_workspaces: list[str] = []
-    model_mapping: dict[str, str] = {}
-    enabled_models: list[str] = []
-    custom_models: list[str] = []
-    providers: dict[str, ProviderConfig] = {}
 
 
 class WorkspaceRequest(BaseModel):
@@ -36,54 +40,103 @@ class DirectoryItem(BaseModel):
     is_dir: bool
 
 
-class ModelConfigRequest(BaseModel):
-    model: str
-    thread_id: str | None = None
-
-
-def load_settings() -> UserSettings:
-    """Load user settings from disk."""
+def load_settings() -> WorkspaceSettings:
     if not SETTINGS_FILE.exists():
-        return UserSettings()
-
+        return WorkspaceSettings()
     try:
         with open(SETTINGS_FILE, encoding="utf-8") as f:
             data = json.load(f)
-        return UserSettings(**data)
+        return WorkspaceSettings(**data)
     except Exception:
-        return UserSettings()
+        return WorkspaceSettings()
 
 
-def save_settings(settings: UserSettings) -> None:
-    """Save user settings to disk."""
+def save_settings(settings: WorkspaceSettings) -> None:
     SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
     with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
         json.dump(settings.model_dump(), f, indent=2, ensure_ascii=False)
 
 
+# ============================================================================
+# Models config (models.json)
+# ============================================================================
+
+
+def load_models() -> dict[str, Any]:
+    """Load raw models.json from disk (user-level only)."""
+    if not MODELS_FILE.exists():
+        return {}
+    try:
+        with open(MODELS_FILE, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def save_models(data: dict[str, Any]) -> None:
+    """Save models.json to disk (user-level)."""
+    MODELS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with open(MODELS_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
+
+def load_merged_models() -> ModelsConfig:
+    """Load fully merged ModelsConfig (system + user)."""
+    return ModelsLoader().load()
+
+
+# ============================================================================
+# Settings endpoint (returns workspace + models combined for frontend compat)
+# ============================================================================
+
+
+class ProviderConfig(BaseModel):
+    api_key: str | None = None
+    base_url: str | None = None
+
+
+class UserSettings(BaseModel):
+    """Combined settings for frontend compatibility."""
+
+    default_workspace: str | None = None
+    recent_workspaces: list[str] = []
+    model_mapping: dict[str, str] = {}
+    enabled_models: list[str] = []
+    custom_models: list[str] = []
+    providers: dict[str, ProviderConfig] = {}
+
+
 @router.get("")
 async def get_settings() -> UserSettings:
-    """Get user settings."""
-    return load_settings()
+    """Get combined settings (workspace from settings.json, models from models.json)."""
+    ws = load_settings()
+    models = load_merged_models()
+
+    # Build compat view
+    mapping = {k: v.model for k, v in models.mapping.items()}
+    providers = {k: ProviderConfig(api_key=v.api_key, base_url=v.base_url) for k, v in models.providers.items()}
+
+    return UserSettings(
+        default_workspace=ws.default_workspace,
+        recent_workspaces=ws.recent_workspaces,
+        model_mapping=mapping,
+        enabled_models=models.pool.enabled,
+        custom_models=models.pool.custom,
+        providers=providers,
+    )
 
 
 @router.get("/browse")
 async def browse_filesystem(path: str = Query(default="~")) -> dict[str, Any]:
     """Browse filesystem directories."""
     try:
-        # Expand ~ and resolve path
         target_path = Path(path).expanduser().resolve()
-
         if not target_path.exists():
             raise HTTPException(status_code=404, detail="Path does not exist")
-
         if not target_path.is_dir():
             raise HTTPException(status_code=400, detail="Path is not a directory")
 
-        # Get parent directory
         parent = str(target_path.parent) if target_path.parent != target_path else None
-
-        # List directories only
         items: list[DirectoryItem] = []
         try:
             for item in sorted(target_path.iterdir(), key=lambda x: x.name.lower()):
@@ -100,23 +153,20 @@ async def browse_filesystem(path: str = Query(default="~")) -> dict[str, Any]:
 @router.post("/workspace")
 async def set_default_workspace(request: WorkspaceRequest) -> dict[str, Any]:
     """Set default workspace path."""
-    # Validate path exists
     workspace_path = Path(request.workspace).expanduser().resolve()
     if not workspace_path.exists():
         raise HTTPException(status_code=400, detail="Workspace path does not exist")
-
     if not workspace_path.is_dir():
         raise HTTPException(status_code=400, detail="Workspace path is not a directory")
 
     settings = load_settings()
     settings.default_workspace = str(workspace_path)
 
-    # Add to recent workspaces
     workspace_str = str(workspace_path)
     if workspace_str in settings.recent_workspaces:
         settings.recent_workspaces.remove(workspace_str)
     settings.recent_workspaces.insert(0, workspace_str)
-    settings.recent_workspaces = settings.recent_workspaces[:5]  # Keep only 5 recent
+    settings.recent_workspaces = settings.recent_workspaces[:5]
 
     save_settings(settings)
     return {"success": True, "workspace": workspace_str}
@@ -141,13 +191,19 @@ async def add_recent_workspace(request: WorkspaceRequest) -> dict[str, Any]:
     return {"success": True}
 
 
+# ============================================================================
+# Model config hot-reload
+# ============================================================================
+
+
+class ModelConfigRequest(BaseModel):
+    model: str
+    thread_id: str | None = None
+
+
 @router.post("/config")
 async def update_model_config(request: ModelConfigRequest, req: Request) -> dict[str, Any]:
-    """Update model configuration for agent.
-
-    Supports dynamic model switching with virtual model names (leon:*).
-    Updates are applied immediately without recreating the agent.
-    """
+    """Update model configuration for agent (hot-reload)."""
     from backend.web.services.agent_pool import update_agent_config
 
     try:
@@ -159,44 +215,43 @@ async def update_model_config(request: ModelConfigRequest, req: Request) -> dict
         raise HTTPException(status_code=500, detail=f"Failed to update config: {str(e)}")
 
 
+# ============================================================================
+# Available models
+# ============================================================================
+
+
 @router.get("/available-models")
 async def get_available_models() -> dict[str, Any]:
-    """Get all available models and virtual models."""
-    from pathlib import Path
-
-    # Load pricing data to get all available models
+    """Get all available models and virtual models from models.json."""
     pricing_file = Path(__file__).parent.parent.parent.parent / "core" / "monitor" / "pricing_bundled.json"
-    virtual_models_file = Path(__file__).parent.parent.parent.parent / "config" / "defaults" / "available_models.json"
 
     if not pricing_file.exists():
         raise HTTPException(status_code=500, detail="Pricing data not found")
 
     try:
-        # Load all models from pricing data
         with open(pricing_file, encoding="utf-8") as f:
             pricing_data = json.load(f)
 
         pricing_ids = set(pricing_data["models"].keys())
+        models_list = [{"id": mid, "name": mid} for mid in pricing_ids]
 
-        # Convert to model list
-        models = [{"id": model_id, "name": model_id} for model_id in pricing_ids]
+        # Merge custom + orphaned enabled models
+        mc = load_merged_models()
+        extra_ids = set(mc.pool.custom) | (set(mc.pool.enabled) - pricing_ids)
+        for mid in sorted(extra_ids):
+            models_list.append({"id": mid, "name": mid, "custom": True})
 
-        # Merge custom_models and orphaned enabled_models not in pricing
-        settings = load_settings()
-        extra_ids = set(settings.custom_models) | (set(settings.enabled_models) - pricing_ids)
-        for model_id in sorted(extra_ids):
-            models.append({"id": model_id, "name": model_id, "custom": True})
+        # Virtual models from system defaults
+        virtual_models = [vm.model_dump() for vm in mc.virtual_models]
 
-        # Load virtual models definition
-        virtual_models = []
-        if virtual_models_file.exists():
-            with open(virtual_models_file, encoding="utf-8") as f:
-                vm_data = json.load(f)
-                virtual_models = vm_data.get("virtual_models", [])
-
-        return {"models": models, "virtual_models": virtual_models}
+        return {"models": models_list, "virtual_models": virtual_models}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to load available models: {str(e)}")
+
+
+# ============================================================================
+# Model mapping
+# ============================================================================
 
 
 class ModelMappingRequest(BaseModel):
@@ -205,11 +260,23 @@ class ModelMappingRequest(BaseModel):
 
 @router.post("/model-mapping")
 async def update_model_mapping(request: ModelMappingRequest) -> dict[str, Any]:
-    """Update virtual model mapping."""
-    settings = load_settings()
-    settings.model_mapping = request.mapping
-    save_settings(settings)
-    return {"success": True, "model_mapping": settings.model_mapping}
+    """Update virtual model mapping → models.json."""
+    data = load_models()
+    # Convert simple {name: model} to ModelSpec format
+    mapping = data.get("mapping", {})
+    for name, model_id in request.mapping.items():
+        if name in mapping and isinstance(mapping[name], dict):
+            mapping[name]["model"] = model_id
+        else:
+            mapping[name] = {"model": model_id}
+    data["mapping"] = mapping
+    save_models(data)
+    return {"success": True, "model_mapping": request.mapping}
+
+
+# ============================================================================
+# Model pool (enable/disable, custom)
+# ============================================================================
 
 
 class ModelToggleRequest(BaseModel):
@@ -219,24 +286,20 @@ class ModelToggleRequest(BaseModel):
 
 @router.post("/models/toggle")
 async def toggle_model(request: ModelToggleRequest) -> dict[str, Any]:
-    """Enable or disable a model."""
-    settings = load_settings()
+    """Enable or disable a model → models.json pool.enabled."""
+    data = load_models()
+    pool = data.setdefault("pool", {"enabled": [], "custom": []})
+    enabled = pool.setdefault("enabled", [])
 
     if request.enabled:
-        if request.model_id not in settings.enabled_models:
-            settings.enabled_models.append(request.model_id)
+        if request.model_id not in enabled:
+            enabled.append(request.model_id)
     else:
-        if request.model_id in settings.enabled_models:
-            settings.enabled_models.remove(request.model_id)
+        if request.model_id in enabled:
+            enabled.remove(request.model_id)
 
-    save_settings(settings)
-    return {"success": True, "enabled_models": settings.enabled_models}
-
-
-class ProviderRequest(BaseModel):
-    provider: str
-    api_key: str | None = None
-    base_url: str | None = None
+    save_models(data)
+    return {"success": True, "enabled_models": enabled}
 
 
 class CustomModelRequest(BaseModel):
@@ -245,40 +308,64 @@ class CustomModelRequest(BaseModel):
 
 @router.post("/models/custom")
 async def add_custom_model(request: CustomModelRequest) -> dict[str, Any]:
-    """Add a custom model to the pool and auto-enable it."""
-    settings = load_settings()
+    """Add a custom model → models.json pool.custom + auto-enable."""
+    data = load_models()
+    pool = data.setdefault("pool", {"enabled": [], "custom": []})
+    custom = pool.setdefault("custom", [])
+    enabled = pool.setdefault("enabled", [])
 
-    if request.model_id not in settings.custom_models:
-        settings.custom_models.append(request.model_id)
-    if request.model_id not in settings.enabled_models:
-        settings.enabled_models.append(request.model_id)
+    if request.model_id not in custom:
+        custom.append(request.model_id)
+    if request.model_id not in enabled:
+        enabled.append(request.model_id)
 
-    save_settings(settings)
-    return {"success": True, "custom_models": settings.custom_models, "enabled_models": settings.enabled_models}
+    save_models(data)
+    return {"success": True, "custom_models": custom, "enabled_models": enabled}
 
 
 @router.delete("/models/custom")
 async def remove_custom_model(request: CustomModelRequest) -> dict[str, Any]:
-    """Remove a custom model from the pool."""
-    settings = load_settings()
+    """Remove a custom model from models.json pool.custom."""
+    data = load_models()
+    pool = data.setdefault("pool", {"enabled": [], "custom": []})
+    custom = pool.setdefault("custom", [])
 
-    if request.model_id in settings.custom_models:
-        settings.custom_models.remove(request.model_id)
+    if request.model_id in custom:
+        custom.remove(request.model_id)
 
-    save_settings(settings)
-    return {"success": True, "custom_models": settings.custom_models}
+    save_models(data)
+    return {"success": True, "custom_models": custom}
+
+
+# ============================================================================
+# Providers
+# ============================================================================
+
+
+class ProviderRequest(BaseModel):
+    provider: str
+    api_key: str | None = None
+    base_url: str | None = None
 
 
 @router.post("/providers")
 async def update_provider(request: ProviderRequest) -> dict[str, Any]:
-    """Update provider configuration."""
-    settings = load_settings()
-
-    settings.providers[request.provider] = ProviderConfig(api_key=request.api_key, base_url=request.base_url)
-
-    save_settings(settings)
+    """Update provider config → models.json providers."""
+    data = load_models()
+    providers = data.setdefault("providers", {})
+    provider_data: dict[str, Any] = {}
+    if request.api_key is not None:
+        provider_data["api_key"] = request.api_key
+    if request.base_url is not None:
+        provider_data["base_url"] = request.base_url
+    providers[request.provider] = provider_data
+    save_models(data)
     return {"success": True, "provider": request.provider}
 
+
+# ============================================================================
+# Sandboxes (unchanged)
+# ============================================================================
 
 SANDBOXES_DIR = Path.home() / ".leon" / "sandboxes"
 
@@ -288,23 +375,17 @@ class SandboxConfigRequest(BaseModel):
     config: dict
 
 
-def _load_json(path: Path) -> dict:
-    if not path.exists():
-        return {}
-    try:
-        with open(path, encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return {}
-
-
 @router.get("/sandboxes")
 async def list_sandbox_configs() -> dict[str, Any]:
     """List all sandbox configurations from ~/.leon/sandboxes/."""
     sandboxes: dict[str, Any] = {}
     if SANDBOXES_DIR.exists():
         for f in SANDBOXES_DIR.glob("*.json"):
-            sandboxes[f.stem] = _load_json(f)
+            try:
+                with open(f, encoding="utf-8") as fh:
+                    sandboxes[f.stem] = json.load(fh)
+            except Exception:
+                sandboxes[f.stem] = {}
     return {"sandboxes": sandboxes}
 
 
