@@ -1,19 +1,13 @@
 {
-  "api": {
-    "model": "claude-sonnet-4-5-20250929",
-    "model_provider": null,
-    "api_key": null,
-    "base_url": null,
-    "temperature": null,
-    "max_tokens": null,
-    "model_kwargs": {},
-    "context_limit": 100000,
-    "enable_audit_log": true,
-    "allowed_extensions": null,
-    "block_dangerous_commands": true,
-    "block_network_commands": false,
-    "queue_mode": "steer"
-  },
+  "context_limit": 100000,
+  "enable_audit_log": true,
+  "allowed_extensions": null,
+  "block_dangerous_commands": true,
+  "block_network_commands": false,
+  "queue_mode": "steer",
+  "temperature": null,
+  "max_tokens": null,
+  "model_kwargs": {},
   "memory": {
     "pruning": {
       "enabled": true,
