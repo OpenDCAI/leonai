@@ -22,6 +22,7 @@ interface CenteredInputBoxProps {
   sandboxTypes: SandboxType[];
   defaultSandbox?: string;
   defaultWorkspace?: string;
+  defaultModel?: string;
   recentWorkspaces?: string[];
   onSend: (message: string, sandbox: string, model: string, workspace?: string) => Promise<void>;
 }
@@ -37,12 +38,13 @@ export default function CenteredInputBox({
   sandboxTypes,
   defaultSandbox = "local",
   defaultWorkspace,
+  defaultModel = "leon:medium",
   recentWorkspaces = [],
   onSend,
 }: CenteredInputBoxProps) {
   const [message, setMessage] = useState("");
   const [sandbox, setSandbox] = useState(defaultSandbox);
-  const [model, setModel] = useState("leon:medium");
+  const [model, setModel] = useState(defaultModel);
   const [workspace, setWorkspace] = useState(defaultWorkspace || "");
   const [customWorkspace, setCustomWorkspace] = useState("");
   const [sending, setSending] = useState(false);

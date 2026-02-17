@@ -100,6 +100,7 @@ class UserSettings(BaseModel):
 
     default_workspace: str | None = None
     recent_workspaces: list[str] = []
+    active_model: str = ""
     model_mapping: dict[str, str] = {}
     enabled_models: list[str] = []
     custom_models: list[str] = []
@@ -119,6 +120,7 @@ async def get_settings() -> UserSettings:
     return UserSettings(
         default_workspace=ws.default_workspace,
         recent_workspaces=ws.recent_workspaces,
+        active_model=models.active.model,
         model_mapping=mapping,
         enabled_models=models.pool.enabled,
         custom_models=models.pool.custom,
@@ -203,8 +205,13 @@ class ModelConfigRequest(BaseModel):
 
 @router.post("/config")
 async def update_model_config(request: ModelConfigRequest, req: Request) -> dict[str, Any]:
-    """Update model configuration for agent (hot-reload)."""
+    """Update model configuration for agent (hot-reload) and persist to models.json."""
     from backend.web.services.agent_pool import update_agent_config
+
+    # Persist active model to models.json so new threads use it
+    data = load_models()
+    data.setdefault("active", {})["model"] = request.model
+    save_models(data)
 
     try:
         result = await update_agent_config(app_obj=req.app, model=request.model, thread_id=request.thread_id)

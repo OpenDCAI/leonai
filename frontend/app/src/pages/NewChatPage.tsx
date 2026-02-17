@@ -77,6 +77,7 @@ export default function NewChatPage() {
           sandboxTypes={sandboxTypes}
           defaultSandbox={selectedSandbox}
           defaultWorkspace={settings?.default_workspace || undefined}
+          defaultModel={settings?.active_model || "leon:medium"}
           recentWorkspaces={settings?.recent_workspaces || []}
           onSend={handleSend}
         />
