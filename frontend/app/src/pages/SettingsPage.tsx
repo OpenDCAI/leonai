@@ -184,10 +184,8 @@ export default function SettingsPage() {
                   }}
                   onAddCustomModel={handleAddCustomModel}
                   onRemoveCustomModel={async (modelId) => {
-                    const res = await fetch("http://127.0.0.1:8001/api/settings/models/custom", {
+                    const res = await fetch(`http://127.0.0.1:8001/api/settings/models/custom?model_id=${encodeURIComponent(modelId)}`, {
                       method: "DELETE",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ model_id: modelId }),
                     });
                     const data = await res.json();
                     if (data.success) {
