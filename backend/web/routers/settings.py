@@ -102,7 +102,6 @@ class UserSettings(BaseModel):
     default_workspace: str | None = None
     recent_workspaces: list[str] = []
     default_model: str = "leon:large"
-    active_model: str = ""
     model_mapping: dict[str, str] = {}
     enabled_models: list[str] = []
     custom_models: list[str] = []
@@ -119,19 +118,10 @@ async def get_settings() -> UserSettings:
     mapping = {k: v.model for k, v in models.mapping.items()}
     providers = {k: ProviderConfig(api_key=v.api_key, base_url=v.base_url) for k, v in models.providers.items()}
 
-    # Reverse-map: if active_model is a raw name that matches a virtual model target, return the virtual name
-    active = models.active.model
-    if not active.startswith("leon:"):
-        for vname, spec in models.mapping.items():
-            if spec.model == active:
-                active = vname
-                break
-
     return UserSettings(
         default_workspace=ws.default_workspace,
         recent_workspaces=ws.recent_workspaces,
         default_model=ws.default_model,
-        active_model=active,
         model_mapping=mapping,
         enabled_models=models.pool.enabled,
         custom_models=models.pool.custom,
@@ -229,14 +219,9 @@ class ModelConfigRequest(BaseModel):
 
 @router.post("/config")
 async def update_model_config(request: ModelConfigRequest, req: Request) -> dict[str, Any]:
-    """Update model configuration for agent (hot-reload) and persist to models.json."""
+    """Update model configuration for agent (hot-reload) and persist per-thread."""
     from backend.web.services.agent_pool import update_agent_config
     from backend.web.utils.helpers import save_thread_model
-
-    # Persist active model to models.json so new threads use it
-    data = load_models()
-    data.setdefault("active", {})["model"] = request.model
-    save_models(data)
 
     # Persist model per-thread if thread_id provided
     if request.thread_id:
@@ -380,7 +365,7 @@ async def test_model(request: ModelTestRequest) -> dict[str, Any]:
 
     # Resolve virtual model
     resolved, overrides = mc.resolve_model(request.model_id)
-    provider_name = overrides.get("model_provider") or mc.active.provider
+    provider_name = overrides.get("model_provider") or (mc.active.provider if mc.active else None)
 
     # Check custom_providers mapping
     data = load_models()

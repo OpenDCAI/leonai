@@ -1,8 +1,4 @@
 {
-  "active": {
-    "model": "claude-sonnet-4-5-20250929",
-    "provider": null
-  },
   "providers": {},
   "mapping": {
     "leon:mini": {

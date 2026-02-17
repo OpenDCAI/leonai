@@ -72,10 +72,6 @@ class ConfigMigrator:
             with open(old_files["config.json"], encoding="utf-8") as f:
                 config_json = json.load(f)
             api = config_json.get("api", {})
-            if api.get("model"):
-                models_data.setdefault("active", {})["model"] = api["model"]
-            if api.get("model_provider"):
-                models_data.setdefault("active", {})["provider"] = api["model_provider"]
             if api.get("api_key") or api.get("base_url"):
                 provider_name = api.get("model_provider", "default")
                 p: dict[str, Any] = {}
@@ -163,11 +159,7 @@ class ConfigMigrator:
 
         if "agent" in old_config:
             agent = old_config["agent"]
-            # Model identity → models_data
-            if agent.get("model"):
-                models.setdefault("active", {})["model"] = agent["model"]
-            if agent.get("model_provider"):
-                models.setdefault("active", {})["provider"] = agent["model_provider"]
+            # Provider credentials → models_data
             if agent.get("api_key") or agent.get("base_url"):
                 p: dict[str, Any] = {}
                 if agent.get("api_key"):

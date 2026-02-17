@@ -72,7 +72,7 @@ class ModelsConfig(BaseModel):
     Merge priority: system defaults → user (~/.leon/models.json) → project (.leon/models.json) → CLI
     """
 
-    active: ActiveModel = Field(default_factory=ActiveModel)
+    active: ActiveModel | None = None
     providers: dict[str, ProviderConfig] = Field(default_factory=dict)
     mapping: dict[str, ModelSpec] = Field(default_factory=dict)
     pool: PoolConfig = Field(default_factory=PoolConfig)
@@ -114,7 +114,7 @@ class ModelsConfig(BaseModel):
 
     def get_active_provider(self) -> ProviderConfig | None:
         """Get provider credentials for the active model's provider."""
-        if self.active.provider:
+        if self.active and self.active.provider:
             return self.providers.get(self.active.provider)
         return None
 
@@ -144,7 +144,7 @@ class ModelsConfig(BaseModel):
 
     def get_model_provider(self) -> str | None:
         """Get model provider: active.provider → auto-detect from env."""
-        if self.active.provider:
+        if self.active and self.active.provider:
             return self.active.provider
 
         # Auto-detect from environment
