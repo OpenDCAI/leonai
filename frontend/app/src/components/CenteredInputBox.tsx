@@ -205,8 +205,8 @@ export default function CenteredInputBox({
           )}
 
           <Select value={model} onValueChange={setModel}>
-            <SelectTrigger className="w-[160px] h-9 text-sm">
-              <SelectValue />
+            <SelectTrigger className="w-[200px] h-9 text-sm overflow-hidden">
+              <span className="truncate">{MODELS.find((m) => m.value === model)?.label || model}</span>
             </SelectTrigger>
             <SelectContent>
               {MODELS.map((m) => (
@@ -214,6 +214,9 @@ export default function CenteredInputBox({
                   {m.label}
                 </SelectItem>
               ))}
+              {!MODELS.some((m) => m.value === model) && model && (
+                <SelectItem value={model}>{model}</SelectItem>
+              )}
             </SelectContent>
           </Select>
 
