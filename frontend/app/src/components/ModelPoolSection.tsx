@@ -13,9 +13,10 @@ interface ModelPoolSectionProps {
   providers: Record<string, { api_key: string | null; base_url: string | null }>;
   onToggle: (modelId: string, enabled: boolean) => void;
   onAddCustomModel: (modelId: string, provider?: string) => Promise<void>;
+  onRemoveCustomModel: (modelId: string) => Promise<void>;
 }
 
-export default function ModelPoolSection({ models, enabledModels, providers, onToggle, onAddCustomModel }: ModelPoolSectionProps) {
+export default function ModelPoolSection({ models, enabledModels, providers, onToggle, onAddCustomModel, onRemoveCustomModel }: ModelPoolSectionProps) {
   const [toggling, setToggling] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -164,7 +165,18 @@ export default function ModelPoolSection({ models, enabledModels, providers, onT
                   {model.id}
                 </span>
                 {model.custom && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#f1f5f9] text-[#94a3b8] font-medium">custom</span>
+                  <>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#f1f5f9] text-[#94a3b8] font-medium">custom</span>
+                    <button
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        await onRemoveCustomModel(model.id);
+                      }}
+                      className="text-[11px] text-[#94a3b8] hover:text-[#ef4444] opacity-0 group-hover:opacity-100 transition-all flex-shrink-0"
+                    >
+                      Remove
+                    </button>
+                  </>
                 )}
 
                 {/* Test button */}

@@ -183,6 +183,22 @@ export default function SettingsPage() {
                     setSettings({ ...settings, enabled_models: newEnabled });
                   }}
                   onAddCustomModel={handleAddCustomModel}
+                  onRemoveCustomModel={async (modelId) => {
+                    const res = await fetch("http://127.0.0.1:8001/api/settings/models/custom", {
+                      method: "DELETE",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ model_id: modelId }),
+                    });
+                    const data = await res.json();
+                    if (data.success) {
+                      const [modelsRes, settingsRes] = await Promise.all([
+                        fetch("http://127.0.0.1:8001/api/settings/available-models"),
+                        fetch("http://127.0.0.1:8001/api/settings"),
+                      ]);
+                      setAvailableModels(await modelsRes.json());
+                      setSettings(await settingsRes.json());
+                    }
+                  }}
                 />
                 <ProvidersSection
                   providers={settings.providers}
