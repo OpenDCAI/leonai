@@ -108,19 +108,60 @@ class EvalRunner:
         finished_at: str,
     ) -> RunTrajectory:
         """Merge multiple TrajectoryCaptures into a single RunTrajectory."""
-        from eval.models import RunTrajectory
+        from eval.models import LLMCallRecord, RunTrajectory, ToolCallRecord
 
-        all_text = []
-        all_tool_calls = []
-        all_tool_results = []
-        final_status = {}
+        all_text: list[str] = []
+        tool_records: list[ToolCallRecord] = []
+        final_status: dict = {}
+
+        # Build tool_call_id → result lookup
+        result_map: dict[str, dict] = {}
+        for cap in captures:
+            for tr in cap.tool_results:
+                tcid = tr.get("tool_call_id", "")
+                if tcid:
+                    result_map[tcid] = tr
 
         for cap in captures:
             all_text.extend(cap.text_chunks)
-            all_tool_calls.extend(cap.tool_calls)
-            all_tool_results.extend(cap.tool_results)
             if cap.final_status:
                 final_status = cap.final_status
+
+            for tc in cap.tool_calls:
+                tcid = tc.get("id", "")
+                name = tc.get("name", "unknown")
+                result = result_map.get(tcid, {})
+                content = result.get("content", "")
+                is_error = "error" in content.lower() if content else False
+                tool_records.append(
+                    ToolCallRecord(
+                        run_id=tcid,
+                        tool_name=name,
+                        tool_call_id=tcid,
+                        success=not is_error,
+                        error=content[:200] if is_error else None,
+                        args_summary=str(tc.get("args", ""))[:200],
+                        result_summary=content[:200] if content else "",
+                    )
+                )
+
+        # Extract token data from final status snapshot
+        llm_records: list[LLMCallRecord] = []
+        tokens = final_status.get("tokens", {})
+        total_tokens = tokens.get("total_tokens", 0)
+        if total_tokens > 0:
+            llm_records.append(
+                LLMCallRecord(
+                    run_id=thread_id,
+                    input_tokens=tokens.get("input_tokens", 0),
+                    output_tokens=tokens.get("output_tokens", 0),
+                    reasoning_tokens=tokens.get("reasoning_tokens", 0),
+                    cache_read_tokens=tokens.get("cache_read_tokens", 0),
+                    cache_write_tokens=tokens.get("cache_write_tokens", 0),
+                    total_tokens=total_tokens,
+                    cost_usd=tokens.get("total_cost_usd", 0.0),
+                )
+            )
 
         final_response = "".join(all_text)
         status = "completed"
@@ -136,6 +177,8 @@ class EvalRunner:
             thread_id=thread_id,
             user_message=user_message,
             final_response=final_response,
+            llm_calls=llm_records,
+            tool_calls=tool_records,
             started_at=started_at,
             finished_at=finished_at,
             status=status,
