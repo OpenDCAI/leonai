@@ -39,7 +39,7 @@ export default function CenteredInputBox({
   sandboxTypes,
   defaultSandbox = "local",
   defaultWorkspace,
-  defaultModel = "leon:medium",
+  defaultModel = "leon:large",
   recentWorkspaces = [],
   enabledModels = [],
   onSend,

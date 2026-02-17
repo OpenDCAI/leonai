@@ -25,6 +25,7 @@ interface Settings {
   enabled_models: string[];
   providers: Record<string, { api_key: string | null; base_url: string | null }>;
   default_workspace: string | null;
+  default_model: string;
 }
 
 type Tab = "model" | "sandbox";
@@ -165,6 +166,36 @@ export default function SettingsPage() {
           <div className="px-8 py-8 space-y-6">
             {tab === "model" && (
               <>
+                <div className="space-y-2">
+                  <h3 className="text-sm font-medium text-[#1e293b]">Default Model</h3>
+                  <p className="text-xs text-[#94a3b8]">新对话的默认虚拟模型</p>
+                  <div className="flex gap-2">
+                    {(["leon:mini", "leon:medium", "leon:large", "leon:max"] as const).map((id) => {
+                      const label = id.split(":")[1].charAt(0).toUpperCase() + id.split(":")[1].slice(1);
+                      const active = settings.default_model === id;
+                      return (
+                        <button
+                          key={id}
+                          onClick={async () => {
+                            setSettings({ ...settings, default_model: id });
+                            await fetch("http://127.0.0.1:8001/api/settings/default-model", {
+                              method: "POST",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({ model: id }),
+                            });
+                          }}
+                          className={`px-4 py-2 text-sm rounded-lg border transition-all ${
+                            active
+                              ? "bg-[#0ea5e9]/10 border-[#0ea5e9] text-[#0ea5e9] font-medium"
+                              : "border-[#e2e8f0] text-[#64748b] hover:border-[#94a3b8]"
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
                 <ModelMappingSection
                   virtualModels={availableModels.virtual_models}
                   availableModels={availableModels.models}
