@@ -40,10 +40,17 @@ async def get_or_create_agent(app_obj: FastAPI, sandbox_type: str, thread_id: st
     if pool_key in pool:
         return pool[pool_key]
 
-    # For local sandbox, check if thread has custom cwd
+    # For local sandbox, check if thread has custom cwd (memory → SQLite fallback)
     workspace_root = None
     if sandbox_type == "local":
         cwd = app_obj.state.thread_cwd.get(thread_id)
+        if not cwd:
+            from backend.web.utils.helpers import lookup_thread_metadata
+
+            meta = lookup_thread_metadata(thread_id)
+            if meta and meta[1]:
+                cwd = meta[1]
+                app_obj.state.thread_cwd[thread_id] = cwd
         if cwd:
             workspace_root = Path(cwd).resolve()
 
@@ -54,10 +61,18 @@ async def get_or_create_agent(app_obj: FastAPI, sandbox_type: str, thread_id: st
 
 
 def resolve_thread_sandbox(app_obj: FastAPI, thread_id: str) -> str:
-    """Look up sandbox type for a thread: memory cache → SQLite → default 'local'."""
+    """Look up sandbox type for a thread: memory cache → SQLite → sandbox DB → default 'local'."""
     mapping = app_obj.state.thread_sandbox
     if thread_id in mapping:
         return mapping[thread_id]
+    from backend.web.utils.helpers import lookup_thread_metadata
+
+    meta = lookup_thread_metadata(thread_id)
+    if meta:
+        mapping[thread_id] = meta[0]
+        if meta[1]:
+            app_obj.state.thread_cwd.setdefault(thread_id, meta[1])
+        return meta[0]
     detected = lookup_sandbox_for_thread(thread_id)
     if detected:
         mapping[thread_id] = detected
