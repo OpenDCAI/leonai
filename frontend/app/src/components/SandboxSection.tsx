@@ -1,10 +1,12 @@
-import { Eye, EyeOff } from "lucide-react";
+import { Eye, EyeOff, Folder, Check } from "lucide-react";
 import { useState } from "react";
 import { saveSandboxConfig } from "../api";
 
 interface SandboxSectionProps {
   sandboxes: Record<string, Record<string, unknown>>;
+  defaultWorkspace: string | null;
   onUpdate: (name: string, config: Record<string, unknown>) => void;
+  onWorkspaceChange: (workspace: string) => void;
 }
 
 interface FieldDef {
@@ -92,10 +94,40 @@ function setNestedValue(config: Record<string, unknown>, field: FieldDef, value:
   return updated;
 }
 
-export default function SandboxSection({ sandboxes, onUpdate }: SandboxSectionProps) {
+export default function SandboxSection({ sandboxes, defaultWorkspace, onUpdate, onWorkspaceChange }: SandboxSectionProps) {
   const [saving, setSaving] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});
+  const [workspacePath, setWorkspacePath] = useState(defaultWorkspace || "");
+  const [wsSaving, setWsSaving] = useState(false);
+  const [wsSuccess, setWsSuccess] = useState(false);
+  const [wsError, setWsError] = useState("");
+
+  const handleWorkspaceSave = async () => {
+    if (!workspacePath.trim()) return;
+    setWsSaving(true);
+    setWsError("");
+    try {
+      const res = await fetch("http://127.0.0.1:8001/api/settings/workspace", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workspace: workspacePath.trim() }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.detail || "Save failed");
+      }
+      const data = await res.json();
+      onWorkspaceChange(data.workspace);
+      setWorkspacePath(data.workspace);
+      setWsSuccess(true);
+      setTimeout(() => setWsSuccess(false), 2000);
+    } catch (err) {
+      setWsError(err instanceof Error ? err.message : "Save failed");
+    } finally {
+      setWsSaving(false);
+    }
+  };
 
   const handleSave = async (providerId: string, config: Record<string, unknown>) => {
     setSaving(providerId);
@@ -158,58 +190,107 @@ export default function SandboxSection({ sandboxes, onUpdate }: SandboxSectionPr
   };
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-3">
-        <div className="w-1 h-6 bg-gradient-to-b from-[#0ea5e9] to-[#0284c7] rounded-full" />
-        <h2 className="text-lg font-bold text-[#1e293b]" style={{ fontFamily: 'Inter, system-ui, sans-serif' }}>
-          Sandbox Providers
-        </h2>
+    <div className="space-y-6">
+      {/* Default Local Folder Path */}
+      <div className="space-y-4">
+        <div className="flex items-center gap-3">
+          <div className="w-1 h-6 bg-gradient-to-b from-[#0ea5e9] to-[#0284c7] rounded-full" />
+          <h2 className="text-lg font-bold text-[#1e293b]" style={{ fontFamily: 'Inter, system-ui, sans-serif' }}>
+            Default Local Folder
+          </h2>
+        </div>
+
+        <div className="border border-[#e2e8f0] rounded-xl p-5 bg-white hover:border-[#0ea5e9] hover:shadow-lg hover:shadow-[#0ea5e9]/10 transition-all duration-300 space-y-3">
+          <label className="text-xs font-medium text-[#64748b]">Workspace Path</label>
+          <div className="flex gap-2">
+            <div className="relative flex-1">
+              <Folder className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#94a3b8]" />
+              <input
+                type="text"
+                value={workspacePath}
+                onChange={(e) => { setWorkspacePath(e.target.value); setWsError(""); }}
+                placeholder="~/Projects or /Users/username/workspace"
+                className="w-full pl-9 pr-3 py-2 border border-[#e2e8f0] rounded-lg text-sm text-[#1e293b] bg-[#f8fafc] font-mono hover:border-[#0ea5e9] focus:outline-none focus:border-[#0ea5e9] focus:ring-2 focus:ring-[#0ea5e9]/20 transition-all duration-200"
+                onKeyDown={(e) => { if (e.key === "Enter") void handleWorkspaceSave(); }}
+              />
+            </div>
+            <button
+              onClick={() => void handleWorkspaceSave()}
+              disabled={wsSaving || !workspacePath.trim()}
+              className="px-4 py-2 bg-[#0ea5e9] text-white text-sm font-medium rounded-lg hover:bg-[#0284c7] disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 shrink-0"
+            >
+              {wsSaving ? "Saving..." : "Save"}
+            </button>
+          </div>
+          {wsSuccess && (
+            <div className="flex items-center gap-2 text-xs text-[#10b981] font-medium animate-fadeIn">
+              <Check className="w-4 h-4" />
+              <span>Saved</span>
+            </div>
+          )}
+          {wsError && (
+            <p className="text-xs text-red-500">{wsError}</p>
+          )}
+          <p className="text-xs text-[#94a3b8]">
+            Default folder for local agent execution. Use ~ for home directory.
+          </p>
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {SANDBOX_PROVIDERS.map((provider, index) => {
-          const config = (sandboxes[provider.id] || {}) as Record<string, unknown>;
-          const isSaving = saving === provider.id;
+      {/* Sandbox Providers */}
+      <div className="space-y-4">
+        <div className="flex items-center gap-3">
+          <div className="w-1 h-6 bg-gradient-to-b from-[#0ea5e9] to-[#0284c7] rounded-full" />
+          <h2 className="text-lg font-bold text-[#1e293b]" style={{ fontFamily: 'Inter, system-ui, sans-serif' }}>
+            Sandbox Providers
+          </h2>
+        </div>
 
-          return (
-            <div
-              key={provider.id}
-              className="border border-[#e2e8f0] rounded-xl p-5 bg-white hover:border-[#0ea5e9] hover:shadow-lg hover:shadow-[#0ea5e9]/10 transition-all duration-300 space-y-4"
-              style={{ animation: `fadeInUp 0.5s ease-out ${index * 0.1}s both` }}
-            >
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-bold text-[#1e293b]" style={{ fontFamily: 'Inter, system-ui, sans-serif' }}>
-                  {provider.name}
-                </h3>
-                {isSaving && (
-                  <span className="text-xs text-[#0ea5e9] font-medium animate-pulse">Saving...</span>
-                )}
-                {successMessage === provider.id && !isSaving && (
-                  <div className="flex items-center gap-2 px-3 py-1.5 bg-[#10b981]/10 rounded-full animate-fadeIn">
-                    <svg className="w-4 h-4 text-[#10b981]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                    </svg>
-                    <span className="text-xs text-[#10b981] font-medium">Saved</span>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {SANDBOX_PROVIDERS.map((provider, index) => {
+            const config = (sandboxes[provider.id] || {}) as Record<string, unknown>;
+            const isSaving = saving === provider.id;
+
+            return (
+              <div
+                key={provider.id}
+                className="border border-[#e2e8f0] rounded-xl p-5 bg-white hover:border-[#0ea5e9] hover:shadow-lg hover:shadow-[#0ea5e9]/10 transition-all duration-300 space-y-4"
+                style={{ animation: `fadeInUp 0.5s ease-out ${index * 0.1}s both` }}
+              >
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-bold text-[#1e293b]" style={{ fontFamily: 'Inter, system-ui, sans-serif' }}>
+                    {provider.name}
+                  </h3>
+                  {isSaving && (
+                    <span className="text-xs text-[#0ea5e9] font-medium animate-pulse">Saving...</span>
+                  )}
+                  {successMessage === provider.id && !isSaving && (
+                    <div className="flex items-center gap-2 px-3 py-1.5 bg-[#10b981]/10 rounded-full animate-fadeIn">
+                      <svg className="w-4 h-4 text-[#10b981]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                      </svg>
+                      <span className="text-xs text-[#10b981] font-medium">Saved</span>
+                    </div>
+                  )}
+                </div>
+
+                {provider.fields.map((field) => (
+                  <div key={field.key} className="space-y-1">
+                    <label className="text-xs font-medium text-[#64748b]">{field.label}</label>
+                    {renderField(provider.id, field, config)}
                   </div>
-                )}
+                ))}
+
+                {COMMON_FIELDS.map((field) => (
+                  <div key={field.key} className="space-y-1">
+                    <label className="text-xs font-medium text-[#64748b]">{field.label}</label>
+                    {renderField(provider.id, field, config)}
+                  </div>
+                ))}
               </div>
-
-              {provider.fields.map((field) => (
-                <div key={field.key} className="space-y-1">
-                  <label className="text-xs font-medium text-[#64748b]">{field.label}</label>
-                  {renderField(provider.id, field, config)}
-                </div>
-              ))}
-
-              {COMMON_FIELDS.map((field) => (
-                <div key={field.key} className="space-y-1">
-                  <label className="text-xs font-medium text-[#64748b]">{field.label}</label>
-                  {renderField(provider.id, field, config)}
-                </div>
-              ))}
-            </div>
-          );
-        })}
+            );
+          })}
+        </div>
       </div>
 
       <style>{`
