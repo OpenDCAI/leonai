@@ -68,13 +68,35 @@ class ConfigLoader:
             project_config.get("api", {}),
         )
 
-        # Load API credentials from environment if not in config
-        # Priority: ANTHROPIC > OPENAI > OPENROUTER
-        # Track which provider's env var was used to auto-detect provider
+        # Load API credentials: providers.json > env vars > .env
+        # Priority: config.json api_key > providers.json > env vars
         provider_from_env = None
 
         if not merged_api.get("api_key"):
-            # Check in priority order
+            # Try ~/.leon/providers.json first
+            providers_data = self._load_providers_json()
+            model_provider = merged_api.get("model_provider", "")
+
+            if model_provider and model_provider in providers_data:
+                p = providers_data[model_provider]
+                if p.get("api_key"):
+                    merged_api["api_key"] = p["api_key"]
+                    provider_from_env = model_provider
+                    if p.get("base_url") and not merged_api.get("base_url"):
+                        merged_api["base_url"] = p["base_url"]
+            else:
+                # No model_provider specified, try in priority order
+                for pname in ("anthropic", "openai"):
+                    p = providers_data.get(pname, {})
+                    if p.get("api_key"):
+                        merged_api["api_key"] = p["api_key"]
+                        provider_from_env = pname
+                        if p.get("base_url") and not merged_api.get("base_url"):
+                            merged_api["base_url"] = p["base_url"]
+                        break
+
+        if not merged_api.get("api_key"):
+            # Fall back to environment variables
             if os.getenv("ANTHROPIC_API_KEY"):
                 merged_api["api_key"] = os.getenv("ANTHROPIC_API_KEY")
                 provider_from_env = "anthropic"
@@ -182,6 +204,22 @@ class ConfigLoader:
 
         with open(project_config_path) as f:
             return json.load(f)
+
+    def _load_providers_json(self) -> dict[str, Any]:
+        """Load provider credentials from ~/.leon/providers.json.
+
+        Returns:
+            Dict of provider_name -> {api_key, base_url}
+        """
+        providers_path = Path.home() / ".leon" / "providers.json"
+        if not providers_path.exists():
+            return {}
+        try:
+            with open(providers_path) as f:
+                data = json.load(f)
+            return data.get("providers", {})
+        except Exception:
+            return {}
 
     def _deep_merge(self, *dicts: dict[str, Any]) -> dict[str, Any]:
         """Deep merge multiple dictionaries.
