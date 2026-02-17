@@ -64,6 +64,35 @@ def extract_webhook_instance_id(payload: dict[str, Any]) -> str | None:
     return None
 
 
+def save_thread_metadata(thread_id: str, sandbox_type: str, cwd: str | None) -> None:
+    """Persist thread sandbox_type and cwd to SQLite."""
+    with sqlite3.connect(str(DB_PATH)) as conn:
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS thread_metadata"
+            "(thread_id TEXT PRIMARY KEY, sandbox_type TEXT NOT NULL, cwd TEXT)"
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO thread_metadata (thread_id, sandbox_type, cwd) VALUES (?, ?, ?)",
+            (thread_id, sandbox_type, cwd),
+        )
+        conn.commit()
+
+
+def lookup_thread_metadata(thread_id: str) -> tuple[str, str | None] | None:
+    """Look up persisted (sandbox_type, cwd) for a thread. Returns None if not found."""
+    if not DB_PATH.exists():
+        return None
+    try:
+        with sqlite3.connect(str(DB_PATH)) as conn:
+            row = conn.execute(
+                "SELECT sandbox_type, cwd FROM thread_metadata WHERE thread_id = ?",
+                (thread_id,),
+            ).fetchone()
+            return (row[0], row[1]) if row else None
+    except sqlite3.OperationalError:
+        return None
+
+
 def resolve_local_workspace_path(
     raw_path: str | None,
     thread_id: str | None = None,
@@ -76,15 +105,16 @@ def resolve_local_workspace_path(
     if local_workspace_root is None:
         local_workspace_root = LOCAL_WORKSPACE_ROOT
 
-    # Use thread-specific workspace root if available
-    if thread_id and thread_cwd_map:
-        thread_cwd = thread_cwd_map.get(thread_id)
-        if thread_cwd:
-            base = Path(thread_cwd).resolve()
-        else:
-            base = local_workspace_root
-    else:
-        base = local_workspace_root
+    # Use thread-specific workspace root if available (memory → SQLite fallback)
+    thread_cwd = None
+    if thread_id:
+        if thread_cwd_map:
+            thread_cwd = thread_cwd_map.get(thread_id)
+        if not thread_cwd:
+            meta = lookup_thread_metadata(thread_id)
+            if meta:
+                thread_cwd = meta[1]
+    base = Path(thread_cwd).resolve() if thread_cwd else local_workspace_root
 
     if not raw_path:
         return base
