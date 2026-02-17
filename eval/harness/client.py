@@ -19,7 +19,7 @@ class EvalClient:
 
     def __init__(self, base_url: str = "http://localhost:8001"):
         self.base_url = base_url.rstrip("/")
-        self._client = httpx.AsyncClient(base_url=self.base_url, timeout=300.0)
+        self._client = httpx.AsyncClient(base_url=self.base_url, timeout=300.0, proxy=None)
 
     async def create_thread(self, sandbox: str = "local", cwd: str | None = None) -> str:
         """Create a new thread. Returns thread_id."""
@@ -59,6 +59,8 @@ class EvalClient:
                 elif line == "" and event_type and data_buf:
                     # End of SSE event
                     self._process_event(capture, event_type, data_buf)
+                    if event_type in ("done", "cancelled", "error"):
+                        break
                     event_type = ""
                     data_buf = ""
 

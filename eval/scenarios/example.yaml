@@ -1,7 +1,7 @@
 id: file_ops_basic
 name: "基础文件操作"
 category: file_ops
-timeout_seconds: 120
+timeout_seconds: 300
 sandbox: local
 messages:
   - content: "在 /tmp/eval_test/ 创建一个 hello.py，包含一个 hello() 函数，返回 'Hello, World!'"
