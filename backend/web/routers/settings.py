@@ -323,6 +323,58 @@ async def add_custom_model(request: CustomModelRequest) -> dict[str, Any]:
     return {"success": True, "custom_models": custom, "enabled_models": enabled}
 
 
+class ModelTestRequest(BaseModel):
+    model_id: str
+
+
+@router.post("/models/test")
+async def test_model(request: ModelTestRequest) -> dict[str, Any]:
+    """Test if a model is reachable by sending a minimal request."""
+    import asyncio
+
+    mc = load_merged_models()
+
+    # Resolve virtual model
+    resolved, overrides = mc.resolve_model(request.model_id)
+    provider_name = overrides.get("model_provider") or mc.active.provider
+
+    # Get credentials from specific provider, fallback to any available
+    p = mc.get_provider(provider_name) if provider_name else None
+    api_key = (p.api_key if p else None) or mc.get_api_key()
+    if not api_key:
+        return {"success": False, "error": "No API key configured"}
+
+    base_url = (p.base_url if p else None) or mc.get_base_url()
+    model_provider = provider_name or mc.get_model_provider()
+
+    try:
+        from langchain.chat_models import init_chat_model
+
+        from core.model_params import normalize_model_kwargs
+
+        kwargs: dict[str, Any] = {}
+        if model_provider:
+            kwargs["model_provider"] = model_provider
+        if base_url:
+            url = base_url.rstrip("/")
+            if url.endswith("/v1"):
+                url = url[:-3]
+            if model_provider != "anthropic":
+                url = f"{url}/v1"
+            kwargs["base_url"] = url
+
+        kwargs = normalize_model_kwargs(resolved, kwargs)
+        model = init_chat_model(resolved, api_key=api_key, **kwargs)
+
+        response = await asyncio.wait_for(model.ainvoke("hi"), timeout=15)
+        content = response.content if hasattr(response, "content") else str(response)
+        return {"success": True, "model": resolved, "response": content[:100]}
+    except TimeoutError:
+        return {"success": False, "error": "Request timed out (15s)"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
 @router.delete("/models/custom")
 async def remove_custom_model(request: CustomModelRequest) -> dict[str, Any]:
     """Remove a custom model from models.json pool.custom."""
