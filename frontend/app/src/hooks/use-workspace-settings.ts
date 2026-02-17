@@ -4,6 +4,7 @@ export interface UserSettings {
   default_workspace: string | null;
   recent_workspaces: string[];
   active_model: string | null;
+  enabled_models: string[];
 }
 
 export function useWorkspaceSettings() {
