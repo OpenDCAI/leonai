@@ -67,11 +67,11 @@ export default function SettingsPage() {
     void loadData();
   }, []);
 
-  const handleAddCustomModel = async (modelId: string) => {
+  const handleAddCustomModel = async (modelId: string, provider?: string) => {
     const res = await fetch("http://127.0.0.1:8001/api/settings/models/custom", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model_id: modelId }),
+      body: JSON.stringify({ model_id: modelId, provider: provider || null }),
     });
     const data = await res.json();
     if (data.success) {
@@ -175,6 +175,7 @@ export default function SettingsPage() {
                 <ModelPoolSection
                   models={availableModels.models}
                   enabledModels={settings.enabled_models}
+                  providers={settings.providers}
                   onToggle={(modelId, enabled) => {
                     const newEnabled = enabled
                       ? [...settings.enabled_models, modelId]

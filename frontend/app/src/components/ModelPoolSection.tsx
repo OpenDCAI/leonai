@@ -10,17 +10,19 @@ interface Model {
 interface ModelPoolSectionProps {
   models: Model[];
   enabledModels: string[];
+  providers: Record<string, { api_key: string | null; base_url: string | null }>;
   onToggle: (modelId: string, enabled: boolean) => void;
-  onAddCustomModel: (modelId: string) => Promise<void>;
+  onAddCustomModel: (modelId: string, provider?: string) => Promise<void>;
 }
 
-export default function ModelPoolSection({ models, enabledModels, onToggle, onAddCustomModel }: ModelPoolSectionProps) {
+export default function ModelPoolSection({ models, enabledModels, providers, onToggle, onAddCustomModel }: ModelPoolSectionProps) {
   const [toggling, setToggling] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [testStatus, setTestStatus] = useState<Record<string, "idle" | "testing" | "ok" | "fail">>({});
   const [testError, setTestError] = useState<Record<string, string>>({});
+  const [selectedProvider, setSelectedProvider] = useState("");
 
   const handleToggle = async (modelId: string, enabled: boolean) => {
     setToggling(modelId);
@@ -196,26 +198,39 @@ export default function ModelPoolSection({ models, enabledModels, onToggle, onAd
         <div className="text-center py-12 px-4">
           <p className="text-sm font-medium text-[#64748b] mb-1">No models found for "{searchQuery}"</p>
           <p className="text-xs text-[#94a3b8] mb-4">You can add it as a custom model</p>
-          <button
-            onClick={async () => {
-              setAdding(true);
-              try {
-                await onAddCustomModel(searchQuery.trim());
-                setSearchQuery("");
-                setSuccessMessage("Model added");
-                setTimeout(() => setSuccessMessage(null), 2000);
-              } catch (e) {
-                console.error("Failed to add custom model:", e);
-              } finally {
-                setAdding(false);
-              }
-            }}
-            disabled={adding}
-            className="px-4 py-2 text-sm font-medium text-white rounded-lg transition-all duration-200 hover:opacity-90 disabled:opacity-50"
-            style={{ backgroundColor: '#0ea5e9' }}
-          >
-            {adding ? "Adding..." : `Add "${searchQuery.trim()}" to pool`}
-          </button>
+          <div className="flex items-center justify-center gap-2 mb-3">
+            <select
+              value={selectedProvider}
+              onChange={(e) => setSelectedProvider(e.target.value)}
+              className="h-9 px-3 text-sm border-2 border-[#e2e8f0] rounded-lg bg-white text-[#1e293b] focus:outline-none focus:border-[#0ea5e9]"
+            >
+              <option value="">Auto-detect provider</option>
+              {Object.keys(providers).map((p) => (
+                <option key={p} value={p}>{p}</option>
+              ))}
+            </select>
+            <button
+              onClick={async () => {
+                setAdding(true);
+                try {
+                  await onAddCustomModel(searchQuery.trim(), selectedProvider || undefined);
+                  setSearchQuery("");
+                  setSelectedProvider("");
+                  setSuccessMessage("Model added");
+                  setTimeout(() => setSuccessMessage(null), 2000);
+                } catch (e) {
+                  console.error("Failed to add custom model:", e);
+                } finally {
+                  setAdding(false);
+                }
+              }}
+              disabled={adding}
+              className="px-4 py-2 text-sm font-medium text-white rounded-lg transition-all duration-200 hover:opacity-90 disabled:opacity-50"
+              style={{ backgroundColor: '#0ea5e9' }}
+            >
+              {adding ? "Adding..." : `Add "${searchQuery.trim()}" to pool`}
+            </button>
+          </div>
         </div>
       )}
 
