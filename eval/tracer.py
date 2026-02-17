@@ -90,7 +90,7 @@ class TrajectoryTracer(BaseTracer):
         if n == 0:
             return
 
-        model_name = getattr(getattr(runtime, "_model_name", None), None, "")
+        model_name = getattr(runtime, "_model_name", "")
         if not model_name:
             # Try to get from config
             model_name = ""
