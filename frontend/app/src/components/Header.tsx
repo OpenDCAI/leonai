@@ -1,6 +1,5 @@
 import { Monitor, PanelLeft, Pause, Play } from "lucide-react";
 import type { SandboxInfo } from "../api";
-import SettingsPanel from "./SettingsPanel";
 import ModelSelector from "./ModelSelector";
 
 const sandboxTypeLabels: Record<string, string> = {
@@ -15,12 +14,10 @@ interface HeaderProps {
   activeThreadId: string | null;
   threadPreview: string | null;
   sandboxInfo: SandboxInfo | null;
-  queueEnabled: boolean;
   currentModel?: string;
   onToggleSidebar: () => void;
   onPauseSandbox: () => void;
   onResumeSandbox: () => void;
-  onToggleQueue: () => void;
   onModelChange?: (model: string) => void;
 }
 
@@ -28,12 +25,10 @@ export default function Header({
   activeThreadId,
   threadPreview,
   sandboxInfo,
-  queueEnabled,
   currentModel = "leon:medium",
   onToggleSidebar,
   onPauseSandbox,
   onResumeSandbox,
-  onToggleQueue,
   onModelChange,
 }: HeaderProps) {
   const hasRemote = sandboxInfo && sandboxInfo.type !== "local";
@@ -112,8 +107,6 @@ export default function Header({
             恢复
           </button>
         )}
-
-        <SettingsPanel queueEnabled={queueEnabled} onToggleQueue={onToggleQueue} />
       </div>
     </header>
   );
