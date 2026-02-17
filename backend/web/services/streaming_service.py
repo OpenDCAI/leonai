@@ -114,6 +114,7 @@ async def stream_agent_execution(
     thread_id: str,
     message: str,
     app: Any,
+    enable_trajectory: bool = False,
 ) -> AsyncGenerator[dict[str, str], None]:
     """Stream agent execution with SSE events.
 
@@ -132,6 +133,26 @@ async def stream_agent_execution(
     try:
         config = {"configurable": {"thread_id": thread_id}}
         set_current_thread_id(thread_id)
+
+        # Trajectory tracing (eval system)
+        tracer = None
+        if enable_trajectory:
+            try:
+                from eval.tracer import TrajectoryTracer
+
+                cost_calc = getattr(
+                    getattr(getattr(agent, "runtime", None), "token", None),
+                    "cost_calculator",
+                    None,
+                )
+                tracer = TrajectoryTracer(
+                    thread_id=thread_id,
+                    user_message=message,
+                    cost_calculator=cost_calc,
+                )
+                config["callbacks"] = [tracer]
+            except ImportError:
+                pass
 
         # Prime session before tool calls so lazy capability wrappers never race thread context propagation
         if hasattr(agent, "_sandbox"):
@@ -274,6 +295,19 @@ async def stream_agent_execution(
                 "event": "status",
                 "data": json.dumps(agent.runtime.get_status_dict(), ensure_ascii=False),
             }
+        # Persist trajectory if tracing was enabled
+        if tracer is not None:
+            try:
+                from eval.storage import TrajectoryStore
+
+                trajectory = tracer.to_trajectory()
+                store = TrajectoryStore()
+                store.save_trajectory(trajectory)
+            except Exception:
+                import traceback
+
+                traceback.print_exc()
+
         yield {"event": "done", "data": json.dumps({"thread_id": thread_id})}
     except asyncio.CancelledError:
         # Write cancellation markers to checkpoint for pending tool calls
