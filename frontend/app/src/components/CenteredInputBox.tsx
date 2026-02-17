@@ -1,4 +1,4 @@
-import { Folder, Send } from "lucide-react";
+import { ChevronDown, Folder, Send } from "lucide-react";
 import { useState } from "react";
 import type { SandboxType } from "../api";
 import { Button } from "./ui/button";
@@ -24,6 +24,7 @@ interface CenteredInputBoxProps {
   defaultWorkspace?: string;
   defaultModel?: string;
   recentWorkspaces?: string[];
+  enabledModels?: string[];
   onSend: (message: string, sandbox: string, model: string, workspace?: string) => Promise<void>;
 }
 
@@ -40,6 +41,7 @@ export default function CenteredInputBox({
   defaultWorkspace,
   defaultModel = "leon:medium",
   recentWorkspaces = [],
+  enabledModels = [],
   onSend,
 }: CenteredInputBoxProps) {
   const [message, setMessage] = useState("");
@@ -49,6 +51,10 @@ export default function CenteredInputBox({
   const [customWorkspace, setCustomWorkspace] = useState("");
   const [sending, setSending] = useState(false);
   const [workspacePopoverOpen, setWorkspacePopoverOpen] = useState(false);
+  const [modelPopoverOpen, setModelPopoverOpen] = useState(false);
+  const [showCustomModels, setShowCustomModels] = useState(
+    () => !MODELS.some((m) => m.value === defaultModel) && !!defaultModel
+  );
 
   const isLocalSandbox = sandbox === "local";
 
@@ -216,21 +222,44 @@ export default function CenteredInputBox({
             </Popover>
           )}
 
-          <Select value={model} onValueChange={setModel}>
-            <SelectTrigger className="w-[200px] h-9 text-sm">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
+          <Popover open={modelPopoverOpen} onOpenChange={setModelPopoverOpen}>
+            <PopoverTrigger asChild>
+              <button className="h-9 px-3 text-sm border rounded-md flex items-center gap-2 max-w-[200px] hover:bg-accent">
+                <span className="truncate">{MODELS.find((m) => m.value === model)?.label || model}</span>
+                <ChevronDown className="h-4 w-4 shrink-0 opacity-50" />
+              </button>
+            </PopoverTrigger>
+            <PopoverContent className="w-[220px] p-1" align="start">
               {MODELS.map((m) => (
-                <SelectItem key={m.value} value={m.value}>
+                <button
+                  key={m.value}
+                  onClick={() => { setModel(m.value); setModelPopoverOpen(false); }}
+                  className={`w-full text-left px-3 py-1.5 text-sm rounded-md ${model === m.value ? "bg-accent font-medium" : "hover:bg-accent/50"}`}
+                >
                   {m.label}
-                </SelectItem>
+                </button>
               ))}
-              {!MODELS.some((m) => m.value === model) && model && (
-                <SelectItem value={model}>{model}</SelectItem>
-              )}
-            </SelectContent>
-          </Select>
+              <div className="border-t my-1" />
+              <div className="flex items-center justify-between px-3 py-1.5">
+                <span className="text-sm text-muted-foreground">Custom</span>
+                <button
+                  onClick={() => setShowCustomModels(!showCustomModels)}
+                  className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${showCustomModels ? "bg-primary" : "bg-muted"}`}
+                >
+                  <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform ${showCustomModels ? "translate-x-4" : "translate-x-0.5"}`} />
+                </button>
+              </div>
+              {showCustomModels && enabledModels.map((id) => (
+                <button
+                  key={id}
+                  onClick={() => { setModel(id); setModelPopoverOpen(false); }}
+                  className={`w-full text-left px-3 py-1.5 text-sm rounded-md truncate ${model === id ? "bg-accent font-medium" : "hover:bg-accent/50"}`}
+                >
+                  {id}
+                </button>
+              ))}
+            </PopoverContent>
+          </Popover>
 
           <div className="flex-1" />
 

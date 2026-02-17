@@ -79,6 +79,7 @@ export default function NewChatPage() {
           defaultWorkspace={settings?.default_workspace || undefined}
           defaultModel={settings?.active_model || "leon:medium"}
           recentWorkspaces={settings?.recent_workspaces || []}
+          enabledModels={settings?.enabled_models || []}
           onSend={handleSend}
         />
       </div>
