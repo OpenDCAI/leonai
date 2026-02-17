@@ -26,16 +26,21 @@ export default function ChatPage() {
   const location = useLocation();
   const { tm, setSidebarCollapsed } = useOutletContext<OutletContext>();
   const initialMessageSent = useRef(false);
-  const [currentModel, setCurrentModel] = useState<string>("leon:medium");
+  const [currentModel, setCurrentModel] = useState<string>("");
 
   // Check if we have an initial message to send
   const state = location.state as { initialMessage?: string; selectedModel?: string } | null;
   const hasInitialMessage = !!state?.initialMessage;
 
-  // Set initial model from location state if provided
+  // Set initial model from location state or fetch from API
   useEffect(() => {
     if (state?.selectedModel) {
       setCurrentModel(state.selectedModel);
+    } else if (!currentModel) {
+      fetch("http://127.0.0.1:8001/api/settings")
+        .then((r) => r.json())
+        .then((d) => setCurrentModel(d.active_model || "leon:medium"))
+        .catch(() => setCurrentModel("leon:medium"));
     }
   }, [state?.selectedModel]);
 

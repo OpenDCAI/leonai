@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 export interface UserSettings {
   default_workspace: string | null;
   recent_workspaces: string[];
+  active_model: string | null;
 }
 
 export function useWorkspaceSettings() {
