@@ -24,6 +24,7 @@ interface Settings {
   model_mapping: Record<string, string>;
   enabled_models: string[];
   providers: Record<string, { api_key: string | null; base_url: string | null }>;
+  default_workspace: string | null;
 }
 
 type Tab = "model" | "sandbox";
@@ -197,9 +198,11 @@ export default function SettingsPage() {
             {tab === "sandbox" && (
               <SandboxSection
                 sandboxes={sandboxes}
+                defaultWorkspace={settings.default_workspace}
                 onUpdate={(name, config) => {
                   setSandboxes({ ...sandboxes, [name]: config });
                 }}
+                onWorkspaceChange={(ws) => setSettings({ ...settings, default_workspace: ws })}
               />
             )}
           </div>
