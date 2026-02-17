@@ -74,6 +74,48 @@ class TrajectoryTracer(BaseTracer):
             status="completed",
         )
 
+    def enrich_from_runtime(self, trajectory: RunTrajectory, runtime: Any) -> None:
+        """Enrich trajectory with token data from MonitorMiddleware runtime.
+
+        Streaming mode doesn't populate Run.outputs with usage_metadata,
+        so we distribute runtime aggregate tokens evenly across LLM calls.
+        """
+        if not runtime or not hasattr(runtime, "token"):
+            return
+        token = runtime.token
+        if token.total_tokens == 0:
+            return
+
+        n = len(trajectory.llm_calls)
+        if n == 0:
+            return
+
+        model_name = getattr(getattr(runtime, "_model_name", None), None, "")
+        if not model_name:
+            # Try to get from config
+            model_name = ""
+
+        per_call_input = token.input_tokens // n
+        per_call_output = token.output_tokens // n
+        per_call_total = token.total_tokens // n
+        per_call_reasoning = token.reasoning_tokens // n
+        per_call_cache_read = token.cache_read_tokens // n
+        per_call_cache_write = token.cache_write_tokens // n
+
+        cost_per_call = 0.0
+        if token.cost_calculator:
+            total_cost = float(token.get_cost().get("total", 0))
+            cost_per_call = total_cost / n
+
+        for call in trajectory.llm_calls:
+            call.input_tokens = per_call_input
+            call.output_tokens = per_call_output
+            call.total_tokens = per_call_total
+            call.reasoning_tokens = per_call_reasoning
+            call.cache_read_tokens = per_call_cache_read
+            call.cache_write_tokens = per_call_cache_write
+            call.cost_usd = cost_per_call
+
     def _walk_run_tree(
         self,
         run: Run,
@@ -81,7 +123,7 @@ class TrajectoryTracer(BaseTracer):
         tool_calls: list,
     ) -> None:
         """Recursively walk Run tree, extracting LLM and tool call records."""
-        if run.run_type == "chat_model":
+        if run.run_type in ("chat_model", "llm"):
             record = self._extract_llm_record(run)
             if record:
                 llm_calls.append(record)
@@ -130,6 +172,18 @@ class TrajectoryTracer(BaseTracer):
 
                     resp_meta = getattr(message, "response_metadata", {}) or {}
                     model_name = resp_meta.get("model_name", "") or resp_meta.get("model", "") or ""
+
+            # Fallback: extract from llm_output (OpenAI format)
+            if total_tokens == 0:
+                llm_output = run.outputs.get("llm_output") or {}
+                token_usage = llm_output.get("token_usage") or {}
+                if token_usage:
+                    input_tokens = token_usage.get("prompt_tokens", 0) or 0
+                    output_tokens = token_usage.get("completion_tokens", 0) or 0
+                    total_tokens = token_usage.get("total_tokens", 0) or 0
+                    reasoning_tokens = token_usage.get("reasoning_tokens", 0) or 0
+                if not model_name:
+                    model_name = llm_output.get("model_name", "") or ""
 
         if self.cost_calculator and total_tokens > 0:
             token_dict = {

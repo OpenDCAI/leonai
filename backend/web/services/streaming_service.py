@@ -301,6 +301,8 @@ async def stream_agent_execution(
                 from eval.storage import TrajectoryStore
 
                 trajectory = tracer.to_trajectory()
+                if hasattr(agent, "runtime"):
+                    tracer.enrich_from_runtime(trajectory, agent.runtime)
                 store = TrajectoryStore()
                 store.save_trajectory(trajectory)
             except Exception:
