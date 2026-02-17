@@ -396,13 +396,20 @@ async def test_model(request: ModelTestRequest) -> dict[str, Any]:
 
 @router.delete("/models/custom")
 async def remove_custom_model(model_id: str = Query(...)) -> dict[str, Any]:
-    """Remove a custom model from models.json pool.custom."""
+    """Remove a custom model from models.json pool.custom + pool.enabled."""
     data = load_models()
     pool = data.setdefault("pool", {"enabled": [], "custom": []})
     custom = pool.setdefault("custom", [])
+    enabled = pool.setdefault("enabled", [])
 
     if model_id in custom:
         custom.remove(model_id)
+    if model_id in enabled:
+        enabled.remove(model_id)
+
+    # Clean up custom_providers
+    custom_providers = pool.get("custom_providers", {})
+    custom_providers.pop(model_id, None)
 
     save_models(data)
     return {"success": True, "custom_models": custom}
