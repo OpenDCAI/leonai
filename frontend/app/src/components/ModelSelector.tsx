@@ -29,8 +29,10 @@ export default function ModelSelector({
   const [isOpen, setIsOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [customModel, setCustomModel] = useState("");
-  const [showCustomInput, setShowCustomInput] = useState(false);
+  const [showCustomModels, setShowCustomModels] = useState(
+    () => !VIRTUAL_MODELS.some((m) => m.id === currentModel) && !!currentModel
+  );
+  const [enabledModels, setEnabledModels] = useState<string[]>([]);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   // Close dropdown on outside click
@@ -39,11 +41,19 @@ export default function ModelSelector({
     const handler = (e: MouseEvent) => {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
         setIsOpen(false);
-        setShowCustomInput(false);
       }
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
+  }, [isOpen]);
+
+  // Fetch enabled models when dropdown opens
+  useEffect(() => {
+    if (!isOpen) return;
+    fetch("http://127.0.0.1:8001/api/settings")
+      .then((r) => r.json())
+      .then((d) => setEnabledModels(d.enabled_models || []))
+      .catch(() => {});
   }, [isOpen]);
 
   async function handleModelSelect(model: string) {
@@ -65,18 +75,10 @@ export default function ModelSelector({
       const result = await response.json();
       onModelChange?.(result.model || model);
       setIsOpen(false);
-      setShowCustomInput(false);
-      setCustomModel("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to update model");
     } finally {
       setLoading(false);
-    }
-  }
-
-  function handleCustomModelSubmit() {
-    if (customModel.trim()) {
-      handleModelSelect(customModel.trim());
     }
   }
 
@@ -99,84 +101,50 @@ export default function ModelSelector({
       </button>
 
       {isOpen && (
-        <div className="absolute right-0 top-10 w-80 bg-white rounded-xl border border-[#e5e5e5] shadow-lg z-50 py-2">
-          {/* Virtual Models */}
-          <div className="px-4 py-2">
-            <div className="text-xs font-medium text-[#a3a3a3] uppercase tracking-wider mb-2">
-              预设模型
-            </div>
-            <div className="space-y-1">
-              {VIRTUAL_MODELS.map((model) => (
-                <button
-                  key={model.id}
-                  onClick={() => handleModelSelect(model.id)}
-                  disabled={loading}
-                  className="w-full flex items-center justify-between py-2 px-2 hover:bg-[#f5f5f5] rounded-lg disabled:opacity-50 disabled:cursor-not-allowed group"
-                >
-                  <div className="text-left flex-1">
-                    <div className="text-sm text-[#171717] font-medium">{model.name}</div>
-                    <div className="text-[11px] text-[#a3a3a3] mt-0.5">{model.description}</div>
-                  </div>
-                  {currentModel === model.id && (
-                    <Check className="w-4 h-4 text-amber-500 flex-shrink-0 ml-2" />
-                  )}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Custom Model Input */}
-          <div className="border-t border-[#e5e5e5] mt-2 pt-2 px-4 py-2">
-            {!showCustomInput ? (
-              <button
-                onClick={() => setShowCustomInput(true)}
-                className="w-full text-left text-sm text-[#525252] hover:text-[#171717] py-2 px-2 hover:bg-[#f5f5f5] rounded-lg"
-              >
-                自定义模型...
-              </button>
-            ) : (
-              <div className="space-y-2">
-                <input
-                  type="text"
-                  value={customModel}
-                  onChange={(e) => setCustomModel(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      handleCustomModelSubmit();
-                    } else if (e.key === "Escape") {
-                      setShowCustomInput(false);
-                      setCustomModel("");
-                    }
-                  }}
-                  placeholder="输入模型名称 (如 gpt-4)"
-                  className="w-full px-3 py-2 text-sm border border-[#e5e5e5] rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent"
-                  autoFocus
-                />
-                <div className="flex gap-2">
-                  <button
-                    onClick={handleCustomModelSubmit}
-                    disabled={!customModel.trim() || loading}
-                    className="flex-1 px-3 py-1.5 text-sm bg-amber-400 text-white rounded-lg hover:bg-amber-500 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    确认
-                  </button>
-                  <button
-                    onClick={() => {
-                      setShowCustomInput(false);
-                      setCustomModel("");
-                    }}
-                    className="px-3 py-1.5 text-sm border border-[#e5e5e5] rounded-lg hover:bg-[#f5f5f5]"
-                  >
-                    取消
-                  </button>
-                </div>
+        <div className="absolute right-0 top-10 w-64 bg-white rounded-xl border border-[#e5e5e5] shadow-lg z-50 py-1">
+          {VIRTUAL_MODELS.map((model) => (
+            <button
+              key={model.id}
+              onClick={() => handleModelSelect(model.id)}
+              disabled={loading}
+              className="w-full flex items-center justify-between py-2 px-3 hover:bg-[#f5f5f5] disabled:opacity-50 text-left"
+            >
+              <div>
+                <div className="text-sm text-[#171717] font-medium">{model.name}</div>
+                <div className="text-[11px] text-[#a3a3a3]">{model.description}</div>
               </div>
-            )}
-          </div>
+              {currentModel === model.id && (
+                <Check className="w-4 h-4 text-primary flex-shrink-0 ml-2" />
+              )}
+            </button>
+          ))}
 
-          {/* Error Message */}
+          <div className="border-t my-1" />
+          <div className="flex items-center justify-between px-3 py-2">
+            <span className="text-sm text-muted-foreground">Custom</span>
+            <button
+              onClick={() => setShowCustomModels(!showCustomModels)}
+              className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${showCustomModels ? "bg-primary" : "bg-muted"}`}
+            >
+              <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform ${showCustomModels ? "translate-x-4" : "translate-x-0.5"}`} />
+            </button>
+          </div>
+          {showCustomModels && enabledModels.map((id) => (
+            <button
+              key={id}
+              onClick={() => handleModelSelect(id)}
+              disabled={loading}
+              className="w-full flex items-center justify-between py-2 px-3 hover:bg-[#f5f5f5] disabled:opacity-50 text-left"
+            >
+              <span className="text-sm text-[#171717] truncate">{id}</span>
+              {currentModel === id && (
+                <Check className="w-4 h-4 text-primary flex-shrink-0 ml-2" />
+              )}
+            </button>
+          ))}
+
           {error && (
-            <div className="mx-4 mt-2 px-3 py-2 bg-red-50 border border-red-200 rounded-lg">
+            <div className="mx-3 mt-1 px-3 py-2 bg-red-50 border border-red-200 rounded-lg">
               <p className="text-xs text-red-600">{error}</p>
             </div>
           )}
