@@ -1,6 +1,7 @@
 import { Monitor, PanelLeft, Pause, Play } from "lucide-react";
 import type { SandboxInfo } from "../api";
 import ModelSelector from "./ModelSelector";
+import QueueModeToggle from "./QueueModeToggle";
 
 const sandboxTypeLabels: Record<string, string> = {
   local: "本地",
@@ -15,10 +16,12 @@ interface HeaderProps {
   threadPreview: string | null;
   sandboxInfo: SandboxInfo | null;
   currentModel?: string;
+  queueEnabled: boolean;
   onToggleSidebar: () => void;
   onPauseSandbox: () => void;
   onResumeSandbox: () => void;
   onModelChange?: (model: string) => void;
+  onToggleQueue: () => void;
 }
 
 export default function Header({
@@ -26,10 +29,12 @@ export default function Header({
   threadPreview,
   sandboxInfo,
   currentModel = "leon:medium",
+  queueEnabled,
   onToggleSidebar,
   onPauseSandbox,
   onResumeSandbox,
   onModelChange,
+  onToggleQueue,
 }: HeaderProps) {
   const hasRemote = sandboxInfo && sandboxInfo.type !== "local";
   const sandboxLabel = sandboxTypeLabels[sandboxInfo?.type ?? "local"] ?? sandboxInfo?.type ?? "本地";
@@ -83,6 +88,12 @@ export default function Header({
       </div>
 
       <div className="flex items-center gap-1.5">
+        <QueueModeToggle
+          threadId={activeThreadId}
+          queueEnabled={queueEnabled}
+          onToggle={onToggleQueue}
+        />
+
         <ModelSelector
           currentModel={currentModel}
           threadId={activeThreadId}

@@ -91,10 +91,12 @@ export default function ChatPage() {
         activeThreadId={threadId}
         threadPreview={tm.threads.find((t) => t.thread_id === threadId)?.preview ?? null}
         sandboxInfo={activeSandbox}
+        queueEnabled={queueEnabled}
         currentModel={currentModel}
         onToggleSidebar={() => setSidebarCollapsed(v => !v)}
         onPauseSandbox={() => void handlePauseSandbox()}
         onResumeSandbox={() => void handleResumeSandbox()}
+        onToggleQueue={() => void handleToggleQueue()}
         onModelChange={setCurrentModel}
       />
 
