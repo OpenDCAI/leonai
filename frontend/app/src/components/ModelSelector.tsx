@@ -101,27 +101,24 @@ export default function ModelSelector({
       </button>
 
       {isOpen && (
-        <div className="absolute right-0 top-10 w-64 bg-white rounded-xl border border-[#e5e5e5] shadow-lg z-50 py-1">
+        <div className="absolute right-0 top-10 w-48 bg-white rounded-xl border border-[#e5e5e5] shadow-lg z-50 py-1">
           {VIRTUAL_MODELS.map((model) => (
             <button
               key={model.id}
               onClick={() => handleModelSelect(model.id)}
               disabled={loading}
-              className="w-full flex items-center justify-between py-2 px-3 hover:bg-[#f5f5f5] disabled:opacity-50 text-left"
+              className="w-full flex items-center justify-between py-1.5 px-3 hover:bg-[#f5f5f5] disabled:opacity-50 text-left"
             >
-              <div>
-                <div className="text-sm text-[#171717] font-medium">{model.name}</div>
-                <div className="text-[11px] text-[#a3a3a3]">{model.description}</div>
-              </div>
+              <span className="text-sm text-[#171717]">{model.name}</span>
               {currentModel === model.id && (
-                <Check className="w-4 h-4 text-primary flex-shrink-0 ml-2" />
+                <Check className="w-3.5 h-3.5 text-primary flex-shrink-0 ml-2" />
               )}
             </button>
           ))}
 
           <div className="border-t my-1" />
-          <div className="flex items-center justify-between px-3 py-2">
-            <span className="text-sm text-muted-foreground">Custom</span>
+          <div className="flex items-center justify-between px-3 py-1.5">
+            <span className="text-xs text-muted-foreground">Custom</span>
             <button
               onClick={() => setShowCustomModels(!showCustomModels)}
               className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${showCustomModels ? "bg-primary" : "bg-muted"}`}
@@ -134,9 +131,9 @@ export default function ModelSelector({
               key={id}
               onClick={() => handleModelSelect(id)}
               disabled={loading}
-              className="w-full flex items-center justify-between py-2 px-3 hover:bg-[#f5f5f5] disabled:opacity-50 text-left"
+              className="w-full flex items-center justify-between py-1.5 px-3 hover:bg-[#f5f5f5] disabled:opacity-50 text-left"
             >
-              <span className="text-sm text-[#171717] truncate">{id}</span>
+              <span className="text-xs text-[#171717] truncate">{id}</span>
               {currentModel === id && (
                 <Check className="w-4 h-4 text-primary flex-shrink-0 ml-2" />
               )}

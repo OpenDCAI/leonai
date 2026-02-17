@@ -229,7 +229,7 @@ export default function CenteredInputBox({
                 <ChevronDown className="h-4 w-4 shrink-0 opacity-50" />
               </button>
             </PopoverTrigger>
-            <PopoverContent className="w-[220px] p-1" align="start">
+            <PopoverContent className="w-[180px] p-1" align="start">
               {MODELS.map((m) => (
                 <button
                   key={m.value}
@@ -241,7 +241,7 @@ export default function CenteredInputBox({
               ))}
               <div className="border-t my-1" />
               <div className="flex items-center justify-between px-3 py-1.5">
-                <span className="text-sm text-muted-foreground">Custom</span>
+                <span className="text-xs text-muted-foreground">Custom</span>
                 <button
                   onClick={() => setShowCustomModels(!showCustomModels)}
                   className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${showCustomModels ? "bg-primary" : "bg-muted"}`}
@@ -253,7 +253,7 @@ export default function CenteredInputBox({
                 <button
                   key={id}
                   onClick={() => { setModel(id); setModelPopoverOpen(false); }}
-                  className={`w-full text-left px-3 py-1.5 text-sm rounded-md truncate ${model === id ? "bg-accent font-medium" : "hover:bg-accent/50"}`}
+                  className={`w-full text-left px-3 py-1.5 text-xs rounded-md truncate ${model === id ? "bg-accent font-medium" : "hover:bg-accent/50"}`}
                 >
                   {id}
                 </button>
