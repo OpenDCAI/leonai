@@ -200,6 +200,15 @@ class LeonAgent:
         # Initialize model
         self.model = self._create_model()
 
+        # Store current model config for per-request override via configurable_fields
+        model_kwargs = self._build_model_kwargs()
+        self._current_model_config = {
+            "model": self.model_name,
+            "model_provider": model_kwargs.get("model_provider"),
+            "api_key": self.api_key,
+            "base_url": model_kwargs.get("base_url"),
+        }
+
         # Initialize checkpointer and MCP tools
         self._aiosqlite_conn, mcp_tools = self._init_async_components()
 
@@ -579,9 +588,18 @@ class LeonAgent:
         return f"{base_url}/v1"
 
     def _create_model(self):
-        """Initialize model with all parameters passed to init_chat_model."""
+        """Initialize model with all parameters passed to init_chat_model.
+
+        Uses configurable_fields so model/provider/api_key/base_url can be
+        overridden per-request via LangGraph config without rebuilding the graph.
+        """
         kwargs = normalize_model_kwargs(self.model_name, self._build_model_kwargs())
-        return init_chat_model(self.model_name, api_key=self.api_key, **kwargs)
+        return init_chat_model(
+            self.model_name,
+            api_key=self.api_key,
+            configurable_fields=("model", "model_provider", "api_key", "base_url"),
+            **kwargs,
+        )
 
     def _build_model_kwargs(self) -> dict:
         """Build model parameters for model initialization and sub-agents."""
@@ -629,79 +647,63 @@ class LeonAgent:
         return kwargs
 
     def update_config(self, model: str | None = None, **tool_overrides) -> None:
-        """Hot-reload configuration (model and tools).
+        """Hot-reload model configuration (lightweight, no middleware/graph rebuild).
 
         Args:
             model: New model name (supports leon:* virtual names)
-            **tool_overrides: Tool configuration overrides
+            **tool_overrides: Tool configuration overrides (runtime config only)
         """
         if self.profile:
             raise RuntimeError("Hot-reload only supported with new config system (use agent= parameter)")
 
-        # Reload runtime config
-        cli_overrides = {}
+        # Reload runtime config if tool overrides provided
         if tool_overrides:
-            cli_overrides["tools"] = tool_overrides
-        loader = ConfigLoader(workspace_root=self.workspace_root)
-        self.config = loader.load(cli_overrides=cli_overrides if cli_overrides else None)
+            cli_overrides = {"tools": tool_overrides}
+            loader = ConfigLoader(workspace_root=self.workspace_root)
+            self.config = loader.load(cli_overrides=cli_overrides)
 
-        # Reload models config
-        models_cli = {}
-        if model is not None:
-            models_cli["active"] = {"model": model}
+        if model is None:
+            return
+
+        # Reload models config with new model
+        models_cli = {"active": {"model": model}}
         models_loader = ModelsLoader(workspace_root=self.workspace_root)
-        self.models_config = models_loader.load(cli_overrides=models_cli if models_cli else None)
+        self.models_config = models_loader.load(cli_overrides=models_cli)
 
         # Resolve virtual model
-        active_model = self.models_config.active.model if self.models_config.active else (model or self.model_name)
+        active_model = self.models_config.active.model if self.models_config.active else model
         resolved_model, model_overrides = self.models_config.resolve_model(active_model)
         self.model_name = resolved_model
         self._model_overrides = model_overrides
 
-        # Update API key
-        self.api_key = self.models_config.get_api_key()
+        # Resolve provider credentials
+        provider_name = model_overrides.get("model_provider")
+        p = self.models_config.get_provider(provider_name) if provider_name else None
+        self.api_key = (p.api_key if p else None) or self.models_config.get_api_key()
+        base_url = (p.base_url if p else None) or self.models_config.get_base_url()
+        if base_url:
+            base_url = self._normalize_base_url(base_url, provider_name)
 
-        # Recreate LLM
-        self.model = self._create_model()
+        # Update stored config (no rebuild — configurable_fields handles the rest)
+        self._current_model_config = {
+            "model": resolved_model,
+            "model_provider": provider_name,
+            "api_key": self.api_key,
+            "base_url": base_url,
+        }
 
-        # Rebuild middleware stack (preserve checkpointer)
-        middleware = self._build_middleware_stack()
+        # Update cost calculator (lightweight)
+        if hasattr(self, "_monitor_middleware"):
+            self._monitor_middleware.update_model(resolved_model)
 
-        # Reconfigure TaskMiddleware
+        # Update task middleware references
         if hasattr(self, "_task_middleware"):
-            self._task_middleware.set_parent_middleware(middleware)
-            self._task_middleware.set_checkpointer(self.checkpointer)
-
-        # Rebuild system prompt
-        self.system_prompt = self._build_system_prompt()
-        if self.config.system_prompt:
-            self.system_prompt += f"\n\n**Custom Instructions:**\n{self.config.system_prompt}"
-
-        # Recreate agent (preserve checkpointer)
-        mcp_tools = []  # MCP tools require async init, skip for hot-reload
-        if not mcp_tools and not self._has_middleware_tools(middleware):
-            mcp_tools = [self._create_placeholder_tool()]
-
-        self.agent = create_agent(
-            model=self.model,
-            tools=mcp_tools,
-            system_prompt=self.system_prompt,
-            middleware=middleware,
-            checkpointer=self.checkpointer,
-        )
-
-        # Update runtime reference
-        self.runtime = self._monitor_middleware.runtime
-        self._monitor_middleware.mark_ready()
-        self._task_middleware.set_agent(self)
-
-        # Inject runtime/model into MemoryMiddleware
-        if hasattr(self, "_memory_middleware"):
-            self._memory_middleware.set_runtime(self.runtime)
-            self._memory_middleware.set_model(self.model)
+            self._task_middleware.parent_model = resolved_model
+            self._task_middleware.api_key = self.api_key
+            self._task_middleware.model_kwargs = self._build_model_kwargs()
 
         if self.verbose:
-            print(f"[LeonAgent] Config updated: model={self.model_name}")
+            print(f"[LeonAgent] Config updated: model={resolved_model}")
 
     def close(self):
         """Clean up resources."""

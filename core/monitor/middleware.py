@@ -61,6 +61,10 @@ class MonitorMiddleware(AgentMiddleware):
         """添加自定义 Monitor"""
         self._monitors.append(monitor)
 
+    def update_model(self, model_name: str) -> None:
+        """更新 cost calculator（不重建 middleware）"""
+        self._token_monitor.cost_calculator = CostCalculator(model_name)
+
     def mark_ready(self) -> None:
         """标记 Agent 就绪（初始化完成后调用）"""
         self._state_monitor.mark_ready()

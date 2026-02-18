@@ -263,6 +263,11 @@ async def run_thread(
     sandbox_type = resolve_thread_sandbox(app, thread_id)
     set_current_thread_id(thread_id)
     agent = await get_or_create_agent(app, sandbox_type, thread_id=thread_id)
+
+    # Per-request model override (lightweight, no rebuild)
+    if payload.model:
+        await asyncio.to_thread(agent.update_config, model=payload.model)
+
     lock = await get_thread_lock(app, thread_id)
     async with lock:
         if hasattr(agent, "runtime") and not agent.runtime.transition(AgentState.ACTIVE):
