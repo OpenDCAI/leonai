@@ -167,9 +167,11 @@ class LeonAgent:
             self.model_name = resolved_model
             self._model_overrides = model_overrides
 
-        # Resolve API key
+        # Resolve API key (prefer resolved provider from mapping)
         if self.models_config:
-            self.api_key = api_key or self.models_config.get_api_key()
+            provider_name = self._model_overrides.get("model_provider") if hasattr(self, "_model_overrides") else None
+            p = self.models_config.get_provider(provider_name) if provider_name else None
+            self.api_key = api_key or (p.api_key if p else None) or self.models_config.get_api_key()
         elif self.profile:
             self.api_key = api_key or self.profile.agent.api_key or self._resolve_env_api_key()
         else:
@@ -590,11 +592,14 @@ class LeonAgent:
             if hasattr(self, "_model_overrides"):
                 kwargs.update(self._model_overrides)
 
-            provider = self.models_config.get_model_provider()
+            # Use provider from model overrides (mapping) first, then global
+            provider = kwargs.get("model_provider") or self.models_config.get_model_provider()
             if provider:
                 kwargs["model_provider"] = provider
 
-            base_url = self.models_config.get_base_url()
+            # Get credentials from the resolved provider
+            p = self.models_config.get_provider(provider) if provider else None
+            base_url = (p.base_url if p else None) or self.models_config.get_base_url()
             if base_url:
                 kwargs["base_url"] = self._normalize_base_url(base_url, provider)
 
