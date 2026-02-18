@@ -127,9 +127,7 @@ class LeonApp(App):
         self._quit_pending = False
         # Queue mode from agent config
         self._queue_mode = self._parse_queue_mode(getattr(agent, "queue_mode", "steer"))
-        get_queue_manager().set_mode(self._queue_mode)
-
-        # 注册状态变化回调：IDLE 时自动处理 followup
+        get_queue_manager().set_mode(self._queue_mode, thread_id=self.thread_id)
         if hasattr(agent, "runtime"):
             agent.runtime.state.on_state_changed(self._on_state_changed)
 
@@ -266,7 +264,7 @@ class LeonApp(App):
         mode_name = content[6:].strip().lower()
         if mode_name in self.QUEUE_MODE_MAP:
             self._queue_mode = self.QUEUE_MODE_MAP[mode_name]
-            get_queue_manager().set_mode(self._queue_mode)
+            get_queue_manager().set_mode(self._queue_mode, thread_id=self.thread_id)
             self.notify(f"✓ 队列模式: {mode_name}")
         else:
             self.notify(
@@ -283,7 +281,7 @@ class LeonApp(App):
                 self._agent_worker.cancel()
                 self.notify("⚠ 已中断")
         else:
-            queue_manager.enqueue(content, self._queue_mode)
+            queue_manager.enqueue(content, self._queue_mode, thread_id=self.thread_id)
             mode_labels = {
                 QueueMode.STEER: "转向",
                 QueueMode.FOLLOWUP: "排队",
@@ -511,12 +509,12 @@ class LeonApp(App):
         queue_manager = get_queue_manager()
 
         # flush collected messages
-        collected = queue_manager.flush_collect()
+        collected = queue_manager.flush_collect(thread_id=self.thread_id)
         if collected:
-            queue_manager.enqueue(collected, QueueMode.FOLLOWUP)
+            queue_manager.enqueue(collected, QueueMode.FOLLOWUP, thread_id=self.thread_id)
 
         # process followup queue
-        followup_content = queue_manager.get_followup()
+        followup_content = queue_manager.get_followup(thread_id=self.thread_id)
         if followup_content:
             self.agent.runtime.transition(AgentState.ACTIVE)
             self._quit_pending = False

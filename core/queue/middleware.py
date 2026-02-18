@@ -39,6 +39,14 @@ class SteeringMiddleware(AgentMiddleware):
     def __init__(self):
         self._pending_steer: str | None = None
 
+    def _get_thread_id(self) -> str | None:
+        try:
+            from langgraph.config import get_config
+
+            return get_config().get("configurable", {}).get("thread_id")
+        except Exception:
+            return None
+
     def _handle_tool_call(
         self,
         request: ToolCallRequest,
@@ -46,7 +54,7 @@ class SteeringMiddleware(AgentMiddleware):
     ) -> ToolMessage:
         """Common logic for checking steer after tool execution"""
         if self._pending_steer is None:
-            steer_content = get_queue_manager().get_steer()
+            steer_content = get_queue_manager().get_steer(thread_id=self._get_thread_id())
             if steer_content:
                 self._pending_steer = steer_content
         return result

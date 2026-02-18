@@ -135,6 +135,10 @@ async def stream_agent_execution(
         # Inject current model config for configurable_fields model
         if hasattr(agent, "_current_model_config"):
             config["configurable"].update(agent._current_model_config)
+        # L2: per-thread queue_mode
+        from core.queue import get_queue_manager
+
+        config["configurable"]["queue_mode"] = get_queue_manager().get_mode(thread_id=thread_id).value
         set_current_thread_id(thread_id)
 
         # Trajectory tracing (eval system)
