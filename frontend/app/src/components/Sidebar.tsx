@@ -113,8 +113,13 @@ export default function Sidebar({
                           : "border-l-2 border-l-transparent hover:bg-[#f0f0f0]"
                       }`}
                     >
-                      <div className={`text-sm truncate ${isActive ? "text-[#171717] font-medium" : "text-[#525252]"}`}>
-                        {thread.preview || thread.thread_id.slice(0, 14)}
+                      <div className={`flex items-center gap-1.5 ${isActive ? "text-[#171717] font-medium" : "text-[#525252]"}`}>
+                        {thread.running && (
+                          <span className="w-3 h-3 rounded-full border-2 border-[#a3a3a3] border-t-[#171717] animate-spin flex-shrink-0" />
+                        )}
+                        <span className="text-sm truncate">
+                          {thread.preview || thread.thread_id.slice(0, 14)}
+                        </span>
                       </div>
                       <div className="text-[11px] mt-0.5 text-[#a3a3a3]">
                         {thread.sandbox ?? "local"}
