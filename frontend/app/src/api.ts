@@ -536,6 +536,18 @@ export async function getQueueMode(threadId: string): Promise<{ mode: QueueMode 
   return request(`/api/threads/${encodeURIComponent(threadId)}/queue-mode`);
 }
 
+export async function listSandboxConfigs(): Promise<Record<string, Record<string, unknown>>> {
+  const payload = await request<{ sandboxes: Record<string, Record<string, unknown>> }>("/api/settings/sandboxes");
+  return payload.sandboxes;
+}
+
+export async function saveSandboxConfig(name: string, config: Record<string, unknown>): Promise<void> {
+  await request("/api/settings/sandboxes", {
+    method: "POST",
+    body: JSON.stringify({ name, config }),
+  });
+}
+
 function normalizeStreamType(raw: string): StreamEventType {
   if (
     raw === "text" ||
