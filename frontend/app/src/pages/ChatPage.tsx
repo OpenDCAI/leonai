@@ -68,6 +68,7 @@ export default function ChatPage() {
     useStreamHandler({
       threadId: threadId ?? "",
       refreshThreads: tm.refreshThreads,
+      onUpdate: (updater) => setEntries(updater),
     });
 
   // Handle initial message - send immediately without waiting for loading
@@ -77,7 +78,7 @@ export default function ChatPage() {
       const message = state.initialMessage;
       console.log('[ChatPage] Sending initial message immediately:', message);
       window.history.replaceState({}, document.title);
-      void handleSendMessage(message, (updater) => setEntries(updater));
+      void handleSendMessage(message);
     }
   }, [state?.initialMessage, threadId, handleSendMessage, setEntries]);
 
@@ -146,7 +147,7 @@ export default function ChatPage() {
             isStreaming={isStreaming}
             queueEnabled={queueEnabled}
             placeholder="告诉 Leon 你需要什么帮助..."
-            onSendMessage={(msg) => void handleSendMessage(msg, (updater) => setEntries(updater))}
+            onSendMessage={(msg) => void handleSendMessage(msg)}
             onSendQueueMessage={handleSendQueueMessage}
             onStop={handleStopStreaming}
           />

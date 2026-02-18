@@ -5,6 +5,7 @@ import json
 from collections.abc import AsyncGenerator
 from typing import Any
 
+from backend.web.services.event_buffer import RunEventBuffer
 from backend.web.utils.serializers import extract_text_content
 from core.monitor import AgentState
 from sandbox.thread_context import set_current_thread_id
@@ -109,33 +110,26 @@ async def write_cancellation_markers(
     return cancelled_tool_call_ids
 
 
-async def stream_agent_execution(
+# ---------------------------------------------------------------------------
+# Producer: runs agent, writes events to buffer
+# ---------------------------------------------------------------------------
+
+
+async def _run_agent_to_buffer(
     agent: Any,
     thread_id: str,
     message: str,
     app: Any,
-    enable_trajectory: bool = False,
-) -> AsyncGenerator[dict[str, str], None]:
-    """Stream agent execution with SSE events.
-
-    Yields SSE events:
-    - text: Token-level text streaming
-    - tool_call: Tool invocation
-    - tool_result: Tool completion
-    - status: Runtime status updates
-    - subagent_*: Sub-agent events
-    - done: Execution complete
-    - cancelled: Execution cancelled
-    - error: Error occurred
-    """
+    enable_trajectory: bool,
+    buf: RunEventBuffer,
+) -> None:
+    """Run agent execution and write all SSE events into *buf*."""
     task = None
     stream_gen = None
     try:
         config = {"configurable": {"thread_id": thread_id}}
-        # Inject current model config for configurable_fields model
         if hasattr(agent, "_current_model_config"):
             config["configurable"].update(agent._current_model_config)
-        # L2: per-thread queue_mode
         from core.queue import get_queue_manager
 
         config["configurable"]["queue_mode"] = get_queue_manager().get_mode(thread_id=thread_id).value
@@ -161,14 +155,12 @@ async def stream_agent_execution(
             except ImportError:
                 pass
 
-        # Prime session before tool calls so lazy capability wrappers never race thread context propagation
         if hasattr(agent, "_sandbox"):
             await prime_sandbox(agent, thread_id)
 
         emitted_tool_call_ids: set[str] = set()
-        pending_tool_calls: dict[str, dict] = {}  # Track in-flight tool calls for cancellation
+        pending_tool_calls: dict[str, dict] = {}
 
-        # Wrap astream in a task for cancellation support
         async def run_agent_stream():
             async for chunk in agent.agent.astream(
                 {"messages": [{"role": "user", "content": message}]},
@@ -177,49 +169,43 @@ async def stream_agent_execution(
             ):
                 yield chunk
 
-        # Create and track the task
         stream_gen = run_agent_stream()
         task = asyncio.create_task(stream_gen.__anext__())
         app.state.thread_tasks[thread_id] = task
 
-        # Iterate through the stream
         while True:
             try:
                 chunk = await task
-                # Create next task immediately
                 task = asyncio.create_task(stream_gen.__anext__())
                 app.state.thread_tasks[thread_id] = task
             except StopAsyncIteration:
                 break
             except Exception as stream_error:
-                # Catch errors from the agent stream (e.g., API connection errors)
                 import traceback
 
                 traceback.print_exc()
-                yield {"event": "error", "data": json.dumps({"error": str(stream_error)}, ensure_ascii=False)}
+                await buf.put({"event": "error", "data": json.dumps({"error": str(stream_error)}, ensure_ascii=False)})
                 break
             if not chunk:
                 continue
 
-            # stream_mode=["messages", "updates"] yields tuples: (mode, data)
             if not isinstance(chunk, tuple) or len(chunk) != 2:
                 continue
             mode, data = chunk
 
-            # --- Token-level streaming from "messages" mode ---
             if mode == "messages":
                 msg_chunk, metadata = data
                 msg_class = msg_chunk.__class__.__name__
-                # Only stream AIMessageChunk tokens (not ToolMessage, HumanMessage, etc.)
                 if msg_class == "AIMessageChunk":
                     content = extract_text_content(getattr(msg_chunk, "content", ""))
                     if content:
-                        yield {
-                            "event": "text",
-                            "data": json.dumps({"content": content}, ensure_ascii=False),
-                        }
+                        await buf.put(
+                            {
+                                "event": "text",
+                                "data": json.dumps({"content": content}, ensure_ascii=False),
+                            }
+                        )
 
-            # --- Node-level updates from "updates" mode ---
             elif mode == "updates":
                 if not isinstance(data, dict):
                     continue
@@ -231,8 +217,6 @@ async def stream_agent_execution(
                         messages = [messages]
                     for msg in messages:
                         msg_class = msg.__class__.__name__
-                        # Skip AIMessage text — already streamed token-by-token via "messages" mode
-                        # But still emit tool_calls from updates as a fallback
                         if msg_class == "AIMessage":
                             for tc in getattr(msg, "tool_calls", []):
                                 tc_id = tc.get("id")
@@ -240,69 +224,74 @@ async def stream_agent_execution(
                                     continue
                                 if tc_id:
                                     emitted_tool_call_ids.add(tc_id)
-                                    # Track pending tool call
                                     pending_tool_calls[tc_id] = {
                                         "name": tc.get("name", "unknown"),
                                         "args": tc.get("args", {}),
                                     }
-                                yield {
-                                    "event": "tool_call",
+                                await buf.put(
+                                    {
+                                        "event": "tool_call",
+                                        "data": json.dumps(
+                                            {
+                                                "id": tc.get("id"),
+                                                "name": tc.get("name", "unknown"),
+                                                "args": tc.get("args", {}),
+                                            },
+                                            ensure_ascii=False,
+                                        ),
+                                    }
+                                )
+                        elif msg_class == "ToolMessage":
+                            tc_id = getattr(msg, "tool_call_id", None)
+                            if tc_id:
+                                pending_tool_calls.pop(tc_id, None)
+                            await buf.put(
+                                {
+                                    "event": "tool_result",
                                     "data": json.dumps(
                                         {
-                                            "id": tc.get("id"),
-                                            "name": tc.get("name", "unknown"),
-                                            "args": tc.get("args", {}),
+                                            "tool_call_id": tc_id,
+                                            "name": getattr(msg, "name", "unknown"),
+                                            "content": str(getattr(msg, "content", "")),
                                         },
                                         ensure_ascii=False,
                                     ),
                                 }
-                        elif msg_class == "ToolMessage":
-                            tc_id = getattr(msg, "tool_call_id", None)
-                            # Remove from pending when tool completes
-                            if tc_id:
-                                pending_tool_calls.pop(tc_id, None)
-                            yield {
-                                "event": "tool_result",
-                                "data": json.dumps(
-                                    {
-                                        "tool_call_id": tc_id,
-                                        "name": getattr(msg, "name", "unknown"),
-                                        "content": str(getattr(msg, "content", "")),
-                                    },
-                                    ensure_ascii=False,
-                                ),
-                            }
-                            # Emit runtime status after each tool result
+                            )
                             if hasattr(agent, "runtime"):
                                 status = agent.runtime.get_status_dict()
                                 status["current_tool"] = getattr(msg, "name", None)
-                                yield {
-                                    "event": "status",
-                                    "data": json.dumps(status, ensure_ascii=False),
-                                }
+                                await buf.put(
+                                    {
+                                        "event": "status",
+                                        "data": json.dumps(status, ensure_ascii=False),
+                                    }
+                                )
 
-        # --- Forward sub-agent events ---
+        # Forward sub-agent events
         if hasattr(agent, "runtime"):
             for tool_call_id, events in agent.runtime.get_pending_subagent_events():
                 for event in events:
-                    # Parse event data and add parent_tool_call_id
                     event_type = event.get("event", "")
                     event_data = json.loads(event.get("data", "{}"))
                     event_data["parent_tool_call_id"] = tool_call_id
+                    await buf.put(
+                        {
+                            "event": f"subagent_{event_type}",
+                            "data": json.dumps(event_data, ensure_ascii=False),
+                        }
+                    )
 
-                    # Emit with subagent_ prefix
-                    yield {
-                        "event": f"subagent_{event_type}",
-                        "data": json.dumps(event_data, ensure_ascii=False),
-                    }
-
-        # Final status before done
+        # Final status
         if hasattr(agent, "runtime"):
-            yield {
-                "event": "status",
-                "data": json.dumps(agent.runtime.get_status_dict(), ensure_ascii=False),
-            }
-        # Persist trajectory if tracing was enabled
+            await buf.put(
+                {
+                    "event": "status",
+                    "data": json.dumps(agent.runtime.get_status_dict(), ensure_ascii=False),
+                }
+            )
+
+        # Persist trajectory
         if tracer is not None:
             try:
                 from eval.storage import TrajectoryStore
@@ -317,32 +306,93 @@ async def stream_agent_execution(
 
                 traceback.print_exc()
 
-        yield {"event": "done", "data": json.dumps({"thread_id": thread_id})}
+        await buf.put({"event": "done", "data": json.dumps({"thread_id": thread_id})})
     except asyncio.CancelledError:
-        # Write cancellation markers to checkpoint for pending tool calls
         cancelled_tool_call_ids = await write_cancellation_markers(agent, config, pending_tool_calls)
-
-        yield {
-            "event": "cancelled",
-            "data": json.dumps(
-                {
-                    "message": "Run cancelled by user",
-                    "cancelled_tool_call_ids": cancelled_tool_call_ids,
-                }
-            ),
-        }
+        await buf.put(
+            {
+                "event": "cancelled",
+                "data": json.dumps(
+                    {
+                        "message": "Run cancelled by user",
+                        "cancelled_tool_call_ids": cancelled_tool_call_ids,
+                    }
+                ),
+            }
+        )
     except Exception as e:
         import traceback
 
         traceback.print_exc()
-        yield {"event": "error", "data": json.dumps({"error": str(e)}, ensure_ascii=False)}
+        await buf.put({"event": "error", "data": json.dumps({"error": str(e)}, ensure_ascii=False)})
     finally:
-        # Clean up task tracking and stream generator
         app.state.thread_tasks.pop(thread_id, None)
+        app.state.thread_event_buffers.pop(thread_id, None)
         if stream_gen is not None:
             await stream_gen.aclose()
         if agent and hasattr(agent, "runtime") and agent.runtime.current_state == AgentState.ACTIVE:
             agent.runtime.transition(AgentState.IDLE)
+        await buf.mark_done()
+
+
+# ---------------------------------------------------------------------------
+# Orchestrator: creates buffer + launches background task
+# ---------------------------------------------------------------------------
+
+
+def start_agent_run(
+    agent: Any,
+    thread_id: str,
+    message: str,
+    app: Any,
+    enable_trajectory: bool = False,
+) -> RunEventBuffer:
+    """Create a RunEventBuffer and launch the agent producer as a background task."""
+    buf = RunEventBuffer()
+    app.state.thread_event_buffers[thread_id] = buf
+    bg_task = asyncio.create_task(_run_agent_to_buffer(agent, thread_id, message, app, enable_trajectory, buf))
+    # Store the background task so cancel_run can still cancel it
+    app.state.thread_tasks[thread_id] = bg_task
+    return buf
+
+
+# ---------------------------------------------------------------------------
+# Consumer: reads from buffer and yields SSE dicts
+# ---------------------------------------------------------------------------
+
+
+async def observe_run_events(
+    buf: RunEventBuffer,
+) -> AsyncGenerator[dict[str, str], None]:
+    """Consume events from a RunEventBuffer. Yields SSE event dicts.
+
+    Safe to abort — does not affect the producer or agent state.
+    """
+    cursor = 0
+    while True:
+        events, cursor = await buf.read(cursor)
+        if not events and buf.finished.is_set():
+            break
+        for event in events:
+            yield event
+
+
+# ---------------------------------------------------------------------------
+# Compat wrapper (keeps old signature for TUI runner if needed)
+# ---------------------------------------------------------------------------
+
+
+async def stream_agent_execution(
+    agent: Any,
+    thread_id: str,
+    message: str,
+    app: Any,
+    enable_trajectory: bool = False,
+) -> AsyncGenerator[dict[str, str], None]:
+    """Legacy wrapper: start a buffered run and observe it."""
+    buf = start_agent_run(agent, thread_id, message, app, enable_trajectory)
+    async for event in observe_run_events(buf):
+        yield event
 
 
 async def stream_task_agent_execution(

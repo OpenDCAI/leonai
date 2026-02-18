@@ -75,6 +75,7 @@ export interface ThreadSummary {
   sandbox_info?: SandboxInfo;
   preview?: string;
   updated_at?: string;
+  running?: boolean;
 }
 
 export interface SandboxType {
@@ -627,6 +628,37 @@ export async function cancelRun(threadId: string): Promise<void> {
   });
   if (!response.ok) {
     throw new Error(`Failed to cancel run: ${response.statusText}`);
+  }
+}
+
+export async function observeRun(
+  threadId: string,
+  onEvent: (event: StreamEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const response = await fetch(`/api/threads/${encodeURIComponent(threadId)}/runs/stream`, { signal });
+  if (!response.ok || !response.body) return;
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const chunks = buffer.split(/\r?\n\r?\n/);
+    buffer = chunks.pop() ?? "";
+    for (const chunk of chunks) {
+      if (!chunk.trim()) continue;
+      let eventType = "text";
+      const dataLines: string[] = [];
+      for (const line of chunk.split("\n")) {
+        if (line.startsWith("event:")) eventType = line.slice(6).trim();
+        else if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
+      }
+      onEvent({ type: normalizeStreamType(eventType), data: tryParse(dataLines.join("\n")) });
+    }
   }
 }
 

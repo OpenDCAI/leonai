@@ -1,6 +1,7 @@
 """Thread management and execution endpoints."""
 
 import asyncio
+import json
 import uuid
 from typing import Annotated, Any
 
@@ -17,7 +18,11 @@ from backend.web.models.requests import (
 )
 from backend.web.services.agent_pool import get_or_create_agent, resolve_thread_sandbox
 from backend.web.services.sandbox_service import destroy_thread_resources_sync
-from backend.web.services.streaming_service import stream_agent_execution, stream_task_agent_execution
+from backend.web.services.streaming_service import (
+    observe_run_events,
+    start_agent_run,
+    stream_task_agent_execution,
+)
 from backend.web.services.thread_service import list_threads_from_db
 from backend.web.services.thread_state_service import (
     get_lease_status,
@@ -57,9 +62,10 @@ async def create_thread(
 async def list_threads(app: Annotated[Any, Depends(get_app)] = None) -> dict[str, Any]:
     """List all threads with metadata."""
     threads = await asyncio.to_thread(list_threads_from_db)
-    # Enrich with sandbox info
+    buffers = app.state.thread_event_buffers
     for t in threads:
         t["sandbox"] = resolve_thread_sandbox(app, t["thread_id"])
+        t["running"] = t["thread_id"] in buffers
     return {"threads": threads}
 
 
@@ -277,9 +283,24 @@ async def run_thread(
         if hasattr(agent, "runtime") and not agent.runtime.transition(AgentState.ACTIVE):
             raise HTTPException(status_code=409, detail="Thread is already running")
 
-    return EventSourceResponse(
-        stream_agent_execution(agent, thread_id, payload.message, app, payload.enable_trajectory)
-    )
+    buf = start_agent_run(agent, thread_id, payload.message, app, payload.enable_trajectory)
+    return EventSourceResponse(observe_run_events(buf))
+
+
+@router.get("/{thread_id}/runs/stream")
+async def observe_thread_run(
+    thread_id: str,
+    app: Annotated[Any, Depends(get_app)] = None,
+) -> EventSourceResponse:
+    """Observe an in-progress run from the beginning (replay + live tail)."""
+    buf = app.state.thread_event_buffers.get(thread_id)
+    if not buf:
+        # No active run — return immediate done
+        async def _empty():
+            yield {"event": "done", "data": json.dumps({"thread_id": thread_id})}
+
+        return EventSourceResponse(_empty())
+    return EventSourceResponse(observe_run_events(buf))
 
 
 @router.post("/{thread_id}/runs/cancel")
