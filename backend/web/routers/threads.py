@@ -110,6 +110,7 @@ async def delete_thread(
     # Clean up thread-specific state
     app.state.thread_sandbox.pop(thread_id, None)
     app.state.thread_cwd.pop(thread_id, None)
+    get_queue_manager().clear_thread(thread_id)
 
     # Remove per-thread Agent from pool
     app.state.agent_pool.pop(pool_key, None)
@@ -123,9 +124,8 @@ async def steer_thread(thread_id: str, payload: SteerRequest) -> dict[str, Any]:
     if not payload.message.strip():
         raise HTTPException(status_code=400, detail="message cannot be empty")
     queue_manager = get_queue_manager()
-    # Use the current default mode set by the user
-    queue_manager.enqueue(payload.message)
-    return {"ok": True, "thread_id": thread_id, "mode": queue_manager.get_mode().value}
+    queue_manager.enqueue(payload.message, thread_id=thread_id)
+    return {"ok": True, "thread_id": thread_id, "mode": queue_manager.get_mode(thread_id=thread_id).value}
 
 
 @router.post("/{thread_id}/queue-mode")
@@ -136,7 +136,10 @@ async def set_thread_queue_mode(thread_id: str, payload: QueueModeRequest) -> di
     except ValueError:
         raise HTTPException(status_code=400, detail=f"Invalid queue mode: {payload.mode}")
     queue_manager = get_queue_manager()
-    queue_manager.set_mode(mode)
+    queue_manager.set_mode(mode, thread_id=thread_id)
+    from backend.web.utils.helpers import save_thread_config
+
+    save_thread_config(thread_id, queue_mode=mode.value)
     return {"ok": True, "thread_id": thread_id, "mode": mode.value}
 
 
@@ -144,7 +147,7 @@ async def set_thread_queue_mode(thread_id: str, payload: QueueModeRequest) -> di
 async def get_thread_queue_mode(thread_id: str) -> dict[str, Any]:
     """Get current queue mode for a thread."""
     queue_manager = get_queue_manager()
-    return {"mode": queue_manager.get_mode().value}
+    return {"mode": queue_manager.get_mode(thread_id=thread_id).value}
 
 
 @router.get("/{thread_id}/runtime")

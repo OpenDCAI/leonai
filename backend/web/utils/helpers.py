@@ -64,18 +64,69 @@ def extract_webhook_instance_id(payload: dict[str, Any]) -> str | None:
     return None
 
 
+def _ensure_thread_metadata_table(conn: sqlite3.Connection) -> None:
+    """Create thread_metadata table and run column migrations."""
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS thread_metadata"
+        "(thread_id TEXT PRIMARY KEY, sandbox_type TEXT NOT NULL, cwd TEXT, model TEXT, queue_mode TEXT DEFAULT 'steer')"
+    )
+    for col, default in [("model", None), ("queue_mode", "'steer'")]:
+        try:
+            default_clause = f" DEFAULT {default}" if default else ""
+            conn.execute(f"ALTER TABLE thread_metadata ADD COLUMN {col} TEXT{default_clause}")
+        except sqlite3.OperationalError:
+            pass
+
+
+def save_thread_config(thread_id: str, **fields: Any) -> None:
+    """Update specific fields of thread config in SQLite.
+
+    Usage: save_thread_config(thread_id, model="gpt-4", queue_mode="followup")
+    """
+    allowed = {"sandbox_type", "cwd", "model", "queue_mode"}
+    updates = {k: v for k, v in fields.items() if k in allowed}
+    if not updates:
+        return
+    with sqlite3.connect(str(DB_PATH)) as conn:
+        _ensure_thread_metadata_table(conn)
+        set_clause = ", ".join(f"{k} = ?" for k in updates)
+        conn.execute(
+            f"UPDATE thread_metadata SET {set_clause} WHERE thread_id = ?",
+            (*updates.values(), thread_id),
+        )
+        conn.commit()
+
+
+def load_thread_config(thread_id: str):
+    """Load full thread config from SQLite. Returns ThreadConfig or None."""
+    if not DB_PATH.exists():
+        return None
+    try:
+        with sqlite3.connect(str(DB_PATH)) as conn:
+            conn.row_factory = sqlite3.Row
+            _ensure_thread_metadata_table(conn)
+            row = conn.execute(
+                "SELECT sandbox_type, cwd, model, queue_mode FROM thread_metadata WHERE thread_id = ?",
+                (thread_id,),
+            ).fetchone()
+            if not row:
+                return None
+            from backend.web.models.thread_config import ThreadConfig
+
+            return ThreadConfig(
+                sandbox_type=row["sandbox_type"],
+                cwd=row["cwd"],
+                model=row["model"],
+                queue_mode=row["queue_mode"] or "steer",
+            )
+    except sqlite3.OperationalError:
+        return None
+
+
 def save_thread_metadata(thread_id: str, sandbox_type: str, cwd: str | None) -> None:
     """Persist thread sandbox_type and cwd to SQLite."""
     with sqlite3.connect(str(DB_PATH)) as conn:
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS thread_metadata"
-            "(thread_id TEXT PRIMARY KEY, sandbox_type TEXT NOT NULL, cwd TEXT, model TEXT)"
-        )
-        # Add model column if missing (migration)
-        try:
-            conn.execute("ALTER TABLE thread_metadata ADD COLUMN model TEXT")
-        except sqlite3.OperationalError:
-            pass
+        _ensure_thread_metadata_table(conn)
         conn.execute(
             "INSERT OR REPLACE INTO thread_metadata (thread_id, sandbox_type, cwd) VALUES (?, ?, ?)",
             (thread_id, sandbox_type, cwd),
@@ -85,50 +136,19 @@ def save_thread_metadata(thread_id: str, sandbox_type: str, cwd: str | None) -> 
 
 def save_thread_model(thread_id: str, model: str) -> None:
     """Persist the selected model for a thread."""
-    with sqlite3.connect(str(DB_PATH)) as conn:
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS thread_metadata"
-            "(thread_id TEXT PRIMARY KEY, sandbox_type TEXT NOT NULL, cwd TEXT, model TEXT)"
-        )
-        try:
-            conn.execute("ALTER TABLE thread_metadata ADD COLUMN model TEXT")
-        except sqlite3.OperationalError:
-            pass
-        conn.execute(
-            "UPDATE thread_metadata SET model = ? WHERE thread_id = ?",
-            (model, thread_id),
-        )
-        conn.commit()
+    save_thread_config(thread_id, model=model)
 
 
 def lookup_thread_model(thread_id: str) -> str | None:
     """Look up persisted model for a thread."""
-    if not DB_PATH.exists():
-        return None
-    try:
-        with sqlite3.connect(str(DB_PATH)) as conn:
-            row = conn.execute(
-                "SELECT model FROM thread_metadata WHERE thread_id = ?",
-                (thread_id,),
-            ).fetchone()
-            return row[0] if row and row[0] else None
-    except sqlite3.OperationalError:
-        return None
+    config = load_thread_config(thread_id)
+    return config.model if config else None
 
 
 def lookup_thread_metadata(thread_id: str) -> tuple[str, str | None] | None:
     """Look up persisted (sandbox_type, cwd) for a thread. Returns None if not found."""
-    if not DB_PATH.exists():
-        return None
-    try:
-        with sqlite3.connect(str(DB_PATH)) as conn:
-            row = conn.execute(
-                "SELECT sandbox_type, cwd FROM thread_metadata WHERE thread_id = ?",
-                (thread_id,),
-            ).fetchone()
-            return (row[0], row[1]) if row else None
-    except sqlite3.OperationalError:
-        return None
+    config = load_thread_config(thread_id)
+    return (config.sandbox_type, config.cwd) if config else None
 
 
 def resolve_local_workspace_path(

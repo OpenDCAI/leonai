@@ -1,92 +1,105 @@
-"""Message Queue Manager - global singleton for queue mode coordination"""
+"""Message Queue Manager - per-thread queue isolation for queue mode coordination"""
 
 import threading
 from collections import deque
+from dataclasses import dataclass, field
 
 from .types import QueueMessage, QueueMode
 
+DEFAULT_THREAD = "__global__"
+
+
+@dataclass
+class _ThreadQueue:
+    steer: deque[QueueMessage] = field(default_factory=deque)
+    followup: deque[QueueMessage] = field(default_factory=deque)
+    collect: list[QueueMessage] = field(default_factory=list)
+    mode: QueueMode = QueueMode.STEER
+
 
 class MessageQueueManager:
-    """Thread-safe message queue manager for TUI and SteeringMiddleware coordination"""
+    """Thread-safe message queue manager with per-thread isolation"""
 
     def __init__(self):
         self._lock = threading.Lock()
-        self._steer_queue: deque[QueueMessage] = deque()
-        self._followup_queue: deque[QueueMessage] = deque()
-        self._collect_buffer: list[QueueMessage] = []
-        self._current_mode: QueueMode = QueueMode.STEER
+        self._threads: dict[str, _ThreadQueue] = {}
 
-    def set_mode(self, mode: QueueMode) -> None:
-        """Set the current queue mode"""
+    def _get_thread(self, thread_id: str | None = None) -> _ThreadQueue:
+        tid = thread_id or DEFAULT_THREAD
+        if tid not in self._threads:
+            self._threads[tid] = _ThreadQueue()
+        return self._threads[tid]
+
+    def set_mode(self, mode: QueueMode, thread_id: str | None = None) -> None:
         with self._lock:
-            self._current_mode = mode
+            self._get_thread(thread_id).mode = mode
 
-    def get_mode(self) -> QueueMode:
-        """Get the current queue mode"""
+    def get_mode(self, thread_id: str | None = None) -> QueueMode:
         with self._lock:
-            return self._current_mode
+            return self._get_thread(thread_id).mode
 
-    def enqueue(self, content: str, mode: QueueMode | None = None) -> None:
-        """Enqueue a message with the specified mode (defaults to current mode)"""
-        if mode is None:
-            mode = self._current_mode
-
-        msg = QueueMessage(content=content, mode=mode)
+    def enqueue(self, content: str, mode: QueueMode | None = None, thread_id: str | None = None) -> None:
+        msg_mode = mode if mode is not None else self.get_mode(thread_id)
+        msg = QueueMessage(content=content, mode=msg_mode)
 
         with self._lock:
-            if mode == QueueMode.STEER:
-                self._steer_queue.append(msg)
-            elif mode == QueueMode.FOLLOWUP:
-                self._followup_queue.append(msg)
-            elif mode == QueueMode.COLLECT:
-                self._collect_buffer.append(msg)
-            elif mode == QueueMode.STEER_BACKLOG:
-                self._steer_queue.append(msg)
-                self._followup_queue.append(msg)
+            tq = self._get_thread(thread_id)
+            if msg_mode == QueueMode.STEER:
+                tq.steer.append(msg)
+            elif msg_mode == QueueMode.FOLLOWUP:
+                tq.followup.append(msg)
+            elif msg_mode == QueueMode.COLLECT:
+                tq.collect.append(msg)
+            elif msg_mode == QueueMode.STEER_BACKLOG:
+                tq.steer.append(msg)
+                tq.followup.append(msg)
 
-    def get_steer(self) -> str | None:
-        """Get and remove the next steer message"""
+    def get_steer(self, thread_id: str | None = None) -> str | None:
         with self._lock:
-            return self._steer_queue.popleft().content if self._steer_queue else None
+            tq = self._get_thread(thread_id)
+            return tq.steer.popleft().content if tq.steer else None
 
-    def get_followup(self) -> str | None:
-        """Get and remove the next followup message"""
+    def get_followup(self, thread_id: str | None = None) -> str | None:
         with self._lock:
-            return self._followup_queue.popleft().content if self._followup_queue else None
+            tq = self._get_thread(thread_id)
+            return tq.followup.popleft().content if tq.followup else None
 
-    def flush_collect(self) -> str | None:
-        """Flush collect buffer and return merged content"""
+    def flush_collect(self, thread_id: str | None = None) -> str | None:
         with self._lock:
-            if not self._collect_buffer:
+            tq = self._get_thread(thread_id)
+            if not tq.collect:
                 return None
-            contents = [msg.content for msg in self._collect_buffer]
-            self._collect_buffer.clear()
+            contents = [msg.content for msg in tq.collect]
+            tq.collect.clear()
             return "\n\n".join(contents)
 
-    def has_steer(self) -> bool:
-        """Check if there are pending steer messages"""
+    def has_steer(self, thread_id: str | None = None) -> bool:
         with self._lock:
-            return bool(self._steer_queue)
+            return bool(self._get_thread(thread_id).steer)
 
-    def has_followup(self) -> bool:
-        """Check if there are pending followup messages"""
+    def has_followup(self, thread_id: str | None = None) -> bool:
         with self._lock:
-            return bool(self._followup_queue)
+            return bool(self._get_thread(thread_id).followup)
 
-    def clear_all(self) -> None:
-        """Clear all queues"""
+    def clear_all(self, thread_id: str | None = None) -> None:
         with self._lock:
-            self._steer_queue.clear()
-            self._followup_queue.clear()
-            self._collect_buffer.clear()
+            tq = self._get_thread(thread_id)
+            tq.steer.clear()
+            tq.followup.clear()
+            tq.collect.clear()
 
-    def queue_sizes(self) -> dict[str, int]:
-        """Get current queue sizes for debugging"""
+    def clear_thread(self, thread_id: str) -> None:
+        """Remove all state for a thread."""
         with self._lock:
+            self._threads.pop(thread_id, None)
+
+    def queue_sizes(self, thread_id: str | None = None) -> dict[str, int]:
+        with self._lock:
+            tq = self._get_thread(thread_id)
             return {
-                "steer": len(self._steer_queue),
-                "followup": len(self._followup_queue),
-                "collect": len(self._collect_buffer),
+                "steer": len(tq.steer),
+                "followup": len(tq.followup),
+                "collect": len(tq.collect),
             }
 
 

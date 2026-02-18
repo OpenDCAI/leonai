@@ -54,14 +54,26 @@ async def get_or_create_agent(app_obj: FastAPI, sandbox_type: str, thread_id: st
             workspace_root = Path(cwd).resolve()
 
     # Look up model for this thread (thread metadata → preferences default)
-    from backend.web.utils.helpers import lookup_thread_model
+    from backend.web.utils.helpers import load_thread_config, lookup_thread_model
 
-    model_name = lookup_thread_model(thread_id)
+    thread_config = load_thread_config(thread_id)
+    model_name = thread_config.model if thread_config and thread_config.model else None
+    if not model_name:
+        model_name = lookup_thread_model(thread_id)
     if not model_name:
         from backend.web.routers.settings import load_settings as load_preferences
 
         prefs = load_preferences()
         model_name = prefs.default_model
+
+    # Restore per-thread queue_mode from SQLite
+    if thread_config and thread_config.queue_mode:
+        from core.queue import QueueMode, get_queue_manager
+
+        try:
+            get_queue_manager().set_mode(QueueMode(thread_config.queue_mode), thread_id=thread_id)
+        except ValueError:
+            pass
 
     # @@@ agent-init-thread - LeonAgent.__init__ uses run_until_complete, must run in thread
     agent = await asyncio.to_thread(create_agent_sync, sandbox_type, workspace_root, model_name)
