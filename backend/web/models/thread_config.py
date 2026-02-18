@@ -4,7 +4,7 @@ from pydantic import BaseModel
 
 
 class ThreadConfig(BaseModel):
-    """Per-thread persistent config stored in SQLite thread_metadata."""
+    """Per-thread persistent config stored in SQLite thread_config table."""
 
     sandbox_type: str = "local"
     cwd: str | None = None

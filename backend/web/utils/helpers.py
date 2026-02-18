@@ -64,16 +64,20 @@ def extract_webhook_instance_id(payload: dict[str, Any]) -> str | None:
     return None
 
 
-def _ensure_thread_metadata_table(conn: sqlite3.Connection) -> None:
-    """Create thread_metadata table and run column migrations."""
+def _ensure_thread_config_table(conn: sqlite3.Connection) -> None:
+    """Create thread_config table and run migrations from old thread_metadata."""
+    # Migrate old table name if exists
+    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+    if "thread_metadata" in tables and "thread_config" not in tables:
+        conn.execute("ALTER TABLE thread_metadata RENAME TO thread_config")
     conn.execute(
-        "CREATE TABLE IF NOT EXISTS thread_metadata"
+        "CREATE TABLE IF NOT EXISTS thread_config"
         "(thread_id TEXT PRIMARY KEY, sandbox_type TEXT NOT NULL, cwd TEXT, model TEXT, queue_mode TEXT DEFAULT 'steer')"
     )
     for col, default in [("model", None), ("queue_mode", "'steer'")]:
         try:
             default_clause = f" DEFAULT {default}" if default else ""
-            conn.execute(f"ALTER TABLE thread_metadata ADD COLUMN {col} TEXT{default_clause}")
+            conn.execute(f"ALTER TABLE thread_config ADD COLUMN {col} TEXT{default_clause}")
         except sqlite3.OperationalError:
             pass
 
@@ -88,10 +92,10 @@ def save_thread_config(thread_id: str, **fields: Any) -> None:
     if not updates:
         return
     with sqlite3.connect(str(DB_PATH)) as conn:
-        _ensure_thread_metadata_table(conn)
+        _ensure_thread_config_table(conn)
         set_clause = ", ".join(f"{k} = ?" for k in updates)
         conn.execute(
-            f"UPDATE thread_metadata SET {set_clause} WHERE thread_id = ?",
+            f"UPDATE thread_config SET {set_clause} WHERE thread_id = ?",
             (*updates.values(), thread_id),
         )
         conn.commit()
@@ -104,9 +108,9 @@ def load_thread_config(thread_id: str):
     try:
         with sqlite3.connect(str(DB_PATH)) as conn:
             conn.row_factory = sqlite3.Row
-            _ensure_thread_metadata_table(conn)
+            _ensure_thread_config_table(conn)
             row = conn.execute(
-                "SELECT sandbox_type, cwd, model, queue_mode FROM thread_metadata WHERE thread_id = ?",
+                "SELECT sandbox_type, cwd, model, queue_mode FROM thread_config WHERE thread_id = ?",
                 (thread_id,),
             ).fetchone()
             if not row:
@@ -123,12 +127,12 @@ def load_thread_config(thread_id: str):
         return None
 
 
-def save_thread_metadata(thread_id: str, sandbox_type: str, cwd: str | None) -> None:
-    """Persist thread sandbox_type and cwd to SQLite."""
+def init_thread_config(thread_id: str, sandbox_type: str, cwd: str | None) -> None:
+    """Create initial thread config row in SQLite."""
     with sqlite3.connect(str(DB_PATH)) as conn:
-        _ensure_thread_metadata_table(conn)
+        _ensure_thread_config_table(conn)
         conn.execute(
-            "INSERT OR REPLACE INTO thread_metadata (thread_id, sandbox_type, cwd) VALUES (?, ?, ?)",
+            "INSERT OR REPLACE INTO thread_config (thread_id, sandbox_type, cwd) VALUES (?, ?, ?)",
             (thread_id, sandbox_type, cwd),
         )
         conn.commit()
@@ -143,12 +147,6 @@ def lookup_thread_model(thread_id: str) -> str | None:
     """Look up persisted model for a thread."""
     config = load_thread_config(thread_id)
     return config.model if config else None
-
-
-def lookup_thread_metadata(thread_id: str) -> tuple[str, str | None] | None:
-    """Look up persisted (sandbox_type, cwd) for a thread. Returns None if not found."""
-    config = load_thread_config(thread_id)
-    return (config.sandbox_type, config.cwd) if config else None
 
 
 def resolve_local_workspace_path(
@@ -169,9 +167,9 @@ def resolve_local_workspace_path(
         if thread_cwd_map:
             thread_cwd = thread_cwd_map.get(thread_id)
         if not thread_cwd:
-            meta = lookup_thread_metadata(thread_id)
-            if meta:
-                thread_cwd = meta[1]
+            tc = load_thread_config(thread_id)
+            if tc:
+                thread_cwd = tc.cwd
     base = Path(thread_cwd).resolve() if thread_cwd else local_workspace_root
 
     if not raw_path:
