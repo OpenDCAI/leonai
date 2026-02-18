@@ -692,6 +692,7 @@ class LeonAgent:
 
         # Update runtime reference
         self.runtime = self._monitor_middleware.runtime
+        self._monitor_middleware.mark_ready()
         self._task_middleware.set_agent(self)
 
         # Inject runtime/model into MemoryMiddleware
