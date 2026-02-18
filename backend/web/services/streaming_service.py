@@ -132,6 +132,9 @@ async def stream_agent_execution(
     stream_gen = None
     try:
         config = {"configurable": {"thread_id": thread_id}}
+        # Inject current model config for configurable_fields model
+        if hasattr(agent, "_current_model_config"):
+            config["configurable"].update(agent._current_model_config)
         set_current_thread_id(thread_id)
 
         # Trajectory tracing (eval system)
