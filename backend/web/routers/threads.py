@@ -40,7 +40,6 @@ async def create_thread(
     app: Annotated[Any, Depends(get_app)] = None,
 ) -> dict[str, Any]:
     """Create a new thread with optional sandbox and cwd."""
-    from backend.web.utils.helpers import save_thread_metadata
 
     sandbox_type = payload.sandbox if payload else "local"
     thread_id = str(uuid.uuid4())
@@ -48,7 +47,9 @@ async def create_thread(
     app.state.thread_sandbox[thread_id] = sandbox_type
     if cwd:
         app.state.thread_cwd[thread_id] = cwd
-    save_thread_metadata(thread_id, sandbox_type, cwd)
+    from backend.web.utils.helpers import init_thread_config
+
+    init_thread_config(thread_id, sandbox_type, cwd)
     return {"thread_id": thread_id, "sandbox": sandbox_type}
 
 
