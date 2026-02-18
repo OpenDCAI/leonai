@@ -1,11 +1,11 @@
-# Leon Operator Console (Standalone)
+# Leon Sandbox Monitor
 
-This is a standalone frontend for Leon's operator/data-platform APIs.
+This is a standalone frontend for Leon's sandbox monitoring APIs.
 
 Dev:
 
 ```bash
-cd frontend/operator
+cd frontend/monitor
 npm install
 npm run dev
 ```

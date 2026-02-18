@@ -1,5 +1,5 @@
 """
-Operator Console API - View-Ready Endpoints
+Sandbox Monitor API - View-Ready Endpoints
 
 All endpoints return view-ready data that frontend can directly render.
 No business logic in frontend.
@@ -12,7 +12,7 @@ import sqlite3
 import os
 from pathlib import Path
 
-router = APIRouter(prefix="/api/v2/operator")
+router = APIRouter(prefix="/api/monitor")
 
 
 def get_db():

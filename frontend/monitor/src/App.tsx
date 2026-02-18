@@ -2,7 +2,7 @@ import React from 'react';
 import { BrowserRouter, Routes, Route, Link, useParams, useNavigate } from 'react-router-dom';
 import './styles.css';
 
-const API_BASE = '/api/v2/operator';
+const API_BASE = '/api/monitor';
 
 // Utility: Fetch JSON from API
 async function fetchAPI(path: string) {
@@ -444,7 +444,7 @@ function Layout({ children }: { children: React.ReactNode }) {
   return (
     <div className="app">
       <nav className="top-nav">
-        <h1 className="logo">Leon Operator Console</h1>
+        <h1 className="logo">Leon Sandbox Monitor</h1>
         <div className="nav-links">
           <Link to="/threads">Threads</Link>
           <Link to="/leases">Leases</Link>
