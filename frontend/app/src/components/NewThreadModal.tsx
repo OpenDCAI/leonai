@@ -9,13 +9,16 @@ interface NewThreadModalProps {
   onCreate: (sandboxName: string, cwd?: string) => void;
 }
 
-const sandboxLabels: Record<string, { label: string; desc: string }> = {
+const KNOWN_LABELS: Record<string, { label: string; desc: string }> = {
   local: { label: "本地", desc: "在本机运行，适合本地项目开发" },
   agentbay: { label: "AgentBay", desc: "云端沙箱环境，安全隔离" },
   daytona: { label: "Daytona", desc: "云端开发环境，开箱即用" },
   docker: { label: "Docker", desc: "容器化隔离环境，可复现" },
   e2b: { label: "E2B", desc: "云端代码沙箱，快速启动" },
 };
+function sandboxLabel(name: string): { label: string; desc: string } {
+  return KNOWN_LABELS[name] ?? { label: name.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase()), desc: "" };
+}
 
 export default function NewThreadModal({ open, sandboxTypes, onClose, onCreate }: NewThreadModalProps) {
   const [localExpanded, setLocalExpanded] = useState(false);
@@ -68,7 +71,7 @@ export default function NewThreadModal({ open, sandboxTypes, onClose, onCreate }
           <p className="text-sm mb-3 text-[#737373]">选择运行环境</p>
           <div className="space-y-2">
             {sandboxTypes.map((item) => {
-              const info = sandboxLabels[item.name] ?? { label: item.name, desc: "" };
+              const info = sandboxLabel(item.name);
 
               if (item.name === "local") {
                 return (

@@ -3,13 +3,12 @@ import type { SandboxInfo } from "../api";
 import SettingsPanel from "./SettingsPanel";
 import ModelSelector from "./ModelSelector";
 
-const sandboxTypeLabels: Record<string, string> = {
-  local: "本地",
-  agentbay: "AgentBay",
-  daytona: "Daytona",
-  docker: "Docker",
-  e2b: "E2B",
+const KNOWN_LABELS: Record<string, string> = {
+  local: "本地", agentbay: "AgentBay", daytona: "Daytona", docker: "Docker", e2b: "E2B",
 };
+function sandboxLabel(name: string): string {
+  return KNOWN_LABELS[name] ?? name.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+}
 
 interface HeaderProps {
   activeThreadId: string | null;
@@ -37,7 +36,7 @@ export default function Header({
   onModelChange,
 }: HeaderProps) {
   const hasRemote = sandboxInfo && sandboxInfo.type !== "local";
-  const sandboxLabel = sandboxTypeLabels[sandboxInfo?.type ?? "local"] ?? sandboxInfo?.type ?? "本地";
+  const sandboxLabelText = sandboxLabel(sandboxInfo?.type ?? "local");
   const hasKnownStatus = sandboxInfo?.status === "running" || sandboxInfo?.status === "paused";
   const statusText = sandboxInfo?.status === "running" ? "运行中" : sandboxInfo?.status === "paused" ? "已暂停" : "";
   const statusDotColor = sandboxInfo?.status === "running"
@@ -69,7 +68,7 @@ export default function Header({
               <div className="w-px h-6 bg-[#e5e5e5]" />
               <div className="flex items-center gap-2 px-3 py-1.5 bg-[#fafafa]">
                 <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: statusDotColor }} />
-                <span className="text-sm text-[#525252]">{sandboxLabel}</span>
+                <span className="text-sm text-[#525252]">{sandboxLabelText}</span>
                 {hasRemote && statusText && (
                   <span
                     className="text-[10px] px-1.5 py-0.5 rounded font-medium"

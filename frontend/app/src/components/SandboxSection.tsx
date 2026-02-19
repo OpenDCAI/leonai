@@ -16,50 +16,31 @@ interface FieldDef {
   nested?: string;
 }
 
-const SANDBOX_PROVIDERS: {
-  id: string;
-  name: string;
-  fields: FieldDef[];
-}[] = [
-  {
-    id: "agentbay",
-    name: "AgentBay",
-    fields: [
-      { key: "api_key", label: "API Key", type: "password", nested: "agentbay" },
-      { key: "region_id", label: "Region ID", type: "text", placeholder: "ap-southeast-1", nested: "agentbay" },
-      { key: "context_path", label: "Context Path", type: "text", placeholder: "/home/wuying", nested: "agentbay" },
-      { key: "image_id", label: "Image ID", type: "text", nested: "agentbay" },
-    ],
-  },
-  {
-    id: "docker",
-    name: "Docker",
-    fields: [
-      { key: "image", label: "Image", type: "text", placeholder: "python:3.12-slim", nested: "docker" },
-      { key: "mount_path", label: "Mount Path", type: "text", placeholder: "/workspace", nested: "docker" },
-    ],
-  },
-  {
-    id: "e2b",
-    name: "E2B",
-    fields: [
-      { key: "api_key", label: "API Key", type: "password", nested: "e2b" },
-      { key: "template", label: "Template", type: "text", placeholder: "base", nested: "e2b" },
-      { key: "cwd", label: "Working Directory", type: "text", placeholder: "/home/user", nested: "e2b" },
-      { key: "timeout", label: "Timeout (s)", type: "number", nested: "e2b" },
-    ],
-  },
-  {
-    id: "daytona",
-    name: "Daytona",
-    fields: [
-      { key: "api_key", label: "API Key", type: "password", nested: "daytona" },
-      { key: "api_url", label: "API URL", type: "text", placeholder: "https://app.daytona.io/api", nested: "daytona" },
-      { key: "target", label: "Target", type: "text", placeholder: "local", nested: "daytona" },
-      { key: "cwd", label: "Working Directory", type: "text", placeholder: "/home/daytona", nested: "daytona" },
-    ],
-  },
-];
+// @@@ field-lookup-by-provider-type - same fields, but keyed by provider type so multiple configs of same type share field defs
+const PROVIDER_FIELDS: Record<string, FieldDef[]> = {
+  agentbay: [
+    { key: "api_key", label: "API Key", type: "password", nested: "agentbay" },
+    { key: "region_id", label: "Region ID", type: "text", placeholder: "ap-southeast-1", nested: "agentbay" },
+    { key: "context_path", label: "Context Path", type: "text", placeholder: "/home/wuying", nested: "agentbay" },
+    { key: "image_id", label: "Image ID", type: "text", nested: "agentbay" },
+  ],
+  docker: [
+    { key: "image", label: "Image", type: "text", placeholder: "python:3.12-slim", nested: "docker" },
+    { key: "mount_path", label: "Mount Path", type: "text", placeholder: "/workspace", nested: "docker" },
+  ],
+  e2b: [
+    { key: "api_key", label: "API Key", type: "password", nested: "e2b" },
+    { key: "template", label: "Template", type: "text", placeholder: "base", nested: "e2b" },
+    { key: "cwd", label: "Working Directory", type: "text", placeholder: "/home/user", nested: "e2b" },
+    { key: "timeout", label: "Timeout (s)", type: "number", nested: "e2b" },
+  ],
+  daytona: [
+    { key: "api_key", label: "API Key", type: "password", nested: "daytona" },
+    { key: "api_url", label: "API URL", type: "text", placeholder: "https://app.daytona.io/api", nested: "daytona" },
+    { key: "target", label: "Target", type: "text", placeholder: "local", nested: "daytona" },
+    { key: "cwd", label: "Working Directory", type: "text", placeholder: "/home/daytona", nested: "daytona" },
+  ],
+};
 
 const COMMON_FIELDS: FieldDef[] = [
   { key: "on_exit", label: "On Exit", type: "select", options: ["pause", "destroy"] },
@@ -97,12 +78,12 @@ export default function SandboxSection({ sandboxes, onUpdate }: SandboxSectionPr
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});
 
-  const handleSave = async (providerId: string, config: Record<string, unknown>) => {
-    setSaving(providerId);
-    onUpdate(providerId, config);
+  const handleSave = async (configName: string, config: Record<string, unknown>) => {
+    setSaving(configName);
+    onUpdate(configName, config);
     try {
-      await saveSandboxConfig(providerId, { ...config, provider: providerId });
-      setSuccessMessage(providerId);
+      await saveSandboxConfig(configName, config);
+      setSuccessMessage(configName);
       setTimeout(() => setSuccessMessage(null), 2000);
     } catch (error) {
       console.error("Failed to save sandbox config:", error);
@@ -167,24 +148,32 @@ export default function SandboxSection({ sandboxes, onUpdate }: SandboxSectionPr
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {SANDBOX_PROVIDERS.map((provider, index) => {
-          const config = (sandboxes[provider.id] || {}) as Record<string, unknown>;
-          const isSaving = saving === provider.id;
+        {Object.entries(sandboxes).map(([configName, rawConfig], index) => {
+          const config = rawConfig as Record<string, unknown>;
+          const providerType = String(config.provider ?? configName);
+          const fields = PROVIDER_FIELDS[providerType] ?? [];
+          const isSaving = saving === configName;
+          const displayName = configName.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
 
           return (
             <div
-              key={provider.id}
+              key={configName}
               className="border border-[#e2e8f0] rounded-xl p-5 bg-white hover:border-[#0ea5e9] hover:shadow-lg hover:shadow-[#0ea5e9]/10 transition-all duration-300 space-y-4"
               style={{ animation: `fadeInUp 0.5s ease-out ${index * 0.1}s both` }}
             >
               <div className="flex items-center justify-between">
-                <h3 className="text-sm font-bold text-[#1e293b]" style={{ fontFamily: 'Inter, system-ui, sans-serif' }}>
-                  {provider.name}
-                </h3>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-bold text-[#1e293b]" style={{ fontFamily: 'Inter, system-ui, sans-serif' }}>
+                    {displayName}
+                  </h3>
+                  {configName !== providerType && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#f1f5f9] text-[#64748b]">{providerType}</span>
+                  )}
+                </div>
                 {isSaving && (
                   <span className="text-xs text-[#0ea5e9] font-medium animate-pulse">Saving...</span>
                 )}
-                {successMessage === provider.id && !isSaving && (
+                {successMessage === configName && !isSaving && (
                   <div className="flex items-center gap-2 px-3 py-1.5 bg-[#10b981]/10 rounded-full animate-fadeIn">
                     <svg className="w-4 h-4 text-[#10b981]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
@@ -194,17 +183,17 @@ export default function SandboxSection({ sandboxes, onUpdate }: SandboxSectionPr
                 )}
               </div>
 
-              {provider.fields.map((field) => (
+              {fields.map((field) => (
                 <div key={field.key} className="space-y-1">
                   <label className="text-xs font-medium text-[#64748b]">{field.label}</label>
-                  {renderField(provider.id, field, config)}
+                  {renderField(configName, field, config)}
                 </div>
               ))}
 
               {COMMON_FIELDS.map((field) => (
                 <div key={field.key} className="space-y-1">
                   <label className="text-xs font-medium text-[#64748b]">{field.label}</label>
-                  {renderField(provider.id, field, config)}
+                  {renderField(configName, field, config)}
                 </div>
               ))}
             </div>
