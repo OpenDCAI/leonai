@@ -6,7 +6,7 @@ from collections.abc import AsyncGenerator
 from typing import Any
 
 from backend.web.services.event_buffer import RunEventBuffer
-from backend.web.services.event_store import init_event_store
+from backend.web.services.event_store import cleanup_old_runs, init_event_store
 from backend.web.utils.serializers import extract_text_content
 from core.monitor import AgentState
 from sandbox.thread_context import set_current_thread_id
@@ -360,8 +360,11 @@ async def _run_agent_to_buffer(
             await stream_gen.aclose()
         if agent and hasattr(agent, "runtime") and agent.runtime.current_state == AgentState.ACTIVE:
             agent.runtime.transition(AgentState.IDLE)
-        cleanup_old_runs(thread_id, keep_latest=1)
         await buf.mark_done()
+        try:
+            cleanup_old_runs(thread_id, keep_latest=1)
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------
