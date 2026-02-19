@@ -143,7 +143,17 @@ export function useStreamHandler(deps: StreamHandlerDeps): StreamHandlerState & 
       try {
         const runtime = await getThreadRuntime(threadId);
         const state = runtime?.state?.state;
-        if (state !== "active") return;
+        if (state !== "active") {
+          // Clear stale streaming flags (race: useThreadData saw "active" but agent finished before we checked)
+          onUpdateRef.current((prev) =>
+            prev.map((e) =>
+              e.role === "assistant" && (e as AssistantTurn).streaming
+                ? { ...e, streaming: false } as AssistantTurn
+                : e,
+            ),
+          );
+          return;
+        }
 
         if (ac.signal.aborted) return;
 
