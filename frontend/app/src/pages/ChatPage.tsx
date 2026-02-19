@@ -64,13 +64,15 @@ export default function ChatPage() {
 
   const { entries, activeSandbox, loading, setEntries, setActiveSandbox, refreshThread } = useThreadData(threadId, hasInitialMessage);
 
-  const { isStreaming, streamTurnId, runtimeStatus, handleSendMessage, handleStopStreaming } =
+  const { runtimeStatus, handleSendMessage, handleStopStreaming } =
     useStreamHandler({
       threadId: threadId ?? "",
       refreshThreads: tm.refreshThreads,
       onUpdate: (updater) => setEntries(updater),
       loading,
     });
+
+  const isStreaming = entries.some((e) => e.role === "assistant" && (e as import("../api").AssistantTurn).streaming);
 
   // Handle initial message - send immediately without waiting for loading
   useEffect(() => {
@@ -130,7 +132,6 @@ export default function ChatPage() {
           <ChatArea
             entries={entries}
             isStreaming={isStreaming}
-            streamTurnId={streamTurnId}
             runtimeStatus={runtimeStatus}
             loading={loading}
             onFocusAgent={handleFocusAgent}

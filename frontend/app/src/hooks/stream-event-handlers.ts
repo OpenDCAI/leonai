@@ -17,7 +17,6 @@ export function processStreamEvent(
   event: StreamEvent,
   turnId: string,
   onUpdate: UpdateEntries,
-  setIsStreaming: (v: boolean) => void,
   setRuntimeStatus: (v: StreamStatus | null) => void,
 ): { messageId?: string } {
   const data = (event.data ?? {}) as Record<string, unknown>;
@@ -42,7 +41,7 @@ export function processStreamEvent(
       handleErrorEvent(event, turnId, onUpdate);
       return { messageId };
     case "cancelled":
-      handleCancelledEvent(event, turnId, onUpdate, setIsStreaming);
+      handleCancelledEvent(event, turnId, onUpdate);
       return { messageId };
     default:
       if (event.type.startsWith("subagent_")) {
@@ -177,12 +176,11 @@ function handleCancelledEvent(
   event: StreamEvent,
   turnId: string,
   onUpdate: UpdateEntries,
-  setIsStreaming: (v: boolean) => void,
 ) {
-  setIsStreaming(false);
   const cancelledToolCallIds = (event.data as any)?.cancelled_tool_call_ids || [];
   updateTurnSegments(onUpdate, turnId, (turn) => ({
     ...turn,
+    streaming: false,
     segments: turn.segments.map((seg) => {
       if (seg.type === "tool" && cancelledToolCallIds.includes(seg.step.id)) {
         return { ...seg, step: { ...seg.step, status: "cancelled" as const, result: "任务被用户取消" } };
