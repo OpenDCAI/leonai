@@ -136,7 +136,7 @@ async def _run_agent_to_buffer(
     buf.run_id = run_id
 
     async def emit(event: dict, message_id: str | None = None) -> None:
-        seq = append_event(thread_id, run_id, event, message_id)
+        seq = await append_event(thread_id, run_id, event, message_id)
         data = json.loads(event.get("data", "{}")) if isinstance(event.get("data"), str) else event.get("data", {})
         if isinstance(data, dict):
             data["_seq"] = seq
@@ -362,7 +362,7 @@ async def _run_agent_to_buffer(
             agent.runtime.transition(AgentState.IDLE)
         await buf.mark_done()
         try:
-            cleanup_old_runs(thread_id, keep_latest=1)
+            await cleanup_old_runs(thread_id, keep_latest=1)
         except Exception:
             pass
 

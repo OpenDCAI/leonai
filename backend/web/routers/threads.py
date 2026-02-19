@@ -304,7 +304,7 @@ async def observe_thread_run(
     # No active buffer — try replaying from SQLite (server restart scenario)
     from backend.web.services.event_store import get_latest_run_id, read_events_after
 
-    run_id = get_latest_run_id(thread_id)
+    run_id = await get_latest_run_id(thread_id)
     if not run_id:
 
         async def _empty():
@@ -312,7 +312,7 @@ async def observe_thread_run(
 
         return EventSourceResponse(_empty())
 
-    events = read_events_after(thread_id, run_id, after)
+    events = await read_events_after(thread_id, run_id, after)
 
     async def _replay():
         for ev in events:
