@@ -33,3 +33,18 @@ class RunEventBuffer:
                 return [], cursor
             async with self._notify:
                 await self._notify.wait()
+
+    async def read_with_timeout(self, cursor: int, timeout: float = 30) -> tuple[list[dict] | None, int]:
+        """Same as read() but returns (None, cursor) on timeout instead of blocking forever."""
+        if cursor < len(self.events):
+            return self.events[cursor:], len(self.events)
+        if self.finished.is_set():
+            return [], cursor
+        async with self._notify:
+            try:
+                await asyncio.wait_for(self._notify.wait(), timeout)
+            except TimeoutError:
+                return None, cursor
+        if cursor < len(self.events):
+            return self.events[cursor:], len(self.events)
+        return None, cursor

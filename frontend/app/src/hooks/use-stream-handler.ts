@@ -2,8 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   cancelRun,
   getThreadRuntime,
-  observeRun,
-  startRun,
+  postRun,
+  streamEvents,
   type AssistantTurn,
   type ChatEntry,
   type StreamStatus,
@@ -50,9 +50,21 @@ export function useStreamHandler(deps: StreamHandlerDeps): StreamHandlerState & 
   const { threadId, refreshThreads, onUpdate, loading } = deps;
 
   const [runtimeStatus, setRuntimeStatus] = useState<StreamStatus | null>(null);
-  const abortControllerRef = useRef<AbortController | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
   const onUpdateRef = useRef(onUpdate);
   onUpdateRef.current = onUpdate;
+
+  // Abort current stream when thread changes
+  useEffect(() => {
+    return () => { abortRef.current?.abort(); };
+  }, [threadId]);
+
+  // Graceful cleanup on page unload
+  useEffect(() => {
+    const cleanup = () => abortRef.current?.abort();
+    window.addEventListener("beforeunload", cleanup);
+    return () => window.removeEventListener("beforeunload", cleanup);
+  }, []);
 
   const handleSendMessage = useCallback(
     async (message: string) => {
@@ -68,14 +80,15 @@ export function useStreamHandler(deps: StreamHandlerDeps): StreamHandlerState & 
 
       onUpdateRef.current((prev) => [...prev, userEntry, assistantTurn]);
 
-      const abortController = new AbortController();
-      abortControllerRef.current = abortController;
+      const ac = new AbortController();
+      abortRef.current = ac;
 
       let boundTurnId = tempTurnId;
       let hasBound = false;
 
       try {
-        await startRun(threadId, message, (event) => {
+        await postRun(threadId, message, ac.signal);
+        await streamEvents(threadId, (event) => {
           const { messageId } = processStreamEvent(
             event, boundTurnId, onUpdateRef.current, setRuntimeStatus,
           );
@@ -90,15 +103,19 @@ export function useStreamHandler(deps: StreamHandlerDeps): StreamHandlerState & 
               ),
             );
           }
-        }, abortController.signal);
-      } catch (error) {
-        if (error instanceof Error && error.name === "AbortError") {
-          // Aborted by user or thread switch
-        } else {
-          throw error;
+        }, ac.signal);
+      } catch (e) {
+        if (e instanceof Error && e.name !== "AbortError") {
+          onUpdateRef.current((prev) =>
+            prev.map((entry) =>
+              entry.id === boundTurnId && entry.role === "assistant"
+                ? { ...entry, segments: [...(entry as AssistantTurn).segments, { type: "text" as const, content: `\n\nError: ${(e as Error).message}` }] } as AssistantTurn
+                : entry,
+            ),
+          );
         }
       } finally {
-        abortControllerRef.current = null;
+        abortRef.current = null;
         setTurnStreaming(onUpdateRef.current, boundTurnId, false);
         await refreshThreads();
       }
@@ -112,14 +129,10 @@ export function useStreamHandler(deps: StreamHandlerDeps): StreamHandlerState & 
     } catch (e) {
       console.error("Failed to cancel run:", e);
     }
-    setTimeout(() => {
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
-      }
-    }, 500);
+    setTimeout(() => abortRef.current?.abort(), 500);
   }, [threadId]);
 
-  // Reconnect: after snapshot is loaded (loading=false), check if agent is active → observeRun
+  // Reconnect: after snapshot is loaded, check if agent is active → streamEvents
   useEffect(() => {
     if (!threadId || loading) return;
 
@@ -153,7 +166,6 @@ export function useStreamHandler(deps: StreamHandlerDeps): StreamHandlerState & 
             };
             return [...prev, newTurn];
           }
-          // Mark existing turn as streaming
           return prev.map((e) =>
             e.id === turnId && e.role === "assistant"
               ? { ...e, streaming: true } as AssistantTurn
@@ -163,9 +175,9 @@ export function useStreamHandler(deps: StreamHandlerDeps): StreamHandlerState & 
 
         if (!turnId || ac.signal.aborted) return;
 
-        abortControllerRef.current = ac;
+        abortRef.current = ac;
 
-        await observeRun(threadId, (event) => {
+        await streamEvents(threadId, (event) => {
           processStreamEvent(event, turnId!, onUpdateRef.current, setRuntimeStatus);
         }, ac.signal);
       } catch (error) {
@@ -177,9 +189,7 @@ export function useStreamHandler(deps: StreamHandlerDeps): StreamHandlerState & 
       }
     })();
 
-    return () => {
-      ac.abort();
-    };
+    return () => { ac.abort(); };
   }, [threadId, loading, refreshThreads]);
 
   return { runtimeStatus, handleSendMessage, handleStopStreaming };

@@ -148,6 +148,7 @@ async def _run_agent_to_buffer(
 
     task = None
     stream_gen = None
+    pending_tool_calls: dict[str, dict] = {}
     try:
         config = {"configurable": {"thread_id": thread_id}}
         if hasattr(agent, "_current_model_config"):
@@ -181,7 +182,6 @@ async def _run_agent_to_buffer(
             await prime_sandbox(agent, thread_id)
 
         emitted_tool_call_ids: set[str] = set()
-        pending_tool_calls: dict[str, dict] = {}
 
         async def run_agent_stream():
             async for chunk in agent.agent.astream(
@@ -354,13 +354,13 @@ async def _run_agent_to_buffer(
         traceback.print_exc()
         await emit({"event": "error", "data": json.dumps({"error": str(e)}, ensure_ascii=False)})
     finally:
+        await buf.mark_done()
         app.state.thread_tasks.pop(thread_id, None)
         app.state.thread_event_buffers.pop(thread_id, None)
         if stream_gen is not None:
             await stream_gen.aclose()
         if agent and hasattr(agent, "runtime") and agent.runtime.current_state == AgentState.ACTIVE:
             agent.runtime.transition(AgentState.IDLE)
-        await buf.mark_done()
         try:
             await cleanup_old_runs(thread_id, keep_latest=1)
         except Exception:
@@ -401,58 +401,75 @@ async def observe_run_events(
 
     Safe to abort — does not affect the producer or agent state.
     When *after* > 0, skip events whose injected ``_seq`` <= after.
+    Sends heartbeat comments every 30s to keep the connection alive.
+    Each event includes an ``id`` field for Last-Event-ID reconnection.
     """
+    # Tell the browser to reconnect after 5s if the connection drops
+    yield {"retry": 5000}
+
     cursor = 0
     while True:
-        events, cursor = await buf.read(cursor)
+        events, cursor = await buf.read_with_timeout(cursor, timeout=30)
+        if events is None and not buf.finished.is_set():
+            yield {"comment": "keepalive"}
+            continue
         if not events and buf.finished.is_set():
             break
+        if not events:
+            continue
         for event in events:
             if after > 0:
                 try:
                     data = json.loads(event.get("data", "{}"))
-                    if isinstance(data, dict) and data.get("_seq", 0) <= after:
+                    seq = data.get("_seq", 0) if isinstance(data, dict) else 0
+                    if seq <= after:
                         continue
                 except (json.JSONDecodeError, TypeError):
                     pass
-            yield event
+            # Inject SSE id from _seq for Last-Event-ID support
+            seq_id = None
+            try:
+                data = json.loads(event.get("data", "{}"))
+                if isinstance(data, dict) and "_seq" in data:
+                    seq_id = str(data["_seq"])
+            except (json.JSONDecodeError, TypeError):
+                pass
+            if seq_id:
+                yield {**event, "id": seq_id}
+            else:
+                yield event
 
 
 # ---------------------------------------------------------------------------
-# Compat wrapper (keeps old signature for TUI runner if needed)
+# Task agent: buffer-based producer (same pattern as main agent)
 # ---------------------------------------------------------------------------
 
 
-async def stream_agent_execution(
-    agent: Any,
-    thread_id: str,
-    message: str,
-    app: Any,
-    enable_trajectory: bool = False,
-) -> AsyncGenerator[dict[str, str], None]:
-    """Legacy wrapper: start a buffered run and observe it."""
-    buf = start_agent_run(agent, thread_id, message, app, enable_trajectory)
-    async for event in observe_run_events(buf):
-        yield event
-
-
-async def stream_task_agent_execution(
+def start_task_agent_run(
     thread_id: str,
     payload: Any,
     app: Any,
     sandbox_type: str,
-) -> AsyncGenerator[dict[str, str], None]:
-    """Stream task agent execution with real-time progress updates.
+) -> RunEventBuffer:
+    """Create a RunEventBuffer and launch task agent as background task."""
+    buf = RunEventBuffer()
+    app.state.thread_event_buffers[thread_id] = buf
+    bg_task = asyncio.create_task(_run_task_agent_to_buffer(thread_id, payload, app, sandbox_type, buf))
+    app.state.thread_tasks[thread_id] = bg_task
+    return buf
 
-    Yields SSE events:
-    - task_*: Task-specific events from TaskMiddleware
-    - task_error: Error occurred
-    """
-    agent = None
+
+async def _run_task_agent_to_buffer(
+    thread_id: str,
+    payload: Any,
+    app: Any,
+    sandbox_type: str,
+    buf: RunEventBuffer,
+) -> None:
+    """Task agent producer — writes events to buffer."""
     try:
         set_current_thread_id(thread_id)
-        # Import here to avoid circular dependency
-        from services.agent_pool import get_or_create_agent
+        from backend.web.services.agent_pool import get_or_create_agent
 
         agent = await get_or_create_agent(app, sandbox_type, thread_id=thread_id)
 
@@ -465,14 +482,16 @@ async def stream_task_agent_execution(
                     break
 
         if not task_middleware:
-            yield {
-                "event": "task_error",
-                "data": json.dumps({"error": "TaskMiddleware not available"}, ensure_ascii=False),
-            }
+            await buf.put(
+                {
+                    "event": "task_error",
+                    "data": json.dumps({"error": "TaskMiddleware not available"}, ensure_ascii=False),
+                }
+            )
             return
 
         # Build task params
-        params: TaskParams = {
+        params: dict[str, Any] = {
             "SubagentType": payload.subagent_type,
             "Prompt": payload.prompt,
         }
@@ -483,15 +502,22 @@ async def stream_task_agent_execution(
         if payload.max_turns:
             params["MaxTurns"] = payload.max_turns
 
-        # Stream task execution
+        # Stream task execution into buffer
         async for event in task_middleware.run_task_streaming(params):
-            yield event
+            await buf.put(event)
 
+        await buf.put({"event": "done", "data": json.dumps({"thread_id": thread_id})})
     except Exception as e:
         import traceback
 
         traceback.print_exc()
-        yield {
-            "event": "task_error",
-            "data": json.dumps({"error": str(e)}, ensure_ascii=False),
-        }
+        await buf.put(
+            {
+                "event": "task_error",
+                "data": json.dumps({"error": str(e)}, ensure_ascii=False),
+            }
+        )
+    finally:
+        app.state.thread_tasks.pop(thread_id, None)
+        app.state.thread_event_buffers.pop(thread_id, None)
+        await buf.mark_done()

@@ -5,7 +5,7 @@ import json
 import uuid
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sse_starlette.sse import EventSourceResponse
 
 from backend.web.core.dependencies import get_app, get_thread_agent, get_thread_lock
@@ -21,7 +21,7 @@ from backend.web.services.sandbox_service import destroy_thread_resources_sync
 from backend.web.services.streaming_service import (
     observe_run_events,
     start_agent_run,
-    stream_task_agent_execution,
+    start_task_agent_run,
 )
 from backend.web.services.thread_service import list_threads_from_db
 from backend.web.services.thread_state_service import (
@@ -259,14 +259,21 @@ async def get_thread_lease_status(
         raise HTTPException(404, str(e)) from e
 
 
-# Run endpoint (SSE streaming)
+# SSE response headers: disable proxy buffering for real-time streaming
+SSE_HEADERS = {
+    "Cache-Control": "no-cache",
+    "X-Accel-Buffering": "no",
+}
+
+
+# Run endpoint — returns JSON, agent runs in background
 @router.post("/{thread_id}/runs")
 async def run_thread(
     thread_id: str,
     payload: RunRequest,
     app: Annotated[Any, Depends(get_app)] = None,
-) -> EventSourceResponse:
-    """Execute agent run with SSE streaming."""
+) -> dict[str, Any]:
+    """Start an agent run. Returns {run_id, thread_id}; observe via GET /runs/events."""
     if not payload.message.strip():
         raise HTTPException(status_code=400, detail="message cannot be empty")
 
@@ -284,22 +291,31 @@ async def run_thread(
             raise HTTPException(status_code=409, detail="Thread is already running")
 
     buf = start_agent_run(agent, thread_id, payload.message, app, payload.enable_trajectory)
-    return EventSourceResponse(observe_run_events(buf))
+    return {"run_id": buf.run_id, "thread_id": thread_id}
 
 
-@router.get("/{thread_id}/runs/stream")
-async def observe_thread_run(
+@router.get("/{thread_id}/runs/events")
+async def stream_run_events(
     thread_id: str,
+    request: Request,
     after: int = 0,
     app: Annotated[Any, Depends(get_app)] = None,
 ) -> EventSourceResponse:
-    """Observe an in-progress run from the beginning (replay + live tail).
+    """SSE event stream for an in-progress or completed run.
 
-    Pass ``?after=N`` to skip events with seq <= N (for reconnection).
+    Supports reconnection via ``?after=N`` or ``Last-Event-ID`` header.
     """
+    # Prefer Last-Event-ID header (browser EventSource sends this automatically)
+    last_id = request.headers.get("Last-Event-ID")
+    if last_id:
+        try:
+            after = max(after, int(last_id))
+        except ValueError:
+            pass
+
     buf = app.state.thread_event_buffers.get(thread_id)
     if buf:
-        return EventSourceResponse(observe_run_events(buf, after=after))
+        return EventSourceResponse(observe_run_events(buf, after=after), headers=SSE_HEADERS)
 
     # No active buffer — try replaying from SQLite (server restart scenario)
     from backend.web.services.event_store import get_latest_run_id, read_events_after
@@ -310,7 +326,7 @@ async def observe_thread_run(
         async def _empty():
             yield {"event": "done", "data": json.dumps({"thread_id": thread_id})}
 
-        return EventSourceResponse(_empty())
+        return EventSourceResponse(_empty(), headers=SSE_HEADERS)
 
     events = await read_events_after(thread_id, run_id, after)
 
@@ -319,7 +335,7 @@ async def observe_thread_run(
             yield {"event": ev["event"], "data": ev["data"]}
         yield {"event": "done", "data": json.dumps({"thread_id": thread_id})}
 
-    return EventSourceResponse(_replay())
+    return EventSourceResponse(_replay(), headers=SSE_HEADERS)
 
 
 @router.post("/{thread_id}/runs/cancel")
@@ -335,15 +351,16 @@ async def cancel_run(
     return {"ok": True, "message": "Run cancellation requested"}
 
 
-@router.post("/{thread_id}/task-agent/stream")
-async def stream_task_agent(
+@router.post("/{thread_id}/task-agent/runs")
+async def run_task_agent(
     thread_id: str,
     payload: TaskAgentRequest,
     app: Annotated[Any, Depends(get_app)] = None,
-) -> EventSourceResponse:
-    """Stream Task agent execution with real-time progress updates."""
+) -> dict[str, Any]:
+    """Start a task agent run. Observe events via GET /runs/events."""
     if not payload.prompt.strip():
         raise HTTPException(status_code=400, detail="prompt cannot be empty")
 
     sandbox_type = resolve_thread_sandbox(app, thread_id)
-    return EventSourceResponse(stream_task_agent_execution(thread_id, payload, app, sandbox_type))
+    buf = start_task_agent_run(thread_id, payload, app, sandbox_type)
+    return {"run_id": buf.run_id, "thread_id": thread_id}
