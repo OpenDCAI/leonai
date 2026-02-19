@@ -22,6 +22,7 @@ class AgentBaySandbox(RemoteSandbox):
             region_id=ab.region_id,
             default_context_path=ab.context_path,
             image_id=ab.image_id,
+            provider_name=config.name,
         )
         super().__init__(
             provider=provider,
@@ -33,7 +34,7 @@ class AgentBaySandbox(RemoteSandbox):
 
     @property
     def name(self) -> str:
-        return "agentbay"
+        return self._config.name
 
     @property
     def working_dir(self) -> str:

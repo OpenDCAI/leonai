@@ -34,9 +34,12 @@ class DaytonaProvider(SandboxProvider):
         api_url: str = "https://app.daytona.io/api",
         target: str = "local",
         default_cwd: str = "/home/daytona",
+        provider_name: str | None = None,
     ):
         from daytona_sdk import Daytona
 
+        if provider_name:
+            self.name = provider_name
         self.api_key = api_key
         self.api_url = api_url
         self.target = target

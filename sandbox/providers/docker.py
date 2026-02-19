@@ -34,7 +34,9 @@ class DockerProvider(SandboxProvider):
             runtime_kind="docker_pty",
         )
 
-    def __init__(self, image: str, mount_path: str = "/workspace", command_timeout_sec: float = 20.0):
+    def __init__(self, image: str, mount_path: str = "/workspace", command_timeout_sec: float = 20.0, provider_name: str | None = None):
+        if provider_name:
+            self.name = provider_name
         self.image = image
         self.mount_path = mount_path
         self.command_timeout_sec = command_timeout_sec

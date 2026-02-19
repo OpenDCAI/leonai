@@ -28,6 +28,7 @@ class DaytonaSandbox(RemoteSandbox):
             api_url=dt.api_url,
             target=dt.target,
             default_cwd=dt.cwd,
+            provider_name=config.name,
         )
         super().__init__(
             provider=provider,
@@ -39,7 +40,7 @@ class DaytonaSandbox(RemoteSandbox):
 
     @property
     def name(self) -> str:
-        return "daytona"
+        return self._config.name
 
     @property
     def working_dir(self) -> str:

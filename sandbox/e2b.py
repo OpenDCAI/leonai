@@ -28,6 +28,7 @@ class E2BSandbox(RemoteSandbox):
             template=e2b.template,
             default_cwd=e2b.cwd,
             timeout=e2b.timeout,
+            provider_name=config.name,
         )
         super().__init__(
             provider=provider,
@@ -39,7 +40,7 @@ class E2BSandbox(RemoteSandbox):
 
     @property
     def name(self) -> str:
-        return "e2b"
+        return self._config.name
 
     @property
     def working_dir(self) -> str:

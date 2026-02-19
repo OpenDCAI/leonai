@@ -12,7 +12,7 @@ from sandbox.remote import RemoteSandbox
 class DockerSandbox(RemoteSandbox):
     def __init__(self, config: SandboxConfig, db_path: Path | None = None) -> None:
         dc = config.docker
-        provider = DockerProvider(image=dc.image, mount_path=dc.mount_path)
+        provider = DockerProvider(image=dc.image, mount_path=dc.mount_path, provider_name=config.name)
         super().__init__(
             provider=provider,
             config=config,
@@ -23,7 +23,7 @@ class DockerSandbox(RemoteSandbox):
 
     @property
     def name(self) -> str:
-        return "docker"
+        return self._config.name
 
     @property
     def working_dir(self) -> str:

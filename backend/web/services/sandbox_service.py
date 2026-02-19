@@ -47,40 +47,44 @@ def init_providers_and_managers() -> tuple[dict, dict]:
 
                 key = config.agentbay.api_key or os.getenv("AGENTBAY_API_KEY")
                 if key:
-                    providers["agentbay"] = AgentBayProvider(
+                    providers[name] = AgentBayProvider(
                         api_key=key,
                         region_id=config.agentbay.region_id,
                         default_context_path=config.agentbay.context_path,
                         image_id=config.agentbay.image_id,
+                        provider_name=name,
                     )
             elif config.provider == "docker":
                 from sandbox.providers.docker import DockerProvider
 
-                providers["docker"] = DockerProvider(
+                providers[name] = DockerProvider(
                     image=config.docker.image,
                     mount_path=config.docker.mount_path,
+                    provider_name=name,
                 )
             elif config.provider == "e2b":
                 from sandbox.providers.e2b import E2BProvider
 
                 key = config.e2b.api_key or os.getenv("E2B_API_KEY")
                 if key:
-                    providers["e2b"] = E2BProvider(
+                    providers[name] = E2BProvider(
                         api_key=key,
                         template=config.e2b.template,
                         default_cwd=config.e2b.cwd,
                         timeout=config.e2b.timeout,
+                        provider_name=name,
                     )
             elif config.provider == "daytona":
                 from sandbox.providers.daytona import DaytonaProvider
 
                 key = config.daytona.api_key or os.getenv("DAYTONA_API_KEY")
                 if key:
-                    providers["daytona"] = DaytonaProvider(
+                    providers[name] = DaytonaProvider(
                         api_key=key,
                         api_url=config.daytona.api_url,
                         target=config.daytona.target,
                         default_cwd=config.daytona.cwd,
+                        provider_name=name,
                     )
         except Exception as e:
             print(f"[sandbox] Failed to load {name}: {e}")
