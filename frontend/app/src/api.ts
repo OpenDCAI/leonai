@@ -571,7 +571,13 @@ function normalizeStreamType(raw: string): StreamEventType {
     raw === "task_tool_call" ||
     raw === "task_tool_result" ||
     raw === "task_done" ||
-    raw === "task_error"
+    raw === "task_error" ||
+    raw === "subagent_task_start" ||
+    raw === "subagent_task_text" ||
+    raw === "subagent_task_tool_call" ||
+    raw === "subagent_task_tool_result" ||
+    raw === "subagent_task_done" ||
+    raw === "subagent_task_error"
   ) {
     return raw;
   }
@@ -586,48 +592,82 @@ function tryParse(value: string): unknown {
   }
 }
 
-export async function startRun(threadId: string, message: string, onEvent: (event: StreamEvent) => void, signal?: AbortSignal): Promise<void> {
-  const response = await fetch(`/api/threads/${encodeURIComponent(threadId)}/runs`, {
+/** Start an agent run (fire-and-forget). */
+export async function postRun(
+  threadId: string,
+  message: string,
+  signal?: AbortSignal,
+  options?: { model?: string; enable_trajectory?: boolean },
+): Promise<{ run_id: string; thread_id: string }> {
+  const res = await fetch(`/api/threads/${encodeURIComponent(threadId)}/runs`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message }),
+    body: JSON.stringify({ message, ...options }),
     signal,
   });
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`Run failed ${response.status}: ${body || response.statusText}`);
-  }
-  if (!response.body) {
-    throw new Error("Run response has no body stream");
-  }
+  if (!res.ok) throw new Error(`Run failed ${res.status}: ${await res.text()}`);
+  return res.json();
+}
 
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
+/** Parse a single SSE chunk into event type + data lines. */
+function parseSSEChunk(chunk: string): { eventType: string; dataRaw: string } | null {
+  if (!chunk.trim()) return null;
+  let eventType = "text";
+  const dataLines: string[] = [];
+  for (const line of chunk.split("\n")) {
+    if (line.startsWith("event:")) eventType = line.slice(6).trim();
+    else if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
+  }
+  return { eventType, dataRaw: dataLines.join("\n") };
+}
 
-  outer: while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    const decoded = decoder.decode(value, { stream: true });
-    buffer += decoded;
-    // SSE events are separated by blank lines; handle both \r\n and \n line endings
-    const chunks = buffer.split(/\r?\n\r?\n/);
-    buffer = chunks.pop() ?? "";
-    for (const chunk of chunks) {
-      if (!chunk.trim()) continue;
-      let eventType = "text";
-      const dataLines: string[] = [];
-      for (const line of chunk.split("\n")) {
-        if (line.startsWith("event:")) {
-          eventType = line.slice(6).trim();
-        } else if (line.startsWith("data:")) {
-          dataLines.push(line.slice(5).trim());
+/** Subscribe to SSE event stream with built-in reconnection. */
+export async function streamEvents(
+  threadId: string,
+  onEvent: (event: StreamEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  let after = 0;
+  let attempts = 0;
+
+  while (!signal?.aborted) {
+    try {
+      const url = `/api/threads/${encodeURIComponent(threadId)}/runs/events?after=${after}`;
+      const res = await fetch(url, { signal });
+      if (!res.ok || !res.body) break;
+      attempts = 0; // connected — reset backoff
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const chunks = buffer.split(/\r?\n\r?\n/);
+        buffer = chunks.pop() ?? "";
+        for (const chunk of chunks) {
+          const parsed = parseSSEChunk(chunk);
+          if (!parsed) continue;
+          // Skip SSE comments (heartbeat keepalive)
+          if (!parsed.dataRaw && parsed.eventType === "text") continue;
+          const type = normalizeStreamType(parsed.eventType);
+          const data = tryParse(parsed.dataRaw) as Record<string, unknown>;
+          // Track _seq for reconnection
+          if (typeof data === "object" && data && typeof data._seq === "number") {
+            after = data._seq;
+          }
+          onEvent({ type, data });
+          if (type === "done" || type === "cancelled") return;
         }
       }
-      const dataRaw = dataLines.join("\n");
-      const type = normalizeStreamType(eventType);
-      onEvent({ type, data: tryParse(dataRaw) });
-      if (type === "done") break outer;
+      // Stream ended without done/cancelled — may be a disconnect, retry
+    } catch (e) {
+      if (signal?.aborted) return;
+      const delay = Math.min(1000 * 2 ** attempts, 30000);
+      attempts++;
+      await new Promise((r) => setTimeout(r, delay));
     }
   }
 }
@@ -641,41 +681,6 @@ export async function cancelRun(threadId: string): Promise<void> {
   }
 }
 
-export async function observeRun(
-  threadId: string,
-  onEvent: (event: StreamEvent) => void,
-  signal?: AbortSignal,
-  after?: number,
-): Promise<void> {
-  const params = after != null && after > 0 ? `?after=${after}` : "";
-  const response = await fetch(`/api/threads/${encodeURIComponent(threadId)}/runs/stream${params}`, { signal });
-  if (!response.ok || !response.body) return;
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-
-  outer: while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const chunks = buffer.split(/\r?\n\r?\n/);
-    buffer = chunks.pop() ?? "";
-    for (const chunk of chunks) {
-      if (!chunk.trim()) continue;
-      let eventType = "text";
-      const dataLines: string[] = [];
-      for (const line of chunk.split("\n")) {
-        if (line.startsWith("event:")) eventType = line.slice(6).trim();
-        else if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
-      }
-      const type = normalizeStreamType(eventType);
-      onEvent({ type, data: tryParse(dataLines.join("\n")) });
-      if (type === "done") break outer;
-    }
-  }
-}
-
 export interface TaskAgentRequest {
   subagent_type: string;
   prompt: string;
@@ -684,48 +689,20 @@ export interface TaskAgentRequest {
   max_turns?: number;
 }
 
-export async function streamTaskAgent(
+/** Start a task agent and subscribe to its event stream. */
+export async function runTaskAgent(
   threadId: string,
-  request: TaskAgentRequest,
-  onEvent: (event: StreamEvent) => void
+  taskRequest: TaskAgentRequest,
+  onEvent: (event: StreamEvent) => void,
+  signal?: AbortSignal,
 ): Promise<void> {
-  const response = await fetch(`/api/threads/${encodeURIComponent(threadId)}/task-agent/stream`, {
+  const res = await fetch(`/api/threads/${encodeURIComponent(threadId)}/task-agent/runs`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(request),
+    body: JSON.stringify(taskRequest),
+    signal,
   });
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`Task agent stream failed ${response.status}: ${body || response.statusText}`);
-  }
-  if (!response.body) {
-    throw new Error("Task agent response has no body stream");
-  }
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    const decoded = decoder.decode(value, { stream: true });
-    buffer += decoded;
-    const chunks = buffer.split(/\r?\n\r?\n/);
-    buffer = chunks.pop() ?? "";
-    for (const chunk of chunks) {
-      if (!chunk.trim()) continue;
-      let eventType = "text";
-      const dataLines: string[] = [];
-      for (const line of chunk.split("\n")) {
-        if (line.startsWith("event:")) {
-          eventType = line.slice(6).trim();
-        } else if (line.startsWith("data:")) {
-          dataLines.push(line.slice(5).trim());
-        }
-      }
-      const dataRaw = dataLines.join("\n");
-      onEvent({ type: normalizeStreamType(eventType), data: tryParse(dataRaw) });
-    }
-  }
+  if (!res.ok) throw new Error(`Task agent failed ${res.status}: ${await res.text()}`);
+  // Reuse streamEvents to observe the task agent's event stream
+  await streamEvents(threadId, onEvent, signal);
 }
