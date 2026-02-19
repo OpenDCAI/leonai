@@ -128,12 +128,9 @@ async def _run_agent_to_buffer(
     buf: RunEventBuffer,
 ) -> None:
     """Run agent execution and write all SSE events into *buf*."""
-    import uuid as _uuid
-
     from backend.web.services.event_store import append_event
 
-    run_id = str(_uuid.uuid4())
-    buf.run_id = run_id
+    run_id = buf.run_id
 
     async def emit(event: dict, message_id: str | None = None) -> None:
         seq = await append_event(thread_id, run_id, event, message_id)
@@ -380,7 +377,10 @@ def start_agent_run(
     enable_trajectory: bool = False,
 ) -> RunEventBuffer:
     """Create a RunEventBuffer and launch the agent producer as a background task."""
+    import uuid as _uuid
+
     buf = RunEventBuffer()
+    buf.run_id = str(_uuid.uuid4())
     app.state.thread_event_buffers[thread_id] = buf
     bg_task = asyncio.create_task(_run_agent_to_buffer(agent, thread_id, message, app, enable_trajectory, buf))
     # Store the background task so cancel_run can still cancel it
@@ -452,7 +452,10 @@ def start_task_agent_run(
     sandbox_type: str,
 ) -> RunEventBuffer:
     """Create a RunEventBuffer and launch task agent as background task."""
+    import uuid as _uuid
+
     buf = RunEventBuffer()
+    buf.run_id = str(_uuid.uuid4())
     app.state.thread_event_buffers[thread_id] = buf
     bg_task = asyncio.create_task(_run_task_agent_to_buffer(thread_id, payload, app, sandbox_type, buf))
     app.state.thread_tasks[thread_id] = bg_task
