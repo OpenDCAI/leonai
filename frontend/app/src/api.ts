@@ -605,7 +605,7 @@ export async function startRun(threadId: string, message: string, onEvent: (even
   const decoder = new TextDecoder();
   let buffer = "";
 
-  while (true) {
+  outer: while (true) {
     const { done, value } = await reader.read();
     if (done) break;
     const decoded = decoder.decode(value, { stream: true });
@@ -625,7 +625,9 @@ export async function startRun(threadId: string, message: string, onEvent: (even
         }
       }
       const dataRaw = dataLines.join("\n");
-      onEvent({ type: normalizeStreamType(eventType), data: tryParse(dataRaw) });
+      const type = normalizeStreamType(eventType);
+      onEvent({ type, data: tryParse(dataRaw) });
+      if (type === "done") break outer;
     }
   }
 }
@@ -653,7 +655,7 @@ export async function observeRun(
   const decoder = new TextDecoder();
   let buffer = "";
 
-  while (true) {
+  outer: while (true) {
     const { done, value } = await reader.read();
     if (done) break;
     buffer += decoder.decode(value, { stream: true });
@@ -667,7 +669,9 @@ export async function observeRun(
         if (line.startsWith("event:")) eventType = line.slice(6).trim();
         else if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
       }
-      onEvent({ type: normalizeStreamType(eventType), data: tryParse(dataLines.join("\n")) });
+      const type = normalizeStreamType(eventType);
+      onEvent({ type, data: tryParse(dataLines.join("\n")) });
+      if (type === "done") break outer;
     }
   }
 }
