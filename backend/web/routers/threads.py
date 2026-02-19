@@ -290,17 +290,36 @@ async def run_thread(
 @router.get("/{thread_id}/runs/stream")
 async def observe_thread_run(
     thread_id: str,
+    after: int = 0,
     app: Annotated[Any, Depends(get_app)] = None,
 ) -> EventSourceResponse:
-    """Observe an in-progress run from the beginning (replay + live tail)."""
+    """Observe an in-progress run from the beginning (replay + live tail).
+
+    Pass ``?after=N`` to skip events with seq <= N (for reconnection).
+    """
     buf = app.state.thread_event_buffers.get(thread_id)
-    if not buf:
-        # No active run — return immediate done
+    if buf:
+        return EventSourceResponse(observe_run_events(buf, after=after))
+
+    # No active buffer — try replaying from SQLite (server restart scenario)
+    from backend.web.services.event_store import get_latest_run_id, read_events_after
+
+    run_id = get_latest_run_id(thread_id)
+    if not run_id:
+
         async def _empty():
             yield {"event": "done", "data": json.dumps({"thread_id": thread_id})}
 
         return EventSourceResponse(_empty())
-    return EventSourceResponse(observe_run_events(buf))
+
+    events = read_events_after(thread_id, run_id, after)
+
+    async def _replay():
+        for ev in events:
+            yield {"event": ev["event"], "data": ev["data"]}
+        yield {"event": "done", "data": json.dumps({"thread_id": thread_id})}
+
+    return EventSourceResponse(_replay())
 
 
 @router.post("/{thread_id}/runs/cancel")

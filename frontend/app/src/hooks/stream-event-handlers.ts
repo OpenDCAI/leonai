@@ -19,32 +19,36 @@ export function processStreamEvent(
   onUpdate: UpdateEntries,
   setIsStreaming: (v: boolean) => void,
   setRuntimeStatus: (v: StreamStatus | null) => void,
-) {
+): { messageId?: string } {
+  const data = (event.data ?? {}) as Record<string, unknown>;
+  const messageId = typeof data.message_id === "string" ? data.message_id : undefined;
+
   switch (event.type) {
     case "text":
       handleTextEvent(event, turnId, onUpdate);
-      return;
+      return { messageId };
     case "tool_call":
       handleToolCallEvent(event, turnId, onUpdate);
-      return;
+      return { messageId };
     case "tool_result":
       handleToolResultEvent(event, turnId, onUpdate);
-      return;
+      return { messageId };
     case "status": {
       const status = event.data as StreamStatus | undefined;
       if (status) setRuntimeStatus(status);
-      return;
+      return { messageId };
     }
     case "error":
       handleErrorEvent(event, turnId, onUpdate);
-      return;
+      return { messageId };
     case "cancelled":
       handleCancelledEvent(event, turnId, onUpdate, setIsStreaming);
-      return;
+      return { messageId };
     default:
       if (event.type.startsWith("subagent_")) {
         handleSubagentEvent(event, turnId, onUpdate);
       }
+      return { messageId };
   }
 }
 
@@ -79,24 +83,47 @@ function handleTextEvent(event: StreamEvent, turnId: string, onUpdate: UpdateEnt
 
 function handleToolCallEvent(event: StreamEvent, turnId: string, onUpdate: UpdateEntries) {
   const payload = (event.data ?? {}) as { id?: string; name?: string; args?: unknown };
-  const seg: ToolSegment = {
-    type: "tool",
-    step: {
-      id: payload.id ?? makeId("tc"),
-      name: payload.name ?? "tool",
-      args: payload.args ?? {},
-      status: "calling",
-      timestamp: Date.now(),
-    },
-  };
-  updateTurnSegments(onUpdate, turnId, (turn) => ({
-    ...turn,
-    segments: [...turn.segments, seg],
-  }));
+  const toolCallId = payload.id ?? makeId("tc");
+
+  // Dedup: skip if this tool_call_id already exists in the turn
+  onUpdate((prev) => {
+    const turn = prev.find((e) => e.id === turnId && e.role === "assistant") as AssistantTurn | undefined;
+    if (turn) {
+      const exists = turn.segments.some(
+        (s) => s.type === "tool" && s.step.id === toolCallId,
+      );
+      if (exists) return prev;
+    }
+    return prev.map((e) => {
+      if (e.id !== turnId || e.role !== "assistant") return e;
+      const t = e as AssistantTurn;
+      const seg: ToolSegment = {
+        type: "tool",
+        step: {
+          id: toolCallId,
+          name: payload.name ?? "tool",
+          args: payload.args ?? {},
+          status: "calling",
+          timestamp: Date.now(),
+        },
+      };
+      return { ...t, segments: [...t.segments, seg] };
+    });
+  });
 }
 
 function handleToolResultEvent(event: StreamEvent, turnId: string, onUpdate: UpdateEntries) {
   const payload = (event.data ?? {}) as { content?: string; tool_call_id?: string; name?: string };
+
+  // Dedup: skip if tool segment already has result with status "done"
+  const shouldSkip = (prev: ChatEntry[]): boolean => {
+    const turn = prev.find((e) => e.id === turnId && e.role === "assistant") as AssistantTurn | undefined;
+    if (!turn) return false;
+    const seg = turn.segments.find(
+      (s) => s.type === "tool" && s.step.id === payload.tool_call_id,
+    ) as ToolSegment | undefined;
+    return !!(seg && seg.step.result != null && seg.step.status === "done");
+  };
 
   const updateResult = () => {
     updateTurnSegments(onUpdate, turnId, (turn) => ({
@@ -110,6 +137,7 @@ function handleToolResultEvent(event: StreamEvent, turnId: string, onUpdate: Upd
 
   // Ensure "calling" state is visible for at least 200ms before showing result
   onUpdate((prev) => {
+    if (shouldSkip(prev)) return prev;
     const turn = prev.find((e) => e.id === turnId && e.role === "assistant") as AssistantTurn | undefined;
     if (turn) {
       const toolSeg = turn.segments.find(

@@ -6,9 +6,13 @@ from collections.abc import AsyncGenerator
 from typing import Any
 
 from backend.web.services.event_buffer import RunEventBuffer
+from backend.web.services.event_store import init_event_store
 from backend.web.utils.serializers import extract_text_content
 from core.monitor import AgentState
 from sandbox.thread_context import set_current_thread_id
+
+# Ensure the run_events table exists on import
+init_event_store()
 
 
 async def prime_sandbox(agent: Any, thread_id: str) -> None:
@@ -124,6 +128,24 @@ async def _run_agent_to_buffer(
     buf: RunEventBuffer,
 ) -> None:
     """Run agent execution and write all SSE events into *buf*."""
+    import uuid as _uuid
+
+    from backend.web.services.event_store import append_event
+
+    run_id = str(_uuid.uuid4())
+    buf.run_id = run_id
+
+    async def emit(event: dict, message_id: str | None = None) -> None:
+        seq = append_event(thread_id, run_id, event, message_id)
+        data = json.loads(event.get("data", "{}")) if isinstance(event.get("data"), str) else event.get("data", {})
+        if isinstance(data, dict):
+            data["_seq"] = seq
+            data["_run_id"] = run_id
+            if message_id:
+                data["message_id"] = message_id
+            event = {**event, "data": json.dumps(data, ensure_ascii=False)}
+        await buf.put(event)
+
     task = None
     stream_gen = None
     try:
@@ -184,7 +206,7 @@ async def _run_agent_to_buffer(
                 import traceback
 
                 traceback.print_exc()
-                await buf.put({"event": "error", "data": json.dumps({"error": str(stream_error)}, ensure_ascii=False)})
+                await emit({"event": "error", "data": json.dumps({"error": str(stream_error)}, ensure_ascii=False)})
                 break
             if not chunk:
                 continue
@@ -198,12 +220,14 @@ async def _run_agent_to_buffer(
                 msg_class = msg_chunk.__class__.__name__
                 if msg_class == "AIMessageChunk":
                     content = extract_text_content(getattr(msg_chunk, "content", ""))
+                    chunk_msg_id = getattr(msg_chunk, "id", None)
                     if content:
-                        await buf.put(
+                        await emit(
                             {
                                 "event": "text",
                                 "data": json.dumps({"content": content}, ensure_ascii=False),
-                            }
+                            },
+                            message_id=chunk_msg_id,
                         )
 
             elif mode == "updates":
@@ -218,6 +242,7 @@ async def _run_agent_to_buffer(
                     for msg in messages:
                         msg_class = msg.__class__.__name__
                         if msg_class == "AIMessage":
+                            ai_msg_id = getattr(msg, "id", None)
                             for tc in getattr(msg, "tool_calls", []):
                                 tc_id = tc.get("id")
                                 if tc_id and tc_id in emitted_tool_call_ids:
@@ -228,7 +253,7 @@ async def _run_agent_to_buffer(
                                         "name": tc.get("name", "unknown"),
                                         "args": tc.get("args", {}),
                                     }
-                                await buf.put(
+                                await emit(
                                     {
                                         "event": "tool_call",
                                         "data": json.dumps(
@@ -239,13 +264,15 @@ async def _run_agent_to_buffer(
                                             },
                                             ensure_ascii=False,
                                         ),
-                                    }
+                                    },
+                                    message_id=ai_msg_id,
                                 )
                         elif msg_class == "ToolMessage":
                             tc_id = getattr(msg, "tool_call_id", None)
+                            tool_msg_id = getattr(msg, "id", None)
                             if tc_id:
                                 pending_tool_calls.pop(tc_id, None)
-                            await buf.put(
+                            await emit(
                                 {
                                     "event": "tool_result",
                                     "data": json.dumps(
@@ -256,12 +283,13 @@ async def _run_agent_to_buffer(
                                         },
                                         ensure_ascii=False,
                                     ),
-                                }
+                                },
+                                message_id=tool_msg_id,
                             )
                             if hasattr(agent, "runtime"):
                                 status = agent.runtime.get_status_dict()
                                 status["current_tool"] = getattr(msg, "name", None)
-                                await buf.put(
+                                await emit(
                                     {
                                         "event": "status",
                                         "data": json.dumps(status, ensure_ascii=False),
@@ -275,7 +303,7 @@ async def _run_agent_to_buffer(
                     event_type = event.get("event", "")
                     event_data = json.loads(event.get("data", "{}"))
                     event_data["parent_tool_call_id"] = tool_call_id
-                    await buf.put(
+                    await emit(
                         {
                             "event": f"subagent_{event_type}",
                             "data": json.dumps(event_data, ensure_ascii=False),
@@ -284,7 +312,7 @@ async def _run_agent_to_buffer(
 
         # Final status
         if hasattr(agent, "runtime"):
-            await buf.put(
+            await emit(
                 {
                     "event": "status",
                     "data": json.dumps(agent.runtime.get_status_dict(), ensure_ascii=False),
@@ -306,10 +334,10 @@ async def _run_agent_to_buffer(
 
                 traceback.print_exc()
 
-        await buf.put({"event": "done", "data": json.dumps({"thread_id": thread_id})})
+        await emit({"event": "done", "data": json.dumps({"thread_id": thread_id})})
     except asyncio.CancelledError:
         cancelled_tool_call_ids = await write_cancellation_markers(agent, config, pending_tool_calls)
-        await buf.put(
+        await emit(
             {
                 "event": "cancelled",
                 "data": json.dumps(
@@ -324,7 +352,7 @@ async def _run_agent_to_buffer(
         import traceback
 
         traceback.print_exc()
-        await buf.put({"event": "error", "data": json.dumps({"error": str(e)}, ensure_ascii=False)})
+        await emit({"event": "error", "data": json.dumps({"error": str(e)}, ensure_ascii=False)})
     finally:
         app.state.thread_tasks.pop(thread_id, None)
         app.state.thread_event_buffers.pop(thread_id, None)
@@ -332,6 +360,7 @@ async def _run_agent_to_buffer(
             await stream_gen.aclose()
         if agent and hasattr(agent, "runtime") and agent.runtime.current_state == AgentState.ACTIVE:
             agent.runtime.transition(AgentState.IDLE)
+        cleanup_old_runs(thread_id, keep_latest=1)
         await buf.mark_done()
 
 
@@ -363,10 +392,12 @@ def start_agent_run(
 
 async def observe_run_events(
     buf: RunEventBuffer,
+    after: int = 0,
 ) -> AsyncGenerator[dict[str, str], None]:
     """Consume events from a RunEventBuffer. Yields SSE event dicts.
 
     Safe to abort — does not affect the producer or agent state.
+    When *after* > 0, skip events whose injected ``_seq`` <= after.
     """
     cursor = 0
     while True:
@@ -374,6 +405,13 @@ async def observe_run_events(
         if not events and buf.finished.is_set():
             break
         for event in events:
+            if after > 0:
+                try:
+                    data = json.loads(event.get("data", "{}"))
+                    if isinstance(data, dict) and data.get("_seq", 0) <= after:
+                        continue
+                except (json.JSONDecodeError, TypeError):
+                    pass
             yield event
 
 

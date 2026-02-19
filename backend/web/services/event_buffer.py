@@ -11,6 +11,7 @@ class RunEventBuffer:
     events: list[dict] = field(default_factory=list)
     finished: asyncio.Event = field(default_factory=asyncio.Event)
     _notify: asyncio.Condition = field(default_factory=asyncio.Condition)
+    run_id: str = ""
 
     async def put(self, event: dict) -> None:
         self.events.append(event)
