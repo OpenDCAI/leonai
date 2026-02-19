@@ -130,7 +130,7 @@ export function useStreamHandler(deps: StreamHandlerDeps): StreamHandlerState & 
       try {
         const runtime = await getThreadRuntime(threadId);
         const state = runtime?.state?.state;
-        if (state !== "ACTIVE") return;
+        if (state !== "active") return;
 
         if (ac.signal.aborted) return;
 
