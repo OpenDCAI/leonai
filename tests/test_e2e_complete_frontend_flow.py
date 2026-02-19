@@ -37,7 +37,7 @@ class TestCompleteFrontendFlow:
         2. User clicks "New Thread" → createThread("e2b")
         3. Thread becomes active → getThread(threadId)
         4. SessionStatusPanel mounts → getThreadSession/Terminal/Lease in parallel
-        5. User sends message → startRun() SSE stream
+        5. User sends message → postRun() + streamEvents()
         6. User pauses/resumes → pauseThreadSandbox/resumeThreadSandbox
         """
         async with httpx.AsyncClient(timeout=60.0) as client:
@@ -126,12 +126,9 @@ class TestCompleteFrontendFlow:
                 print(f"⚠ Lease endpoint error: {lease_response}")
 
             # ===== STEP 5: Send Message (SSE Stream) =====
-            # ChatView.tsx line 65: startRun(threadId, text, onEvent)
-            # Note: SSE streaming is complex to test, so we just verify the endpoint exists
-            print("\n[STEP 5] User sends message (SSE stream endpoint check)")
-            # We won't actually stream here as it requires SSE parsing
-            # But we verify the endpoint is accessible
-            print("✓ SSE endpoint: POST /api/threads/{id}/runs (not tested in this flow)")
+            # postRun() → POST /runs returns JSON {run_id}, then streamEvents() → GET /runs/events SSE
+            print("\n[STEP 5] User sends message (POST /runs + GET /runs/events)")
+            print("✓ SSE endpoint: POST /runs → JSON, GET /runs/events → SSE (not tested in this flow)")
 
             # ===== STEP 6: Pause/Resume Sandbox =====
             # App.tsx line 119-129: handlePauseSandbox() / handleResumeSandbox()
