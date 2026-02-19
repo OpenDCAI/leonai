@@ -1,17 +1,19 @@
 import { memo } from "react";
-import type { AssistantTurn } from "../../api";
+import type { AssistantTurn, StreamStatus } from "../../api";
 import MarkdownContent from "../MarkdownContent";
 import { CopyButton } from "./CopyButton";
+import { ThinkingIndicator } from "./ThinkingIndicator";
 import { ToolStepBlock } from "./ToolStepBlock";
 import { formatTime } from "./utils";
 
 interface AssistantBlockProps {
   entry: AssistantTurn;
   isStreamingThis?: boolean;
+  runtimeStatus?: StreamStatus | null;
   onFocusAgent?: (stepId: string) => void;
 }
 
-export const AssistantBlock = memo(function AssistantBlock({ entry, isStreamingThis, onFocusAgent }: AssistantBlockProps) {
+export const AssistantBlock = memo(function AssistantBlock({ entry, isStreamingThis, runtimeStatus, onFocusAgent }: AssistantBlockProps) {
   const fullText = entry.segments
     .filter((s) => s.type === "text")
     .map((s) => s.content)
@@ -22,7 +24,7 @@ export const AssistantBlock = memo(function AssistantBlock({ entry, isStreamingT
     return s.type === "tool";
   });
 
-  if (!hasVisible) return null;
+  if (!hasVisible && !isStreamingThis) return null;
 
   return (
     <div className="flex gap-2.5 animate-fade-in">
@@ -36,6 +38,10 @@ export const AssistantBlock = memo(function AssistantBlock({ entry, isStreamingT
             <span className="text-[10px] text-[#d4d4d4]">{formatTime(entry.timestamp)}</span>
           )}
         </div>
+
+        {isStreamingThis && !hasVisible && (
+          <ThinkingIndicator runtimeStatus={runtimeStatus} />
+        )}
 
         {entry.segments.map((seg, i) => {
           if (seg.type === "text" && seg.content.trim()) {

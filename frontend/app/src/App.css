@@ -49,22 +49,19 @@ button, input, textarea {
   overflow: hidden;
 }
 
-/* Thinking dots */
-@keyframes thinking-dot {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.3; }
+/* Thinking orbs — soft breathing pulse */
+@keyframes thinking-breathe {
+  0%, 100% { transform: scale(0.6); opacity: 0.3; }
+  50% { transform: scale(1); opacity: 1; }
 }
 
-.thinking-dot {
-  animation: thinking-dot 1.4s ease-in-out infinite;
-}
-
-.thinking-dot:nth-child(2) {
-  animation-delay: 0.2s;
-}
-
-.thinking-dot:nth-child(3) {
-  animation-delay: 0.4s;
+.thinking-orb {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #171717;
+  animation: thinking-breathe 1.2s ease-in-out infinite;
 }
 
 /* Custom scrollbar */

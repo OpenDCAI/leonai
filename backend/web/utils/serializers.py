@@ -21,6 +21,7 @@ def extract_text_content(raw_content: Any) -> str:
 def serialize_message(msg: Any) -> dict[str, Any]:
     """Serialize a LangChain message to a JSON-compatible dict."""
     return {
+        "id": getattr(msg, "id", None),
         "type": msg.__class__.__name__,
         "content": getattr(msg, "content", ""),
         "tool_calls": getattr(msg, "tool_calls", []),

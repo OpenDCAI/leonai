@@ -69,6 +69,7 @@ export default function ChatPage() {
       threadId: threadId ?? "",
       refreshThreads: tm.refreshThreads,
       onUpdate: (updater) => setEntries(updater),
+      loading,
     });
 
   // Handle initial message - send immediately without waiting for loading

@@ -105,6 +105,7 @@ export interface SandboxInfo {
 }
 
 export interface BackendMessage {
+  id?: string;              // LangGraph message UUID
   type: string;
   content: unknown;
   tool_calls?: unknown[];
@@ -158,6 +159,7 @@ export type TurnSegment = TextSegment | ToolSegment;
 
 export interface AssistantTurn {
   id: string;
+  messageIds?: string[];    // All AIMessage UUIDs in this turn
   role: "assistant";
   segments: TurnSegment[];
   timestamp: number;
@@ -297,7 +299,7 @@ export function mapBackendEntries(payload: unknown): ChatEntry[] {
     if (msg.type === "HumanMessage") {
       currentTurn = null;
       entries.push({
-        id: `hist-user-${i}`,
+        id: msg.id ?? `hist-user-${i}`,
         role: "user",
         content: extractTextContent(msg.content),
         timestamp: now,
@@ -308,6 +310,7 @@ export function mapBackendEntries(payload: unknown): ChatEntry[] {
     if (msg.type === "AIMessage") {
       const textContent = extractTextContent(msg.content);
       const toolCalls = Array.isArray(msg.tool_calls) ? msg.tool_calls : [];
+      const msgId = msg.id ?? `hist-turn-${i}`;
 
       if (toolCalls.length > 0) {
         // AIMessage with tool_calls
@@ -331,9 +334,11 @@ export function mapBackendEntries(payload: unknown): ChatEntry[] {
         if (currentTurn) {
           // Append to existing turn (multi-step agent loop)
           currentTurn.segments.push(...newSegments);
+          currentTurn.messageIds?.push(msgId);
         } else {
           const turn: AssistantTurn = {
-            id: `hist-turn-${i}`,
+            id: msgId,
+            messageIds: [msgId],
             role: "assistant",
             segments: newSegments,
             timestamp: now,
@@ -346,10 +351,12 @@ export function mapBackendEntries(payload: unknown): ChatEntry[] {
         if (textContent) {
           currentTurn.segments.push({ type: "text", content: textContent });
         }
+        currentTurn.messageIds?.push(msgId);
       } else {
         // Standalone AIMessage
         const turn: AssistantTurn = {
-          id: `hist-turn-${i}`,
+          id: msgId,
+          messageIds: [msgId],
           role: "assistant",
           segments: textContent ? [{ type: "text", content: textContent }] : [],
           timestamp: now,
@@ -635,8 +642,10 @@ export async function observeRun(
   threadId: string,
   onEvent: (event: StreamEvent) => void,
   signal?: AbortSignal,
+  after?: number,
 ): Promise<void> {
-  const response = await fetch(`/api/threads/${encodeURIComponent(threadId)}/runs/stream`, { signal });
+  const params = after != null && after > 0 ? `?after=${after}` : "";
+  const response = await fetch(`/api/threads/${encodeURIComponent(threadId)}/runs/stream${params}`, { signal });
   if (!response.ok || !response.body) return;
 
   const reader = response.body.getReader();
