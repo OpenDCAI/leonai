@@ -7,13 +7,12 @@ import { UserBubble } from "./chat-area/UserBubble";
 interface ChatAreaProps {
   entries: ChatEntry[];
   isStreaming: boolean;
-  streamTurnId?: string | null;
   runtimeStatus: StreamStatus | null;
   loading?: boolean;
   onFocusAgent?: (stepId: string) => void;
 }
 
-export default function ChatArea({ entries, isStreaming, streamTurnId, runtimeStatus, loading, onFocusAgent }: ChatAreaProps) {
+export default function ChatArea({ entries, isStreaming, runtimeStatus, loading, onFocusAgent }: ChatAreaProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -35,11 +34,12 @@ export default function ChatArea({ entries, isStreaming, streamTurnId, runtimeSt
           if (entry.role === "user") {
             return <UserBubble key={entry.id} entry={entry} />;
           }
-          const isStreamingThis = isStreaming && entry.id === streamTurnId;
+          const assistantEntry = entry as AssistantTurn;
+          const isStreamingThis = assistantEntry.streaming === true;
           return (
             <AssistantBlock
               key={entry.id}
-              entry={entry as AssistantTurn}
+              entry={assistantEntry}
               isStreamingThis={isStreamingThis}
               runtimeStatus={isStreamingThis ? runtimeStatus : null}
               onFocusAgent={onFocusAgent}

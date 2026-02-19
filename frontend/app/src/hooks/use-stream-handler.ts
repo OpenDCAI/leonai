@@ -14,19 +14,30 @@ function makeId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+/** Mark a turn's streaming field in the entries array. */
+function setTurnStreaming(
+  onUpdate: (updater: (prev: ChatEntry[]) => ChatEntry[]) => void,
+  turnId: string,
+  streaming: boolean,
+) {
+  onUpdate((prev) =>
+    prev.map((e) =>
+      e.id === turnId && e.role === "assistant"
+        ? { ...e, streaming } as AssistantTurn
+        : e,
+    ),
+  );
+}
+
 interface StreamHandlerDeps {
   threadId: string;
   refreshThreads: () => Promise<void>;
   onUpdate: (updater: (prev: ChatEntry[]) => ChatEntry[]) => void;
-  /** Resolves when thread snapshot is loaded (entries populated with stable IDs). */
-  loadThread: (threadId: string) => Promise<void>;
   /** True while useThreadData is loading the snapshot — reconnect waits for this. */
   loading: boolean;
 }
 
 export interface StreamHandlerState {
-  isStreaming: boolean;
-  streamTurnId: string | null;
   runtimeStatus: StreamStatus | null;
 }
 
@@ -38,8 +49,6 @@ export interface StreamHandlerActions {
 export function useStreamHandler(deps: StreamHandlerDeps): StreamHandlerState & StreamHandlerActions {
   const { threadId, refreshThreads, onUpdate, loading } = deps;
 
-  const [isStreaming, setIsStreaming] = useState(false);
-  const [streamTurnId, setStreamTurnId] = useState<string | null>(null);
   const [runtimeStatus, setRuntimeStatus] = useState<StreamStatus | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const onUpdateRef = useRef(onUpdate);
@@ -54,12 +63,10 @@ export function useStreamHandler(deps: StreamHandlerDeps): StreamHandlerState & 
         role: "assistant",
         segments: [],
         timestamp: Date.now(),
+        streaming: true,
       };
 
       onUpdateRef.current((prev) => [...prev, userEntry, assistantTurn]);
-
-      setStreamTurnId(tempTurnId);
-      setIsStreaming(true);
 
       const abortController = new AbortController();
       abortControllerRef.current = abortController;
@@ -69,14 +76,12 @@ export function useStreamHandler(deps: StreamHandlerDeps): StreamHandlerState & 
 
       try {
         await startRun(threadId, message, (event) => {
-          // Rebind turn ID to the first message_id from backend
           const { messageId } = processStreamEvent(
-            event, boundTurnId, onUpdateRef.current, setIsStreaming, setRuntimeStatus,
+            event, boundTurnId, onUpdateRef.current, setRuntimeStatus,
           );
           if (!hasBound && messageId) {
             hasBound = true;
             boundTurnId = messageId;
-            // Rename the temp turn to the stable message_id
             onUpdateRef.current((prev) =>
               prev.map((e) =>
                 e.id === tempTurnId && e.role === "assistant"
@@ -84,7 +89,6 @@ export function useStreamHandler(deps: StreamHandlerDeps): StreamHandlerState & 
                   : e,
               ),
             );
-            setStreamTurnId(messageId);
           }
         }, abortController.signal);
       } catch (error) {
@@ -95,8 +99,7 @@ export function useStreamHandler(deps: StreamHandlerDeps): StreamHandlerState & 
         }
       } finally {
         abortControllerRef.current = null;
-        setIsStreaming(false);
-        setStreamTurnId(null);
+        setTurnStreaming(onUpdateRef.current, boundTurnId, false);
         await refreshThreads();
       }
     },
@@ -123,18 +126,15 @@ export function useStreamHandler(deps: StreamHandlerDeps): StreamHandlerState & 
     const ac = new AbortController();
 
     (async () => {
+      let turnId: string | null = null;
       try {
-        // Snapshot is already loaded by useThreadData — entries have stable IDs
-
-        // Check if agent is still running
         const runtime = await getThreadRuntime(threadId);
         const state = runtime?.state?.state;
         if (state !== "ACTIVE") return;
 
         if (ac.signal.aborted) return;
 
-        // Find the last assistant turn from loaded entries (has stable message_id)
-        let turnId: string | null = null;
+        // Find the last assistant turn or create one
         onUpdateRef.current((prev) => {
           for (let i = prev.length - 1; i >= 0; i--) {
             if (prev[i].role === "assistant") {
@@ -142,7 +142,6 @@ export function useStreamHandler(deps: StreamHandlerDeps): StreamHandlerState & 
               break;
             }
           }
-          // If no assistant turn exists yet, create one
           if (!turnId) {
             turnId = makeId("reconnect-turn");
             const newTurn: AssistantTurn = {
@@ -150,28 +149,30 @@ export function useStreamHandler(deps: StreamHandlerDeps): StreamHandlerState & 
               role: "assistant",
               segments: [],
               timestamp: Date.now(),
+              streaming: true,
             };
             return [...prev, newTurn];
           }
-          return prev;
+          // Mark existing turn as streaming
+          return prev.map((e) =>
+            e.id === turnId && e.role === "assistant"
+              ? { ...e, streaming: true } as AssistantTurn
+              : e,
+          );
         });
 
         if (!turnId || ac.signal.aborted) return;
 
-        setStreamTurnId(turnId);
-        setIsStreaming(true);
         abortControllerRef.current = ac;
 
-        // Observe with dedup — SSE events match snapshot entries by message_id
         await observeRun(threadId, (event) => {
-          processStreamEvent(event, turnId!, onUpdateRef.current, setIsStreaming, setRuntimeStatus);
+          processStreamEvent(event, turnId!, onUpdateRef.current, setRuntimeStatus);
         }, ac.signal);
       } catch (error) {
         if (error instanceof Error && error.name === "AbortError") return;
         console.error("Reconnect failed:", error);
       } finally {
-        setIsStreaming(false);
-        setStreamTurnId(null);
+        if (turnId) setTurnStreaming(onUpdateRef.current, turnId, false);
         void refreshThreads();
       }
     })();
@@ -181,14 +182,5 @@ export function useStreamHandler(deps: StreamHandlerDeps): StreamHandlerState & 
     };
   }, [threadId, loading, refreshThreads]);
 
-  // Refresh sidebar when streaming state changes (shows/hides spinner)
-  const prevStreaming = useRef(isStreaming);
-  useEffect(() => {
-    if (prevStreaming.current !== isStreaming) {
-      prevStreaming.current = isStreaming;
-      void refreshThreads();
-    }
-  }, [isStreaming, refreshThreads]);
-
-  return { isStreaming, streamTurnId, runtimeStatus, handleSendMessage, handleStopStreaming };
+  return { runtimeStatus, handleSendMessage, handleStopStreaming };
 }

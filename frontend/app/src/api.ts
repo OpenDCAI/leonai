@@ -163,6 +163,7 @@ export interface AssistantTurn {
   role: "assistant";
   segments: TurnSegment[];
   timestamp: number;
+  streaming?: boolean;
 }
 
 export interface UserMessage {
