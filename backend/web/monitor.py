@@ -5,26 +5,29 @@ All endpoints return view-ready data that frontend can directly render.
 No business logic in frontend.
 """
 
-from fastapi import APIRouter
-from typing import List, Optional, Dict, Any
+from fastapi import APIRouter, Depends, HTTPException
 from datetime import datetime
+import json
 import sqlite3
-import os
-from pathlib import Path
+
+from sandbox.db import DEFAULT_DB_PATH
 
 router = APIRouter(prefix="/api/monitor")
 
 
 def get_db():
-    db_path = Path(os.getenv("LEON_SANDBOX_DB_PATH") or (Path.home() / ".leon" / "sandbox.db"))
-    return sqlite3.connect(str(db_path))
+    db = sqlite3.connect(str(DEFAULT_DB_PATH))
+    db.row_factory = sqlite3.Row
+    try:
+        yield db
+    finally:
+        db.close()
 
 
 def format_time_ago(iso_timestamp: str) -> str:
     """Convert ISO timestamp to human readable 'X hours ago'"""
     if not iso_timestamp:
         return "never"
-    from datetime import datetime
     # @@@ naive-local — SQLite timestamps are local time, compare with local now
     if 'Z' in iso_timestamp:
         iso_timestamp = iso_timestamp.replace('Z', '')
@@ -55,11 +58,7 @@ def make_badge(desired, observed):
 
 
 @router.get("/threads")
-def list_threads():
-    """List all threads with summary info"""
-    db = get_db()
-    db.row_factory = sqlite3.Row
-
+def list_threads(db: sqlite3.Connection = Depends(get_db)):
     rows = db.execute("""
         SELECT
             cs.thread_id,
@@ -102,12 +101,7 @@ def list_threads():
 
 
 @router.get("/thread/{thread_id}")
-def get_thread(thread_id: str):
-    """Get detailed view of a single thread"""
-    db = get_db()
-    db.row_factory = sqlite3.Row
-
-    # Get all sessions for this thread
+def get_thread(thread_id: str, db: sqlite3.Connection = Depends(get_db)):
     sessions = db.execute("""
         SELECT
             cs.chat_session_id,
@@ -172,13 +166,9 @@ def get_thread(thread_id: str):
 
 
 @router.get("/leases")
-def list_leases():
-    """List all leases"""
-    db = get_db()
-    db.row_factory = sqlite3.Row
-
+def list_leases(db: sqlite3.Connection = Depends(get_db)):
     rows = db.execute("""
-        SELECT DISTINCT
+        SELECT
             sl.lease_id,
             sl.provider_name,
             sl.desired_state,
@@ -186,7 +176,7 @@ def list_leases():
             sl.current_instance_id,
             sl.last_error,
             sl.updated_at,
-            cs.thread_id
+            MAX(cs.thread_id) as thread_id
         FROM sandbox_leases sl
         LEFT JOIN chat_sessions cs ON sl.lease_id = cs.lease_id
         GROUP BY sl.lease_id
@@ -219,20 +209,14 @@ def list_leases():
 
 
 @router.get("/lease/{lease_id}")
-def get_lease(lease_id: str):
-    """Get detailed view of a single lease"""
-    db = get_db()
-    db.row_factory = sqlite3.Row
-
-    # Get lease info
+def get_lease(lease_id: str, db: sqlite3.Connection = Depends(get_db)):
     lease = db.execute("""
         SELECT * FROM sandbox_leases WHERE lease_id = ?
     """, (lease_id,)).fetchone()
 
     if not lease:
-        return {"error": "Lease not found"}
+        raise HTTPException(status_code=404, detail="Lease not found")
 
-    # Get related threads
     threads = db.execute("""
         SELECT DISTINCT thread_id FROM chat_sessions WHERE lease_id = ?
     """, (lease_id,)).fetchall()
@@ -282,11 +266,7 @@ def get_lease(lease_id: str):
 
 
 @router.get("/diverged")
-def list_diverged():
-    """List all diverged leases"""
-    db = get_db()
-    db.row_factory = sqlite3.Row
-
+def list_diverged(db: sqlite3.Connection = Depends(get_db)):
     rows = db.execute("""
         SELECT
             sl.lease_id,
@@ -334,11 +314,7 @@ def list_diverged():
 
 
 @router.get("/events")
-def list_events(limit: int = 100):
-    """List lease lifecycle events"""
-    db = get_db()
-    db.row_factory = sqlite3.Row
-
+def list_events(limit: int = 100, db: sqlite3.Connection = Depends(get_db)):
     rows = db.execute("""
         SELECT le.event_id, le.lease_id, le.event_type, le.source,
                le.payload_json, le.error, le.created_at,
@@ -375,11 +351,7 @@ def list_events(limit: int = 100):
 
 
 @router.get("/event/{event_id}")
-def get_event(event_id: str):
-    """Get detailed view of a single lease event"""
-    db = get_db()
-    db.row_factory = sqlite3.Row
-
+def get_event(event_id: str, db: sqlite3.Connection = Depends(get_db)):
     event = db.execute("""
         SELECT le.*, sl.provider_name
         FROM lease_events le
@@ -388,9 +360,8 @@ def get_event(event_id: str):
     """, (event_id,)).fetchone()
 
     if not event:
-        return {"error": "Event not found"}
+        raise HTTPException(status_code=404, detail="Event not found")
 
-    import json
     payload = json.loads(event['payload_json']) if event['payload_json'] else {}
 
     return {
