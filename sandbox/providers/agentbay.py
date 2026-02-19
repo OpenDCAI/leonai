@@ -42,9 +42,12 @@ class AgentBayProvider(SandboxProvider):
         region_id: str = "ap-southeast-1",
         default_context_path: str = "/home/wuying",
         image_id: str | None = None,
+        provider_name: str | None = None,
     ):
         from agentbay import AgentBay
 
+        if provider_name:
+            self.name = provider_name
         self.client = AgentBay(api_key=api_key)
         self.default_context_path = default_context_path
         self.image_id = image_id

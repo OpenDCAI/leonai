@@ -40,6 +40,8 @@ class DaytonaConfig(BaseModel):
 
 class SandboxConfig(BaseModel):
     provider: str = "local"
+    # @@@ config-name-propagation - carries the config file stem (e.g. "daytona_selfhost") through the pipeline
+    name: str = "local"
     agentbay: AgentBayConfig = Field(default_factory=AgentBayConfig)
     docker: DockerConfig = Field(default_factory=DockerConfig)
     e2b: E2BConfig = Field(default_factory=E2BConfig)
@@ -57,7 +59,9 @@ class SandboxConfig(BaseModel):
             raise FileNotFoundError(f"Sandbox config not found: {path}")
 
         data = json.loads(path.read_text())
-        return cls(**data)
+        config = cls(**data)
+        config.name = name
+        return config
 
     def save(self, name: str) -> Path:
         path = Path.home() / ".leon" / "sandboxes" / f"{name}.json"

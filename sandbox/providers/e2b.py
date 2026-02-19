@@ -44,7 +44,10 @@ class E2BProvider(SandboxProvider):
         template: str = "base",
         default_cwd: str = "/home/user",
         timeout: int = 300,
+        provider_name: str | None = None,
     ):
+        if provider_name:
+            self.name = provider_name
         self.api_key = api_key
         # @@@ E2B SDK methods like beta_pause() read from env, not from instance
         os.environ["E2B_API_KEY"] = api_key
