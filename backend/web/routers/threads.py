@@ -324,6 +324,7 @@ async def stream_run_events(
     if not run_id:
 
         async def _empty():
+            yield {"retry": 5000}
             yield {"event": "done", "data": json.dumps({"thread_id": thread_id})}
 
         return EventSourceResponse(_empty(), headers=SSE_HEADERS)
@@ -331,9 +332,17 @@ async def stream_run_events(
     events = await read_events_after(thread_id, run_id, after)
 
     async def _replay():
+        yield {"retry": 5000}
+        has_done = False
         for ev in events:
-            yield {"event": ev["event"], "data": ev["data"]}
-        yield {"event": "done", "data": json.dumps({"thread_id": thread_id})}
+            if ev["event"] == "done":
+                has_done = True
+            out = {"event": ev["event"], "data": ev["data"]}
+            if ev.get("seq"):
+                out["id"] = str(ev["seq"])
+            yield out
+        if not has_done:
+            yield {"event": "done", "data": json.dumps({"thread_id": thread_id})}
 
     return EventSourceResponse(_replay(), headers=SSE_HEADERS)
 
