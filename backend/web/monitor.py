@@ -277,7 +277,7 @@ def list_diverged(db: sqlite3.Connection = Depends(get_db)):
             sl.last_error,
             sl.updated_at,
             cs.thread_id,
-            CAST((julianday('now') - julianday(sl.updated_at)) * 24 AS INTEGER) as hours_diverged
+            CAST((julianday('now', 'localtime') - julianday(sl.updated_at)) * 24 AS INTEGER) as hours_diverged
         FROM sandbox_leases sl
         LEFT JOIN chat_sessions cs ON sl.lease_id = cs.lease_id
         WHERE sl.desired_state != sl.observed_state
