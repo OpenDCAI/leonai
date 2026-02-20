@@ -1,9 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   getThread,
-  getThreadRuntime,
   mapBackendEntries,
-  type AssistantTurn,
   type ChatEntry,
   type SandboxInfo,
 } from "../api";
@@ -29,22 +27,8 @@ export function useThreadData(threadId: string | undefined, skipInitialLoad = fa
   const loadThread = useCallback(async (id: string) => {
     setLoading(true);
     try {
-      const [thread, runtime] = await Promise.all([
-        getThread(id),
-        getThreadRuntime(id).catch(() => null),
-      ]);
-      const mappedEntries = mapBackendEntries(thread.messages);
-      // If agent is active, mark the last assistant turn as streaming
-      const isActive = runtime?.state?.state === "active";
-      if (isActive) {
-        for (let i = mappedEntries.length - 1; i >= 0; i--) {
-          if (mappedEntries[i].role === "assistant") {
-            (mappedEntries[i] as AssistantTurn).streaming = true;
-            break;
-          }
-        }
-      }
-      setEntries(mappedEntries);
+      const thread = await getThread(id);
+      setEntries(mapBackendEntries(thread.messages));
       setActiveSandbox(thread.sandbox);
     } finally {
       setLoading(false);
