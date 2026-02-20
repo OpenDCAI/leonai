@@ -1,0 +1,5 @@
+cmd=LEON_BACKEND_PORT=8118 uv run --with fastapi --with uvicorn python -m uvicorn backend.web.main:app --host 127.0.0.1 --port 8118
+endpoint=http://127.0.0.1:8118/api/settings
+http_code=200
+backend_log_path=/tmp/hunter-pr018-backend-uvicorn.log
+artifact_path=/tmp/leonai-pr-fusion-49-52/artifacts/pr-018/api_settings_response.json

@@ -1,0 +1,10 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.0.2, pluggy-1.6.0
+rootdir: /tmp/leonai-pr-fusion-49-52
+configfile: pytest.ini
+plugins: langsmith-0.6.4, anyio-4.12.1
+collected 6 items
+
+tests/test_model_params.py ......                                        [100%]
+
+============================== 6 passed in 0.97s ===============================
