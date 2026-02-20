@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { flushSync } from "react-dom";
 import { getThreadRuntime, streamEvents, type AssistantTurn, type ChatEntry, type StreamStatus } from "../api";
 import { processStreamEvent } from "./stream-event-handlers";
@@ -38,6 +38,9 @@ function applyReconnectTurn(
 
 export function useStreamReconnect(deps: ReconnectDeps) {
   const { threadId, loading, runStarted, refreshThreads, onUpdateRef, abortRef, setRuntimeStatus, setIsRunning } = deps;
+  const runStartedRef = useRef(runStarted);
+  runStartedRef.current = runStarted;
+
   const setTurnStreaming = (turnId: string, streaming: boolean) => {
     onUpdateRef.current((prev) =>
       prev.map((e) => e.id === turnId && e.role === "assistant" ? { ...e, streaming } as AssistantTurn : e),
@@ -54,7 +57,7 @@ export function useStreamReconnect(deps: ReconnectDeps) {
       try {
         const runtime = await getThreadRuntime(threadId);
         if (runtime) setRuntimeStatus(runtime);
-        const isActive = runtime?.state?.state === "active" || runStarted;
+        const isActive = runtime?.state?.state === "active" || runStartedRef.current;
         if (!isActive) { setIsRunning(false); return; }
         if (ac.signal.aborted) return;
 

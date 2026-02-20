@@ -6,6 +6,7 @@ from typing import Any
 
 from fastapi import FastAPI
 
+from backend.web.services.event_buffer import RunEventBuffer
 from backend.web.services.idle_reaper import idle_reaper_loop
 from tui.config import ConfigManager
 
@@ -17,6 +18,11 @@ async def lifespan(app: FastAPI):
     config_manager = ConfigManager()
     config_manager.load_to_env()
 
+    # Ensure event store table exists (lazy init, not at module import)
+    from backend.web.services.event_store import init_event_store
+
+    init_event_store()
+
     # Initialize app state
     app.state.agent_pool: dict[str, Any] = {}
     app.state.thread_sandbox: dict[str, str] = {}
@@ -24,7 +30,7 @@ async def lifespan(app: FastAPI):
     app.state.thread_locks: dict[str, asyncio.Lock] = {}
     app.state.thread_locks_guard = asyncio.Lock()
     app.state.thread_tasks: dict[str, asyncio.Task] = {}
-    app.state.thread_event_buffers: dict[str, RunEventBuffer] = {}  # noqa: F821
+    app.state.thread_event_buffers: dict[str, RunEventBuffer] = {}
     app.state.idle_reaper_task: asyncio.Task | None = None
 
     try:

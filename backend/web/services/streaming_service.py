@@ -2,17 +2,15 @@
 
 import asyncio
 import json
+import uuid as _uuid
 from collections.abc import AsyncGenerator
 from typing import Any
 
 from backend.web.services.event_buffer import RunEventBuffer
-from backend.web.services.event_store import cleanup_old_runs, init_event_store
+from backend.web.services.event_store import cleanup_old_runs
 from backend.web.utils.serializers import extract_text_content
 from core.monitor import AgentState
 from sandbox.thread_context import set_current_thread_id
-
-# Ensure the run_events table exists on import
-init_event_store()
 
 
 async def prime_sandbox(agent: Any, thread_id: str) -> None:
@@ -134,7 +132,10 @@ async def _run_agent_to_buffer(
 
     async def emit(event: dict, message_id: str | None = None) -> None:
         seq = await append_event(thread_id, run_id, event, message_id)
-        data = json.loads(event.get("data", "{}")) if isinstance(event.get("data"), str) else event.get("data", {})
+        try:
+            data = json.loads(event.get("data", "{}")) if isinstance(event.get("data"), str) else event.get("data", {})
+        except (json.JSONDecodeError, TypeError):
+            data = event.get("data", {})
         if isinstance(data, dict):
             data["_seq"] = seq
             data["_run_id"] = run_id
@@ -377,7 +378,6 @@ def start_agent_run(
     enable_trajectory: bool = False,
 ) -> RunEventBuffer:
     """Create a RunEventBuffer and launch the agent producer as a background task."""
-    import uuid as _uuid
 
     buf = RunEventBuffer()
     buf.run_id = str(_uuid.uuid4())
@@ -418,22 +418,19 @@ async def observe_run_events(
         if not events:
             continue
         for event in events:
-            if after > 0:
-                try:
-                    data = json.loads(event.get("data", "{}"))
-                    seq = data.get("_seq", 0) if isinstance(data, dict) else 0
-                    if seq <= after:
-                        continue
-                except (json.JSONDecodeError, TypeError):
-                    pass
-            # Inject SSE id from _seq for Last-Event-ID support
-            seq_id = None
+            # Parse data once, reuse for both after-filtering and id injection
+            parsed_data = None
             try:
-                data = json.loads(event.get("data", "{}"))
-                if isinstance(data, dict) and "_seq" in data:
-                    seq_id = str(data["_seq"])
+                parsed_data = json.loads(event.get("data", "{}"))
             except (json.JSONDecodeError, TypeError):
                 pass
+
+            if after > 0 and isinstance(parsed_data, dict):
+                if parsed_data.get("_seq", 0) <= after:
+                    continue
+
+            # Inject SSE id from _seq for Last-Event-ID support
+            seq_id = str(parsed_data["_seq"]) if isinstance(parsed_data, dict) and "_seq" in parsed_data else None
             if seq_id:
                 yield {**event, "id": seq_id}
             else:
@@ -452,7 +449,6 @@ def start_task_agent_run(
     sandbox_type: str,
 ) -> RunEventBuffer:
     """Create a RunEventBuffer and launch task agent as background task."""
-    import uuid as _uuid
 
     buf = RunEventBuffer()
     buf.run_id = str(_uuid.uuid4())
@@ -521,6 +517,6 @@ async def _run_task_agent_to_buffer(
             }
         )
     finally:
+        await buf.mark_done()
         app.state.thread_tasks.pop(thread_id, None)
         app.state.thread_event_buffers.pop(thread_id, None)
-        await buf.mark_done()
