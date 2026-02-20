@@ -163,6 +163,7 @@ async def get_thread_runtime(
     app: Annotated[Any, Depends(get_app)] = None,
 ) -> dict[str, Any]:
     """Get runtime status for a thread."""
+    from backend.web.services.event_store import get_last_seq
     from backend.web.utils.helpers import lookup_thread_model
 
     sandbox_type = resolve_thread_sandbox(app, thread_id)
@@ -170,8 +171,8 @@ async def get_thread_runtime(
     if not hasattr(agent, "runtime"):
         raise HTTPException(status_code=404, detail="Agent has no runtime monitor")
     status = agent.runtime.get_status_dict()
-    # Include per-thread model
     status["model"] = lookup_thread_model(thread_id)
+    status["last_seq"] = await get_last_seq(thread_id)
     return status
 
 

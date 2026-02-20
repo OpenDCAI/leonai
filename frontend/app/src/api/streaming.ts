@@ -70,8 +70,9 @@ export async function streamEvents(
   threadId: string,
   onEvent: (event: StreamEvent) => void,
   signal?: AbortSignal,
+  startAfter = 0,
 ): Promise<void> {
-  let after = 0;
+  let after = startAfter;
   let attempts = 0;
 
   while (!signal?.aborted) {

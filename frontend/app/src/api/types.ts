@@ -163,6 +163,7 @@ export interface StreamStatus {
   tokens: { total_tokens: number; input_tokens: number; output_tokens: number; cost: number };
   context: { message_count: number; estimated_tokens: number; usage_percent: number; near_limit: boolean };
   current_tool?: string;
+  last_seq?: number;
 }
 
 export interface ChatSettings {
