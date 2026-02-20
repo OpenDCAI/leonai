@@ -149,8 +149,11 @@ async def browse_filesystem(path: str = Query(default="~")) -> dict[str, Any]:
             pass
 
         return {"current_path": str(target_path), "parent_path": parent, "items": [item.model_dump() for item in items]}
+    # @@@http_passthrough - preserve explicit user-facing status codes from validation branches
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.post("/workspace")
