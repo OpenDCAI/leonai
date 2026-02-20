@@ -19,10 +19,10 @@ export interface ThreadDataActions {
   refreshThread: () => Promise<void>;
 }
 
-export function useThreadData(threadId: string | undefined, skipInitialLoad = false): ThreadDataState & ThreadDataActions {
-  const [entries, setEntries] = useState<ChatEntry[]>([]);
+export function useThreadData(threadId: string | undefined, skipInitialLoad = false, initialEntries?: ChatEntry[]): ThreadDataState & ThreadDataActions {
+  const [entries, setEntries] = useState<ChatEntry[]>(initialEntries ?? []);
   const [activeSandbox, setActiveSandbox] = useState<SandboxInfo | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!skipInitialLoad);
 
   const loadThread = useCallback(async (id: string) => {
     setLoading(true);

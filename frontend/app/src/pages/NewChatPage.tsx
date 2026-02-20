@@ -32,7 +32,7 @@ export default function NewChatPage() {
     console.log('[NewChatPage] Created thread:', threadId, 'posting run:', message);
     await postRun(threadId, message, undefined, model ? { model } : undefined);
     navigate(`/app/${threadId}`, {
-      state: { selectedModel: model, runStarted: true },
+      state: { selectedModel: model, runStarted: true, message },
     });
   }
 
