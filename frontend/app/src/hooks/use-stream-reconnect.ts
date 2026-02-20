@@ -64,7 +64,7 @@ export function useStreamReconnect(deps: ReconnectDeps) {
 
         await streamEvents(threadId, (event) => {
           processStreamEvent(event, turnId!, onUpdateRef.current, setRuntimeStatus);
-        }, ac.signal);
+        }, ac.signal, runtime?.last_seq ?? 0);
       } catch (error) {
         if (error instanceof Error && error.name === "AbortError") return;
         console.error("Reconnect failed:", error);

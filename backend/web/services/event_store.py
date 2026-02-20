@@ -82,6 +82,14 @@ async def read_events_after(
     return [{"seq": r[0], "event": r[1], "data": r[2], "message_id": r[3]} for r in rows]
 
 
+async def get_last_seq(thread_id: str) -> int:
+    """Return the highest seq for a thread, or 0."""
+    conn = await _get_conn()
+    cur = await conn.execute("SELECT MAX(seq) FROM run_events WHERE thread_id = ?", (thread_id,))
+    row = await cur.fetchone()
+    return row[0] or 0
+
+
 async def get_latest_run_id(thread_id: str) -> str | None:
     """Return the run_id of the most recent run for a thread, or None."""
     conn = await _get_conn()
