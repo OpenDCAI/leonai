@@ -1,0 +1,4 @@
+backend_8102_launch=LEON_BACKEND_PORT=8102 uv run --with-requirements backend/web/requirements.txt python -m uvicorn backend.web.main:app --host 127.0.0.1 --port 8102
+backend_8001_launch=uv run --with-requirements backend/web/requirements.txt python -m uvicorn backend.web.main:app --host 127.0.0.1 --port 8001
+frontend_5272_launch=npm run dev -- --host 127.0.0.1 --port 5272 --strictPort
+webshot_command=node /home/ubuntu/codex-smoke/tools/webshot.mjs http://127.0.0.1:5272/ /tmp/leonai-pr47/artifacts/pr-47/pr-47-frontend-runtime.png
