@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useNavigate, useOutletContext } from "react-router-dom";
+import { postRun } from "../api";
 import CenteredInputBox from "../components/CenteredInputBox";
 import WorkspaceSetupModal from "../components/WorkspaceSetupModal";
 import type { ThreadManagerState, ThreadManagerActions } from "../hooks/use-thread-manager";
@@ -28,9 +29,10 @@ export default function NewChatPage() {
 
     const cwd = workspace || settings?.default_workspace || undefined;
     const threadId = await handleCreateThread(sandbox, cwd);
-    console.log('[NewChatPage] Created thread:', threadId, 'navigating with message:', message);
+    console.log('[NewChatPage] Created thread:', threadId, 'posting run:', message);
+    await postRun(threadId, message, undefined, model ? { model } : undefined);
     navigate(`/app/${threadId}`, {
-      state: { initialMessage: message, selectedModel: model },
+      state: { selectedModel: model, runStarted: true },
     });
   }
 

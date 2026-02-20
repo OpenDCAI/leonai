@@ -17,6 +17,8 @@ interface StreamHandlerDeps {
   onUpdate: (updater: (prev: ChatEntry[]) => ChatEntry[]) => void;
   /** True while useThreadData is loading the snapshot — reconnect waits for this. */
   loading: boolean;
+  /** When true, a run was just started — reconnect skips runtime check. */
+  runStarted?: boolean;
 }
 
 export interface StreamHandlerState {
@@ -30,7 +32,7 @@ export interface StreamHandlerActions {
 }
 
 export function useStreamHandler(deps: StreamHandlerDeps): StreamHandlerState & StreamHandlerActions {
-  const { threadId, refreshThreads, onUpdate, loading } = deps;
+  const { threadId, refreshThreads, onUpdate, loading, runStarted } = deps;
 
   const [runtimeStatus, setRuntimeStatus] = useState<StreamStatus | null>(null);
   const [isRunning, setIsRunning] = useState(false);
@@ -120,7 +122,7 @@ export function useStreamHandler(deps: StreamHandlerDeps): StreamHandlerState & 
     setTimeout(() => abortRef.current?.abort(), 500);
   }, [threadId]);
 
-  useStreamReconnect({ threadId, loading, refreshThreads, onUpdateRef, abortRef, setRuntimeStatus, setIsRunning });
+  useStreamReconnect({ threadId, loading, runStarted, refreshThreads, onUpdateRef, abortRef, setRuntimeStatus, setIsRunning });
 
   return { runtimeStatus, isRunning, handleSendMessage, handleStopStreaming };
 }

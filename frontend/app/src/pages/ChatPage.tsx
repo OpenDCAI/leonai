@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams, useOutletContext, useLocation } from "react-router-dom";
 import ChatArea from "../components/ChatArea";
 import ComputerPanel from "../components/ComputerPanel";
@@ -31,11 +31,9 @@ export default function ChatPage() {
 function ChatPageInner({ threadId }: { threadId: string }) {
   const location = useLocation();
   const { tm, setSidebarCollapsed } = useOutletContext<OutletContext>();
-  const initialMessageSent = useRef(false);
   const [currentModel, setCurrentModel] = useState<string>("");
 
-  const state = location.state as { initialMessage?: string; selectedModel?: string } | null;
-  const hasInitialMessage = !!state?.initialMessage;
+  const state = location.state as { selectedModel?: string; runStarted?: boolean } | null;
 
   useEffect(() => {
     if (state?.selectedModel) {
@@ -61,7 +59,7 @@ function ChatPageInner({ threadId }: { threadId: string }) {
     }
   }, [state?.selectedModel, threadId]);
 
-  const { entries, activeSandbox, loading, setEntries, setActiveSandbox, refreshThread } = useThreadData(threadId, hasInitialMessage);
+  const { entries, activeSandbox, loading, setEntries, setActiveSandbox, refreshThread } = useThreadData(threadId);
 
   const { runtimeStatus, isRunning, handleSendMessage, handleStopStreaming } =
     useStreamHandler({
@@ -69,18 +67,10 @@ function ChatPageInner({ threadId }: { threadId: string }) {
       refreshThreads: tm.refreshThreads,
       onUpdate: (updater) => setEntries(updater),
       loading,
+      runStarted: state?.runStarted,
     });
 
   const isStreaming = isRunning;
-
-  useEffect(() => {
-    if (state?.initialMessage && !initialMessageSent.current) {
-      initialMessageSent.current = true;
-      const message = state.initialMessage;
-      window.history.replaceState({}, document.title);
-      void handleSendMessage(message);
-    }
-  }, [state?.initialMessage, handleSendMessage]);
 
   const { sandboxActionError, handlePauseSandbox, handleResumeSandbox } =
     useSandboxManager({
