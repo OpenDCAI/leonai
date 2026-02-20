@@ -30,6 +30,10 @@ app.include_router(monitor_router)
 
 
 if __name__ == "__main__":
+    import os
     import uvicorn
 
-    uvicorn.run("main:app", host="0.0.0.0", port=8001, reload=True)
+    # @@@port-precedence - Use LEON_BACKEND_PORT first for desk workflows, then PORT for platform compatibility.
+    port = int(os.environ.get("LEON_BACKEND_PORT") or os.environ.get("PORT") or "8001")
+    # @@@module-launch-target - Package-qualified target keeps module launch (`python -m backend.web.main`) import-safe.
+    uvicorn.run("backend.web.main:app", host="0.0.0.0", port=port, reload=True)
