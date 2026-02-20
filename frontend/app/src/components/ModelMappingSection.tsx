@@ -36,7 +36,7 @@ export default function ModelMappingSection({
 
     setSaving(true);
     try {
-      await fetch("http://127.0.0.1:8001/api/settings/model-mapping", {
+      await fetch("/api/settings/model-mapping", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ mapping: newMapping }),

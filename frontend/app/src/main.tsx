@@ -14,7 +14,7 @@ console.log = (...args: any[]) => {
     typeof arg === 'object' ? JSON.stringify(arg) : String(arg)
   ).join(' ');
 
-  fetch('http://127.0.0.1:8001/api/debug/log', {
+  fetch('/api/debug/log', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ message, timestamp: new Date().toISOString() }),

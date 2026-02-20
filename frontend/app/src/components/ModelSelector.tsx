@@ -50,7 +50,7 @@ export default function ModelSelector({
   // Fetch enabled models when dropdown opens
   useEffect(() => {
     if (!isOpen) return;
-    fetch("http://127.0.0.1:8001/api/settings")
+    fetch("/api/settings")
       .then((r) => r.json())
       .then((d) => setEnabledModels(d.enabled_models || []))
       .catch(() => {});
@@ -61,7 +61,7 @@ export default function ModelSelector({
     setError(null);
 
     try {
-      const response = await fetch("http://127.0.0.1:8001/api/settings/config", {
+      const response = await fetch("/api/settings/config", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ model, thread_id: threadId }),

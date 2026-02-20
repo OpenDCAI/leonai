@@ -46,19 +46,19 @@ function ChatPageInner({ threadId }: { threadId: string }) {
   useEffect(() => {
     if (state?.selectedModel) {
       setCurrentModel(state.selectedModel);
-      void fetch("http://127.0.0.1:8001/api/settings/config", {
+      void fetch("/api/settings/config", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ model: state.selectedModel, thread_id: threadId }),
       });
     } else {
-      fetch(`http://127.0.0.1:8001/api/threads/${threadId}/runtime`)
+      fetch(`/api/threads/${threadId}/runtime`)
         .then((r) => r.json())
         .then((d) => {
           if (d.model) {
             setCurrentModel(d.model);
           } else {
-            return fetch("http://127.0.0.1:8001/api/settings")
+            return fetch("/api/settings")
               .then((r) => r.json())
               .then((d) => setCurrentModel(d.default_model || "leon:large"));
           }

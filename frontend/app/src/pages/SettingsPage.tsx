@@ -46,9 +46,9 @@ export default function SettingsPage() {
     async function loadData() {
       try {
         const [modelsRes, settingsRes, sandboxesRes] = await Promise.all([
-          fetch("http://127.0.0.1:8001/api/settings/available-models"),
-          fetch("http://127.0.0.1:8001/api/settings"),
-          fetch("http://127.0.0.1:8001/api/settings/sandboxes"),
+          fetch("/api/settings/available-models"),
+          fetch("/api/settings"),
+          fetch("/api/settings/sandboxes"),
         ]);
 
         const modelsData = await modelsRes.json();
@@ -69,7 +69,7 @@ export default function SettingsPage() {
   }, []);
 
   const handleAddCustomModel = async (modelId: string, provider?: string) => {
-    const res = await fetch("http://127.0.0.1:8001/api/settings/models/custom", {
+    const res = await fetch("/api/settings/models/custom", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ model_id: modelId, provider: provider || null }),
@@ -77,8 +77,8 @@ export default function SettingsPage() {
     const data = await res.json();
     if (data.success) {
       const [modelsRes, settingsRes] = await Promise.all([
-        fetch("http://127.0.0.1:8001/api/settings/available-models"),
-        fetch("http://127.0.0.1:8001/api/settings"),
+        fetch("/api/settings/available-models"),
+        fetch("/api/settings"),
       ]);
       setAvailableModels(await modelsRes.json());
       setSettings(await settingsRes.json());
@@ -178,7 +178,7 @@ export default function SettingsPage() {
                           key={id}
                           onClick={async () => {
                             setSettings({ ...settings, default_model: id });
-                            await fetch("http://127.0.0.1:8001/api/settings/default-model", {
+                            await fetch("/api/settings/default-model", {
                               method: "POST",
                               headers: { "Content-Type": "application/json" },
                               body: JSON.stringify({ model: id }),
@@ -215,14 +215,14 @@ export default function SettingsPage() {
                   }}
                   onAddCustomModel={handleAddCustomModel}
                   onRemoveCustomModel={async (modelId) => {
-                    const res = await fetch(`http://127.0.0.1:8001/api/settings/models/custom?model_id=${encodeURIComponent(modelId)}`, {
+                    const res = await fetch(`/api/settings/models/custom?model_id=${encodeURIComponent(modelId)}`, {
                       method: "DELETE",
                     });
                     const data = await res.json();
                     if (data.success) {
                       const [modelsRes, settingsRes] = await Promise.all([
-                        fetch("http://127.0.0.1:8001/api/settings/available-models"),
-                        fetch("http://127.0.0.1:8001/api/settings"),
+                        fetch("/api/settings/available-models"),
+                        fetch("/api/settings"),
                       ]);
                       setAvailableModels(await modelsRes.json());
                       setSettings(await settingsRes.json());

@@ -13,7 +13,7 @@ export function useWorkspaceSettings() {
 
   async function loadSettings() {
     try {
-      const response = await fetch("http://127.0.0.1:8001/api/settings");
+      const response = await fetch("/api/settings");
       if (response.ok) {
         const data = await response.json();
         setSettings(data);
@@ -26,7 +26,7 @@ export function useWorkspaceSettings() {
   }
 
   async function setDefaultWorkspace(workspace: string): Promise<void> {
-    const response = await fetch("http://127.0.0.1:8001/api/settings/workspace", {
+    const response = await fetch("/api/settings/workspace", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ workspace }),
@@ -42,7 +42,7 @@ export function useWorkspaceSettings() {
 
   async function addRecentWorkspace(workspace: string): Promise<void> {
     try {
-      await fetch("http://127.0.0.1:8001/api/settings/workspace/recent", {
+      await fetch("/api/settings/workspace/recent", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ workspace }),

@@ -30,7 +30,7 @@ export default function FilesystemBrowser({
 
     try {
       const response = await fetch(
-        `http://127.0.0.1:8001/api/settings/browse?path=${encodeURIComponent(path)}`
+        `/api/settings/browse?path=${encodeURIComponent(path)}`
       );
 
       if (!response.ok) {
