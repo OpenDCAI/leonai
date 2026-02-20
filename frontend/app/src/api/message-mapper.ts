@@ -41,55 +41,65 @@ function appendToTurn(turn: AssistantTurn, msgId: string, segments: TurnSegment[
   turn.messageIds?.push(msgId);
 }
 
+interface MapState {
+  entries: ChatEntry[];
+  currentTurn: AssistantTurn | null;
+  now: number;
+}
+
+function handleHuman(msg: BackendMessage, i: number, state: MapState): void {
+  state.currentTurn = null;
+  state.entries.push({
+    id: msg.id ?? `hist-user-${i}`,
+    role: "user",
+    content: extractTextContent(msg.content),
+    timestamp: state.now,
+  });
+}
+
+function handleAI(msg: BackendMessage, i: number, state: MapState): void {
+  const textContent = extractTextContent(msg.content);
+  const toolCalls = Array.isArray(msg.tool_calls) ? msg.tool_calls : [];
+  const msgId = msg.id ?? `hist-turn-${i}`;
+
+  const segments: TurnSegment[] = [];
+  if (textContent) segments.push({ type: "text", content: textContent });
+  if (toolCalls.length > 0) segments.push(...buildToolSegments(toolCalls, i, state.now));
+
+  if (state.currentTurn) {
+    appendToTurn(state.currentTurn, msgId, segments);
+  } else {
+    state.currentTurn = createTurn(msgId, segments, state.now);
+    state.entries.push(state.currentTurn);
+  }
+}
+
+function handleTool(msg: BackendMessage, _i: number, state: MapState): void {
+  if (!state.currentTurn) return;
+  const seg = state.currentTurn.segments.find(
+    (s): s is ToolSegment => s.type === "tool" && s.step.id === msg.tool_call_id,
+  );
+  if (seg) {
+    seg.step.result = extractTextContent(msg.content);
+    seg.step.status = "done";
+  }
+}
+
+const MSG_HANDLERS: Record<string, (msg: BackendMessage, i: number, state: MapState) => void> = {
+  HumanMessage: handleHuman,
+  AIMessage: handleAI,
+  ToolMessage: handleTool,
+};
+
 export function mapBackendEntries(payload: unknown): ChatEntry[] {
   if (!Array.isArray(payload)) return [];
-  const entries: ChatEntry[] = [];
-  const now = Date.now();
-  let currentTurn: AssistantTurn | null = null;
+  const state: MapState = { entries: [], currentTurn: null, now: Date.now() };
 
   for (let i = 0; i < payload.length; i += 1) {
     const msg = payload[i] as BackendMessage | undefined;
     if (!msg || typeof msg !== "object") continue;
-
-    if (msg.type === "HumanMessage") {
-      currentTurn = null;
-      entries.push({
-        id: msg.id ?? `hist-user-${i}`,
-        role: "user",
-        content: extractTextContent(msg.content),
-        timestamp: now,
-      });
-      continue;
-    }
-
-    if (msg.type === "AIMessage") {
-      const textContent = extractTextContent(msg.content);
-      const toolCalls = Array.isArray(msg.tool_calls) ? msg.tool_calls : [];
-      const msgId = msg.id ?? `hist-turn-${i}`;
-
-      const segments: TurnSegment[] = [];
-      if (textContent) segments.push({ type: "text", content: textContent });
-      if (toolCalls.length > 0) segments.push(...buildToolSegments(toolCalls, i, now));
-
-      if (currentTurn) {
-        appendToTurn(currentTurn, msgId, segments);
-      } else {
-        currentTurn = createTurn(msgId, segments, now);
-        entries.push(currentTurn);
-      }
-      continue;
-    }
-
-    if (msg.type === "ToolMessage" && currentTurn) {
-      const seg = currentTurn.segments.find(
-        (s): s is ToolSegment => s.type === "tool" && s.step.id === msg.tool_call_id,
-      );
-      if (seg) {
-        seg.step.result = extractTextContent(msg.content);
-        seg.step.status = "done";
-      }
-    }
+    MSG_HANDLERS[msg.type]?.(msg, i, state);
   }
 
-  return entries;
+  return state.entries;
 }
