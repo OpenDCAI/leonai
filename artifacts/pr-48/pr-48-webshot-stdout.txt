@@ -1,1 +1,0 @@
-screenshot_saved=/tmp/leonai-pr48/artifacts/pr-48/pr-48-frontend-runtime.png
