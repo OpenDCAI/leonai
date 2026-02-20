@@ -96,7 +96,7 @@ export default function CenteredInputBox({
   }
 
   function persistWorkspace(path: string) {
-    return fetch("http://127.0.0.1:8001/api/settings/workspace", {
+    return fetch("/api/settings/workspace", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ workspace: path }),

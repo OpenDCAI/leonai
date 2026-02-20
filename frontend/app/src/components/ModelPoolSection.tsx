@@ -30,7 +30,7 @@ export default function ModelPoolSection({ models, enabledModels, providers, onT
     onToggle(modelId, enabled);
 
     try {
-      await fetch("http://127.0.0.1:8001/api/settings/models/toggle", {
+      await fetch("/api/settings/models/toggle", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ model_id: modelId, enabled }),
@@ -50,7 +50,7 @@ export default function ModelPoolSection({ models, enabledModels, providers, onT
     setTestStatus((s) => ({ ...s, [modelId]: "testing" }));
     setTestError((s) => ({ ...s, [modelId]: "" }));
     try {
-      const res = await fetch("http://127.0.0.1:8001/api/settings/models/test", {
+      const res = await fetch("/api/settings/models/test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ model_id: modelId }),
