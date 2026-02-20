@@ -1,0 +1,8 @@
+# rollout-002 smoke
+timestamp_utc=2026-02-20T04:06:47Z
+cmd=LEON_BACKEND_PORT=8114 uv run python -m backend.web.main
+smoke_status=PASS
+endpoint=http://127.0.0.1:8114/api/settings
+http_code=200
+response_keys=custom_models,default_model,default_workspace,enabled_models,model_mapping,providers,recent_workspaces
+backend_log_path=/tmp/hunter-rollout-002-backend.log
