@@ -7,7 +7,7 @@ Marker: HUNTER_GITHUB_ROLLOUT_018
 ## Supersede Map
 - Superseded PR: https://github.com/OpenDCAI/leonai/pull/49
 - Superseded PR: https://github.com/OpenDCAI/leonai/pull/52
-- Superseding PR: TBD_AFTER_OPEN
+- Superseding PR: https://github.com/OpenDCAI/leonai/pull/56
 
 ## Combined Scope (Backend Reliability)
 - `backend/web/main.py`: honor `LEON_BACKEND_PORT` then `PORT`, and use package-qualified app target for module-safe launch.
