@@ -8,8 +8,8 @@ Tests real data flows end-to-end:
 - Thread deletion cleans up events
 """
 
+import asyncio
 import json
-import threading
 from unittest.mock import patch
 
 import pytest
@@ -22,9 +22,12 @@ def tmp_db(tmp_path):
     with patch("backend.web.services.event_store._DB_PATH", db_path):
         import backend.web.services.event_store as es
 
-        es._local = threading.local()
+        es._conn = None
         es.init_event_store()
         yield db_path
+        if es._conn is not None:
+            asyncio.run(es._conn.close())
+            es._conn = None
 
 
 # ---------------------------------------------------------------------------
@@ -190,7 +193,6 @@ class TestEmitSQLiteRoundTrip:
 
     def test_emit_persists_and_injects_metadata(self, tmp_db):
         """emit() should write to SQLite AND inject _seq/_run_id/message_id into event data."""
-        import asyncio
 
         async def _run():
             from backend.web.services.event_buffer import RunEventBuffer
@@ -201,10 +203,9 @@ class TestEmitSQLiteRoundTrip:
             buf.run_id = run_id
             thread_id = "thread-abc"
 
-            # Simulate emit() logic (same as in streaming_service.py)
             event = {"event": "text", "data": json.dumps({"content": "hello"}, ensure_ascii=False)}
             message_id = "msg-ai-uuid-1"
-            seq = append_event(thread_id, run_id, event, message_id)
+            seq = await append_event(thread_id, run_id, event, message_id)
 
             data = json.loads(event["data"])
             data["_seq"] = seq
@@ -213,14 +214,12 @@ class TestEmitSQLiteRoundTrip:
             enriched_event = {**event, "data": json.dumps(data, ensure_ascii=False)}
             await buf.put(enriched_event)
 
-            # Verify SQLite has the event
-            db_events = read_events_after(thread_id, run_id, 0)
+            db_events = await read_events_after(thread_id, run_id, 0)
             assert len(db_events) == 1
             assert db_events[0]["event"] == "text"
             assert db_events[0]["message_id"] == message_id
             assert db_events[0]["seq"] == seq
 
-            # Verify buffer event has injected metadata
             buf_events, _ = await buf.read(0)
             buf_data = json.loads(buf_events[0]["data"])
             assert buf_data["_seq"] == seq
@@ -232,56 +231,68 @@ class TestEmitSQLiteRoundTrip:
 
     def test_emit_sequence_is_monotonic(self, tmp_db):
         """Sequence numbers from append_event must be strictly increasing."""
-        from backend.web.services.event_store import append_event
 
-        seqs = []
-        for i in range(20):
-            seq = append_event("t1", "r1", {"event": "text", "data": f'{{"n":{i}}}'}, f"msg-{i}")
-            seqs.append(seq)
+        async def _run():
+            from backend.web.services.event_store import append_event
 
-        for i in range(1, len(seqs)):
-            assert seqs[i] > seqs[i - 1], f"seq[{i}]={seqs[i]} not > seq[{i - 1}]={seqs[i - 1]}"
+            seqs = []
+            for i in range(20):
+                seq = await append_event("t1", "r1", {"event": "text", "data": f'{{"n":{i}}}'}, f"msg-{i}")
+                seqs.append(seq)
+            for i in range(1, len(seqs)):
+                assert seqs[i] > seqs[i - 1], f"seq[{i}]={seqs[i]} not > seq[{i - 1}]={seqs[i - 1]}"
+
+        asyncio.run(_run())
 
     def test_emit_tool_call_with_message_id(self, tmp_db):
         """tool_call events should persist with the AIMessage's id."""
-        from backend.web.services.event_store import append_event, read_events_after
 
-        tc_event = {
-            "event": "tool_call",
-            "data": json.dumps({"id": "call_abc", "name": "web_search", "args": {"q": "test"}}),
-        }
-        append_event("t1", "r1", tc_event, "ai-msg-uuid")
+        async def _run():
+            from backend.web.services.event_store import append_event, read_events_after
 
-        events = read_events_after("t1", "r1", 0)
-        assert events[0]["message_id"] == "ai-msg-uuid"
-        data = json.loads(events[0]["data"])
-        assert data["id"] == "call_abc"
+            tc_event = {
+                "event": "tool_call",
+                "data": json.dumps({"id": "call_abc", "name": "web_search", "args": {"q": "test"}}),
+            }
+            await append_event("t1", "r1", tc_event, "ai-msg-uuid")
+            events = await read_events_after("t1", "r1", 0)
+            assert events[0]["message_id"] == "ai-msg-uuid"
+            data = json.loads(events[0]["data"])
+            assert data["id"] == "call_abc"
+
+        asyncio.run(_run())
 
     def test_emit_tool_result_with_message_id(self, tmp_db):
         """tool_result events should persist with the ToolMessage's id."""
-        from backend.web.services.event_store import append_event, read_events_after
 
-        tr_event = {
-            "event": "tool_result",
-            "data": json.dumps({"tool_call_id": "call_abc", "name": "web_search", "content": "results..."}),
-        }
-        append_event("t1", "r1", tr_event, "tool-msg-uuid")
+        async def _run():
+            from backend.web.services.event_store import append_event, read_events_after
 
-        events = read_events_after("t1", "r1", 0)
-        assert events[0]["message_id"] == "tool-msg-uuid"
+            tr_event = {
+                "event": "tool_result",
+                "data": json.dumps({"tool_call_id": "call_abc", "name": "web_search", "content": "results..."}),
+            }
+            await append_event("t1", "r1", tr_event, "tool-msg-uuid")
+            events = await read_events_after("t1", "r1", 0)
+            assert events[0]["message_id"] == "tool-msg-uuid"
+
+        asyncio.run(_run())
 
     def test_status_events_have_no_message_id(self, tmp_db):
         """Status events should persist with message_id=None."""
-        from backend.web.services.event_store import append_event, read_events_after
 
-        status_event = {
-            "event": "status",
-            "data": json.dumps({"state": {"state": "ACTIVE"}, "tokens": {}}),
-        }
-        append_event("t1", "r1", status_event, None)
+        async def _run():
+            from backend.web.services.event_store import append_event, read_events_after
 
-        events = read_events_after("t1", "r1", 0)
-        assert events[0]["message_id"] is None
+            status_event = {
+                "event": "status",
+                "data": json.dumps({"state": {"state": "ACTIVE"}, "tokens": {}}),
+            }
+            await append_event("t1", "r1", status_event, None)
+            events = await read_events_after("t1", "r1", 0)
+            assert events[0]["message_id"] is None
+
+        asyncio.run(_run())
 
 
 # ---------------------------------------------------------------------------
@@ -319,7 +330,8 @@ class TestObserveCursorSemantics:
 
             async def consumer():
                 async for ev in observe_run_events(buf):
-                    consumed.append(ev)
+                    if "event" in ev:
+                        consumed.append(ev)
 
             await asyncio.gather(producer(), consumer())
             # All events including done
@@ -344,7 +356,8 @@ class TestObserveCursorSemantics:
             # after=3 → should get seq 4, 5, 6
             events = []
             async for ev in observe_run_events(buf, after=3):
-                events.append(ev)
+                if "event" in ev:
+                    events.append(ev)
             assert len(events) == 3
             seqs = [json.loads(e["data"])["_seq"] for e in events]
             assert seqs == [4, 5, 6]
@@ -366,7 +379,8 @@ class TestObserveCursorSemantics:
 
             events = []
             async for ev in observe_run_events(buf, after=0):
-                events.append(ev)
+                if "event" in ev:
+                    events.append(ev)
             assert len(events) == 2
 
         asyncio.run(_run())
@@ -388,7 +402,8 @@ class TestObserveCursorSemantics:
 
             events = []
             async for ev in observe_run_events(buf, after=999):
-                events.append(ev)
+                if "event" in ev:
+                    events.append(ev)
             # Only the non-JSON event passes through (JSON event has _seq=0 <= 999)
             assert len(events) == 1
             assert events[0]["event"] == "done"
@@ -406,79 +421,112 @@ class TestEventStoreEdgeCases:
 
     def test_large_payload(self, tmp_db):
         """Events with large data payloads persist correctly."""
-        from backend.web.services.event_store import append_event, read_events_after
 
-        big_content = "x" * 100_000
-        event = {"event": "text", "data": json.dumps({"content": big_content})}
-        append_event("t1", "r1", event)
+        async def _run():
+            from backend.web.services.event_store import append_event, read_events_after
 
-        events = read_events_after("t1", "r1", 0)
-        assert len(events) == 1
-        data = json.loads(events[0]["data"])
-        assert len(data["content"]) == 100_000
+            big_content = "x" * 100_000
+            event = {"event": "text", "data": json.dumps({"content": big_content})}
+            await append_event("t1", "r1", event)
+
+            events = await read_events_after("t1", "r1", 0)
+            assert len(events) == 1
+            data = json.loads(events[0]["data"])
+            assert len(data["content"]) == 100_000
+
+        asyncio.run(_run())
 
     def test_unicode_content(self, tmp_db):
         """Unicode content (Chinese, emoji) persists correctly."""
-        from backend.web.services.event_store import append_event, read_events_after
 
-        content = "你好世界 🌍 こんにちは"
-        event = {"event": "text", "data": json.dumps({"content": content}, ensure_ascii=False)}
-        append_event("t1", "r1", event, "msg-unicode")
+        async def _run():
+            from backend.web.services.event_store import append_event, read_events_after
 
-        events = read_events_after("t1", "r1", 0)
-        data = json.loads(events[0]["data"])
-        assert data["content"] == content
+            content = "你好世界 🌍 こんにちは"
+            event = {"event": "text", "data": json.dumps({"content": content}, ensure_ascii=False)}
+            await append_event("t1", "r1", event, "msg-unicode")
+
+            events = await read_events_after("t1", "r1", 0)
+            data = json.loads(events[0]["data"])
+            assert data["content"] == content
+
+        asyncio.run(_run())
 
     def test_cleanup_keeps_latest_n(self, tmp_db):
         """cleanup_old_runs(keep_latest=2) keeps exactly 2 most recent runs."""
-        from backend.web.services.event_store import (
-            append_event,
-            cleanup_old_runs,
-            read_events_after,
-        )
 
-        for run in ["r1", "r2", "r3", "r4"]:
-            for i in range(3):
-                append_event("t1", run, {"event": "text", "data": f'{{"n":{i}}}'})
+        async def _run():
+            from backend.web.services.event_store import (
+                append_event,
+                cleanup_old_runs,
+                read_events_after,
+            )
 
-        cleanup_old_runs("t1", keep_latest=2)
+            for run in ["r1", "r2", "r3", "r4"]:
+                for i in range(3):
+                    await append_event("t1", run, {"event": "text", "data": f'{{"n":{i}}}'})
 
-        # r1 and r2 should be gone
-        assert read_events_after("t1", "r1", 0) == []
-        assert read_events_after("t1", "r2", 0) == []
-        # r3 and r4 should remain
-        assert len(read_events_after("t1", "r3", 0)) == 3
-        assert len(read_events_after("t1", "r4", 0)) == 3
+            await cleanup_old_runs("t1", keep_latest=2)
+
+            # r1 and r2 should be gone
+            assert await read_events_after("t1", "r1", 0) == []
+            assert await read_events_after("t1", "r2", 0) == []
+            # r3 and r4 should remain
+            assert len(await read_events_after("t1", "r3", 0)) == 3
+            assert len(await read_events_after("t1", "r4", 0)) == 3
+
+        asyncio.run(_run())
 
     def test_cleanup_noop_when_fewer_runs(self, tmp_db):
         """cleanup_old_runs does nothing when runs <= keep_latest."""
-        from backend.web.services.event_store import append_event, cleanup_old_runs, read_events_after
 
-        append_event("t1", "r1", {"event": "done", "data": "{}"})
-        deleted = cleanup_old_runs("t1", keep_latest=5)
-        assert deleted == 0
-        assert len(read_events_after("t1", "r1", 0)) == 1
+        async def _run():
+            from backend.web.services.event_store import append_event, cleanup_old_runs, read_events_after
+
+            await append_event("t1", "r1", {"event": "done", "data": "{}"})
+            deleted = await cleanup_old_runs("t1", keep_latest=5)
+            assert deleted == 0
+            assert len(await read_events_after("t1", "r1", 0)) == 1
+
+        asyncio.run(_run())
 
     def test_empty_run_id(self, tmp_db):
         """get_latest_run_id returns None for thread with no events."""
-        from backend.web.services.event_store import get_latest_run_id
 
-        assert get_latest_run_id("nonexistent-thread") is None
+        async def _run():
+            from backend.web.services.event_store import get_latest_run_id
+
+            assert await get_latest_run_id("nonexistent-thread") is None
+
+        asyncio.run(_run())
 
     def test_multiple_threads_independent_cleanup(self, tmp_db):
         """Cleaning up one thread doesn't affect another."""
-        from backend.web.services.event_store import append_event, cleanup_thread, read_events_after
 
-        append_event("t1", "r1", {"event": "text", "data": '{"a":1}'})
-        append_event("t1", "r1", {"event": "done", "data": "{}"})
-        append_event("t2", "r1", {"event": "text", "data": '{"b":2}'})
+        async def _run():
+            from backend.web.services.event_store import append_event, cleanup_thread, read_events_after
 
-        cleanup_thread("t1")
-        assert read_events_after("t1", "r1", 0) == []
-        assert len(read_events_after("t2", "r1", 0)) == 1
+            await append_event("t1", "r1", {"event": "text", "data": '{"a":1}'})
+            await append_event("t1", "r1", {"event": "done", "data": "{}"})
+            await append_event("t2", "r1", {"event": "text", "data": '{"b":2}'})
+
+            await cleanup_thread("t1")
+            assert await read_events_after("t1", "r1", 0) == []
+            assert len(await read_events_after("t2", "r1", 0)) == 1
+
+        asyncio.run(_run())
 
     def test_db_wal_mode(self, tmp_db):
         """Verify WAL mode is enabled for concurrent read/write."""
+
+        async def _run():
+            # WAL is set by _get_conn() (async path), trigger it first
+            from backend.web.services.event_store import append_event
+
+            await append_event("t1", "r1", {"event": "text", "data": "{}"})
+
+        asyncio.run(_run())
+
         import sqlite3
 
         conn = sqlite3.connect(str(tmp_db))
