@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { flushSync } from "react-dom";
 import { getThreadRuntime, streamEvents, type AssistantTurn, type ChatEntry, type StreamStatus } from "../api";
 import { processStreamEvent } from "./stream-event-handlers";
 import { makeId } from "./utils";
@@ -57,11 +58,13 @@ export function useStreamReconnect(deps: ReconnectDeps) {
         if (!isActive) { setIsRunning(false); return; }
         if (ac.signal.aborted) return;
 
-        setIsRunning(true);
-        onUpdateRef.current((prev) => {
-          const result = applyReconnectTurn(prev, fallbackId);
-          resolved.turnId = result.turnId;
-          return result.entries;
+        flushSync(() => {
+          setIsRunning(true);
+          onUpdateRef.current((prev) => {
+            const result = applyReconnectTurn(prev, fallbackId);
+            resolved.turnId = result.turnId;
+            return result.entries;
+          });
         });
 
         if (ac.signal.aborted) return;

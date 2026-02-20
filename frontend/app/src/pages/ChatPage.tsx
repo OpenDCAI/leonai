@@ -33,7 +33,15 @@ function ChatPageInner({ threadId }: { threadId: string }) {
   const { tm, setSidebarCollapsed } = useOutletContext<OutletContext>();
   const [currentModel, setCurrentModel] = useState<string>("");
 
-  const state = location.state as { selectedModel?: string; runStarted?: boolean } | null;
+  const state = location.state as { selectedModel?: string; runStarted?: boolean; message?: string } | null;
+  const runStarted = !!state?.runStarted;
+
+  // Pre-populate user message so ThinkingIndicator shows immediately (no skeleton)
+  const [initialEntries] = useState(() =>
+    runStarted && state?.message
+      ? [{ id: `user-${Date.now()}`, role: "user" as const, content: state.message, timestamp: Date.now() }]
+      : undefined,
+  );
 
   useEffect(() => {
     if (state?.selectedModel) {
@@ -59,7 +67,7 @@ function ChatPageInner({ threadId }: { threadId: string }) {
     }
   }, [state?.selectedModel, threadId]);
 
-  const { entries, activeSandbox, loading, setEntries, setActiveSandbox, refreshThread } = useThreadData(threadId);
+  const { entries, activeSandbox, loading, setEntries, setActiveSandbox, refreshThread } = useThreadData(threadId, runStarted, initialEntries);
 
   const { runtimeStatus, isRunning, handleSendMessage, handleStopStreaming } =
     useStreamHandler({

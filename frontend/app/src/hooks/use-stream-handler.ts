@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import {
   cancelRun,
   postRun,
@@ -64,8 +65,10 @@ export function useStreamHandler(deps: StreamHandlerDeps): StreamHandlerState & 
         streaming: true,
       };
 
-      onUpdateRef.current((prev) => [...prev, userEntry, assistantTurn]);
-      setIsRunning(true);
+      flushSync(() => {
+        onUpdateRef.current((prev) => [...prev, userEntry, assistantTurn]);
+        setIsRunning(true);
+      });
 
       const ac = new AbortController();
       abortRef.current = ac;
