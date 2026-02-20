@@ -27,3 +27,11 @@ Date (UTC): 2026-02-20
 
 ## Marker + URL
 - `[rollout-notes:hunter-015] https://github.com/OpenDCAI/leonai/blob/hunter/pr51-remediation-fastapi-dep/HUNTER_GITHUB_ROLLOUT_015.md`
+
+## GitHub Evidence URLs
+- Remediation review (`CHANGES_REQUESTED`) on `#51`:
+  - https://github.com/OpenDCAI/leonai/pull/51#pullrequestreview-3831901714
+- Remediation comment on `#51` (screenshot fields + self-review):
+  - https://github.com/OpenDCAI/leonai/pull/51#issuecomment-3934261204
+- First minimal follow-up PR:
+  - https://github.com/OpenDCAI/leonai/pull/54
