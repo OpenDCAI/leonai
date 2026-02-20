@@ -1,5 +1,8 @@
 """Leon Web Backend - FastAPI Application."""
 
+import os
+
+import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -30,9 +33,6 @@ app.include_router(monitor_router)
 
 
 if __name__ == "__main__":
-    import os
-    import uvicorn
-
     # @@@port-precedence - Use LEON_BACKEND_PORT first for desk workflows, then PORT for platform compatibility.
     port = int(os.environ.get("LEON_BACKEND_PORT") or os.environ.get("PORT") or "8001")
     # @@@module-launch-target - Package-qualified target keeps module launch (`python -m backend.web.main`) import-safe.
