@@ -5,6 +5,7 @@ interface Model {
   id: string;
   name: string;
   custom?: boolean;
+  provider?: string;
 }
 
 interface ModelPoolSectionProps {
@@ -166,7 +167,9 @@ export default function ModelPoolSection({ models, enabledModels, providers, onT
                 </span>
                 {model.custom && (
                   <>
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#f1f5f9] text-[#94a3b8] font-medium">custom</span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#f1f5f9] text-[#94a3b8] font-medium">
+                      custom · {model.provider || "auto"}
+                    </span>
                     <button
                       onClick={async (e) => {
                         e.stopPropagation();
