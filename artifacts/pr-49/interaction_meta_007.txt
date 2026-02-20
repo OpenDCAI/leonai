@@ -1,0 +1,7 @@
+thread_id=a026bcb4-1c01-44d0-bd83-73cc3aa86054
+marker=interaction-clean-20260220_052103
+thread_create_response={"thread_id":"a026bcb4-1c01-44d0-bd83-73cc3aa86054","sandbox":"local"}
+run_log=/tmp/leon_strict_evidence_20260220_052103/run.sse.log
+webshot_command=node /home/ubuntu/codex-smoke/tools/webshot.mjs http://127.0.0.1:5272/app/a026bcb4-1c01-44d0-bd83-73cc3aa86054 /tmp/leon_strict_evidence_20260220_052103/interaction_webshot.png
+backend_command=LEON_BACKEND_PORT=8102 uv run python -m uvicorn backend.web.main:app --host 127.0.0.1 --port 8102
+frontend_command=VITE_API_PROXY_TARGET=http://127.0.0.1:8102 VITE_DEV_PORT=5272 npm run dev -- --host 127.0.0.1 --port 5272
