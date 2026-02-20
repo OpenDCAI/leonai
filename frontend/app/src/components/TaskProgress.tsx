@@ -1,13 +1,12 @@
 import { useState } from "react";
 import type { StreamStatus } from "../api";
 
-const sandboxTypeLabels: Record<string, string> = {
-  local: "本地",
-  agentbay: "AgentBay",
-  daytona: "Daytona",
-  docker: "Docker",
-  e2b: "E2B",
+const KNOWN_LABELS: Record<string, string> = {
+  local: "本地", agentbay: "AgentBay", daytona: "Daytona", docker: "Docker", e2b: "E2B",
 };
+function sandboxLabel(name: string): string {
+  return KNOWN_LABELS[name] ?? name.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+}
 
 interface TaskProgressProps {
   isStreaming: boolean;
@@ -130,7 +129,7 @@ export default function TaskProgress({ isStreaming, runtimeStatus, sandboxType, 
               <div className="flex items-center gap-2 text-sm">
                 <span className="w-2 h-2 rounded-full" style={{ background: statusColor(sandboxStatus) }} />
                 <span className="text-[#171717]">
-                  {sandboxTypeLabels[sandboxType ?? "local"] ?? sandboxType ?? "本地"}
+                  {sandboxLabel(sandboxType ?? "local")}
                   {sandboxStatus && (
                     <>
                       {" "}
