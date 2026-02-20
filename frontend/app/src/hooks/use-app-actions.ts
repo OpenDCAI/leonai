@@ -1,5 +1,6 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
+  getQueueMode,
   setQueueMode,
   steerThread,
   type ChatEntry,
@@ -52,6 +53,14 @@ export function useAppActions(deps: AppActionsDeps): AppActionsState & AppAction
   const [sessionsOpen, setSessionsOpen] = useState(false);
   const [newThreadOpen, setNewThreadOpen] = useState(false);
   const [queueEnabled, setQueueEnabled] = useState(false);
+
+  // Load queue mode from backend on mount
+  useEffect(() => {
+    if (!activeThreadId) return;
+    getQueueMode(activeThreadId)
+      .then((r) => setQueueEnabled(r.mode !== "steer"))
+      .catch(() => {});
+  }, [activeThreadId]);
 
   const handleFocusAgent = useCallback((stepId: string) => {
     setFocusedAgentStepId(stepId);

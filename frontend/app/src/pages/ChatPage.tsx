@@ -21,38 +21,37 @@ interface OutletContext {
   setSessionsOpen: (value: boolean) => void;
 }
 
+/** Thin wrapper: key={threadId} forces remount → all hook state resets naturally. */
 export default function ChatPage() {
   const { threadId } = useParams<{ threadId: string }>();
+  if (!threadId) return null;
+  return <ChatPageInner key={threadId} threadId={threadId} />;
+}
+
+function ChatPageInner({ threadId }: { threadId: string }) {
   const location = useLocation();
   const { tm, setSidebarCollapsed } = useOutletContext<OutletContext>();
   const initialMessageSent = useRef(false);
   const [currentModel, setCurrentModel] = useState<string>("");
 
-  // Check if we have an initial message to send
   const state = location.state as { initialMessage?: string; selectedModel?: string } | null;
   const hasInitialMessage = !!state?.initialMessage;
 
-  // Set initial model from location state, then thread runtime, then global settings
   useEffect(() => {
     if (state?.selectedModel) {
       setCurrentModel(state.selectedModel);
-      // Persist to thread metadata
-      if (threadId) {
-        void fetch("http://127.0.0.1:8001/api/settings/config", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ model: state.selectedModel, thread_id: threadId }),
-        });
-      }
-    } else if (threadId) {
-      // Try thread-specific model first
+      void fetch("http://127.0.0.1:8001/api/settings/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: state.selectedModel, thread_id: threadId }),
+      });
+    } else {
       fetch(`http://127.0.0.1:8001/api/threads/${threadId}/runtime`)
         .then((r) => r.json())
         .then((d) => {
           if (d.model) {
             setCurrentModel(d.model);
           } else {
-            // Fallback to global default model
             return fetch("http://127.0.0.1:8001/api/settings")
               .then((r) => r.json())
               .then((d) => setCurrentModel(d.default_model || "leon:large"));
@@ -64,37 +63,35 @@ export default function ChatPage() {
 
   const { entries, activeSandbox, loading, setEntries, setActiveSandbox, refreshThread } = useThreadData(threadId, hasInitialMessage);
 
-  const { runtimeStatus, handleSendMessage, handleStopStreaming } =
+  const { runtimeStatus, isRunning, handleSendMessage, handleStopStreaming } =
     useStreamHandler({
-      threadId: threadId ?? "",
+      threadId,
       refreshThreads: tm.refreshThreads,
       onUpdate: (updater) => setEntries(updater),
       loading,
     });
 
-  const isStreaming = entries.some((e) => e.role === "assistant" && (e as import("../api").AssistantTurn).streaming);
+  const isStreaming = isRunning;
 
-  // Handle initial message - send immediately without waiting for loading
   useEffect(() => {
-    if (state?.initialMessage && threadId && !initialMessageSent.current) {
+    if (state?.initialMessage && !initialMessageSent.current) {
       initialMessageSent.current = true;
       const message = state.initialMessage;
-      console.log('[ChatPage] Sending initial message immediately:', message);
       window.history.replaceState({}, document.title);
       void handleSendMessage(message);
     }
-  }, [state?.initialMessage, threadId, handleSendMessage, setEntries]);
+  }, [state?.initialMessage, handleSendMessage]);
 
   const { sandboxActionError, handlePauseSandbox, handleResumeSandbox } =
     useSandboxManager({
-      activeThreadId: threadId ?? null,
+      activeThreadId: threadId,
       isStreaming,
       activeSandbox,
       setActiveSandbox,
       loadThread: refreshThread,
     });
 
-  const ui = useAppActions({ activeThreadId: threadId ?? null, setEntries });
+  const ui = useAppActions({ activeThreadId: threadId, setEntries });
   const {
     queueEnabled, computerOpen, computerTab, focusedAgentStepId,
     setComputerOpen, setComputerTab, setFocusedAgentStepId,
@@ -102,10 +99,6 @@ export default function ChatPage() {
   } = ui;
 
   const computerResize = useResizableX(600, 360, 1200, true);
-
-  if (!threadId) {
-    return null;
-  }
 
   return (
     <>
@@ -160,7 +153,6 @@ export default function ChatPage() {
           <>
             <DragHandle onMouseDown={computerResize.onMouseDown} />
             <ComputerPanel
-              key={threadId}
               isOpen={computerOpen}
               onClose={() => setComputerOpen(false)}
               threadId={threadId}
