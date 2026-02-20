@@ -10,6 +10,7 @@ import aiosqlite
 _DB_PATH = Path.home() / ".leon" / "leon.db"
 
 # Single async connection, lazily created, serialises all writes via the event loop.
+# NOTE: assumes single uvicorn worker. Multi-worker (--workers > 1) needs a connection pool.
 _conn: aiosqlite.Connection | None = None
 _lock = asyncio.Lock()
 

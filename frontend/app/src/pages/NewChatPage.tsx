@@ -30,7 +30,12 @@ export default function NewChatPage() {
     const cwd = workspace || settings?.default_workspace || undefined;
     const threadId = await handleCreateThread(sandbox, cwd);
     console.log('[NewChatPage] Created thread:', threadId, 'posting run:', message);
-    await postRun(threadId, message, undefined, model ? { model } : undefined);
+    try {
+      await postRun(threadId, message, undefined, model ? { model } : undefined);
+    } catch (err) {
+      console.error('[NewChatPage] postRun failed:', err);
+      // Navigate anyway — the thread exists, user can retry from chat page
+    }
     navigate(`/app/${threadId}`, {
       state: { selectedModel: model, runStarted: true, message },
     });
