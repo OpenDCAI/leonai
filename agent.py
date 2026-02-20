@@ -19,6 +19,7 @@ from typing import Any
 import aiosqlite
 from langchain.agents import create_agent
 from langchain.chat_models import init_chat_model
+from langchain_core.messages import SystemMessage
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 from config.schema import DEFAULT_MODEL
@@ -242,7 +243,7 @@ class LeonAgent:
         self.agent = create_agent(
             model=self.model,
             tools=mcp_tools,
-            system_prompt=self.system_prompt,
+            system_prompt=SystemMessage(content=[{"type": "text", "text": self.system_prompt}]),
             middleware=middleware,
             checkpointer=self.checkpointer if not self._needs_async_init else None,
         )
