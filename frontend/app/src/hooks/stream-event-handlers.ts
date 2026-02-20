@@ -5,51 +5,13 @@ import {
   type StreamStatus,
   type ToolSegment,
 } from "../api";
-
-function makeId(prefix: string): string {
-  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-}
+import { handleSubagentEvent } from "./subagent-event-handler";
+import { makeId } from "./utils";
 
 export type UpdateEntries = (updater: (prev: ChatEntry[]) => ChatEntry[]) => void;
 export type StreamEvent = { type: string; data?: unknown };
 
-export function processStreamEvent(
-  event: StreamEvent,
-  turnId: string,
-  onUpdate: UpdateEntries,
-  setRuntimeStatus: (v: StreamStatus | null) => void,
-): { messageId?: string } {
-  const data = (event.data ?? {}) as Record<string, unknown>;
-  const messageId = typeof data.message_id === "string" ? data.message_id : undefined;
-
-  switch (event.type) {
-    case "text":
-      handleTextEvent(event, turnId, onUpdate);
-      return { messageId };
-    case "tool_call":
-      handleToolCallEvent(event, turnId, onUpdate);
-      return { messageId };
-    case "tool_result":
-      handleToolResultEvent(event, turnId, onUpdate);
-      return { messageId };
-    case "status": {
-      const status = event.data as StreamStatus | undefined;
-      if (status) setRuntimeStatus(status);
-      return { messageId };
-    }
-    case "error":
-      handleErrorEvent(event, turnId, onUpdate);
-      return { messageId };
-    case "cancelled":
-      handleCancelledEvent(event, turnId, onUpdate);
-      return { messageId };
-    default:
-      if (event.type.startsWith("subagent_")) {
-        handleSubagentEvent(event, turnId, onUpdate);
-      }
-      return { messageId };
-  }
-}
+type EventPayload = Record<string, unknown>;
 
 function updateTurnSegments(
   onUpdate: UpdateEntries,
@@ -63,14 +25,21 @@ function updateTurnSegments(
   );
 }
 
-function handleTextEvent(event: StreamEvent, turnId: string, onUpdate: UpdateEntries) {
+function findTurnToolSeg(prev: ChatEntry[], turnId: string, toolCallId: string): ToolSegment | undefined {
+  const turn = prev.find((e) => e.id === turnId && e.role === "assistant") as AssistantTurn | undefined;
+  return turn?.segments.find((s) => s.type === "tool" && s.step.id === toolCallId) as ToolSegment | undefined;
+}
+
+// --- Individual event handlers ---
+
+function handleText(event: StreamEvent, turnId: string, onUpdate: UpdateEntries) {
   const payload = event.data as { content?: string } | string | undefined;
   const chunk = typeof payload === "string" ? payload : payload?.content ?? "";
   flushSync(() => {
     updateTurnSegments(onUpdate, turnId, (turn) => {
       const segs = [...turn.segments];
       const last = segs[segs.length - 1];
-      if (last && last.type === "text") {
+      if (last?.type === "text") {
         segs[segs.length - 1] = { type: "text", content: last.content + chunk };
       } else {
         segs.push({ type: "text", content: chunk });
@@ -80,91 +49,48 @@ function handleTextEvent(event: StreamEvent, turnId: string, onUpdate: UpdateEnt
   });
 }
 
-function handleToolCallEvent(event: StreamEvent, turnId: string, onUpdate: UpdateEntries) {
+function handleToolCall(event: StreamEvent, turnId: string, onUpdate: UpdateEntries) {
   const payload = (event.data ?? {}) as { id?: string; name?: string; args?: unknown };
   const toolCallId = payload.id ?? makeId("tc");
 
-  // Dedup: skip if this tool_call_id already exists in the turn
   onUpdate((prev) => {
-    const turn = prev.find((e) => e.id === turnId && e.role === "assistant") as AssistantTurn | undefined;
-    if (turn) {
-      const exists = turn.segments.some(
-        (s) => s.type === "tool" && s.step.id === toolCallId,
-      );
-      if (exists) return prev;
-    }
+    const existing = findTurnToolSeg(prev, turnId, toolCallId);
+    if (existing) return prev;
     return prev.map((e) => {
       if (e.id !== turnId || e.role !== "assistant") return e;
       const t = e as AssistantTurn;
       const seg: ToolSegment = {
         type: "tool",
-        step: {
-          id: toolCallId,
-          name: payload.name ?? "tool",
-          args: payload.args ?? {},
-          status: "calling",
-          timestamp: Date.now(),
-        },
+        step: { id: toolCallId, name: payload.name ?? "tool", args: payload.args ?? {}, status: "calling", timestamp: Date.now() },
       };
       return { ...t, segments: [...t.segments, seg] };
     });
   });
 }
 
-function handleToolResultEvent(event: StreamEvent, turnId: string, onUpdate: UpdateEntries) {
-  const payload = (event.data ?? {}) as { content?: string; tool_call_id?: string; name?: string };
+function markToolDone(turn: AssistantTurn, tcId: string | undefined, result: string): AssistantTurn {
+  return { ...turn, segments: turn.segments.map((s) =>
+    s.type === "tool" && s.step.id === tcId ? { ...s, step: { ...s.step, result, status: "done" as const } } : s,
+  ) };
+}
 
-  // Dedup: skip if tool segment already has result with status "done"
-  const shouldSkip = (prev: ChatEntry[]): boolean => {
-    const turn = prev.find((e) => e.id === turnId && e.role === "assistant") as AssistantTurn | undefined;
-    if (!turn) return false;
-    const seg = turn.segments.find(
-      (s) => s.type === "tool" && s.step.id === payload.tool_call_id,
-    ) as ToolSegment | undefined;
-    return !!(seg && seg.step.result != null && seg.step.status === "done");
-  };
+function handleToolResult(event: StreamEvent, turnId: string, onUpdate: UpdateEntries) {
+  const payload = (event.data ?? {}) as { content?: string; tool_call_id?: string };
+  const tcId = payload.tool_call_id;
+  const result = payload.content ?? "";
 
-  const updateResult = () => {
-    updateTurnSegments(onUpdate, turnId, (turn) => ({
-      ...turn,
-      segments: turn.segments.map((s) => {
-        if (s.type !== "tool" || s.step.id !== payload.tool_call_id) return s;
-        return { ...s, step: { ...s.step, result: payload.content ?? "", status: "done" as const } };
-      }),
-    }));
-  };
-
-  // Ensure "calling" state is visible for at least 200ms before showing result
   onUpdate((prev) => {
-    if (shouldSkip(prev)) return prev;
-    const turn = prev.find((e) => e.id === turnId && e.role === "assistant") as AssistantTurn | undefined;
-    if (turn) {
-      const toolSeg = turn.segments.find(
-        (s) => s.type === "tool" && s.step.id === payload.tool_call_id,
-      ) as ToolSegment | undefined;
-      if (toolSeg) {
-        const elapsed = Date.now() - toolSeg.step.timestamp;
-        if (elapsed < 200) {
-          setTimeout(updateResult, 200 - elapsed);
-          return prev;
-        }
-      }
+    const seg = tcId ? findTurnToolSeg(prev, turnId, tcId) : undefined;
+    if (seg?.step.status === "done") return prev;
+    if (seg && Date.now() - seg.step.timestamp < 200) {
+      setTimeout(() => updateTurnSegments(onUpdate, turnId, (t) => markToolDone(t, tcId, result)), 200 - (Date.now() - seg.step.timestamp));
+      return prev;
     }
-    return prev.map((e) => {
-      if (e.id !== turnId || e.role !== "assistant") return e;
-      const t = e as AssistantTurn;
-      return {
-        ...t,
-        segments: t.segments.map((s) => {
-          if (s.type !== "tool" || s.step.id !== payload.tool_call_id) return s;
-          return { ...s, step: { ...s.step, result: payload.content ?? "", status: "done" as const } };
-        }),
-      };
-    });
+    return prev.map((e) => e.id === turnId && e.role === "assistant" ? markToolDone(e as AssistantTurn, tcId, result) : e);
   });
 }
 
-function handleErrorEvent(event: StreamEvent, turnId: string, onUpdate: UpdateEntries) {
+function handleError(event: StreamEvent, turnId: string, onUpdate: UpdateEntries) {
   const text = typeof event.data === "string" ? event.data : JSON.stringify(event.data ?? "Unknown error");
   updateTurnSegments(onUpdate, turnId, (turn) => ({
     ...turn,
@@ -172,60 +98,51 @@ function handleErrorEvent(event: StreamEvent, turnId: string, onUpdate: UpdateEn
   }));
 }
 
-function handleCancelledEvent(
-  event: StreamEvent,
-  turnId: string,
-  onUpdate: UpdateEntries,
-) {
-  const cancelledToolCallIds = (event.data as any)?.cancelled_tool_call_ids || [];
+function handleCancelled(event: StreamEvent, turnId: string, onUpdate: UpdateEntries) {
+  const ids: string[] = (event.data as EventPayload)?.cancelled_tool_call_ids as string[] || [];
   updateTurnSegments(onUpdate, turnId, (turn) => ({
     ...turn,
     streaming: false,
-    segments: turn.segments.map((seg) => {
-      if (seg.type === "tool" && cancelledToolCallIds.includes(seg.step.id)) {
-        return { ...seg, step: { ...seg.step, status: "cancelled" as const, result: "任务被用户取消" } };
-      }
-      return seg;
-    }),
+    segments: turn.segments.map((seg) =>
+      seg.type === "tool" && ids.includes(seg.step.id)
+        ? { ...seg, step: { ...seg.step, status: "cancelled" as const, result: "任务被用户取消" } }
+        : seg,
+    ),
   }));
 }
 
-function handleSubagentEvent(event: StreamEvent, turnId: string, onUpdate: UpdateEntries) {
-  const data = event.data as any;
-  const parentToolCallId = data?.parent_tool_call_id;
-  if (!parentToolCallId) return;
+// --- Main dispatcher via handler map ---
 
-  updateTurnSegments(onUpdate, turnId, (turn) => ({
-    ...turn,
-    segments: turn.segments.map((s) => {
-      if (s.type !== "tool" || s.step.id !== parentToolCallId) return s;
+type EventHandler = (event: StreamEvent, turnId: string, onUpdate: UpdateEntries) => void;
 
-      const step = { ...s.step };
-      if (!step.subagent_stream) {
-        step.subagent_stream = {
-          task_id: "", thread_id: "", text: "", tool_calls: [], status: "running",
-        };
-      }
+const EVENT_HANDLERS: Record<string, EventHandler> = {
+  text: handleText,
+  tool_call: handleToolCall,
+  tool_result: handleToolResult,
+  error: handleError,
+  cancelled: handleCancelled,
+};
 
-      const stream = { ...step.subagent_stream };
-      if (event.type === "subagent_task_start") {
-        stream.task_id = data.task_id || "";
-        stream.thread_id = data.thread_id || "";
-        stream.status = "running";
-      } else if (event.type === "subagent_task_text") {
-        stream.text += data.content || "";
-      } else if (event.type === "subagent_task_tool_call") {
-        stream.tool_calls = [...stream.tool_calls, {
-          id: data.tool_call_id || "", name: data.name || "", args: data.args || {},
-        }];
-      } else if (event.type === "subagent_task_done") {
-        stream.status = "completed";
-      } else if (event.type === "subagent_task_error") {
-        stream.status = "error";
-        stream.error = data.error || "Unknown error";
-      }
+export function processStreamEvent(
+  event: StreamEvent,
+  turnId: string,
+  onUpdate: UpdateEntries,
+  setRuntimeStatus: (v: StreamStatus | null) => void,
+): { messageId?: string } {
+  const data = (event.data ?? {}) as EventPayload;
+  const messageId = typeof data.message_id === "string" ? data.message_id : undefined;
 
-      return { ...s, step: { ...step, subagent_stream: stream } };
-    }),
-  }));
+  if (event.type === "status") {
+    if (event.data) setRuntimeStatus(event.data as StreamStatus);
+    return { messageId };
+  }
+
+  const handler = EVENT_HANDLERS[event.type];
+  if (handler) {
+    handler(event, turnId, onUpdate);
+  } else if (event.type.startsWith("subagent_")) {
+    handleSubagentEvent(event, turnId, onUpdate);
+  }
+
+  return { messageId };
 }

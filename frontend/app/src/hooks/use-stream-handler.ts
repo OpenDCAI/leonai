@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   cancelRun,
-  getThreadRuntime,
   postRun,
   streamEvents,
   type AssistantTurn,
@@ -9,25 +8,8 @@ import {
   type StreamStatus,
 } from "../api";
 import { processStreamEvent } from "./stream-event-handlers";
-
-function makeId(prefix: string): string {
-  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
-/** Mark a turn's streaming field in the entries array. */
-function setTurnStreaming(
-  onUpdate: (updater: (prev: ChatEntry[]) => ChatEntry[]) => void,
-  turnId: string,
-  streaming: boolean,
-) {
-  onUpdate((prev) =>
-    prev.map((e) =>
-      e.id === turnId && e.role === "assistant"
-        ? { ...e, streaming } as AssistantTurn
-        : e,
-    ),
-  );
-}
+import { useStreamReconnect } from "./use-stream-reconnect";
+import { makeId } from "./utils";
 
 interface StreamHandlerDeps {
   threadId: string;
@@ -120,7 +102,9 @@ export function useStreamHandler(deps: StreamHandlerDeps): StreamHandlerState & 
       } finally {
         abortRef.current = null;
         setIsRunning(false);
-        setTurnStreaming(onUpdateRef.current, boundTurnId, false);
+        onUpdateRef.current((prev) => prev.map((e) =>
+          e.id === boundTurnId && e.role === "assistant" ? { ...e, streaming: false } as AssistantTurn : e,
+        ));
         await refreshThreads();
       }
     },
@@ -136,71 +120,7 @@ export function useStreamHandler(deps: StreamHandlerDeps): StreamHandlerState & 
     setTimeout(() => abortRef.current?.abort(), 500);
   }, [threadId]);
 
-  // Reconnect: after snapshot is loaded, check if agent is active → streamEvents
-  useEffect(() => {
-    if (!threadId || loading) return;
-
-    const ac = new AbortController();
-
-    (async () => {
-      let turnId: string | null = null;
-      try {
-        const runtime = await getThreadRuntime(threadId);
-        if (runtime) setRuntimeStatus(runtime);
-        const state = runtime?.state?.state;
-        if (state !== "active") {
-          setIsRunning(false);
-          return;
-        }
-
-        if (ac.signal.aborted) return;
-        setIsRunning(true);
-
-        // Find the last assistant turn or create one
-        onUpdateRef.current((prev) => {
-          for (let i = prev.length - 1; i >= 0; i--) {
-            if (prev[i].role === "assistant") {
-              turnId = prev[i].id;
-              break;
-            }
-          }
-          if (!turnId) {
-            turnId = makeId("reconnect-turn");
-            const newTurn: AssistantTurn = {
-              id: turnId,
-              role: "assistant",
-              segments: [],
-              timestamp: Date.now(),
-              streaming: true,
-            };
-            return [...prev, newTurn];
-          }
-          return prev.map((e) =>
-            e.id === turnId && e.role === "assistant"
-              ? { ...e, streaming: true } as AssistantTurn
-              : e,
-          );
-        });
-
-        if (!turnId || ac.signal.aborted) return;
-
-        abortRef.current = ac;
-
-        await streamEvents(threadId, (event) => {
-          processStreamEvent(event, turnId!, onUpdateRef.current, setRuntimeStatus);
-        }, ac.signal);
-      } catch (error) {
-        if (error instanceof Error && error.name === "AbortError") return;
-        console.error("Reconnect failed:", error);
-      } finally {
-        setIsRunning(false);
-        if (turnId) setTurnStreaming(onUpdateRef.current, turnId, false);
-        void refreshThreads();
-      }
-    })();
-
-    return () => { ac.abort(); };
-  }, [threadId, loading, refreshThreads]);
+  useStreamReconnect({ threadId, loading, refreshThreads, onUpdateRef, abortRef, setRuntimeStatus, setIsRunning });
 
   return { runtimeStatus, isRunning, handleSendMessage, handleStopStreaming };
 }
