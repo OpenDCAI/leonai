@@ -25,17 +25,6 @@ function statusColor(status: string | null): string {
   return "#ef4444";
 }
 
-function formatTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
-  return String(n);
-}
-
-function formatCost(c: number): string {
-  if (c < 0.01) return "<$0.01";
-  return `$${c.toFixed(2)}`;
-}
-
 /** Retro computer icon — CRT monitor with base stand */
 function RetroComputerIcon({ className }: { className?: string }) {
   return (
@@ -117,7 +106,7 @@ function ToggleButton({ expanded, onClick }: { expanded: boolean; onClick?: () =
   );
 }
 
-export default function TaskProgress({ isStreaming, runtimeStatus, sandboxType, sandboxStatus, computerOpen = false, onToggleComputer }: TaskProgressProps) {
+export default function TaskProgress({ isStreaming, sandboxType, sandboxStatus, computerOpen = false, onToggleComputer }: TaskProgressProps) {
   return (
     <div className="bg-white">
       <div className="max-w-3xl mx-auto px-4">
