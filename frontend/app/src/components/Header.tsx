@@ -7,7 +7,12 @@ const KNOWN_LABELS: Record<string, string> = {
   local: "本地", agentbay: "AgentBay", daytona: "Daytona", docker: "Docker", e2b: "E2B",
 };
 function sandboxLabel(name: string): string {
-  return KNOWN_LABELS[name] ?? name.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+  return KNOWN_LABELS[name]
+    ?? name
+      .split(/[_-]+/)
+      .filter(Boolean)
+      .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(" ");
 }
 
 interface HeaderProps {

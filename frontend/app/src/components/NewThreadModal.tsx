@@ -17,7 +17,15 @@ const KNOWN_LABELS: Record<string, { label: string; desc: string }> = {
   e2b: { label: "E2B", desc: "云端代码沙箱，快速启动" },
 };
 function sandboxLabel(name: string): { label: string; desc: string } {
-  return KNOWN_LABELS[name] ?? { label: name.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase()), desc: "" };
+  return KNOWN_LABELS[name]
+    ?? {
+      label: name
+        .split(/[_-]+/)
+        .filter(Boolean)
+        .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+        .join(" "),
+      desc: "",
+    };
 }
 
 export default function NewThreadModal({ open, sandboxTypes, onClose, onCreate }: NewThreadModalProps) {
