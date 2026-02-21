@@ -35,6 +35,25 @@ const MODELS = [
   { value: "leon:max", label: "Max" },
 ];
 
+const SANDBOX_LABELS: Record<string, string> = {
+  local: "本地",
+  agentbay: "AgentBay",
+  daytona: "Daytona",
+  docker: "Docker",
+  e2b: "E2B",
+};
+
+function formatSandboxLabel(name: string): string {
+  const known = SANDBOX_LABELS[name];
+  if (known) return known;
+  // @@@sandbox-label-humanize - Keep /app selector readable when provider name is snake_case (e.g. daytona_selfhost).
+  return name
+    .split(/[_-]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
 export default function CenteredInputBox({
   sandboxTypes,
   defaultSandbox = "local",
@@ -134,7 +153,7 @@ export default function CenteredInputBox({
             <SelectContent>
               {sandboxTypes.map((type) => (
                 <SelectItem key={type.name} value={type.name} disabled={!type.available}>
-                  {type.name}
+                  {formatSandboxLabel(type.name)}
                 </SelectItem>
               ))}
             </SelectContent>
