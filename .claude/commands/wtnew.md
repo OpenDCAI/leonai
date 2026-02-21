@@ -33,13 +33,13 @@ git worktree add "$MAIN_REPO/worktrees/<目录名>" -b $ARGUMENTS origin/dev
 - `worktrees/` 统一放在主仓库内
 - 必须确认 `worktrees/` 在 `.gitignore` 中，不在则自动添加
 
-## Step 3：链接 Claude 配置
+## Step 3：链接本地配置
 
-worktree 不包含 gitignored 文件，必须手动链接：
+`.claude/` 已纳入 Git 管理，worktree checkout 后自动包含。  
+只需链接不在 Git 里的本地配置文件：
 
 ```bash
 cd "$MAIN_REPO/worktrees/<目录名>"
-ln -s "$MAIN_REPO/.claude" .claude
 ln -s "$MAIN_REPO/CLAUDE.local.md" CLAUDE.local.md 2>/dev/null
 ```
 
@@ -48,7 +48,7 @@ ln -s "$MAIN_REPO/CLAUDE.local.md" CLAUDE.local.md 2>/dev/null
 输出：
 - worktree 路径
 - 分支名
-- `.claude` 符号链接状态
+- `CLAUDE.local.md` 符号链接状态
 
 询问用户：是否在新 worktree 中打开新的 Claude 会话？
 
