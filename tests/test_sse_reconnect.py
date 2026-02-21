@@ -206,3 +206,21 @@ class TestObserveRunEvents:
         assert buf.run_id == ""
         buf.run_id = "test-run-123"
         assert buf.run_id == "test-run-123"
+
+    def test_read_with_timeout_returns_done_when_mark_done_happens_during_wait(self):
+        async def _run():
+            from backend.web.services.event_buffer import RunEventBuffer
+
+            buf = RunEventBuffer()
+
+            async def _mark_done_soon():
+                await asyncio.sleep(0.05)
+                await buf.mark_done()
+
+            mark_task = asyncio.create_task(_mark_done_soon())
+            events, cursor = await buf.read_with_timeout(0, timeout=1)
+            await mark_task
+            assert events == []
+            assert cursor == 0
+
+        asyncio.run(_run())
