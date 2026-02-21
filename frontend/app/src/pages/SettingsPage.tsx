@@ -244,11 +244,9 @@ export default function SettingsPage() {
             {tab === "sandbox" && (
               <SandboxSection
                 sandboxes={sandboxes}
-                defaultWorkspace={settings.default_workspace}
                 onUpdate={(name, config) => {
                   setSandboxes({ ...sandboxes, [name]: config });
                 }}
-                onWorkspaceChange={(ws) => setSettings({ ...settings, default_workspace: ws })}
               />
             )}
           </div>
