@@ -1,0 +1,6 @@
+{
+  "enabledPlugins": {
+    "ralph-wiggum@claude-code-plugins": true,
+    "typescript-lsp@claude-plugins-official": true
+  }
+}

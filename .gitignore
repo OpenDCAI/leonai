@@ -35,8 +35,11 @@ node_modules/
 # Environment
 .env
 
-# Syncthing-synced folders (team collaboration, Claude sessions)
-.claude/
+# Claude Code - track config, exclude local/generated
+.claude/**/.DS_Store
+.claude/.stfolder/
+.claude/.vscode/
+.claude/settings.local.json
 teams
 
 # User-level Leon config and skills
@@ -77,3 +80,4 @@ docs/assets/
 /QUICK_REFERENCE.md
 /context_manager_*.py
 CLAUDE.local.md
+worktrees/
