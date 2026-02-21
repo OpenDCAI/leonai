@@ -1,11 +1,12 @@
-# 同步 Worktree 配置
+# 同步 Worktree 本地配置
 
-将主仓库的 `.claude` 配置链接到当前 worktree。
+将主仓库的 `CLAUDE.local.md` 链接到当前 worktree。
+
+> `.claude/` 已纳入 Git 管理，worktree checkout 后自动包含，无需手动处理。
 
 ## 使用场景
 
-- worktree 中新开的 Claude 会话发现没有加载项目规则
-- worktree 创建时忘了链接配置
+- worktree 中找不到 `CLAUDE.local.md`（本地配置不在 Git 里，不会随 checkout 复制）
 
 ## Step 0：确定位置
 
@@ -17,12 +18,18 @@ CWD=$(pwd)
 - `CWD == MAIN_REPO` → 提示"你在主仓库，不需要 sync"，退出
 - `CWD` 在某个 worktree 下 → 继续
 
-## Step 1：链接配置
+## Step 1：链接本地配置
 
 ```bash
-ln -sf "$MAIN_REPO/.claude" .claude
-ln -sf "$MAIN_REPO/CLAUDE.local.md" CLAUDE.local.md 2>/dev/null
+TARGET="CLAUDE.local.md"
+if [ -e "$TARGET" ] && [ ! -L "$TARGET" ]; then
+  echo "错误：$TARGET 是普通文件，不覆盖，请手动确认后再操作"
+  exit 1
+fi
+ln -sf "$MAIN_REPO/CLAUDE.local.md" "$TARGET"
 ```
+
+**若目标已存在且不是 symlink（即普通文件），直接报错退出**，绝不强制覆盖。
 
 ## Step 2：验证
 
@@ -30,7 +37,6 @@ ln -sf "$MAIN_REPO/CLAUDE.local.md" CLAUDE.local.md 2>/dev/null
 
 ```
 ✅ 已同步：
-  .claude → /path/to/main/.claude
   CLAUDE.local.md → /path/to/main/CLAUDE.local.md
 ```
 

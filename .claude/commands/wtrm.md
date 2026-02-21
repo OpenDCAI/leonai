@@ -26,20 +26,31 @@ git -C <worktree路径> status --short
 
 有未提交改动 → 列出改动内容，询问用户：**继续移除（改动会丢失）？还是先处理？**
 
-## Step 2：移除 worktree
+## Step 2：清理 untracked 文件
+
+先移除已知的 symlink（`CLAUDE.local.md` 由 `wtnew` 创建，不在 Git 里）：
+
+```bash
+TARGET="$MAIN_REPO/worktrees/<目录名>/CLAUDE.local.md"
+[ -L "$TARGET" ] && rm "$TARGET" || echo "跳过：$TARGET 不是符号链接，不删除"
+```
+
+**必须用 `[ -L ]` 确认是 symlink 再删**，绝不对普通文件执行 `rm`，防止误删原始文件。
+
+## Step 3：移除 worktree
 
 ```bash
 git worktree remove "$MAIN_REPO/worktrees/<目录名>"
 ```
 
-如果失败（`.venv`、`__pycache__` 等 untracked 文件残留）：
+如果仍然失败（`.venv`、`__pycache__` 等其他 untracked 文件残留）：
 
 ```bash
 rm -rf "$MAIN_REPO/worktrees/<目录名>"
 git worktree prune
 ```
 
-## Step 3：询问是否删除本地分支
+## Step 4：询问是否删除本地分支
 
 ```bash
 git branch -d <分支名>   # 已合并分支
