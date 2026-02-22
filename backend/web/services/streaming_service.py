@@ -191,6 +191,17 @@ async def _run_agent_to_buffer(
                     session_id=thread_id,
                 )
                 config.setdefault("callbacks", []).append(obs_handler)
+            elif obs_config and obs_config.active == "langsmith":
+                import os
+
+                cfg = obs_config.langsmith
+                if cfg.api_key:
+                    os.environ["LANGCHAIN_TRACING_V2"] = "true"
+                    os.environ["LANGCHAIN_API_KEY"] = cfg.api_key
+                    if cfg.project:
+                        os.environ["LANGCHAIN_PROJECT"] = cfg.project
+                    if cfg.endpoint:
+                        os.environ["LANGCHAIN_ENDPOINT"] = cfg.endpoint
         except ImportError:
             pass
         except Exception as obs_err:

@@ -476,6 +476,8 @@ OBSERVATION_FILE = Path.home() / ".leon" / "observation.json"
 class ObservationRequest(BaseModel):
     active: str | None = None
     thread_id: str | None = None
+    langfuse: dict | None = None
+    langsmith: dict | None = None
 
 
 @router.get("/observation")
@@ -499,7 +501,17 @@ async def update_observation_settings(request: ObservationRequest, req: Request)
         except Exception:
             pass
 
-    data["active"] = request.active
+    if request.active is not None:
+        data["active"] = request.active
+    if request.langfuse is not None:
+        existing = data.get("langfuse", {})
+        existing.update(request.langfuse)
+        data["langfuse"] = existing
+    if request.langsmith is not None:
+        existing = data.get("langsmith", {})
+        existing.update(request.langsmith)
+        data["langsmith"] = existing
+
     OBSERVATION_FILE.parent.mkdir(parents=True, exist_ok=True)
     with open(OBSERVATION_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
@@ -515,7 +527,64 @@ async def update_observation_settings(request: ObservationRequest, req: Request)
         if agent and hasattr(agent, "update_observation"):
             agent.update_observation(active=request.active)
 
-    return {"success": True, "active": request.active}
+    return {"success": True, "active": data.get("active")}
+
+
+@router.get("/observation/verify")
+async def verify_observation() -> dict[str, Any]:
+    """Verify observation provider by querying recent traces via SDK."""
+    from config.observation_loader import ObservationLoader
+
+    config = ObservationLoader().load()
+
+    if not config.active:
+        return {"success": False, "error": "No active observation provider"}
+
+    if config.active == "langfuse":
+        cfg = config.langfuse
+        if not cfg.secret_key or not cfg.public_key:
+            return {"success": False, "error": "Langfuse keys not configured"}
+        try:
+            from langfuse.client import FernLangfuse
+
+            client = FernLangfuse(
+                username=cfg.public_key,
+                password=cfg.secret_key,
+                base_url=cfg.host or "https://cloud.langfuse.com",
+            )
+            traces = client.trace.list(limit=5)
+            trace_list = [
+                {"id": t.id, "name": t.name, "timestamp": str(t.timestamp)}
+                for t in (traces.data if hasattr(traces, "data") else [])
+            ]
+            return {"success": True, "provider": "langfuse", "traces": trace_list}
+        except Exception as e:
+            return {"success": False, "provider": "langfuse", "error": str(e)}
+
+    if config.active == "langsmith":
+        cfg = config.langsmith
+        if not cfg.api_key:
+            return {"success": False, "error": "LangSmith API key not configured"}
+        try:
+            from langsmith import Client
+
+            client = Client(
+                api_key=cfg.api_key,
+                api_url=cfg.endpoint or "https://api.smith.langchain.com",
+            )
+            runs = list(client.list_runs(
+                project_name=cfg.project or "default",
+                limit=5,
+            ))
+            run_list = [
+                {"id": str(r.id), "name": r.name, "start_time": str(r.start_time)}
+                for r in runs
+            ]
+            return {"success": True, "provider": "langsmith", "traces": run_list}
+        except Exception as e:
+            return {"success": False, "provider": "langsmith", "error": str(e)}
+
+    return {"success": False, "error": f"Unknown provider: {config.active}"}
 
 
 class SandboxConfigRequest(BaseModel):

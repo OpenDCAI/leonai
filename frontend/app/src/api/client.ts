@@ -187,3 +187,28 @@ export async function saveSandboxConfig(name: string, config: Record<string, unk
     body: JSON.stringify({ name, config }),
   });
 }
+
+// --- Observation API ---
+
+export async function getObservationConfig(): Promise<Record<string, unknown>> {
+  return request("/api/settings/observation");
+}
+
+export async function saveObservationConfig(
+  active: string | null,
+  config?: Record<string, unknown>,
+): Promise<void> {
+  await request("/api/settings/observation", {
+    method: "POST",
+    body: JSON.stringify({ active, ...config }),
+  });
+}
+
+export async function verifyObservation(): Promise<{
+  success: boolean;
+  provider?: string;
+  traces?: unknown[];
+  error?: string;
+}> {
+  return request("/api/settings/observation/verify");
+}
