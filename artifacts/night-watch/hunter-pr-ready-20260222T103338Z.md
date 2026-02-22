@@ -50,3 +50,8 @@ Exact command:
 - malformed sandbox JSON now fails startup earlier because parity check parses each config file directly
 - dependency check only validates module importability, not runtime credential validity
 - provider reconciliation fallback depends on `abstract_terminals` row presence; schema drift could change behavior
+
+## HUNTER_GITHUB_ROLLOUT_019_20260222T123748Z_PR70
+- PR URL: https://github.com/OpenDCAI/leonai/pull/70
+- Screenshot path: /tmp/hunter-pr70-72-remed-20260222T123650Z/repo/artifacts/night-watch/hunter-pr-ready-20260222T103338Z.png
+- Command: `node /home/ubuntu/codex-smoke/tools/webshot.mjs http://127.0.0.1:5272/ /tmp/hunter-pr70-72-remed-20260222T123650Z/repo/artifacts/night-watch/hunter-pr-ready-20260222T103338Z.png`
