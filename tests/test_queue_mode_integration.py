@@ -33,12 +33,7 @@ def test_queue_mode_steer():
     queue_manager = get_queue_manager()
 
     # Create agent with minimal config (no MCP to speed up)
-    from agent_profile import AgentProfile
-
-    profile = AgentProfile.default()
-    profile.mcp.enabled = False
-
-    agent = create_leon_agent(profile=profile)
+    agent = create_leon_agent()
 
     # Track what happens
     tool_calls_seen = []
