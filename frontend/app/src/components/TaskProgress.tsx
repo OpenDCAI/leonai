@@ -1,13 +1,17 @@
 import { useState } from "react";
 import type { StreamStatus } from "../api";
 
-const sandboxTypeLabels: Record<string, string> = {
-  local: "本地",
-  agentbay: "AgentBay",
-  daytona: "Daytona",
-  docker: "Docker",
-  e2b: "E2B",
+const KNOWN_LABELS: Record<string, string> = {
+  local: "本地", agentbay: "AgentBay", daytona: "Daytona", docker: "Docker", e2b: "E2B",
 };
+function sandboxLabel(name: string): string {
+  return KNOWN_LABELS[name]
+    ?? name
+      .split(/[_-]+/)
+      .filter(Boolean)
+      .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(" ");
+}
 
 interface TaskProgressProps {
   isStreaming: boolean;
@@ -23,17 +27,6 @@ function statusColor(status: string | null): string {
   if (status === "paused") return "#eab308";
   if (status === "detached") return "#a3a3a3";
   return "#ef4444";
-}
-
-function formatTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
-  return String(n);
-}
-
-function formatCost(c: number): string {
-  if (c < 0.01) return "<$0.01";
-  return `$${c.toFixed(2)}`;
 }
 
 /** Retro computer icon — CRT monitor with base stand */
@@ -117,7 +110,9 @@ function ToggleButton({ expanded, onClick }: { expanded: boolean; onClick?: () =
   );
 }
 
-export default function TaskProgress({ isStreaming, runtimeStatus, sandboxType, sandboxStatus, computerOpen = false, onToggleComputer }: TaskProgressProps) {
+export default function TaskProgress(props: TaskProgressProps) {
+  const { isStreaming, sandboxType, sandboxStatus, computerOpen = false, onToggleComputer } = props;
+
   return (
     <div className="bg-white">
       <div className="max-w-3xl mx-auto px-4">
@@ -130,7 +125,7 @@ export default function TaskProgress({ isStreaming, runtimeStatus, sandboxType, 
               <div className="flex items-center gap-2 text-sm">
                 <span className="w-2 h-2 rounded-full" style={{ background: statusColor(sandboxStatus) }} />
                 <span className="text-[#171717]">
-                  {sandboxTypeLabels[sandboxType ?? "local"] ?? sandboxType ?? "本地"}
+                  {sandboxLabel(sandboxType ?? "local")}
                   {sandboxStatus && (
                     <>
                       {" "}
