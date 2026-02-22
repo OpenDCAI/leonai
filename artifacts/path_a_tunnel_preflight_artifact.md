@@ -39,3 +39,8 @@ scripts/path_a_tunnel_preflight.sh \
 - PR URL: `https://github.com/OpenDCAI/leonai/pull/71`
 - Screenshot absolute path: `/home/ubuntu/Aria/Projects/leonai/worktrees/desks/hunter-tunnel-preflight/artifacts/screenshots/leon_fe_5272_path_a_preflight.png`
 - Screenshot command evidence: `node /home/ubuntu/codex-smoke/tools/webshot.mjs http://127.0.0.1:5272/ /home/ubuntu/Aria/Projects/leonai/worktrees/desks/hunter-tunnel-preflight/artifacts/screenshots/leon_fe_5272_path_a_preflight.png`
+
+## HUNTER_GITHUB_ROLLOUT_019_20260222T123748Z_PR71
+- PR URL: https://github.com/OpenDCAI/leonai/pull/71
+- Screenshot path: /tmp/hunter-pr70-72-remed-20260222T123650Z/repo/artifacts/screenshots/leon_fe_5272_path_a_preflight.png
+- Command: `node /home/ubuntu/codex-smoke/tools/webshot.mjs http://127.0.0.1:5272/ /tmp/hunter-pr70-72-remed-20260222T123650Z/repo/artifacts/screenshots/leon_fe_5272_path_a_preflight.png`
