@@ -18,3 +18,9 @@ scripts/path_a_tunnel_preflight.sh \
   --ingress-url <public_ingress_url> \
   --credential-file <credential_file>
 ```
+
+## Regression tests
+
+```bash
+uv run pytest tests/test_path_a_tunnel_preflight.py -q
+```
