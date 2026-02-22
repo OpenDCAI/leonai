@@ -5,20 +5,44 @@ import './index.css'
 import './App.css'
 import { router } from './router.tsx'
 
+const serializeLogArg = (arg: unknown): string => {
+  if (typeof arg !== 'object' || arg === null) {
+    return String(arg)
+  }
+
+  try {
+    const seen = new WeakSet<object>()
+    // @@@safe-log-serialization - prevent circular references from turning console.log calls into runtime errors
+    const json = JSON.stringify(arg, (_key, value) => {
+      if (typeof value === 'object' && value !== null) {
+        if (seen.has(value)) {
+          return '[Circular]'
+        }
+        seen.add(value)
+      }
+      return value
+    })
+    return json ?? String(arg)
+  } catch (error) {
+    originalLog('[frontend-debug-log] failed to serialize console.log arg:', error)
+    return String(arg)
+  }
+}
+
 // Intercept console.log and send to backend
 const originalLog = console.log;
-console.log = (...args: any[]) => {
+console.log = (...args: unknown[]) => {
   originalLog(...args);
   // Send to backend for logging
-  const message = args.map(arg =>
-    typeof arg === 'object' ? JSON.stringify(arg) : String(arg)
-  ).join(' ');
+  const message = args.map((arg) => serializeLogArg(arg)).join(' ')
 
   fetch('/api/debug/log', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ message, timestamp: new Date().toISOString() }),
-  }).catch(() => {}); // Ignore errors
+  }).catch((error) => {
+    originalLog('[frontend-debug-log] failed to send /api/debug/log:', error)
+  })
 };
 
 createRoot(document.getElementById('root')!).render(
