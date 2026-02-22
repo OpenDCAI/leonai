@@ -95,6 +95,7 @@ class ConfigLoader:
             final_config = self._deep_merge(final_config, cli_overrides)
 
         final_config = self._expand_env_vars(final_config)
+        self._ensure_default_skill_dir(final_config)
         final_config = self._remove_none_values(final_config)
 
         return LeonSettings(**final_config)
@@ -163,6 +164,24 @@ class ConfigLoader:
         if isinstance(obj, list):
             return [self._remove_none_values(v) for v in obj if v is not None]
         return obj
+
+    def _ensure_default_skill_dir(self, config: dict[str, Any]) -> None:
+        """Create ~/.leon/skills when configured, so first-run validation succeeds."""
+        skills = config.get("skills")
+        if not isinstance(skills, dict):
+            return
+        paths = skills.get("paths")
+        if not isinstance(paths, list):
+            return
+
+        default_home_skills = Path.home() / ".leon" / "skills"
+        for raw_path in paths:
+            if not isinstance(raw_path, str):
+                continue
+            path = Path(raw_path).expanduser()
+            # @@@skills-default-bootstrap - keep strict path validation while avoiding first-run failure for default home skills dir
+            if path == default_home_skills and not path.exists():
+                path.mkdir(parents=True, exist_ok=True)
 
 
 def load_config(
