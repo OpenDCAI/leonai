@@ -38,8 +38,10 @@ Exact command:
 `node /home/ubuntu/codex-smoke/tools/webshot.mjs http://127.0.0.1:5272/ /home/ubuntu/Aria/Projects/leonai/worktrees/desks/hunter-pr-ready/artifacts/night-watch/hunter-pr-ready-20260222T103338Z.png`
 
 ## Rollout Notes
-- rollout marker placeholder: `ROLL_OUT_MARKER_PLACEHOLDER`
-- rollout URL placeholder: `https://ROLL_OUT_URL_PLACEHOLDER`
+- rollout marker: `[proposer:hunter]`
+- rollout PR URL: `https://github.com/OpenDCAI/leonai/pull/70`
+- rollout screenshot absolute path: `/home/ubuntu/Aria/Projects/leonai/worktrees/desks/hunter-pr-ready/artifacts/night-watch/hunter-pr-ready-20260222T103338Z.png`
+- rollout screenshot command evidence: `node /home/ubuntu/codex-smoke/tools/webshot.mjs http://127.0.0.1:5272/ /home/ubuntu/Aria/Projects/leonai/worktrees/desks/hunter-pr-ready/artifacts/night-watch/hunter-pr-ready-20260222T103338Z.png`
 
 ## Self-review Verdict
 - verdict: pass, candidate is minimal and scoped to dependency-parity hardening
