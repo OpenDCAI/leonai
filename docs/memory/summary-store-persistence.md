@@ -57,8 +57,8 @@ CREATE TABLE summaries (
 
 ### 前置条件
 ```bash
-git checkout dev
-git pull origin dev
+git checkout main
+git pull origin main
 ```
 
 ### Phase 1: 创建 SummaryStore

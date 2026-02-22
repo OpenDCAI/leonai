@@ -21,7 +21,7 @@
 
 **安全检查（破坏性操作前必须执行）：**
 - `reset --hard` 前 → `git log HEAD --not --remotes` 确认本地无独有 commit
-- PR 目标分支 → 默认 `dev`（master 只接受 dev 合入）
+- PR 目标分支 → 默认 `main`
 - push 前 → `git log origin/<branch>..HEAD` 确认要推送的内容符合预期
 
 ## Worktree 规范
