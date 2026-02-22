@@ -1,0 +1,6 @@
+number,title,url,has_proposer_marker,has_screenshot_command,has_self_review,has_rollout_note_ref
+70,"[proposer:hunter] backend/web: dependency parity hardening for startup + delete","https://github.com/OpenDCAI/leonai/pull/70",true,true,true,false
+71,"[proposer:hunter] Add Path A tunnel preflight safety utility","https://github.com/OpenDCAI/leonai/pull/71",true,true,true,true
+72,"[proposer:hunter] Add reproducible Alibaba<->ZGC tunnel proof tuple utility","https://github.com/OpenDCAI/leonai/pull/72",true,true,true,true
+73,"[proposer:hunter] Add automated PR evidence hard-rule checker","https://github.com/OpenDCAI/leonai/pull/73",true,true,true,true
+74,"[proposer:taotao-db] CP1 minimal: thread metadata sqlite seam","https://github.com/OpenDCAI/leonai/pull/74",true,true,true,false
