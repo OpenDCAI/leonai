@@ -1,0 +1,7 @@
+$ uv run --with fastapi --with pytest pytest -q tests/storage/test_thread_metadata_repo_sqlite.py
+....                                                                     [100%]
+4 passed in 0.45s
+
+$ uv run --with fastapi --with pytest pytest -q tests/backend/web/test_thread_metadata_helpers_repo_parity.py
+...                                                                      [100%]
+3 passed in 0.50s

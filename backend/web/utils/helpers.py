@@ -8,7 +8,10 @@ from typing import Any
 from fastapi import HTTPException
 
 from backend.web.core.config import DB_PATH
+from core.storage.sqlite import SQLiteThreadMetadataRepo
 from sandbox.db import DEFAULT_DB_PATH as SANDBOX_DB_PATH
+
+_thread_metadata_repo = SQLiteThreadMetadataRepo(DB_PATH)
 
 
 def is_virtual_thread_id(thread_id: str | None) -> bool:
@@ -62,6 +65,11 @@ def extract_webhook_instance_id(payload: dict[str, Any]) -> str | None:
                 return value
 
     return None
+
+
+def save_thread_metadata(thread_id: str, sandbox_type: str, cwd: str | None) -> None:
+    """Persist thread sandbox_type and cwd to SQLite."""
+    _thread_metadata_repo.save_thread_metadata(thread_id, sandbox_type, cwd)
 
 
 def _ensure_thread_config_table(conn: sqlite3.Connection) -> None:
@@ -140,13 +148,17 @@ def init_thread_config(thread_id: str, sandbox_type: str, cwd: str | None) -> No
 
 def save_thread_model(thread_id: str, model: str) -> None:
     """Persist the selected model for a thread."""
-    save_thread_config(thread_id, model=model)
+    _thread_metadata_repo.save_thread_model(thread_id, model)
 
 
 def lookup_thread_model(thread_id: str) -> str | None:
     """Look up persisted model for a thread."""
-    config = load_thread_config(thread_id)
-    return config.model if config else None
+    return _thread_metadata_repo.lookup_thread_model(thread_id)
+
+
+def lookup_thread_metadata(thread_id: str) -> tuple[str, str | None] | None:
+    """Look up persisted (sandbox_type, cwd) for a thread. Returns None if not found."""
+    return _thread_metadata_repo.lookup_thread_metadata(thread_id)
 
 
 def resolve_local_workspace_path(
