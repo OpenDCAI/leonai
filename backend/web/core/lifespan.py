@@ -8,6 +8,7 @@ from fastapi import FastAPI
 
 from backend.web.services.event_buffer import RunEventBuffer
 from backend.web.services.idle_reaper import idle_reaper_loop
+from backend.web.services.sandbox_service import verify_provider_dependency_parity
 from tui.config import ConfigManager
 
 
@@ -17,6 +18,7 @@ async def lifespan(app: FastAPI):
     # Load configuration
     config_manager = ConfigManager()
     config_manager.load_to_env()
+    verify_provider_dependency_parity()
 
     # Ensure event store table exists (lazy init, not at module import)
     from backend.web.services.event_store import init_event_store

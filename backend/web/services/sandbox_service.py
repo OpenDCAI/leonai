@@ -1,6 +1,8 @@
 """Sandbox management service."""
 
+import importlib.util
 import os
+import sqlite3
 import uuid
 from datetime import datetime
 from typing import Any
@@ -9,7 +11,13 @@ from backend.web.core.config import LOCAL_WORKSPACE_ROOT, SANDBOXES_DIR
 from backend.web.utils.helpers import is_virtual_thread_id
 from sandbox.config import SandboxConfig
 from sandbox.db import DEFAULT_DB_PATH as SANDBOX_DB_PATH
-from sandbox.manager import SandboxManager
+from sandbox.manager import SandboxManager, lookup_sandbox_for_thread
+
+PROVIDER_SDK_MODULE_BY_TYPE = {
+    "agentbay": "agentbay",
+    "e2b": "e2b",
+    "daytona": "daytona_sdk",
+}
 
 
 def available_sandbox_types() -> list[dict[str, Any]]:
@@ -25,6 +33,35 @@ def available_sandbox_types() -> list[dict[str, Any]]:
         except Exception as e:
             types.append({"name": name, "available": False, "reason": str(e)})
     return types
+
+
+def verify_provider_dependency_parity() -> None:
+    """Fail startup when configured provider SDKs are not installed."""
+    if not SANDBOXES_DIR.exists():
+        return
+
+    missing: list[tuple[str, str, str]] = []
+    for config_file in sorted(SANDBOXES_DIR.glob("*.json")):
+        sandbox_name = config_file.stem
+        config = SandboxConfig.model_validate_json(config_file.read_text())
+        module_name = PROVIDER_SDK_MODULE_BY_TYPE.get(config.provider)
+        if not module_name:
+            continue
+        if importlib.util.find_spec(module_name) is None:
+            missing.append((sandbox_name, config.provider, module_name))
+
+    if not missing:
+        return
+
+    missing_lines = [
+        f"- sandbox={name!r} provider={provider!r} missing_module={module!r}" for name, provider, module in missing
+    ]
+    details = "\n".join(missing_lines)
+    raise RuntimeError(
+        "Configured sandbox provider SDKs are missing.\n"
+        f"{details}\n"
+        "Install backend deps and retry: pip install -r backend/web/requirements.txt"
+    )
 
 
 def init_providers_and_managers() -> tuple[dict, dict]:
@@ -240,11 +277,43 @@ def destroy_thread_resources_sync(thread_id: str, sandbox_type: str, agent_pool:
     """Destroy sandbox resources for a thread."""
     pool_key = f"{thread_id}:{sandbox_type}"
     pooled_agent = agent_pool.get(pool_key)
+    managers: dict[str, Any] = {}
     if pooled_agent and hasattr(pooled_agent, "_sandbox"):
         manager = pooled_agent._sandbox.manager
     else:
         _, managers = init_providers_and_managers()
         manager = managers.get(sandbox_type)
+
+    if not manager and managers:
+        db_provider = lookup_sandbox_for_thread(thread_id, db_path=SANDBOX_DB_PATH)
+        if db_provider:
+            # @@@thread-provider-reconcile - Thread metadata can lag behind lease provider after restarts/renames.
+            manager = managers.get(db_provider)
+
     if not manager:
-        raise RuntimeError(f"No sandbox manager found for provider {sandbox_type}")
+        if not _thread_has_sandbox_rows(thread_id):
+            return False
+        known = ", ".join(sorted(managers.keys())) or "(none)"
+        raise RuntimeError(
+            f"No sandbox manager found for provider {sandbox_type}; available managers: {known}"
+        )
     return manager.destroy_thread_resources(thread_id)
+
+
+def _thread_has_sandbox_rows(thread_id: str) -> bool:
+    if not SANDBOX_DB_PATH.exists():
+        return False
+    with sqlite3.connect(str(SANDBOX_DB_PATH), timeout=5) as conn:
+        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+        if "abstract_terminals" not in tables:
+            return False
+        row = conn.execute(
+            """
+            SELECT 1
+            FROM abstract_terminals
+            WHERE thread_id = ?
+            LIMIT 1
+            """,
+            (thread_id,),
+        ).fetchone()
+        return row is not None

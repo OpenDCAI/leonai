@@ -1,3 +1,7 @@
 fastapi
 uvicorn
 sse-starlette
+e2b
+daytona-sdk
+python-socks
+wuying-agentbay-sdk
