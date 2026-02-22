@@ -36,6 +36,6 @@ scripts/path_a_tunnel_preflight.sh \
 ## Rollout Notes
 
 - Marker: `[proposer:hunter]`
-- PR URL: _pending_
+- PR URL: `https://github.com/OpenDCAI/leonai/pull/71`
 - Screenshot absolute path: `/home/ubuntu/Aria/Projects/leonai/worktrees/desks/hunter-tunnel-preflight/artifacts/screenshots/leon_fe_5272_path_a_preflight.png`
 - Screenshot command evidence: `node /home/ubuntu/codex-smoke/tools/webshot.mjs http://127.0.0.1:5272/ /home/ubuntu/Aria/Projects/leonai/worktrees/desks/hunter-tunnel-preflight/artifacts/screenshots/leon_fe_5272_path_a_preflight.png`
