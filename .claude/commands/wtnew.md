@@ -1,6 +1,6 @@
 # 创建 Worktree
 
-基于最新 `origin/dev` 创建隔离的 worktree 开发环境。
+基于最新 `origin/main` 创建隔离的 worktree 开发环境。
 
 ## 参数
 
@@ -20,14 +20,14 @@ MAIN_REPO=$(git worktree list | head -1 | awk '{print $1}')
 git fetch origin
 ```
 
-确保基于最新的 `origin/dev` 创建，避免从过时的 base 分叉。
+确保基于最新的 `origin/main` 创建，避免从过时的 base 分叉。
 
 ## Step 2：创建 worktree
 
 目录名规则：分支名中的 `/` 替换为 `-`（如 `feat/eval` → `feat-eval`）
 
 ```bash
-git worktree add "$MAIN_REPO/worktrees/<目录名>" -b $ARGUMENTS origin/dev
+git worktree add "$MAIN_REPO/worktrees/<目录名>" -b $ARGUMENTS origin/main
 ```
 
 - `worktrees/` 统一放在主仓库内

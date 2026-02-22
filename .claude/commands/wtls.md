@@ -20,10 +20,10 @@ git fetch origin                       # 同步远端状态
 
 # 对每个 worktree 采集：
 git -C <path> status --short           # DIRTY
-git -C <path> rev-list origin/dev..HEAD --count   # AHEAD
-git -C <path> rev-list HEAD..origin/dev --count   # BEHIND
+git -C <path> rev-list origin/main..HEAD --count   # AHEAD
+git -C <path> rev-list HEAD..origin/main --count   # BEHIND
 git -C <path> log -1 --format="%ai"               # 最近 commit 时间
-git -C <path> log --format="%ai" $(git -C <path> merge-base HEAD origin/dev) -1  # 分叉时间
+git -C <path> log --format="%ai" $(git -C <path> merge-base HEAD origin/main) -1  # 分叉时间
 gh pr view --json state,url,number -R <repo> -b <branch> 2>/dev/null  # PR 状态
 ```
 
@@ -40,7 +40,7 @@ worktrees/old-feat  old/feat        +1     -12     ✗      #8 merged ⚠
 状态标注：
 - `⚠` = PR 已 merged/closed，建议清理
 - `✓` dirty = 有未提交改动
-- behind 较多 = 落后 dev，建议 rebase
+- behind 较多 = 落后 main，建议 rebase
 
 ## Step 3：输出 Mermaid 时间轴
 
@@ -49,7 +49,7 @@ worktrees/old-feat  old/feat        +1     -12     ✗      #8 merged ⚠
 ```
 gantt 图规则：
 - 每个 worktree 一行
-- 起点 = 分叉时间（从 dev 创建分支的时间）
+- 起点 = 分叉时间（从 main 创建分支的时间）
 - 终点 = 最近 commit 时间（或今天）
 - 颜色（section）：
     active   = PR open
