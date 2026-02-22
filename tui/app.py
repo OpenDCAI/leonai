@@ -392,6 +392,26 @@ class LeonApp(App):
         checkpoint_id = f"{self.thread_id}-{uuid.uuid4().hex[:8]}"
         current_checkpoint_id.set(checkpoint_id)
 
+        # Observation provider (langfuse / langsmith)
+        obs_handler = None
+        try:
+            obs_config = getattr(self.agent, "observation_config", None)
+            if obs_config and obs_config.active == "langfuse":
+                from langfuse.callback import CallbackHandler as LangfuseHandler
+
+                cfg = obs_config.langfuse
+                obs_handler = LangfuseHandler(
+                    secret_key=cfg.secret_key,
+                    public_key=cfg.public_key,
+                    host=cfg.host,
+                    session_id=self.thread_id,
+                )
+                config.setdefault("callbacks", []).append(obs_handler)
+        except ImportError:
+            pass
+        except Exception:
+            pass
+
         try:
             async for chunk in self.agent.agent.astream(
                 {"messages": [{"role": "user", "content": message}]},
@@ -483,6 +503,12 @@ class LeonApp(App):
             # 错误 → ERROR
             self.agent.runtime.state.mark_error(e)
         finally:
+            # Flush observation handler
+            if obs_handler is not None:
+                try:
+                    obs_handler.flush()
+                except Exception:
+                    pass
             # ACTIVE → IDLE（仅在正常完成时，中断/错误已在 except 中处理）
             if self.agent.runtime.current_state == AgentState.ACTIVE:
                 self.agent.runtime.transition(AgentState.IDLE)

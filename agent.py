@@ -36,6 +36,8 @@ from config import LeonSettings
 from config.loader import ConfigLoader
 from config.models_loader import ModelsLoader
 from config.models_schema import ModelsConfig
+from config.observation_loader import ObservationLoader
+from config.observation_schema import ObservationConfig
 from core.command import CommandMiddleware
 
 # 导入 hooks
@@ -123,6 +125,8 @@ class LeonAgent:
             enable_audit_log=enable_audit_log,
             enable_web_tools=enable_web_tools,
         )
+        # Load observation config (langfuse / langsmith)
+        self._observation_config = ObservationLoader(workspace_root=workspace_root).load()
         # Resolve virtual model name
         active_model = self.models_config.active.model if self.models_config.active else model_name
         if not active_model:
@@ -555,6 +559,24 @@ class LeonAgent:
 
         if self.verbose:
             print(f"[LeonAgent] Config updated: model={resolved_model}")
+
+    @property
+    def observation_config(self) -> ObservationConfig:
+        """Current observation provider configuration."""
+        return self._observation_config
+
+    def update_observation(self, **overrides) -> None:
+        """Hot-reload observation configuration.
+
+        Args:
+            **overrides: Fields to override (e.g. active="langfuse" or active=None)
+        """
+        self._observation_config = ObservationLoader(
+            workspace_root=self.workspace_root
+        ).load(cli_overrides=overrides if overrides else None)
+
+        if self.verbose:
+            print(f"[LeonAgent] Observation updated: active={self._observation_config.active}")
 
     def close(self):
         """Clean up resources."""

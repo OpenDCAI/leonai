@@ -465,6 +465,57 @@ async def update_provider(request: ProviderRequest) -> dict[str, Any]:
 # ============================================================================
 
 SANDBOXES_DIR = Path.home() / ".leon" / "sandboxes"
+OBSERVATION_FILE = Path.home() / ".leon" / "observation.json"
+
+
+# ============================================================================
+# Observation provider (observation.json)
+# ============================================================================
+
+
+class ObservationRequest(BaseModel):
+    active: str | None = None
+    thread_id: str | None = None
+
+
+@router.get("/observation")
+async def get_observation_settings() -> dict[str, Any]:
+    """Get observation provider configuration."""
+    from config.observation_loader import ObservationLoader
+
+    config = ObservationLoader().load()
+    return config.model_dump()
+
+
+@router.post("/observation")
+async def update_observation_settings(request: ObservationRequest, req: Request) -> dict[str, Any]:
+    """Update observation provider (hot-reload for active agent)."""
+    # Persist to user-level observation.json
+    data: dict[str, Any] = {}
+    if OBSERVATION_FILE.exists():
+        try:
+            with open(OBSERVATION_FILE, encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            pass
+
+    data["active"] = request.active
+    OBSERVATION_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with open(OBSERVATION_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
+    # Hot-reload agent if thread_id provided
+    if request.thread_id:
+        from backend.web.services.agent_pool import resolve_thread_sandbox
+
+        sandbox_type = resolve_thread_sandbox(req.app, request.thread_id)
+        pool_key = f"{request.thread_id}:{sandbox_type}"
+        pool = req.app.state.agent_pool
+        agent = pool.get(pool_key)
+        if agent and hasattr(agent, "update_observation"):
+            agent.update_observation(active=request.active)
+
+    return {"success": True, "active": request.active}
 
 
 class SandboxConfigRequest(BaseModel):

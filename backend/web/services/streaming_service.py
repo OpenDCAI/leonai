@@ -176,6 +176,26 @@ async def _run_agent_to_buffer(
             except ImportError:
                 pass
 
+        # Observation provider (langfuse / langsmith)
+        obs_handler = None
+        try:
+            obs_config = getattr(agent, "observation_config", None)
+            if obs_config and obs_config.active == "langfuse":
+                from langfuse.callback import CallbackHandler as LangfuseHandler
+
+                cfg = obs_config.langfuse
+                obs_handler = LangfuseHandler(
+                    secret_key=cfg.secret_key,
+                    public_key=cfg.public_key,
+                    host=cfg.host,
+                    session_id=thread_id,
+                )
+                config.setdefault("callbacks", []).append(obs_handler)
+        except ImportError:
+            pass
+        except Exception as obs_err:
+            print(f"[streaming_service] Observation handler error: {obs_err}")
+
         if hasattr(agent, "_sandbox"):
             await prime_sandbox(agent, thread_id)
 
@@ -352,6 +372,12 @@ async def _run_agent_to_buffer(
         traceback.print_exc()
         await emit({"event": "error", "data": json.dumps({"error": str(e)}, ensure_ascii=False)})
     finally:
+        # Flush observation handler
+        if obs_handler is not None:
+            try:
+                obs_handler.flush()
+            except Exception:
+                pass
         await buf.mark_done()
         app.state.thread_tasks.pop(thread_id, None)
         app.state.thread_event_buffers.pop(thread_id, None)
