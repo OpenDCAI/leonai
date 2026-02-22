@@ -6,4 +6,4 @@
 - Screenshot command: `node /home/ubuntu/codex-smoke/tools/webshot.mjs http://127.0.0.1:5272/ /home/ubuntu/Aria/Projects/leonai/worktrees/desks/taotao-db-cp1-pr/artifacts/screenshots/leon-fe-cp1-2026-02-22.png`.
 - Screenshot path: `/home/ubuntu/Aria/Projects/leonai/worktrees/desks/taotao-db-cp1-pr/artifacts/screenshots/leon-fe-cp1-2026-02-22.png`.
 - Marker: `[proposer:taotao-db]`.
-- PR URL: pending.
+- PR URL: `https://github.com/OpenDCAI/leonai/pull/74`.
