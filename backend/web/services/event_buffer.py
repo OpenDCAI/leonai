@@ -45,6 +45,9 @@ class RunEventBuffer:
                 await asyncio.wait_for(self._notify.wait(), timeout)
             except TimeoutError:
                 return None, cursor
+        # @@@post-wait-done - mark_done may arrive while waiting; return completion sentinel, not timeout sentinel.
         if cursor < len(self.events):
             return self.events[cursor:], len(self.events)
+        if self.finished.is_set():
+            return [], cursor
         return None, cursor
