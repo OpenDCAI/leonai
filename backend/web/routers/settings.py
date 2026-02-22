@@ -501,8 +501,8 @@ async def update_observation_settings(request: ObservationRequest, req: Request)
         except Exception:
             pass
 
-    if request.active is not None:
-        data["active"] = request.active
+    # Always persist active field (including null to disable)
+    data["active"] = request.active
     if request.langfuse is not None:
         existing = data.get("langfuse", {})
         existing.update(request.langfuse)
