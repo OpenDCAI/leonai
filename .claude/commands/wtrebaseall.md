@@ -1,6 +1,6 @@
 # 批量 Rebase 所有 Worktree
 
-一个 PR 合并到 dev 后，批量将所有 in-progress worktree rebase 到最新 `origin/dev`。
+一个 PR 合并到 main 后，批量将所有 in-progress worktree rebase 到最新 `origin/main`。
 
 ## 使用时机
 
@@ -37,7 +37,7 @@ git worktree list --porcelain
 ```
 DIRTY 检查
 ├── 有未提交改动 → 跳过，标记为"需手动处理"
-└── 干净 → git -C <path> rebase origin/dev
+└── 干净 → git -C <path> rebase origin/main
          ├── 成功 → 标记 ✅
          └── 有冲突 → git -C <path> rebase --abort（回滚）
                       标记为"需手动处理"，继续下一个
@@ -59,7 +59,7 @@ wtrebaseall 完成
 
 ❌ 冲突（已 abort，需手动处理）：
   - worktrees/old-a (old/a)
-    提示：cd worktrees/old-a && git rebase origin/dev
+    提示：cd worktrees/old-a && git rebase origin/main
 
 🗑 建议清理（PR 已关闭）：
   - worktrees/done-b (done/b) → PR #9 merged
