@@ -112,5 +112,7 @@ ignore = []
 
 [dependency-groups]
 dev = [
+    "fastapi>=0.118.0",
     "pytest>=9.0.2",
+    "pytest-asyncio>=1.2.0",
 ]
