@@ -181,15 +181,18 @@ async def _run_agent_to_buffer(
         try:
             obs_config = getattr(agent, "observation_config", None)
             if obs_config and obs_config.active == "langfuse":
-                from langfuse.callback import CallbackHandler as LangfuseHandler
+                import os
+
+                from langfuse.langchain import CallbackHandler as LangfuseHandler
 
                 cfg = obs_config.langfuse
-                obs_handler = LangfuseHandler(
-                    secret_key=cfg.secret_key,
-                    public_key=cfg.public_key,
-                    host=cfg.host,
-                    session_id=thread_id,
-                )
+                if cfg.secret_key:
+                    os.environ["LANGFUSE_SECRET_KEY"] = cfg.secret_key
+                if cfg.public_key:
+                    os.environ["LANGFUSE_PUBLIC_KEY"] = cfg.public_key
+                if cfg.host:
+                    os.environ["LANGFUSE_HOST"] = cfg.host
+                obs_handler = LangfuseHandler()
                 config.setdefault("callbacks", []).append(obs_handler)
             elif obs_config and obs_config.active == "langsmith":
                 import os
@@ -386,7 +389,8 @@ async def _run_agent_to_buffer(
         # Flush observation handler
         if obs_handler is not None:
             try:
-                obs_handler.flush()
+                import langfuse
+                langfuse.get_client().flush()
             except Exception:
                 pass
         await buf.mark_done()

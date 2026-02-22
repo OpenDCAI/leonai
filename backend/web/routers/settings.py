@@ -545,7 +545,7 @@ async def verify_observation() -> dict[str, Any]:
         if not cfg.secret_key or not cfg.public_key:
             return {"success": False, "error": "Langfuse keys not configured"}
         try:
-            from langfuse.client import FernLangfuse
+            from langfuse.api.client import FernLangfuse
 
             client = FernLangfuse(
                 username=cfg.public_key,
