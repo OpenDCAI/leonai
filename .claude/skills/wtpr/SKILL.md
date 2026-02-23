@@ -77,7 +77,7 @@ rebase 重写了 commit SHA，必须 force push。`--force-with-lease` 在覆盖
 
 | PR_STATE | 动作 |
 |----------|------|
-| `none` | 自动生成 title/body，直接 `gh pr create`（无需用户确认） |
+| `none` | 自动生成 title/body，直接 `gh pr create`（无需用户确认）。❌ PR body 不加 Claude 签名 |
 | `open` | 显示 PR URL + 提示新 commit 已追加 |
 | `merged` / `closed` | 提示 PR 已关闭，建议执行 `wtrm` 清理 |
 
