@@ -1,0 +1,33 @@
+run_dir=/home/ubuntu/Aria/Projects/leonai/worktrees/desks/hunter-pr-d9-persistent/artifacts/d9-preview-tunnel
+tunnel_id=d9c1137e-a397-40bc-9774-f41ff36e13d5
+local_port=5272
+preview_hosts=pr61-leon.f2j.space pr66-leon.f2j.space
+config=/home/ubuntu/Aria/Projects/leonai/worktrees/desks/hunter-pr-d9-persistent/artifacts/d9-preview-tunnel/cloudflared-d9.yml
+supervisor_pid=3173158
+cloudflared_pid=3173172
+supervisor_state=running
+cloudflared_state=running
+restart_events=0
+supervisor_log_tail:
+2026-02-23T04:43:41Z event=cloudflared_start restart_count=0
+cloudflared_log_tail:
+2026-02-23T04:43:41Z INF Settings: map[config:/home/ubuntu/Aria/Projects/leonai/worktrees/desks/hunter-pr-d9-persistent/artifacts/d9-preview-tunnel/cloudflared-d9.yml cred-file:/home/ubuntu/.cloudflared/d9c1137e-a397-40bc-9774-f41ff36e13d5.json credentials-file:/home/ubuntu/.cloudflared/d9c1137e-a397-40bc-9774-f41ff36e13d5.json no-autoupdate:true]
+2026-02-23T04:43:41Z INF cloudflared will not automatically update if installed by a package manager.
+2026-02-23T04:43:41Z INF Generated Connector ID: 80981f1f-5220-447c-9d91-802fbf507217
+2026-02-23T04:43:41Z INF Initial protocol quic
+2026-02-23T04:43:41Z INF ICMP proxy will use 192.168.31.117 as source for IPv4
+2026-02-23T04:43:41Z INF ICMP proxy will use fe80::be24:11ff:fe7c:c338 in zone ens18 as source for IPv6
+2026-02-23T04:43:41Z WRN The user running cloudflared process has a GID (group ID) that is not within ping_group_range. You might need to add that user to a group within that range, or instead update the range to encompass a group the user is already in by modifying /proc/sys/net/ipv4/ping_group_range. Otherwise cloudflared will not be able to ping this network error="Group ID 1000 is not between ping group 1 to 0"
+2026-02-23T04:43:41Z WRN ICMP proxy feature is disabled error="cannot create ICMPv4 proxy: Group ID 1000 is not between ping group 1 to 0 nor ICMPv6 proxy: socket: permission denied"
+2026-02-23T04:43:41Z INF ICMP proxy will use 192.168.31.117 as source for IPv4
+2026-02-23T04:43:41Z INF ICMP proxy will use fe80::be24:11ff:fe7c:c338 in zone ens18 as source for IPv6
+2026-02-23T04:43:41Z INF Starting metrics server on 127.0.0.1:20243/metrics
+2026-02-23T04:43:41Z INF Tunnel connection curve preferences: [X25519MLKEM768 CurveP256] connIndex=0 event=0 ip=198.41.192.57
+2026/02/23 04:43:41 failed to sufficiently increase receive buffer size (was: 208 kiB, wanted: 7168 kiB, got: 416 kiB). See https://github.com/quic-go/quic-go/wiki/UDP-Buffer-Sizes for details.
+2026-02-23T04:43:42Z INF Registered tunnel connection connIndex=0 connection=854be879-7acb-41a6-9430-6373ab064726 event=0 ip=198.41.192.57 location=lax07 protocol=quic
+2026-02-23T04:43:42Z INF Tunnel connection curve preferences: [X25519MLKEM768 CurveP256] connIndex=1 event=0 ip=198.41.200.33
+2026-02-23T04:43:42Z INF Registered tunnel connection connIndex=1 connection=ceca8c2e-99e3-4435-be52-e4a8da62a86d event=0 ip=198.41.200.33 location=lax01 protocol=quic
+2026-02-23T04:43:43Z INF Tunnel connection curve preferences: [X25519MLKEM768 CurveP256] connIndex=2 event=0 ip=198.41.200.53
+2026-02-23T04:43:43Z INF Registered tunnel connection connIndex=2 connection=7def0a2c-af08-4cff-b002-b0611c5d0457 event=0 ip=198.41.200.53 location=lax01 protocol=quic
+2026-02-23T04:43:44Z INF Tunnel connection curve preferences: [X25519MLKEM768 CurveP256] connIndex=3 event=0 ip=198.41.192.37
+2026-02-23T04:43:44Z INF Registered tunnel connection connIndex=3 connection=43b1b11a-d12d-437d-bd71-df9f6e0379a1 event=0 ip=198.41.192.37 location=lax10 protocol=quic
