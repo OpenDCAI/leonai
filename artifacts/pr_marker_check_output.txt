@@ -1,0 +1,2 @@
+Checked 3 open PR entries from artifacts/open_pr_metadata.json
+All entries include a proposer marker in title or first body line.
