@@ -74,7 +74,7 @@ def _ensure_thread_config_table(conn: sqlite3.Connection) -> None:
         "CREATE TABLE IF NOT EXISTS thread_config"
         "(thread_id TEXT PRIMARY KEY, sandbox_type TEXT NOT NULL, cwd TEXT, model TEXT, queue_mode TEXT DEFAULT 'steer')"
     )
-    for col, default in [("model", None), ("queue_mode", "'steer'")]:
+    for col, default in [("model", None), ("queue_mode", "'steer'"), ("observation_provider", None)]:
         try:
             default_clause = f" DEFAULT {default}" if default else ""
             conn.execute(f"ALTER TABLE thread_config ADD COLUMN {col} TEXT{default_clause}")
@@ -87,7 +87,7 @@ def save_thread_config(thread_id: str, **fields: Any) -> None:
 
     Usage: save_thread_config(thread_id, model="gpt-4", queue_mode="followup")
     """
-    allowed = {"sandbox_type", "cwd", "model", "queue_mode"}
+    allowed = {"sandbox_type", "cwd", "model", "queue_mode", "observation_provider"}
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
         return
@@ -110,7 +110,7 @@ def load_thread_config(thread_id: str):
             conn.row_factory = sqlite3.Row
             _ensure_thread_config_table(conn)
             row = conn.execute(
-                "SELECT sandbox_type, cwd, model, queue_mode FROM thread_config WHERE thread_id = ?",
+                "SELECT sandbox_type, cwd, model, queue_mode, observation_provider FROM thread_config WHERE thread_id = ?",
                 (thread_id,),
             ).fetchone()
             if not row:
@@ -122,6 +122,7 @@ def load_thread_config(thread_id: str):
                 cwd=row["cwd"],
                 model=row["model"],
                 queue_mode=row["queue_mode"] or "steer",
+                observation_provider=row["observation_provider"],
             )
     except sqlite3.OperationalError:
         return None
@@ -136,6 +137,14 @@ def init_thread_config(thread_id: str, sandbox_type: str, cwd: str | None) -> No
             (thread_id, sandbox_type, cwd),
         )
         conn.commit()
+
+
+def get_active_observation_provider() -> str | None:
+    """Read global observation config and return the active provider name."""
+    from config.observation_loader import ObservationLoader
+
+    config = ObservationLoader().load()
+    return config.active if config.active else None
 
 
 def save_thread_model(thread_id: str, model: str) -> None:

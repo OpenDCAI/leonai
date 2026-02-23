@@ -10,3 +10,4 @@ class ThreadConfig(BaseModel):
     cwd: str | None = None
     model: str | None = None
     queue_mode: str = "steer"
+    observation_provider: str | None = None  # "langfuse" | "langsmith" | None

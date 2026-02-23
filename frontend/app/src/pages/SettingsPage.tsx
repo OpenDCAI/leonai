@@ -34,7 +34,7 @@ type Tab = "model" | "sandbox" | "observation";
 const TABS: { id: Tab; label: string; icon: typeof Cpu; desc: string }[] = [
   { id: "model", label: "Model", icon: Cpu, desc: "Models, providers & mapping" },
   { id: "sandbox", label: "Sandbox", icon: Box, desc: "Execution environments" },
-  { id: "observation", label: "追踪", icon: Activity, desc: "Langfuse & LangSmith tracing" },
+  { id: "observation", label: "Trace", icon: Activity, desc: "Agent observability & tracing" },
 ];
 
 export default function SettingsPage() {

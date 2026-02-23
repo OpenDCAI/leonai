@@ -475,7 +475,6 @@ OBSERVATION_FILE = Path.home() / ".leon" / "observation.json"
 
 class ObservationRequest(BaseModel):
     active: str | None = None
-    thread_id: str | None = None
     langfuse: dict | None = None
     langsmith: dict | None = None
 
@@ -490,9 +489,12 @@ async def get_observation_settings() -> dict[str, Any]:
 
 
 @router.post("/observation")
-async def update_observation_settings(request: ObservationRequest, req: Request) -> dict[str, Any]:
-    """Update observation provider (hot-reload for active agent)."""
-    # Persist to user-level observation.json
+async def update_observation_settings(request: ObservationRequest) -> dict[str, Any]:
+    """Update observation provider config (persists to observation.json).
+
+    New threads will pick up the active provider at creation time.
+    Existing threads keep their locked provider — only credentials are read live.
+    """
     data: dict[str, Any] = {}
     if OBSERVATION_FILE.exists():
         try:
@@ -501,7 +503,6 @@ async def update_observation_settings(request: ObservationRequest, req: Request)
         except Exception:
             pass
 
-    # Always persist active field (including null to disable)
     data["active"] = request.active
     if request.langfuse is not None:
         existing = data.get("langfuse", {})
@@ -515,17 +516,6 @@ async def update_observation_settings(request: ObservationRequest, req: Request)
     OBSERVATION_FILE.parent.mkdir(parents=True, exist_ok=True)
     with open(OBSERVATION_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
-
-    # Hot-reload agent if thread_id provided
-    if request.thread_id:
-        from backend.web.services.agent_pool import resolve_thread_sandbox
-
-        sandbox_type = resolve_thread_sandbox(req.app, request.thread_id)
-        pool_key = f"{request.thread_id}:{sandbox_type}"
-        pool = req.app.state.agent_pool
-        agent = pool.get(pool_key)
-        if agent and hasattr(agent, "update_observation"):
-            agent.update_observation(active=request.active)
 
     return {"success": True, "active": data.get("active")}
 
@@ -557,7 +547,13 @@ async def verify_observation() -> dict[str, Any]:
                 {"id": t.id, "name": t.name, "timestamp": str(t.timestamp)}
                 for t in (traces.data if hasattr(traces, "data") else [])
             ]
-            return {"success": True, "provider": "langfuse", "traces": trace_list}
+            return {
+                "success": True,
+                "provider": "langfuse",
+                "record_type": "trace",
+                "records": trace_list,
+                "traces": trace_list,
+            }
         except Exception as e:
             return {"success": False, "provider": "langfuse", "error": str(e)}
 
@@ -580,7 +576,13 @@ async def verify_observation() -> dict[str, Any]:
                 {"id": str(r.id), "name": r.name, "start_time": str(r.start_time)}
                 for r in runs
             ]
-            return {"success": True, "provider": "langsmith", "traces": run_list}
+            return {
+                "success": True,
+                "provider": "langsmith",
+                "record_type": "run",
+                "records": run_list,
+                "traces": run_list,
+            }
         except Exception as e:
             return {"success": False, "provider": "langsmith", "error": str(e)}
 

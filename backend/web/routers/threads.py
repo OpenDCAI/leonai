@@ -52,9 +52,12 @@ async def create_thread(
     app.state.thread_sandbox[thread_id] = sandbox_type
     if cwd:
         app.state.thread_cwd[thread_id] = cwd
-    from backend.web.utils.helpers import init_thread_config
+    from backend.web.utils.helpers import get_active_observation_provider, init_thread_config, save_thread_config
 
     init_thread_config(thread_id, sandbox_type, cwd)
+    obs_provider = get_active_observation_provider()
+    if obs_provider:
+        save_thread_config(thread_id, observation_provider=obs_provider)
     return {"thread_id": thread_id, "sandbox": sandbox_type}
 
 

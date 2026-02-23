@@ -394,33 +394,41 @@ class LeonApp(App):
 
         # Observation provider (langfuse / langsmith)
         obs_handler = None
+        obs_active = None
         try:
             obs_config = getattr(self.agent, "observation_config", None)
             if obs_config and obs_config.active == "langfuse":
-                import os
-
+                from langfuse import Langfuse
                 from langfuse.langchain import CallbackHandler as LangfuseHandler
 
                 cfg = obs_config.langfuse
-                if cfg.secret_key:
-                    os.environ["LANGFUSE_SECRET_KEY"] = cfg.secret_key
-                if cfg.public_key:
-                    os.environ["LANGFUSE_PUBLIC_KEY"] = cfg.public_key
-                if cfg.host:
-                    os.environ["LANGFUSE_HOST"] = cfg.host
-                obs_handler = LangfuseHandler()
-                config.setdefault("callbacks", []).append(obs_handler)
+                if cfg.secret_key and cfg.public_key:
+                    obs_active = "langfuse"
+                    Langfuse(
+                        public_key=cfg.public_key,
+                        secret_key=cfg.secret_key,
+                        host=cfg.host or "https://cloud.langfuse.com",
+                    )
+                    obs_handler = LangfuseHandler(public_key=cfg.public_key)
+                    config.setdefault("callbacks", []).append(obs_handler)
+                    config.setdefault("metadata", {})["langfuse_session_id"] = self.thread_id
             elif obs_config and obs_config.active == "langsmith":
-                import os
+                from langchain_core.tracers.langchain import LangChainTracer
+                from langsmith import Client as LangSmithClient
 
                 cfg = obs_config.langsmith
                 if cfg.api_key:
-                    os.environ["LANGCHAIN_TRACING_V2"] = "true"
-                    os.environ["LANGCHAIN_API_KEY"] = cfg.api_key
-                    if cfg.project:
-                        os.environ["LANGCHAIN_PROJECT"] = cfg.project
-                    if cfg.endpoint:
-                        os.environ["LANGCHAIN_ENDPOINT"] = cfg.endpoint
+                    obs_active = "langsmith"
+                    ls_client = LangSmithClient(
+                        api_key=cfg.api_key,
+                        api_url=cfg.endpoint or "https://api.smith.langchain.com",
+                    )
+                    obs_handler = LangChainTracer(
+                        client=ls_client,
+                        project_name=cfg.project or "default",
+                    )
+                    config.setdefault("callbacks", []).append(obs_handler)
+                    config.setdefault("metadata", {})["session_id"] = self.thread_id
         except ImportError:
             pass
         except Exception:
@@ -520,8 +528,11 @@ class LeonApp(App):
             # Flush observation handler
             if obs_handler is not None:
                 try:
-                    import langfuse
-                    langfuse.get_client().flush()
+                    if obs_active == "langfuse":
+                        from langfuse import get_client
+                        get_client().flush()
+                    elif obs_active == "langsmith":
+                        obs_handler.wait_for_futures()
                 except Exception:
                     pass
             # ACTIVE → IDLE（仅在正常完成时，中断/错误已在 except 中处理）
