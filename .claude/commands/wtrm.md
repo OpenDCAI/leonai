@@ -52,10 +52,19 @@ git worktree prune
 
 ## Step 4：询问是否删除本地分支
 
+先 fetch 远程 main，确保合并判断基于最新状态：
+
 ```bash
-git branch -d <分支名>   # 已合并分支
-git branch -D <分支名>   # 未合并分支（需用户确认）
+git fetch origin main
+git branch -d <分支名>   # 基于最新 origin/main 判断是否已合并
 ```
 
+如果 `-d` 报"未合并"：先检查远程 main 是否包含该分支内容（可能是 rebase merge 导致 hash 不同）：
+
+```bash
+git log --oneline origin/main | grep -i <关键词>
+```
+
+- 远程已合并 → 安全删除 `git branch -D <分支名>`
+- 远程未合并 → 告知用户，确认后再 `-D` 强删
 - 不删除远程分支，除非用户明确要求
-- 未合并分支用 `-D` 强删前需额外确认
