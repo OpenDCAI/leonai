@@ -176,6 +176,57 @@ async def _run_agent_to_buffer(
             except ImportError:
                 pass
 
+        # Observation provider: provider from thread config, credentials from global config
+        obs_handler = None
+        obs_active = None
+        try:
+            from backend.web.utils.helpers import load_thread_config
+
+            thread_cfg = load_thread_config(thread_id)
+            obs_provider = thread_cfg.observation_provider if thread_cfg else None
+
+            if obs_provider:
+                from config.observation_loader import ObservationLoader
+
+                obs_config = ObservationLoader().load()
+
+                if obs_provider == "langfuse":
+                    from langfuse import Langfuse
+                    from langfuse.langchain import CallbackHandler as LangfuseHandler
+
+                    cfg = obs_config.langfuse
+                    if cfg.secret_key and cfg.public_key:
+                        obs_active = "langfuse"
+                        Langfuse(
+                            public_key=cfg.public_key,
+                            secret_key=cfg.secret_key,
+                            host=cfg.host or "https://cloud.langfuse.com",
+                        )
+                        obs_handler = LangfuseHandler(public_key=cfg.public_key)
+                        config.setdefault("callbacks", []).append(obs_handler)
+                        config.setdefault("metadata", {})["langfuse_session_id"] = thread_id
+                elif obs_provider == "langsmith":
+                    from langchain_core.tracers.langchain import LangChainTracer
+                    from langsmith import Client as LangSmithClient
+
+                    cfg = obs_config.langsmith
+                    if cfg.api_key:
+                        obs_active = "langsmith"
+                        ls_client = LangSmithClient(
+                            api_key=cfg.api_key,
+                            api_url=cfg.endpoint or "https://api.smith.langchain.com",
+                        )
+                        obs_handler = LangChainTracer(
+                            client=ls_client,
+                            project_name=cfg.project or "default",
+                        )
+                        config.setdefault("callbacks", []).append(obs_handler)
+                        config.setdefault("metadata", {})["session_id"] = thread_id
+        except ImportError:
+            pass
+        except Exception as obs_err:
+            print(f"[streaming_service] Observation handler error: {obs_err}")
+
         if hasattr(agent, "_sandbox"):
             await prime_sandbox(agent, thread_id)
 
@@ -352,6 +403,16 @@ async def _run_agent_to_buffer(
         traceback.print_exc()
         await emit({"event": "error", "data": json.dumps({"error": str(e)}, ensure_ascii=False)})
     finally:
+        # Flush observation handler
+        if obs_handler is not None:
+            try:
+                if obs_active == "langfuse":
+                    from langfuse import get_client
+                    get_client().flush()
+                elif obs_active == "langsmith":
+                    obs_handler.wait_for_futures()
+            except Exception:
+                pass
         await buf.mark_done()
         app.state.thread_tasks.pop(thread_id, None)
         app.state.thread_event_buffers.pop(thread_id, None)

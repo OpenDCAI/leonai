@@ -1,8 +1,9 @@
-import { ArrowLeft, Box, Cpu } from "lucide-react";
+import { ArrowLeft, Box, Cpu, Activity } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import ModelMappingSection from "../components/ModelMappingSection";
 import ModelPoolSection from "../components/ModelPoolSection";
+import ObservationSection from "../components/ObservationSection";
 import ProvidersSection from "../components/ProvidersSection";
 import SandboxSection from "../components/SandboxSection";
 
@@ -28,11 +29,12 @@ interface Settings {
   default_model: string;
 }
 
-type Tab = "model" | "sandbox";
+type Tab = "model" | "sandbox" | "observation";
 
 const TABS: { id: Tab; label: string; icon: typeof Cpu; desc: string }[] = [
   { id: "model", label: "Model", icon: Cpu, desc: "Models, providers & mapping" },
   { id: "sandbox", label: "Sandbox", icon: Box, desc: "Execution environments" },
+  { id: "observation", label: "Trace", icon: Activity, desc: "Agent observability & tracing" },
 ];
 
 export default function SettingsPage() {
@@ -40,24 +42,28 @@ export default function SettingsPage() {
   const [availableModels, setAvailableModels] = useState<AvailableModelsData | null>(null);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [sandboxes, setSandboxes] = useState<Record<string, Record<string, unknown>>>({});
+  const [observationConfig, setObservationConfig] = useState<Record<string, unknown>>({});
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function loadData() {
       try {
-        const [modelsRes, settingsRes, sandboxesRes] = await Promise.all([
+        const [modelsRes, settingsRes, sandboxesRes, observationRes] = await Promise.all([
           fetch("/api/settings/available-models"),
           fetch("/api/settings"),
           fetch("/api/settings/sandboxes"),
+          fetch("/api/settings/observation"),
         ]);
 
         const modelsData = await modelsRes.json();
         const settingsData = await settingsRes.json();
         const sandboxesData = await sandboxesRes.json();
+        const observationData = await observationRes.json();
 
         setAvailableModels(modelsData);
         setSettings(settingsData);
         setSandboxes(sandboxesData.sandboxes || {});
+        setObservationConfig(observationData);
       } catch (error) {
         console.error("Failed to load settings:", error);
       } finally {
@@ -247,6 +253,13 @@ export default function SettingsPage() {
                 onUpdate={(name, config) => {
                   setSandboxes({ ...sandboxes, [name]: config });
                 }}
+              />
+            )}
+
+            {tab === "observation" && (
+              <ObservationSection
+                config={observationConfig}
+                onUpdate={(cfg) => setObservationConfig(cfg)}
               />
             )}
           </div>

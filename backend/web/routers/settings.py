@@ -465,6 +465,128 @@ async def update_provider(request: ProviderRequest) -> dict[str, Any]:
 # ============================================================================
 
 SANDBOXES_DIR = Path.home() / ".leon" / "sandboxes"
+OBSERVATION_FILE = Path.home() / ".leon" / "observation.json"
+
+
+# ============================================================================
+# Observation provider (observation.json)
+# ============================================================================
+
+
+class ObservationRequest(BaseModel):
+    active: str | None = None
+    langfuse: dict | None = None
+    langsmith: dict | None = None
+
+
+@router.get("/observation")
+async def get_observation_settings() -> dict[str, Any]:
+    """Get observation provider configuration."""
+    from config.observation_loader import ObservationLoader
+
+    config = ObservationLoader().load()
+    return config.model_dump()
+
+
+@router.post("/observation")
+async def update_observation_settings(request: ObservationRequest) -> dict[str, Any]:
+    """Update observation provider config (persists to observation.json).
+
+    New threads will pick up the active provider at creation time.
+    Existing threads keep their locked provider — only credentials are read live.
+    """
+    data: dict[str, Any] = {}
+    if OBSERVATION_FILE.exists():
+        try:
+            with open(OBSERVATION_FILE, encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            pass
+
+    data["active"] = request.active
+    if request.langfuse is not None:
+        existing = data.get("langfuse", {})
+        existing.update(request.langfuse)
+        data["langfuse"] = existing
+    if request.langsmith is not None:
+        existing = data.get("langsmith", {})
+        existing.update(request.langsmith)
+        data["langsmith"] = existing
+
+    OBSERVATION_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with open(OBSERVATION_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
+    return {"success": True, "active": data.get("active")}
+
+
+@router.get("/observation/verify")
+async def verify_observation() -> dict[str, Any]:
+    """Verify observation provider by querying recent traces via SDK."""
+    from config.observation_loader import ObservationLoader
+
+    config = ObservationLoader().load()
+
+    if not config.active:
+        return {"success": False, "error": "No active observation provider"}
+
+    if config.active == "langfuse":
+        cfg = config.langfuse
+        if not cfg.secret_key or not cfg.public_key:
+            return {"success": False, "error": "Langfuse keys not configured"}
+        try:
+            from langfuse.api.client import FernLangfuse
+
+            client = FernLangfuse(
+                username=cfg.public_key,
+                password=cfg.secret_key,
+                base_url=cfg.host or "https://cloud.langfuse.com",
+            )
+            traces = client.trace.list(limit=5)
+            trace_list = [
+                {"id": t.id, "name": t.name, "timestamp": str(t.timestamp)}
+                for t in (traces.data if hasattr(traces, "data") else [])
+            ]
+            return {
+                "success": True,
+                "provider": "langfuse",
+                "record_type": "trace",
+                "records": trace_list,
+                "traces": trace_list,
+            }
+        except Exception as e:
+            return {"success": False, "provider": "langfuse", "error": str(e)}
+
+    if config.active == "langsmith":
+        cfg = config.langsmith
+        if not cfg.api_key:
+            return {"success": False, "error": "LangSmith API key not configured"}
+        try:
+            from langsmith import Client
+
+            client = Client(
+                api_key=cfg.api_key,
+                api_url=cfg.endpoint or "https://api.smith.langchain.com",
+            )
+            runs = list(client.list_runs(
+                project_name=cfg.project or "default",
+                limit=5,
+            ))
+            run_list = [
+                {"id": str(r.id), "name": r.name, "start_time": str(r.start_time)}
+                for r in runs
+            ]
+            return {
+                "success": True,
+                "provider": "langsmith",
+                "record_type": "run",
+                "records": run_list,
+                "traces": run_list,
+            }
+        except Exception as e:
+            return {"success": False, "provider": "langsmith", "error": str(e)}
+
+    return {"success": False, "error": f"Unknown provider: {config.active}"}
 
 
 class SandboxConfigRequest(BaseModel):

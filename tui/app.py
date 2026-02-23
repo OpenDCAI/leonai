@@ -392,6 +392,48 @@ class LeonApp(App):
         checkpoint_id = f"{self.thread_id}-{uuid.uuid4().hex[:8]}"
         current_checkpoint_id.set(checkpoint_id)
 
+        # Observation provider (langfuse / langsmith)
+        obs_handler = None
+        obs_active = None
+        try:
+            obs_config = getattr(self.agent, "observation_config", None)
+            if obs_config and obs_config.active == "langfuse":
+                from langfuse import Langfuse
+                from langfuse.langchain import CallbackHandler as LangfuseHandler
+
+                cfg = obs_config.langfuse
+                if cfg.secret_key and cfg.public_key:
+                    obs_active = "langfuse"
+                    Langfuse(
+                        public_key=cfg.public_key,
+                        secret_key=cfg.secret_key,
+                        host=cfg.host or "https://cloud.langfuse.com",
+                    )
+                    obs_handler = LangfuseHandler(public_key=cfg.public_key)
+                    config.setdefault("callbacks", []).append(obs_handler)
+                    config.setdefault("metadata", {})["langfuse_session_id"] = self.thread_id
+            elif obs_config and obs_config.active == "langsmith":
+                from langchain_core.tracers.langchain import LangChainTracer
+                from langsmith import Client as LangSmithClient
+
+                cfg = obs_config.langsmith
+                if cfg.api_key:
+                    obs_active = "langsmith"
+                    ls_client = LangSmithClient(
+                        api_key=cfg.api_key,
+                        api_url=cfg.endpoint or "https://api.smith.langchain.com",
+                    )
+                    obs_handler = LangChainTracer(
+                        client=ls_client,
+                        project_name=cfg.project or "default",
+                    )
+                    config.setdefault("callbacks", []).append(obs_handler)
+                    config.setdefault("metadata", {})["session_id"] = self.thread_id
+        except ImportError:
+            pass
+        except Exception:
+            pass
+
         try:
             async for chunk in self.agent.agent.astream(
                 {"messages": [{"role": "user", "content": message}]},
@@ -483,6 +525,16 @@ class LeonApp(App):
             # 错误 → ERROR
             self.agent.runtime.state.mark_error(e)
         finally:
+            # Flush observation handler
+            if obs_handler is not None:
+                try:
+                    if obs_active == "langfuse":
+                        from langfuse import get_client
+                        get_client().flush()
+                    elif obs_active == "langsmith":
+                        obs_handler.wait_for_futures()
+                except Exception:
+                    pass
             # ACTIVE → IDLE（仅在正常完成时，中断/错误已在 except 中处理）
             if self.agent.runtime.current_state == AgentState.ACTIVE:
                 self.agent.runtime.transition(AgentState.IDLE)
