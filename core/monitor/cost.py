@@ -52,7 +52,8 @@ def _parse_openrouter_model(model: dict[str, Any]) -> tuple[str, dict[str, Decim
     cache_read_per_m = _parse_cache_price(pricing.get("input_cache_read"))
     cache_write_per_m = _parse_cache_price(pricing.get("input_cache_write"))
 
-    if not cache_read_per_m or not cache_write_per_m:
+    # @@@cache-zero-is-explicit - upstream "0" means free cache tier and must not be replaced by inferred defaults.
+    if cache_read_per_m is None or cache_write_per_m is None:
         provider = model_id.split("/", 1)[0] if "/" in model_id else ""
         cache_read_per_m, cache_write_per_m = _infer_cache_prices(
             provider, input_per_m, cache_read_per_m, cache_write_per_m
@@ -69,18 +70,21 @@ def _parse_openrouter_model(model: dict[str, Any]) -> tuple[str, dict[str, Decim
     return short_name, costs
 
 
-def _parse_cache_price(price_str: str | None) -> Decimal:
+def _parse_cache_price(price_str: str | None) -> Decimal | None:
     """解析缓存价格字符串"""
-    if not price_str:
-        return Decimal("0")
+    if price_str is None:
+        return None
+    value = price_str.strip()
+    if not value:
+        return None
     try:
-        return Decimal(price_str) * _PER_TOKEN_TO_PER_M
+        return Decimal(value) * _PER_TOKEN_TO_PER_M
     except Exception:
-        return Decimal("0")
+        return None
 
 
 def _infer_cache_prices(
-    provider: str, input_per_m: Decimal, cache_read: Decimal, cache_write: Decimal
+    provider: str, input_per_m: Decimal, cache_read: Decimal | None, cache_write: Decimal | None
 ) -> tuple[Decimal, Decimal]:
     """根据 provider 推断缓存价格"""
     cache_rules = {
@@ -92,9 +96,9 @@ def _infer_cache_prices(
 
     read_multiplier, write_multiplier = cache_rules.get(provider, (Decimal("0.5"), Decimal("1.0")))
 
-    if not cache_read:
+    if cache_read is None:
         cache_read = input_per_m * read_multiplier
-    if not cache_write:
+    if cache_write is None:
         cache_write = input_per_m * write_multiplier
 
     return cache_read, cache_write
