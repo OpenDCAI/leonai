@@ -505,13 +505,11 @@ async def update_observation_settings(request: ObservationRequest) -> dict[str, 
 
     data["active"] = request.active
     if request.langfuse is not None:
-        existing = data.get("langfuse", {})
-        existing.update(request.langfuse)
-        data["langfuse"] = existing
+        # @@@observation-provider-replace - frontend clears fields by omitting them; replace payload must be source of truth.
+        data["langfuse"] = dict(request.langfuse)
     if request.langsmith is not None:
-        existing = data.get("langsmith", {})
-        existing.update(request.langsmith)
-        data["langsmith"] = existing
+        # @@@observation-provider-replace - keep clear-by-omission behavior consistent across providers.
+        data["langsmith"] = dict(request.langsmith)
 
     OBSERVATION_FILE.parent.mkdir(parents=True, exist_ok=True)
     with open(OBSERVATION_FILE, "w", encoding="utf-8") as f:
