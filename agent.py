@@ -514,6 +514,9 @@ class LeonAgent:
 
         kwargs.update(self.config.runtime.model_kwargs)
 
+        # Enable usage reporting in streaming mode
+        kwargs.setdefault("stream_usage", True)
+
         return kwargs
 
     def update_config(self, model: str | None = None, **tool_overrides) -> None:
