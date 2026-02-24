@@ -77,18 +77,24 @@ def _summarize_messages(msgs: list, first: bool = False) -> str:
     return "\n".join(parts) if parts else "(context from previous turns)"
 
 
-def _fmt_usage(u) -> str:
+def _fmt_usage(u, details=None) -> str:
     if not u:
         return ""
     parts = []
     if u.input:
-        parts.append(f"in={u.input}")
+        cache_read = details.get("input_cache_read", 0) if details else 0
+        if cache_read:
+            parts.append(f"in={u.input}(cached={cache_read})")
+        else:
+            parts.append(f"in={u.input}")
     if u.output:
-        parts.append(f"out={u.output}")
+        reasoning = details.get("output_reasoning", 0) if details else 0
+        if reasoning:
+            parts.append(f"out={u.output}(reasoning={reasoning})")
+        else:
+            parts.append(f"out={u.output}")
     if u.total:
         parts.append(f"total={u.total}")
-    if hasattr(u, "input_cost") and u.input_cost:
-        parts.append(f"cost=${(u.input_cost or 0) + (u.output_cost or 0):.4f}")
     return " ".join(parts) if parts else ""
 
 
@@ -122,7 +128,7 @@ def show_session(thread_id: str):
 
             if o.type == "GENERATION":
                 step += 1
-                usage = _fmt_usage(o.usage)
+                usage = _fmt_usage(o.usage, o.usage_details)
                 print(f"\n  [{step}] LLM  {o.model or '?':<25} {dur:>8}  {usage}")
                 # Show input: first call shows system+user, subsequent only last 3 messages
                 if o.input and isinstance(o.input, list):
