@@ -23,6 +23,8 @@ from typing import Any
 
 from sandbox.db import DEFAULT_DB_PATH
 
+from .summary_repo import SQLiteSummaryRepo
+
 logger = logging.getLogger(__name__)
 
 
@@ -60,35 +62,13 @@ class SummaryStore:
 
     def __init__(self, db_path: Path = DEFAULT_DB_PATH):
         self.db_path = db_path
+        # @@@connect_injection - keep _connect as an indirection point so existing retry/rollback tests can patch it.
+        self._repo = SQLiteSummaryRepo(db_path, connect_fn=lambda p: _connect(p))
         self._ensure_tables()
 
     def _ensure_tables(self) -> None:
         """Ensure summaries table exists."""
-        with _connect(self.db_path) as conn:
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS summaries (
-                    summary_id TEXT PRIMARY KEY,
-                    thread_id TEXT NOT NULL,
-                    summary_text TEXT NOT NULL,
-                    compact_up_to_index INTEGER NOT NULL,
-                    compacted_at INTEGER NOT NULL,
-                    is_split_turn BOOLEAN DEFAULT FALSE,
-                    split_turn_prefix TEXT,
-                    is_active BOOLEAN DEFAULT TRUE,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-                """
-            )
-            # Index for fast lookup by thread_id
-            conn.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_summaries_thread_id
-                ON summaries(thread_id, is_active, created_at DESC)
-                """
-            )
-            conn.commit()
+        self._repo.ensure_tables()
 
     def save_summary(
         self,
@@ -122,41 +102,16 @@ class SummaryStore:
 
         for attempt in range(max_retries):
             try:
-                with _connect(self.db_path) as conn:
-                    # Mark all existing summaries for this thread as inactive
-                    conn.execute(
-                        """
-                        UPDATE summaries
-                        SET is_active = FALSE
-                        WHERE thread_id = ? AND is_active = TRUE
-                        """,
-                        (thread_id,),
-                    )
-
-                    # Insert new summary
-                    conn.execute(
-                        """
-                        INSERT INTO summaries (
-                            summary_id, thread_id, summary_text,
-                            compact_up_to_index, compacted_at,
-                            is_split_turn, split_turn_prefix,
-                            is_active, created_at
-                        )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        (
-                            summary_id,
-                            thread_id,
-                            summary_text,
-                            compact_up_to_index,
-                            compacted_at,
-                            is_split_turn,
-                            split_turn_prefix,
-                            True,
-                            now,
-                        ),
-                    )
-                    conn.commit()
+                self._repo.save_summary(
+                    summary_id=summary_id,
+                    thread_id=thread_id,
+                    summary_text=summary_text,
+                    compact_up_to_index=compact_up_to_index,
+                    compacted_at=compacted_at,
+                    is_split_turn=is_split_turn,
+                    split_turn_prefix=split_turn_prefix,
+                    created_at=now,
+                )
 
                 logger.info(f"[SummaryStore] Saved summary {summary_id} for thread {thread_id}")
                 return summary_id
@@ -185,41 +140,27 @@ class SummaryStore:
         """
         for attempt in range(max_retries):
             try:
-                with _connect(self.db_path) as conn:
-                    conn.row_factory = sqlite3.Row
-                    row = conn.execute(
-                        """
-                        SELECT summary_id, thread_id, summary_text,
-                               compact_up_to_index, compacted_at,
-                               is_split_turn, split_turn_prefix,
-                               is_active, created_at
-                        FROM summaries
-                        WHERE thread_id = ? AND is_active = TRUE
-                        ORDER BY created_at DESC
-                        LIMIT 1
-                        """,
-                        (thread_id,),
-                    ).fetchone()
+                row = self._repo.get_latest_summary_row(thread_id)
 
-                    if not row:
-                        return None
+                if not row:
+                    return None
 
-                    # Validate data integrity
-                    try:
-                        return SummaryData(
-                            summary_id=row["summary_id"],
-                            thread_id=row["thread_id"],
-                            summary_text=row["summary_text"],
-                            compact_up_to_index=row["compact_up_to_index"],
-                            compacted_at=row["compacted_at"],
-                            is_split_turn=bool(row["is_split_turn"]),
-                            split_turn_prefix=row["split_turn_prefix"],
-                            is_active=bool(row["is_active"]),
-                            created_at=row["created_at"],
-                        )
-                    except (KeyError, TypeError, ValueError) as e:
-                        logger.error(f"[SummaryStore] Data corruption detected: {e}")
-                        return None  # Signal data corruption
+                # Validate data integrity
+                try:
+                    return SummaryData(
+                        summary_id=row["summary_id"],
+                        thread_id=row["thread_id"],
+                        summary_text=row["summary_text"],
+                        compact_up_to_index=row["compact_up_to_index"],
+                        compacted_at=row["compacted_at"],
+                        is_split_turn=bool(row["is_split_turn"]),
+                        split_turn_prefix=row["split_turn_prefix"],
+                        is_active=bool(row["is_active"]),
+                        created_at=row["created_at"],
+                    )
+                except (KeyError, TypeError, ValueError) as e:
+                    logger.error(f"[SummaryStore] Data corruption detected: {e}")
+                    return None  # Signal data corruption
 
             except sqlite3.Error as e:
                 if attempt < max_retries - 1:
@@ -240,21 +181,7 @@ class SummaryStore:
         Returns:
             List of summary records as dictionaries
         """
-        with _connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            rows = conn.execute(
-                """
-                SELECT summary_id, thread_id,
-                       compact_up_to_index, compacted_at,
-                       is_split_turn, is_active, created_at
-                FROM summaries
-                WHERE thread_id = ?
-                ORDER BY created_at DESC
-                """,
-                (thread_id,),
-            ).fetchall()
-
-            return [dict(row) for row in rows]
+        return self._repo.list_summaries(thread_id)
 
     def delete_thread_summaries(self, thread_id: str) -> None:
         """Delete all summaries for a thread.
@@ -262,11 +189,6 @@ class SummaryStore:
         Args:
             thread_id: Thread identifier
         """
-        with _connect(self.db_path) as conn:
-            conn.execute(
-                "DELETE FROM summaries WHERE thread_id = ?",
-                (thread_id,),
-            )
-            conn.commit()
+        self._repo.delete_thread_summaries(thread_id)
 
         logger.info(f"[SummaryStore] Deleted all summaries for thread {thread_id}")
