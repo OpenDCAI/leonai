@@ -263,9 +263,11 @@ async def get_available_models() -> dict[str, Any]:
 
         # Merge custom + orphaned enabled models
         mc = load_merged_models()
+        data = load_models()
+        custom_providers = data.get("pool", {}).get("custom_providers", {})
         extra_ids = set(mc.pool.custom) | (set(mc.pool.enabled) - pricing_ids)
         for mid in sorted(extra_ids):
-            models_list.append({"id": mid, "name": mid, "custom": True})
+            models_list.append({"id": mid, "name": mid, "custom": True, "provider": custom_providers.get(mid)})
 
         # Virtual models from system defaults
         virtual_models = [vm.model_dump() for vm in mc.virtual_models]
@@ -330,7 +332,7 @@ async def toggle_model(request: ModelToggleRequest) -> dict[str, Any]:
 
 class CustomModelRequest(BaseModel):
     model_id: str
-    provider: str | None = None
+    provider: str
 
 
 @router.post("/models/custom")
@@ -346,10 +348,8 @@ async def add_custom_model(request: CustomModelRequest) -> dict[str, Any]:
     if request.model_id not in enabled:
         enabled.append(request.model_id)
 
-    # Store provider mapping if specified
-    if request.provider:
-        custom_providers = pool.setdefault("custom_providers", {})
-        custom_providers[request.model_id] = request.provider
+    custom_providers = pool.setdefault("custom_providers", {})
+    custom_providers[request.model_id] = request.provider
 
     save_models(data)
     return {"success": True, "custom_models": custom, "enabled_models": enabled}
@@ -376,14 +376,13 @@ async def test_model(request: ModelTestRequest) -> dict[str, Any]:
     if request.model_id in custom_providers:
         provider_name = custom_providers[request.model_id]
 
-    # Get credentials from specific provider, fallback to any available
-    p = mc.get_provider(provider_name) if provider_name else None
-    api_key = (p.api_key if p else None) or mc.get_api_key()
-    if not api_key:
-        return {"success": False, "error": "No API key configured"}
+    # Infer provider from model name if still unknown
+    if not provider_name:
+        from langchain.chat_models.base import _attempt_infer_model_provider
+        provider_name = _attempt_infer_model_provider(resolved)
 
-    base_url = (p.base_url if p else None) or mc.get_base_url()
-    model_provider = provider_name or mc.get_model_provider()
+    # Get credentials from providers config
+    p = mc.get_provider(provider_name) if provider_name else None
 
     try:
         from langchain.chat_models import init_chat_model
@@ -391,18 +390,20 @@ async def test_model(request: ModelTestRequest) -> dict[str, Any]:
         from core.model_params import normalize_model_kwargs
 
         kwargs: dict[str, Any] = {}
-        if model_provider:
-            kwargs["model_provider"] = model_provider
-        if base_url:
-            url = base_url.rstrip("/")
+        if provider_name:
+            kwargs["model_provider"] = provider_name
+        if p and p.api_key:
+            kwargs["api_key"] = p.api_key
+        if p and p.base_url:
+            url = p.base_url.rstrip("/")
             if url.endswith("/v1"):
                 url = url[:-3]
-            if model_provider != "anthropic":
+            if provider_name != "anthropic":
                 url = f"{url}/v1"
             kwargs["base_url"] = url
 
         kwargs = normalize_model_kwargs(resolved, kwargs)
-        model = init_chat_model(resolved, api_key=api_key, **kwargs)
+        model = init_chat_model(resolved, **kwargs)
 
         response = await asyncio.wait_for(model.ainvoke("hi"), timeout=15)
         content = response.content if hasattr(response, "content") else str(response)

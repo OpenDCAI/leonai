@@ -168,7 +168,7 @@ export default function ModelPoolSection({ models, enabledModels, providers, onT
                 {model.custom && (
                   <>
                     <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#f1f5f9] text-[#94a3b8] font-medium">
-                      custom · {model.provider || "auto"}
+                      custom · {model.provider || "unknown"}
                     </span>
                     <button
                       onClick={async (e) => {
@@ -219,7 +219,7 @@ export default function ModelPoolSection({ models, enabledModels, providers, onT
               onChange={(e) => setSelectedProvider(e.target.value)}
               className="h-9 px-3 text-sm border-2 border-[#e2e8f0] rounded-lg bg-white text-[#1e293b] focus:outline-none focus:border-[#0ea5e9]"
             >
-              <option value="">Auto-detect provider</option>
+              <option value="" disabled>Select provider</option>
               {Object.keys(providers).map((p) => (
                 <option key={p} value={p}>{p}</option>
               ))}
@@ -239,7 +239,7 @@ export default function ModelPoolSection({ models, enabledModels, providers, onT
                   setAdding(false);
                 }
               }}
-              disabled={adding}
+              disabled={adding || !selectedProvider}
               className="px-4 py-2 text-sm font-medium text-white rounded-lg transition-all duration-200 hover:opacity-90 disabled:opacity-50"
               style={{ backgroundColor: '#0ea5e9' }}
             >
