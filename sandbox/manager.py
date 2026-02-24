@@ -17,6 +17,8 @@ from sandbox.lease import LeaseStore
 from sandbox.provider import SandboxProvider
 from sandbox.terminal import TerminalState, TerminalStore
 
+VALID_STATE_PERSIST_MODES = {"always", "boundary"}
+
 
 def lookup_sandbox_for_thread(thread_id: str, db_path: Path | None = None) -> str | None:
     import sqlite3
@@ -49,10 +51,17 @@ class SandboxManager:
         provider: SandboxProvider,
         db_path: Path | None = None,
         on_session_ready: Callable[[str, str], None] | None = None,
+        state_persist_mode: str = "always",
     ):
+        if state_persist_mode not in VALID_STATE_PERSIST_MODES:
+            raise RuntimeError(
+                f"Invalid state_persist_mode '{state_persist_mode}'. "
+                f"Expected one of {sorted(VALID_STATE_PERSIST_MODES)}"
+            )
         self.provider = provider
         self.provider_capability = provider.get_capability()
         self._on_session_ready = on_session_ready
+        self.state_persist_mode = state_persist_mode
 
         self.db_path = db_path or DEFAULT_DB_PATH
         self.terminal_store = TerminalStore(db_path=self.db_path)
@@ -61,6 +70,7 @@ class SandboxManager:
             provider=provider,
             db_path=self.db_path,
             default_policy=ChatSessionPolicy(),
+            state_persist_mode=state_persist_mode,
         )
 
     def _default_terminal_cwd(self) -> str:
@@ -189,18 +199,30 @@ class SandboxManager:
             raise RuntimeError(f"Missing lease {default_terminal.lease_id} for thread {thread_id}")
         self._assert_lease_provider(lease, thread_id)
 
+        inherited_before = default_terminal.get_state()
+        self._snapshot_runtime_for_terminal_boundary(
+            thread_id=thread_id,
+            terminal_id=default_terminal.terminal_id,
+            require_live=False,
+        )
+        refreshed_default_terminal = self.terminal_store.get_by_id(default_terminal.terminal_id)
+        if refreshed_default_terminal is not None:
+            default_terminal = refreshed_default_terminal
         inherited = default_terminal.get_state()
+        effective_initial_cwd = initial_cwd
+        if self.state_persist_mode == "boundary" and initial_cwd == inherited_before.cwd:
+            effective_initial_cwd = inherited.cwd
         terminal_id = f"term-{uuid.uuid4().hex[:12]}"
         terminal = self.terminal_store.create(
             terminal_id=terminal_id,
             thread_id=thread_id,
             lease_id=lease.lease_id,
-            initial_cwd=initial_cwd,
+            initial_cwd=effective_initial_cwd,
         )
         # @@@async-terminal-inherit-state - non-blocking commands fork from default terminal cwd/env snapshot.
         terminal.update_state(
             TerminalState(
-                cwd=initial_cwd,
+                cwd=effective_initial_cwd,
                 env_delta=dict(inherited.env_delta),
                 state_version=inherited.state_version,
             )
@@ -212,6 +234,26 @@ class SandboxManager:
             lease=lease,
         )
         return session
+
+    def _snapshot_runtime_for_terminal_boundary(
+        self,
+        *,
+        thread_id: str,
+        terminal_id: str,
+        require_live: bool,
+    ) -> None:
+        if self.state_persist_mode != "boundary":
+            return
+        session = self.session_manager.get_live(thread_id, terminal_id)
+        if session is None:
+            if require_live:
+                # @@@boundary-pause-live-runtime - Boundary mode must fail loudly when pause runs without live runtime owner.
+                raise RuntimeError(
+                    f"Boundary state snapshot requires live runtime in this process "
+                    f"(thread={thread_id}, terminal={terminal_id})"
+                )
+            return
+        session.runtime.sync_terminal_state_snapshot(timeout=10.0)
 
     def enforce_idle_timeouts(self) -> int:
         """Pause expired leases and close chat sessions.
@@ -389,6 +431,12 @@ class SandboxManager:
             return False
 
         if lease.observed_state != "paused":
+            for terminal in terminals:
+                self._snapshot_runtime_for_terminal_boundary(
+                    thread_id=thread_id,
+                    terminal_id=terminal.terminal_id,
+                    require_live=True,
+                )
             # @@@pause-rebind-instance - Pause must operate on a concrete running instance.
             # Re-resolve through lease to avoid pausing stale detached bindings.
             lease.ensure_active_instance(self.provider)
