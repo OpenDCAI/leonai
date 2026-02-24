@@ -8,6 +8,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from backend.web.core.config import DB_PATH
+from core.memory.thread_config_repo import SQLiteThreadConfigRepo
 from sandbox.db import DEFAULT_DB_PATH as SANDBOX_DB_PATH
 
 
@@ -139,6 +140,15 @@ def init_thread_config(thread_id: str, sandbox_type: str, cwd: str | None) -> No
         conn.commit()
 
 
+def save_thread_metadata(thread_id: str, sandbox_type: str, cwd: str | None) -> None:
+    """Persist thread sandbox_type and cwd to SQLite."""
+    repo = SQLiteThreadConfigRepo(DB_PATH)
+    try:
+        repo.save_metadata(thread_id, sandbox_type, cwd)
+    finally:
+        repo.close()
+
+
 def get_active_observation_provider() -> str | None:
     """Read global observation config and return the active provider name."""
     from config.observation_loader import ObservationLoader
@@ -149,13 +159,39 @@ def get_active_observation_provider() -> str | None:
 
 def save_thread_model(thread_id: str, model: str) -> None:
     """Persist the selected model for a thread."""
-    save_thread_config(thread_id, model=model)
+    repo = SQLiteThreadConfigRepo(DB_PATH)
+    try:
+        repo.save_model(thread_id, model)
+    finally:
+        repo.close()
 
 
 def lookup_thread_model(thread_id: str) -> str | None:
     """Look up persisted model for a thread."""
-    config = load_thread_config(thread_id)
-    return config.model if config else None
+    if not DB_PATH.exists():
+        return None
+    try:
+        repo = SQLiteThreadConfigRepo(DB_PATH)
+        try:
+            return repo.lookup_model(thread_id)
+        finally:
+            repo.close()
+    except sqlite3.OperationalError:
+        return None
+
+
+def lookup_thread_metadata(thread_id: str) -> tuple[str, str | None] | None:
+    """Look up persisted (sandbox_type, cwd) for a thread. Returns None if not found."""
+    if not DB_PATH.exists():
+        return None
+    try:
+        repo = SQLiteThreadConfigRepo(DB_PATH)
+        try:
+            return repo.lookup_metadata(thread_id)
+        finally:
+            repo.close()
+    except sqlite3.OperationalError:
+        return None
 
 
 def resolve_local_workspace_path(
