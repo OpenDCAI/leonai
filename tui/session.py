@@ -4,6 +4,8 @@ import json
 import sqlite3
 from pathlib import Path
 
+from core.memory.checkpoint_repo import SQLiteCheckpointRepo
+
 
 class SessionManager:
     """管理 TUI session 状态"""
@@ -48,26 +50,19 @@ class SessionManager:
         if not self.db_path.exists():
             return []
 
-        threads = []
+        threads: list[dict] = []
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                conn.row_factory = sqlite3.Row
-                # Query checkpoints table for unique thread_ids
-                cursor = conn.execute("""
-                    SELECT DISTINCT thread_id
-                    FROM checkpoints
-                    WHERE thread_id IS NOT NULL
-                    ORDER BY thread_id
-                """)
-                for row in cursor.fetchall():
-                    thread_id = row["thread_id"]
-                    if thread_id:
-                        threads.append(
-                            {
-                                "thread_id": thread_id,
-                                "last_active": None,
-                            }
-                        )
+            repo = SQLiteCheckpointRepo(db_path=self.db_path)
+            try:
+                for thread_id in repo.list_thread_ids():
+                    threads.append(
+                        {
+                            "thread_id": thread_id,
+                            "last_active": None,
+                        }
+                    )
+            finally:
+                repo.close()
         except Exception as e:
             print(f"[SessionManager] Error reading threads from DB: {e}")
 
@@ -88,17 +83,13 @@ class SessionManager:
         # Remove from SQLite database
         if self.db_path.exists():
             try:
+                repo = SQLiteCheckpointRepo(db_path=self.db_path)
+                try:
+                    repo.delete_thread_data(thread_id)
+                finally:
+                    repo.close()
+
                 with sqlite3.connect(self.db_path) as conn:
-                    # Delete from checkpoints table
-                    conn.execute(
-                        "DELETE FROM checkpoints WHERE thread_id = ?",
-                        (thread_id,),
-                    )
-                    # Delete from writes table
-                    conn.execute(
-                        "DELETE FROM writes WHERE thread_id = ?",
-                        (thread_id,),
-                    )
                     # Delete from file_operations table
                     conn.execute(
                         "DELETE FROM file_operations WHERE thread_id = ?",

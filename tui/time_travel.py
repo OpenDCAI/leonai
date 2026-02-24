@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from langgraph.checkpoint.sqlite import SqliteSaver
 
+from core.memory.checkpoint_repo import SQLiteCheckpointRepo
 from tui.operations import FileOperation, FileOperationRecorder, get_recorder
 
 if TYPE_CHECKING:
@@ -49,6 +50,7 @@ class TimeTravelManager:
         db_path = Path.home() / ".leon" / "leon.db"
         self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
         self.checkpointer = SqliteSaver(self._conn)
+        self.checkpoint_repo = SQLiteCheckpointRepo(conn=self._conn)
         self.recorder = recorder or get_recorder()
 
     def get_checkpoints(self, thread_id: str, user_turns_only: bool = False) -> list[CheckpointInfo]:
@@ -214,32 +216,7 @@ class TimeTravelManager:
         if not ids_to_delete:
             return
 
-        # Delete from SQLite database
-        cursor = self._conn.cursor()
-        placeholders = ",".join("?" * len(ids_to_delete))
-
-        # Delete from checkpoints table
-        cursor.execute(
-            f"DELETE FROM checkpoints WHERE thread_id = ? AND checkpoint_id IN ({placeholders})",
-            [thread_id] + ids_to_delete,
-        )
-
-        # Delete from checkpoint_writes table
-        cursor.execute(
-            f"DELETE FROM checkpoint_writes WHERE thread_id = ? AND checkpoint_id IN ({placeholders})",
-            [thread_id] + ids_to_delete,
-        )
-
-        # Delete from checkpoint_blobs table if exists
-        try:
-            cursor.execute(
-                f"DELETE FROM checkpoint_blobs WHERE thread_id = ? AND checkpoint_id IN ({placeholders})",
-                [thread_id] + ids_to_delete,
-            )
-        except Exception:
-            pass  # Table might not exist
-
-        self._conn.commit()
+        self.checkpoint_repo.delete_checkpoints_by_ids(thread_id, ids_to_delete)
 
     def _revert_operation(self, op: FileOperation) -> None:
         """Revert a single file operation"""
