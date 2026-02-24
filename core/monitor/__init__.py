@@ -5,6 +5,7 @@ from .middleware import MonitorMiddleware
 from .runtime import AgentRuntime
 from .state_monitor import AgentFlags, AgentState, StateMonitor
 from .token_monitor import TokenMonitor
+from .usage_patches import apply_all as apply_usage_patches
 
 __all__ = [
     "BaseMonitor",
@@ -17,4 +18,5 @@ __all__ = [
     "fetch_openrouter_pricing",
     "AgentRuntime",
     "MonitorMiddleware",
+    "apply_usage_patches",
 ]

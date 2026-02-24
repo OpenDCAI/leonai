@@ -47,8 +47,8 @@ from core.command.hooks.file_permission import FilePermissionHook
 from core.command.hooks.path_security import PathSecurityHook
 from core.filesystem import FileSystemMiddleware
 from core.memory import MemoryMiddleware
-from core.model_params import normalize_model_kwargs, patch_anthropic_streaming_usage
-from core.monitor import MonitorMiddleware
+from core.model_params import normalize_model_kwargs
+from core.monitor import MonitorMiddleware, apply_usage_patches
 from core.prompt_caching import PromptCachingMiddleware
 from core.queue import SteeringMiddleware
 from core.search import SearchMiddleware
@@ -61,7 +61,7 @@ from core.web import WebMiddleware
 from tui.operations import get_recorder
 
 # @@@langchain-anthropic-streaming-usage-regression
-patch_anthropic_streaming_usage()
+apply_usage_patches()
 
 
 class LeonAgent:
