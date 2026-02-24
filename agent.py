@@ -138,7 +138,7 @@ class LeonAgent:
         self._model_overrides = model_overrides
 
         # Resolve API key (prefer resolved provider from mapping)
-        provider_name = self._model_overrides.get("model_provider") if hasattr(self, "_model_overrides") else None
+        provider_name = self._resolve_provider_name(resolved_model, model_overrides)
         p = self.models_config.get_provider(provider_name) if provider_name else None
         self.api_key = api_key or (p.api_key if p else None) or self.models_config.get_api_key()
 
@@ -420,6 +420,18 @@ class LeonAgent:
 
         raise TypeError(f"sandbox must be Sandbox, str, or None, got {type(sandbox)}")
 
+    def _resolve_provider_name(self, model_name: str, overrides: dict | None = None) -> str | None:
+        """Resolve provider: overrides → custom_providers → infer from model name → env fallback."""
+        if overrides and overrides.get("model_provider"):
+            return overrides["model_provider"]
+        if self.models_config.active and self.models_config.active.provider:
+            return self.models_config.active.provider
+        from langchain.chat_models.base import _attempt_infer_model_provider
+        inferred = _attempt_infer_model_provider(model_name)
+        if inferred and self.models_config.get_provider(inferred):
+            return inferred
+        return self.models_config.get_model_provider()
+
     def _resolve_env_api_key(self) -> str | None:
         """Resolve API key from environment variables based on model_provider."""
         return self.models_config.get_api_key()
@@ -484,8 +496,8 @@ class LeonAgent:
         if hasattr(self, "_model_overrides"):
             kwargs.update(self._model_overrides)
 
-        # Use provider from model overrides (mapping) first, then global
-        provider = kwargs.get("model_provider") or self.models_config.get_model_provider()
+        # Use provider from model overrides (mapping) first, then infer
+        provider = self._resolve_provider_name(self.model_name, kwargs if kwargs else None)
         if provider:
             kwargs["model_provider"] = provider
 
@@ -532,7 +544,7 @@ class LeonAgent:
         self._model_overrides = model_overrides
 
         # Resolve provider credentials
-        provider_name = model_overrides.get("model_provider")
+        provider_name = self._resolve_provider_name(resolved_model, model_overrides)
         p = self.models_config.get_provider(provider_name) if provider_name else None
         self.api_key = (p.api_key if p else None) or self.models_config.get_api_key()
         base_url = (p.base_url if p else None) or self.models_config.get_base_url()
