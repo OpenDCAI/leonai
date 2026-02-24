@@ -1,0 +1,47 @@
+{
+  "title": "LeonAI SWE-bench Case-001 (A/B)",
+  "case_id": "astropy__astropy-12907",
+  "run_a_dir": "/home/ubuntu/specops0/Projects/leonai-main/artifacts/swebench/case001-a",
+  "run_b_dir": "/home/ubuntu/specops0/Projects/leonai-main/artifacts/swebench/case001-b",
+  "metrics_a": {
+    "instances": 1,
+    "patch_non_empty": 0,
+    "patch_empty": 1,
+    "errors": 1,
+    "invalid_tool_bash": 1,
+    "recursion_limit_hits": 1,
+    "avg_checkpoints": 26,
+    "avg_tool_calls": 8
+  },
+  "metrics_b": {
+    "instances": 1,
+    "patch_non_empty": 0,
+    "patch_empty": 1,
+    "errors": 1,
+    "invalid_tool_bash": 1,
+    "recursion_limit_hits": 1,
+    "avg_checkpoints": 42,
+    "avg_tool_calls": 13
+  },
+  "case_a": {
+    "instance_id": "astropy__astropy-12907",
+    "patch_len": 0,
+    "checkpoint_count": 26,
+    "tool_calls_total": 8,
+    "invalid_tool_bash": 1,
+    "recursion_limit": 0,
+    "error": "Recursion limit of 24 reached without hitting a stop condition. You can increase the limit by setting the `recursion_limit` config key.\nFor troubleshooting, visit: https://docs.langchain.com/oss/python/langgraph/errors/GRAPH_RECURSION_LIMIT",
+    "last_ai_message": "Let me check if we can run the tests directly:"
+  },
+  "case_b": {
+    "instance_id": "astropy__astropy-12907",
+    "patch_len": 0,
+    "checkpoint_count": 42,
+    "tool_calls_total": 13,
+    "invalid_tool_bash": 1,
+    "recursion_limit": 0,
+    "error": "Recursion limit of 40 reached without hitting a stop condition. You can increase the limit by setting the `recursion_limit` config key.\nFor troubleshooting, visit: https://docs.langchain.com/oss/python/langgraph/errors/GRAPH_RECURSION_LIMIT",
+    "last_ai_message": ""
+  },
+  "generated_at_utc": "2026-02-24T06:28:38.245087+00:00"
+}
