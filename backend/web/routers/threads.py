@@ -55,9 +55,15 @@ async def create_thread(
     from backend.web.utils.helpers import get_active_observation_provider, init_thread_config, save_thread_config
 
     init_thread_config(thread_id, sandbox_type, cwd)
+    model = payload.model if payload else None
     obs_provider = get_active_observation_provider()
+    updates = {}
+    if model:
+        updates["model"] = model
     if obs_provider:
-        save_thread_config(thread_id, observation_provider=obs_provider)
+        updates["observation_provider"] = obs_provider
+    if updates:
+        save_thread_config(thread_id, **updates)
     return {"thread_id": thread_id, "sandbox": sandbox_type}
 
 

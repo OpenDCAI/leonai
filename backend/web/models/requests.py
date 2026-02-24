@@ -6,6 +6,7 @@ from pydantic import BaseModel
 class CreateThreadRequest(BaseModel):
     sandbox: str = "local"
     cwd: str | None = None
+    model: str | None = None
 
 
 class RunRequest(BaseModel):
