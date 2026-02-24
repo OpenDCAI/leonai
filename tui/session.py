@@ -1,10 +1,10 @@
 """Session management for TUI resume"""
 
 import json
-import sqlite3
 from pathlib import Path
 
 from core.memory.checkpoint_repo import SQLiteCheckpointRepo
+from core.memory.file_operation_repo import SQLiteFileOperationRepo
 
 
 class SessionManager:
@@ -89,13 +89,8 @@ class SessionManager:
                 finally:
                     repo.close()
 
-                with sqlite3.connect(self.db_path) as conn:
-                    # Delete from file_operations table
-                    conn.execute(
-                        "DELETE FROM file_operations WHERE thread_id = ?",
-                        (thread_id,),
-                    )
-                    conn.commit()
+                file_repo = SQLiteFileOperationRepo(db_path=self.db_path)
+                file_repo.delete_thread_operations(thread_id)
                 return True
             except Exception as e:
                 print(f"[SessionManager] Error deleting thread from DB: {e}")
