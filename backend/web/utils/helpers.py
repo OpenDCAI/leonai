@@ -8,6 +8,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from backend.web.core.config import DB_PATH
+from core.memory.thread_config_repo import SQLiteThreadConfigRepo
 from sandbox.db import DEFAULT_DB_PATH as SANDBOX_DB_PATH
 
 
@@ -66,39 +67,20 @@ def extract_webhook_instance_id(payload: dict[str, Any]) -> str | None:
 
 def save_thread_metadata(thread_id: str, sandbox_type: str, cwd: str | None) -> None:
     """Persist thread sandbox_type and cwd to SQLite."""
-    with sqlite3.connect(str(DB_PATH)) as conn:
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS thread_metadata"
-            "(thread_id TEXT PRIMARY KEY, sandbox_type TEXT NOT NULL, cwd TEXT, model TEXT)"
-        )
-        # Add model column if missing (migration)
-        try:
-            conn.execute("ALTER TABLE thread_metadata ADD COLUMN model TEXT")
-        except sqlite3.OperationalError:
-            pass
-        conn.execute(
-            "INSERT OR REPLACE INTO thread_metadata (thread_id, sandbox_type, cwd) VALUES (?, ?, ?)",
-            (thread_id, sandbox_type, cwd),
-        )
-        conn.commit()
+    repo = SQLiteThreadConfigRepo(DB_PATH)
+    try:
+        repo.save_metadata(thread_id, sandbox_type, cwd)
+    finally:
+        repo.close()
 
 
 def save_thread_model(thread_id: str, model: str) -> None:
     """Persist the selected model for a thread."""
-    with sqlite3.connect(str(DB_PATH)) as conn:
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS thread_metadata"
-            "(thread_id TEXT PRIMARY KEY, sandbox_type TEXT NOT NULL, cwd TEXT, model TEXT)"
-        )
-        try:
-            conn.execute("ALTER TABLE thread_metadata ADD COLUMN model TEXT")
-        except sqlite3.OperationalError:
-            pass
-        conn.execute(
-            "UPDATE thread_metadata SET model = ? WHERE thread_id = ?",
-            (model, thread_id),
-        )
-        conn.commit()
+    repo = SQLiteThreadConfigRepo(DB_PATH)
+    try:
+        repo.save_model(thread_id, model)
+    finally:
+        repo.close()
 
 
 def lookup_thread_model(thread_id: str) -> str | None:
@@ -106,12 +88,11 @@ def lookup_thread_model(thread_id: str) -> str | None:
     if not DB_PATH.exists():
         return None
     try:
-        with sqlite3.connect(str(DB_PATH)) as conn:
-            row = conn.execute(
-                "SELECT model FROM thread_metadata WHERE thread_id = ?",
-                (thread_id,),
-            ).fetchone()
-            return row[0] if row and row[0] else None
+        repo = SQLiteThreadConfigRepo(DB_PATH)
+        try:
+            return repo.lookup_model(thread_id)
+        finally:
+            repo.close()
     except sqlite3.OperationalError:
         return None
 
@@ -121,12 +102,11 @@ def lookup_thread_metadata(thread_id: str) -> tuple[str, str | None] | None:
     if not DB_PATH.exists():
         return None
     try:
-        with sqlite3.connect(str(DB_PATH)) as conn:
-            row = conn.execute(
-                "SELECT sandbox_type, cwd FROM thread_metadata WHERE thread_id = ?",
-                (thread_id,),
-            ).fetchone()
-            return (row[0], row[1]) if row else None
+        repo = SQLiteThreadConfigRepo(DB_PATH)
+        try:
+            return repo.lookup_metadata(thread_id)
+        finally:
+            repo.close()
     except sqlite3.OperationalError:
         return None
 
