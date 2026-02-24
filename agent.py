@@ -47,7 +47,7 @@ from core.command.hooks.file_permission import FilePermissionHook
 from core.command.hooks.path_security import PathSecurityHook
 from core.filesystem import FileSystemMiddleware
 from core.memory import MemoryMiddleware
-from core.model_params import normalize_model_kwargs
+from core.model_params import normalize_model_kwargs, patch_anthropic_streaming_usage
 from core.monitor import MonitorMiddleware
 from core.prompt_caching import PromptCachingMiddleware
 from core.queue import SteeringMiddleware
@@ -59,6 +59,9 @@ from core.web import WebMiddleware
 
 # Import file operation recorder for time travel
 from tui.operations import get_recorder
+
+# @@@langchain-anthropic-streaming-usage-regression
+patch_anthropic_streaming_usage()
 
 
 class LeonAgent:
