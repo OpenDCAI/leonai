@@ -465,7 +465,7 @@ async def update_custom_model_config(request: CustomModelConfigRequest) -> dict[
     data = load_models()
     pool = data.setdefault("pool", {})
     custom_config = pool.setdefault("custom_config", {})
-    cfg: dict[str, Any] = {}
+    cfg: dict[str, Any] = custom_config.get(request.model_id, {})
     if request.based_on is not None:
         cfg["based_on"] = request.based_on or None
     if request.context_limit is not None:
