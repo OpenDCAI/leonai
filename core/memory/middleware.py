@@ -91,6 +91,10 @@ class MemoryMiddleware(AgentMiddleware):
         """Inject LLM model reference (called by agent.py)."""
         self._model = model
 
+    def set_context_limit(self, context_limit: int) -> None:
+        """Update context limit (called on model switch)."""
+        self._context_limit = context_limit
+
     def set_runtime(self, runtime: Any) -> None:
         """Inject AgentRuntime reference (called by agent.py)."""
         self._runtime = runtime
