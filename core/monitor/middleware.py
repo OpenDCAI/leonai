@@ -70,7 +70,7 @@ class MonitorMiddleware(AgentMiddleware):
     def update_model(self, model_name: str, overrides: dict | None = None) -> None:
         """更新 cost calculator 和 context_limit（不重建 middleware）"""
         overrides = overrides or {}
-        lookup_name = overrides.get("alias") or model_name
+        lookup_name = overrides.get("based_on") or model_name
         self._token_monitor.cost_calculator = CostCalculator(lookup_name)
         self._context_monitor.context_limit = (
             overrides.get("context_limit") or get_model_context_limit(lookup_name)

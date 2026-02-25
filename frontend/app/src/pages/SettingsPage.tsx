@@ -24,7 +24,7 @@ interface AvailableModelsData {
 interface Settings {
   model_mapping: Record<string, string>;
   enabled_models: string[];
-  custom_config: Record<string, { alias?: string | null; context_limit?: number | null }>;
+  custom_config: Record<string, { based_on?: string | null; context_limit?: number | null }>;
   providers: Record<string, { api_key: string | null; base_url: string | null }>;
   default_workspace: string | null;
   default_model: string;
@@ -75,11 +75,11 @@ export default function SettingsPage() {
     void loadData();
   }, []);
 
-  const handleAddCustomModel = async (modelId: string, provider?: string, alias?: string, contextLimit?: number) => {
+  const handleAddCustomModel = async (modelId: string, provider?: string, basedOn?: string, contextLimit?: number) => {
     const res = await fetch("/api/settings/models/custom", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model_id: modelId, provider: provider || null, alias: alias || null, context_limit: contextLimit || null }),
+      body: JSON.stringify({ model_id: modelId, provider: provider || null, based_on: basedOn || null, context_limit: contextLimit || null }),
     });
     const data = await res.json();
     if (data.success) {
