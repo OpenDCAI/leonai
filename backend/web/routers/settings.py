@@ -102,9 +102,10 @@ class UserSettings(BaseModel):
     default_workspace: str | None = None
     recent_workspaces: list[str] = []
     default_model: str = "leon:large"
-    model_mapping: dict[str, dict[str, Any]] = {}
+    model_mapping: dict[str, str] = {}
     enabled_models: list[str] = []
     custom_models: list[str] = []
+    custom_config: dict[str, dict[str, Any]] = {}
     providers: dict[str, ProviderConfig] = {}
 
 
@@ -115,11 +116,10 @@ async def get_settings() -> UserSettings:
     models = load_merged_models()
 
     # Build compat view
-    mapping = {
-        k: {"model": v.model, "alias": v.alias, "context_limit": v.context_limit}
-        for k, v in models.mapping.items()
-    }
+    mapping = {k: v.model for k, v in models.mapping.items()}
     providers = {k: ProviderConfig(api_key=v.api_key, base_url=v.base_url) for k, v in models.providers.items()}
+    raw = load_models()
+    custom_config = raw.get("pool", {}).get("custom_config", {})
 
     return UserSettings(
         default_workspace=ws.default_workspace,
@@ -128,6 +128,7 @@ async def get_settings() -> UserSettings:
         model_mapping=mapping,
         enabled_models=models.pool.enabled,
         custom_models=models.pool.custom,
+        custom_config=custom_config,
         providers=providers,
     )
 
@@ -336,6 +337,8 @@ async def toggle_model(request: ModelToggleRequest) -> dict[str, Any]:
 class CustomModelRequest(BaseModel):
     model_id: str
     provider: str
+    alias: str | None = None
+    context_limit: int | None = None
 
 
 @router.post("/models/custom")
@@ -353,6 +356,16 @@ async def add_custom_model(request: CustomModelRequest) -> dict[str, Any]:
 
     custom_providers = pool.setdefault("custom_providers", {})
     custom_providers[request.model_id] = request.provider
+
+    # Store alias/context_limit in custom_config
+    if request.alias or request.context_limit:
+        custom_config = pool.setdefault("custom_config", {})
+        cfg: dict[str, Any] = custom_config.get(request.model_id, {})
+        if request.alias:
+            cfg["alias"] = request.alias
+        if request.context_limit:
+            cfg["context_limit"] = request.context_limit
+        custom_config[request.model_id] = cfg
 
     save_models(data)
     return {"success": True, "custom_models": custom, "enabled_models": enabled}
@@ -430,12 +443,36 @@ async def remove_custom_model(model_id: str = Query(...)) -> dict[str, Any]:
     if model_id in enabled:
         enabled.remove(model_id)
 
-    # Clean up custom_providers
+    # Clean up custom_providers and custom_config
     custom_providers = pool.get("custom_providers", {})
     custom_providers.pop(model_id, None)
+    custom_config = pool.get("custom_config", {})
+    custom_config.pop(model_id, None)
 
     save_models(data)
     return {"success": True, "custom_models": custom}
+
+
+class CustomModelConfigRequest(BaseModel):
+    model_id: str
+    alias: str | None = None
+    context_limit: int | None = None
+
+
+@router.post("/models/custom/config")
+async def update_custom_model_config(request: CustomModelConfigRequest) -> dict[str, Any]:
+    """Update alias/context_limit for a custom model."""
+    data = load_models()
+    pool = data.setdefault("pool", {})
+    custom_config = pool.setdefault("custom_config", {})
+    cfg: dict[str, Any] = {}
+    if request.alias is not None:
+        cfg["alias"] = request.alias or None
+    if request.context_limit is not None:
+        cfg["context_limit"] = request.context_limit or None
+    custom_config[request.model_id] = cfg
+    save_models(data)
+    return {"success": True, "custom_config": custom_config}
 
 
 # ============================================================================

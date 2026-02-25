@@ -45,11 +45,19 @@ class ActiveModel(BaseModel):
     context_limit: int | None = Field(None, gt=0)
 
 
+class CustomModelConfig(BaseModel):
+    """Custom model metadata (alias, context_limit)."""
+
+    alias: str | None = None
+    context_limit: int | None = Field(None, gt=0)
+
+
 class PoolConfig(BaseModel):
     """Model pool configuration."""
 
     enabled: list[str] = Field(default_factory=list)
     custom: list[str] = Field(default_factory=list)
+    custom_config: dict[str, CustomModelConfig] = Field(default_factory=dict)
 
 
 class CatalogEntry(BaseModel):
@@ -96,15 +104,21 @@ class ModelsConfig(BaseModel):
             ValueError: If virtual model name not found in mapping
         """
         if not name.startswith("leon:"):
-            # Non-virtual: pass active model's alias/context_limit if set
+            overrides: dict[str, Any] = {}
+            # From active model config
             if self.active:
-                overrides: dict[str, Any] = {}
                 if self.active.alias:
                     overrides["alias"] = self.active.alias
                 if self.active.context_limit is not None:
                     overrides["context_limit"] = self.active.context_limit
-                return name, overrides
-            return name, {}
+            # From custom_config (higher priority for custom models)
+            if name in self.pool.custom_config:
+                cc = self.pool.custom_config[name]
+                if cc.alias:
+                    overrides["alias"] = cc.alias
+                if cc.context_limit is not None:
+                    overrides["context_limit"] = cc.context_limit
+            return name, overrides
 
         if name not in self.mapping:
             available = ", ".join(self.mapping.keys())
