@@ -56,12 +56,6 @@ export default function ProvidersSection({ providers, onUpdate }: ProvidersSecti
     }
   };
 
-  const maskApiKey = (key: string | null) => {
-    if (!key) return "";
-    if (key.length <= 8) return "*".repeat(key.length);
-    return key.slice(0, 7) + "*".repeat(Math.min(key.length - 11, 25)) + key.slice(-4);
-  };
-
   return (
     <div className="space-y-4">
       {/* Section header */}
@@ -112,7 +106,8 @@ export default function ProvidersSection({ providers, onUpdate }: ProvidersSecti
                 <div className="relative">
                   <input
                     type={showKey ? "text" : "password"}
-                    value={showKey ? config.api_key || "" : maskApiKey(config.api_key)}
+                    // @@@provider-key-value - Keep the real key in state; password type already masks UI text.
+                    value={config.api_key || ""}
                     onChange={(e) => {
                       const newConfig = { ...config, api_key: e.target.value || null };
                       void handleSave(providerConfig.id, newConfig);
