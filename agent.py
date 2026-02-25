@@ -565,9 +565,14 @@ class LeonAgent:
             "base_url": base_url,
         }
 
-        # Update cost calculator (lightweight)
+        # Update monitor (cost calculator + context_limit)
         if hasattr(self, "_monitor_middleware"):
             self._monitor_middleware.update_model(resolved_model)
+
+        # Update memory middleware context_limit
+        if hasattr(self, "_memory_middleware"):
+            from core.monitor.cost import get_model_context_limit
+            self._memory_middleware.set_context_limit(get_model_context_limit(resolved_model))
 
         # Update task middleware references
         if hasattr(self, "_task_middleware"):

@@ -29,7 +29,7 @@ class RuntimeConfig(BaseModel):
     temperature: float | None = Field(None, ge=0.0, le=2.0, description="Temperature")
     max_tokens: int | None = Field(None, gt=0, description="Max tokens")
     model_kwargs: dict[str, Any] = Field(default_factory=dict, description="Extra kwargs for init_chat_model")
-    context_limit: int = Field(100000, gt=0, description="Context window limit in tokens")
+    context_limit: int = Field(0, ge=0, description="Context window limit in tokens (0 = auto-detect from model)")
     enable_audit_log: bool = Field(True, description="Enable audit logging")
     allowed_extensions: list[str] | None = Field(None, description="Allowed extensions (None = all)")
     block_dangerous_commands: bool = Field(True, description="Block dangerous commands")
