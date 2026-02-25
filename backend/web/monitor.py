@@ -5,20 +5,18 @@ All endpoints return view-ready data that frontend can directly render.
 No business logic in frontend.
 """
 
+import asyncio
 import json
 import sqlite3
 import uuid
 from datetime import datetime
 from pathlib import Path
+from subprocess import PIPE
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from backend.web.core.config import DB_PATH
-from backend.web.services.agent_pool import get_or_create_agent
-from backend.web.services.streaming_service import start_agent_run
-from backend.web.utils.helpers import init_thread_config
-from core.monitor import AgentState
 from sandbox.db import DEFAULT_DB_PATH
 
 router = APIRouter(prefix="/api/monitor")
@@ -44,6 +42,9 @@ class EvaluationCreateRequest(BaseModel):
     sandbox: str = "local"
     cwd: str = "/home/ubuntu/specops0/Projects/leonai-main"
     arm: str = "monitor"
+    output_dir: str = "artifacts/swebench"
+    run_eval: bool = True
+    thread_prefix: str = "swebench"
 
 
 def _ensure_evaluation_tables() -> None:
@@ -95,33 +96,137 @@ def _ensure_evaluation_tables() -> None:
         conn.commit()
 
 
-def _build_eval_message(
+def _ensure_eval_task_map(app: object) -> dict[str, asyncio.Task]:
+    tasks = getattr(app.state, "evaluation_tasks", None)
+    if tasks is None:
+        tasks = {}
+        app.state.evaluation_tasks = tasks
+    return tasks
+
+
+def _resolve_output_dir(cwd: str, output_dir: str) -> Path:
+    root = Path(output_dir).expanduser()
+    if not root.is_absolute():
+        root = (Path(cwd).expanduser().resolve() / root).resolve()
+    return root
+
+
+def _build_run_slice_command(payload: EvaluationCreateRequest, evaluation_id: str) -> list[str]:
+    cmd = [
+        "uv",
+        "run",
+        "python",
+        "eval/swebench/run_slice.py",
+        "--dataset",
+        payload.dataset,
+        "--split",
+        payload.split,
+        "--start",
+        str(payload.start),
+        "--count",
+        str(payload.count),
+        "--run-id",
+        evaluation_id,
+        "--arm",
+        payload.arm,
+        "--prompt-profile",
+        payload.prompt_profile,
+        "--timeout-sec",
+        str(payload.timeout_sec),
+        "--recursion-limit",
+        str(payload.recursion_limit),
+        "--output-dir",
+        payload.output_dir,
+        "--thread-prefix",
+        payload.thread_prefix,
+    ]
+    if not payload.run_eval:
+        cmd.append("--no-eval")
+    return cmd
+
+
+def _update_evaluation_job_status(evaluation_id: str, status: str, notes: str) -> None:
+    now = datetime.now().isoformat()
+    with sqlite3.connect(str(DB_PATH)) as conn:
+        conn.execute(
+            "UPDATE evaluation_jobs SET status = ?, notes = ?, updated_at = ? WHERE evaluation_id = ?",
+            (status, notes, now, evaluation_id),
+        )
+        conn.commit()
+
+
+def _ingest_evaluation_threads(
     *,
-    dataset: str,
-    split: str,
+    evaluation_id: str,
+    thread_prefix: str,
     start_idx: int,
-    prompt_profile: str,
-    timeout_sec: int,
-    recursion_limit: int,
-    arm: str,
-    run_label: str,
-) -> str:
-    return "\n".join(
-        [
-            "Run a real SWE-bench slice and report trace evidence.",
-            "Always call the `run_command` tool (never `bash`).",
-            "Execute exactly:",
-            (
-                "cd /home/ubuntu/specops0/Projects/leonai-main && "
-                "uv run python eval/swebench/run_slice.py "
-                f"--dataset {dataset} --split {split} --start {start_idx} --count 1 "
-                f"--run-id {run_label} --arm {arm} --prompt-profile {prompt_profile} "
-                f"--timeout-sec {timeout_sec} --recursion-limit {recursion_limit} "
-                "--output-dir artifacts/swebench --no-eval"
-            ),
-            "After it finishes, summarize run_id and output files.",
-        ]
-    )
+    run_dir: Path,
+) -> int:
+    ids_path = run_dir / "instance_ids.txt"
+    if not ids_path.exists():
+        return 0
+    instance_ids = [line.strip() for line in ids_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    now = datetime.now().isoformat()
+    with sqlite3.connect(str(DB_PATH)) as conn:
+        conn.execute("DELETE FROM evaluation_job_threads WHERE evaluation_id = ?", (evaluation_id,))
+        for idx, instance_id in enumerate(instance_ids):
+            thread_id = f"{thread_prefix}-{evaluation_id}-{instance_id}"
+            run = _load_run_stats(thread_id, None)
+            conn.execute(
+                """
+                INSERT INTO evaluation_job_threads (
+                    evaluation_id, thread_id, run_id, start_idx, item_index, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    evaluation_id,
+                    thread_id,
+                    run.get("run_id"),
+                    start_idx + idx,
+                    idx,
+                    now,
+                ),
+            )
+        conn.commit()
+    return len(instance_ids)
+
+
+async def _run_evaluation_job(evaluation_id: str, payload: EvaluationCreateRequest) -> None:
+    cwd = str(Path(payload.cwd).expanduser().resolve())
+    output_root = _resolve_output_dir(cwd, payload.output_dir)
+    run_dir = output_root / evaluation_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    stdout_path = run_dir / "monitor_stdout.log"
+    stderr_path = run_dir / "monitor_stderr.log"
+    command = _build_run_slice_command(payload, evaluation_id)
+    try:
+        # @@@monitor-eval-direct-runner - evaluate by invoking SWE runner directly, not by sending a control prompt to another agent.
+        proc = await asyncio.create_subprocess_exec(*command, cwd=cwd, stdout=PIPE, stderr=PIPE)
+        stdout, stderr = await proc.communicate()
+        stdout_path.write_bytes(stdout or b"")
+        stderr_path.write_bytes(stderr or b"")
+        if proc.returncode != 0:
+            notes = (
+                f"runner=direct rc={proc.returncode} run_dir={run_dir} "
+                f"stdout_log={stdout_path} stderr_log={stderr_path}"
+            )
+            _update_evaluation_job_status(evaluation_id, "error", notes)
+            return
+        thread_count = _ingest_evaluation_threads(
+            evaluation_id=evaluation_id,
+            thread_prefix=payload.thread_prefix,
+            start_idx=payload.start,
+            run_dir=run_dir,
+        )
+        notes = (
+            f"runner=direct rc=0 run_dir={run_dir} stdout_log={stdout_path} "
+            f"stderr_log={stderr_path} threads={thread_count}"
+        )
+        _update_evaluation_job_status(evaluation_id, "completed", notes)
+    except Exception as exc:
+        notes = f"runner=direct error={exc} run_dir={run_dir} stdout_log={stdout_path} stderr_log={stderr_path}"
+        _update_evaluation_job_status(evaluation_id, "error", notes)
 
 
 def _load_latest_session(db: sqlite3.Connection, thread_id: str) -> sqlite3.Row | None:
@@ -468,7 +573,7 @@ def get_thread(thread_id: str, db: sqlite3.Connection = Depends(get_db)):
 
 @router.post("/evaluations")
 async def create_evaluation(payload: EvaluationCreateRequest, request: Request):
-    """Create one evaluation job that fans out into multiple evaluation-mode threads."""
+    """Create one evaluation job and run SWE-bench slice in backend runner."""
     _ensure_evaluation_tables()
     app = request.app
     now = datetime.now().isoformat()
@@ -480,7 +585,7 @@ async def create_evaluation(payload: EvaluationCreateRequest, request: Request):
                 evaluation_id, dataset, split, start_idx, slice_count, prompt_profile,
                 timeout_sec, recursion_limit, sandbox, cwd, arm, status, notes, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', NULL, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?)
             """,
             (
                 evaluation_id,
@@ -494,83 +599,43 @@ async def create_evaluation(payload: EvaluationCreateRequest, request: Request):
                 payload.sandbox,
                 payload.cwd,
                 payload.arm,
+                "runner=direct (backend subprocess)",
                 now,
                 now,
             ),
         )
         conn.commit()
 
-    created: list[dict] = []
-    try:
-        for item_index in range(payload.count):
-            start_idx = payload.start + item_index
-            thread_id = str(uuid.uuid4())
-            app.state.thread_sandbox[thread_id] = payload.sandbox
-            if payload.cwd:
-                app.state.thread_cwd[thread_id] = payload.cwd
-            init_thread_config(
-                thread_id,
-                payload.sandbox,
-                payload.cwd,
-                thread_mode="evaluation",
-                keep_full_trace=True,
-            )
-            agent = await get_or_create_agent(app, payload.sandbox, thread_id=thread_id)
-            if hasattr(agent, "runtime") and not agent.runtime.transition(AgentState.ACTIVE):
-                raise RuntimeError(f"Thread {thread_id} is already active")
-            swebench_run_label = f"{evaluation_id}-{item_index:03d}"
-            message = _build_eval_message(
-                dataset=payload.dataset,
-                split=payload.split,
-                start_idx=start_idx,
-                prompt_profile=payload.prompt_profile,
-                timeout_sec=payload.timeout_sec,
-                recursion_limit=payload.recursion_limit,
-                arm=payload.arm,
-                run_label=swebench_run_label,
-            )
-            run_buffer = start_agent_run(agent, thread_id, message, app, enable_trajectory=True)
-            run_id = str(run_buffer.run_id)
-            created.append({"thread_id": thread_id, "run_id": run_id, "start_idx": start_idx, "item_index": item_index})
-            with sqlite3.connect(str(DB_PATH)) as conn:
-                conn.execute(
-                    """
-                    INSERT INTO evaluation_job_threads (
-                        evaluation_id, thread_id, run_id, start_idx, item_index, created_at
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?)
-                    """,
-                    (evaluation_id, thread_id, run_id, start_idx, item_index, datetime.now().isoformat()),
-                )
-                conn.execute(
-                    "UPDATE evaluation_jobs SET updated_at = ? WHERE evaluation_id = ?",
-                    (datetime.now().isoformat(), evaluation_id),
-                )
-                conn.commit()
-    except Exception as exc:
-        with sqlite3.connect(str(DB_PATH)) as conn:
-            conn.execute(
-                "UPDATE evaluation_jobs SET status = 'error', notes = ?, updated_at = ? WHERE evaluation_id = ?",
-                (str(exc), datetime.now().isoformat(), evaluation_id),
-            )
-            conn.commit()
-        raise HTTPException(status_code=500, detail=f"failed to start evaluation {evaluation_id}: {exc}") from exc
+    tasks = _ensure_eval_task_map(app)
+    task = asyncio.create_task(_run_evaluation_job(evaluation_id, payload))
+    tasks[evaluation_id] = task
+
+    def _cleanup_task(done_task: asyncio.Task) -> None:
+        task_map = _ensure_eval_task_map(app)
+        task_map.pop(evaluation_id, None)
+        _ = done_task
+
+    task.add_done_callback(_cleanup_task)
 
     return {
         "evaluation_id": evaluation_id,
         "status": "running",
-        "count": len(created),
+        "count": payload.count,
         "dataset": payload.dataset,
         "split": payload.split,
         "start": payload.start,
-        "threads": created,
+        "runner": "backend_subprocess",
+        "threads": [],
     }
 
 
 @router.get("/evaluations")
 def list_evaluations(limit: int = 30, request: Request = None):
     _ensure_evaluation_tables()
-    running_threads = set(getattr(request.app.state, "thread_tasks", {}).keys()) if request else set()
+    running_jobs = set()
+    if request:
+        tasks = _ensure_eval_task_map(request.app)
+        running_jobs = {evaluation_id for evaluation_id, task in tasks.items() if not task.done()}
     with sqlite3.connect(str(DB_PATH)) as conn:
         conn.row_factory = sqlite3.Row
         jobs = conn.execute(
@@ -593,17 +658,11 @@ def list_evaluations(limit: int = 30, request: Request = None):
                 """,
                 (row["evaluation_id"],),
             ).fetchall()
-            thread_ids = [str(t["thread_id"]) for t in threads]
-            running_count = sum(1 for tid in thread_ids if tid in running_threads)
-            total = len(thread_ids)
-            if row["status"] == "error":
-                status = "error"
-            elif running_count > 0:
+            total = len(threads)
+            status = str(row["status"] or "pending")
+            if row["evaluation_id"] in running_jobs:
                 status = "running"
-            elif total > 0:
-                status = "completed"
-            else:
-                status = "pending"
+            running_count = total if status == "running" else 0
             items.append(
                 {
                     "evaluation_id": row["evaluation_id"],
@@ -633,7 +692,10 @@ def list_evaluations(limit: int = 30, request: Request = None):
 @router.get("/evaluation/{evaluation_id}")
 def get_evaluation_detail(evaluation_id: str, request: Request, db: sqlite3.Connection = Depends(get_db)):
     _ensure_evaluation_tables()
-    running_threads = set(getattr(request.app.state, "thread_tasks", {}).keys()) if request else set()
+    running_jobs = set()
+    if request:
+        tasks = _ensure_eval_task_map(request.app)
+        running_jobs = {job_id for job_id, task in tasks.items() if not task.done()}
     with sqlite3.connect(str(DB_PATH)) as conn:
         conn.row_factory = sqlite3.Row
         job = conn.execute(
@@ -658,13 +720,16 @@ def get_evaluation_detail(evaluation_id: str, request: Request, db: sqlite3.Conn
             (evaluation_id,),
         ).fetchall()
 
+    status = str(job["status"] or "pending")
+    if evaluation_id in running_jobs:
+        status = "running"
     thread_items = []
     running_count = 0
     for row in rows:
         thread_id = str(row["thread_id"])
         session = _load_latest_session(db, thread_id)
         run = _load_run_stats(thread_id, row["run_id"])
-        running = thread_id in running_threads
+        running = status == "running"
         if running:
             running_count += 1
         thread_items.append(
@@ -691,14 +756,6 @@ def get_evaluation_detail(evaluation_id: str, request: Request, db: sqlite3.Conn
         )
 
     total = len(thread_items)
-    if job["status"] == "error":
-        status = "error"
-    elif running_count > 0:
-        status = "running"
-    elif total > 0:
-        status = "completed"
-    else:
-        status = "pending"
 
     return {
         "evaluation_id": evaluation_id,
@@ -766,27 +823,6 @@ def get_session(session_id: str, db: sqlite3.Connection = Depends(get_db)):
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    commands = db.execute(
-        """
-        SELECT
-            command_id,
-            command_line,
-            cwd,
-            status,
-            exit_code,
-            created_at,
-            updated_at,
-            finished_at,
-            stdout,
-            stderr
-        FROM terminal_commands
-        WHERE chat_session_id = ?
-        ORDER BY created_at DESC
-        LIMIT 20
-        """,
-        (session_id,),
-    ).fetchall()
-
     return {
         "session_id": session_id,
         "thread_id": session["thread_id"],
@@ -811,26 +847,6 @@ def get_session(session_id: str, db: sqlite3.Connection = Depends(get_db)):
             "close_reason": session["close_reason"],
             "error": session["last_error"],
             "state_badge": make_badge(session["desired_state"], session["observed_state"]),
-        },
-        "commands": {
-            "title": "Terminal Commands",
-            "count": len(commands),
-            "items": [
-                {
-                    "command_id": c["command_id"],
-                    "command_line": c["command_line"],
-                    "cwd": c["cwd"],
-                    "status": c["status"],
-                    "exit_code": c["exit_code"],
-                    "created_at": c["created_at"],
-                    "created_ago": format_time_ago(c["created_at"]),
-                    "updated_at": c["updated_at"],
-                    "finished_at": c["finished_at"],
-                    "stdout": c["stdout"],
-                    "stderr": c["stderr"],
-                }
-                for c in commands
-            ],
         },
     }
 
