@@ -59,12 +59,12 @@ git fetch origin main
 git branch -d <分支名>   # 基于最新 origin/main 判断是否已合并
 ```
 
-如果 `-d` 报"未合并"：先检查远程 main 是否包含该分支内容（可能是 rebase merge 导致 hash 不同）：
+如果 `-d` 报"未合并"：用 `gh` 查该分支是否有已合并的 PR（squash/rebase merge 会改变 hash，`git branch -d` 检测不到）：
 
 ```bash
-git log --oneline origin/main | grep -i <关键词>
+gh pr list --head <分支名> --state merged --json number,title --limit 1
 ```
 
-- 远程已合并 → 安全删除 `git branch -D <分支名>`
-- 远程未合并 → 告知用户，确认后再 `-D` 强删
+- 返回非空（有已合并 PR）→ 安全删除 `git branch -D <分支名>`
+- 返回空（无已合并 PR）→ 告知用户分支确实未合并，确认后再 `-D` 强删
 - 不删除远程分支，除非用户明确要求
