@@ -572,7 +572,7 @@ class LeonAgent:
         # Update memory middleware context_limit
         if hasattr(self, "_memory_middleware"):
             from core.monitor.cost import get_model_context_limit
-            lookup_name = model_overrides.get("alias") or resolved_model
+            lookup_name = model_overrides.get("based_on") or resolved_model
             self._memory_middleware.set_context_limit(
                 model_overrides.get("context_limit") or get_model_context_limit(lookup_name)
             )

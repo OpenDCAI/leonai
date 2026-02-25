@@ -11,10 +11,10 @@ interface Model {
 interface ModelPoolSectionProps {
   models: Model[];
   enabledModels: string[];
-  customConfig: Record<string, { alias?: string | null; context_limit?: number | null }>;
+  customConfig: Record<string, { based_on?: string | null; context_limit?: number | null }>;
   providers: Record<string, { api_key: string | null; base_url: string | null }>;
   onToggle: (modelId: string, enabled: boolean) => void;
-  onAddCustomModel: (modelId: string, provider?: string, alias?: string, contextLimit?: number) => Promise<void>;
+  onAddCustomModel: (modelId: string, provider?: string, basedOn?: string, contextLimit?: number) => Promise<void>;
   onRemoveCustomModel: (modelId: string) => Promise<void>;
 }
 
@@ -73,7 +73,7 @@ export default function ModelPoolSection({ models, enabledModels, customConfig, 
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         model_id: modelId,
-        alias: editAlias || null,
+        based_on: editAlias || null,
         context_limit: editContextLimit ? parseInt(editContextLimit) : null,
       }),
     });
@@ -167,7 +167,7 @@ export default function ModelPoolSection({ models, enabledModels, customConfig, 
             <div className="grid grid-cols-2 gap-2">
               <input
                 type="text"
-                placeholder="Alias (e.g. claude-sonnet-4.5)"
+                placeholder="Based on (e.g. deepseek-chat)"
                 value={addAlias}
                 onChange={(e) => setAddAlias(e.target.value)}
                 className="px-3 py-1.5 text-sm border border-[#e2e8f0] rounded-lg bg-white focus:outline-none focus:border-[#0ea5e9]"
@@ -203,7 +203,7 @@ export default function ModelPoolSection({ models, enabledModels, customConfig, 
                 </button>
                 <div className="flex-1 min-w-0">
                   <span className="text-sm text-[#1e293b] truncate block">{model.id}</span>
-                  {cfg?.alias && <span className="text-[10px] text-[#94a3b8]">alias: {cfg.alias}</span>}
+                  {cfg?.based_on && <span className="text-[10px] text-[#94a3b8]">based on: {cfg.based_on}</span>}
                 </div>
                 {model.custom && <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#f0f9ff] text-[#0ea5e9]">custom</span>}
                 <div className="flex gap-1 shrink-0">
@@ -213,7 +213,7 @@ export default function ModelPoolSection({ models, enabledModels, customConfig, 
                         onClick={() => {
                           if (isEditing) { setEditingModel(null); } else {
                             setEditingModel(model.id);
-                            setEditAlias(cfg?.alias || "");
+                            setEditAlias(cfg?.based_on || "");
                             setEditContextLimit(cfg?.context_limit?.toString() || "");
                           }
                         }}
@@ -245,8 +245,8 @@ export default function ModelPoolSection({ models, enabledModels, customConfig, 
                 <div className="mx-3 mt-2 mb-1 p-3 border border-[#e2e8f0] rounded-lg bg-[#f8f9fa] space-y-2">
                   <div className="grid grid-cols-2 gap-2">
                     <div>
-                      <label className="text-[11px] text-[#94a3b8] block mb-1">Alias</label>
-                      <input type="text" placeholder="e.g. claude-sonnet-4.5" value={editAlias} onChange={(e) => setEditAlias(e.target.value)}
+                      <label className="text-[11px] text-[#94a3b8] block mb-1">Based On</label>
+                      <input type="text" placeholder="e.g. deepseek-chat" value={editAlias} onChange={(e) => setEditAlias(e.target.value)}
                         className="w-full px-2 py-1 text-sm border border-[#e2e8f0] rounded bg-white focus:outline-none focus:border-[#0ea5e9]" />
                     </div>
                     <div>

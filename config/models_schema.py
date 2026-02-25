@@ -32,7 +32,7 @@ class ModelSpec(BaseModel):
     temperature: float | None = Field(None, ge=0.0, le=2.0)
     max_tokens: int | None = Field(None, gt=0)
     description: str | None = None
-    alias: str | None = None
+    based_on: str | None = None
     context_limit: int | None = Field(None, gt=0)
 
 
@@ -41,14 +41,14 @@ class ActiveModel(BaseModel):
 
     model: str = "claude-sonnet-4-5-20250929"
     provider: str | None = None
-    alias: str | None = None
+    based_on: str | None = None
     context_limit: int | None = Field(None, gt=0)
 
 
 class CustomModelConfig(BaseModel):
-    """Custom model metadata (alias, context_limit)."""
+    """Custom model metadata (based_on, context_limit)."""
 
-    alias: str | None = None
+    based_on: str | None = None
     context_limit: int | None = Field(None, gt=0)
 
 
@@ -107,15 +107,15 @@ class ModelsConfig(BaseModel):
             overrides: dict[str, Any] = {}
             # From active model config
             if self.active:
-                if self.active.alias:
-                    overrides["alias"] = self.active.alias
+                if self.active.based_on:
+                    overrides["based_on"] = self.active.based_on
                 if self.active.context_limit is not None:
                     overrides["context_limit"] = self.active.context_limit
             # From custom_config (higher priority for custom models)
             if name in self.pool.custom_config:
                 cc = self.pool.custom_config[name]
-                if cc.alias:
-                    overrides["alias"] = cc.alias
+                if cc.based_on:
+                    overrides["based_on"] = cc.based_on
                 if cc.context_limit is not None:
                     overrides["context_limit"] = cc.context_limit
             return name, overrides
@@ -136,13 +136,13 @@ class ModelsConfig(BaseModel):
         resolved = spec.model
         if resolved in self.pool.custom_config:
             cc = self.pool.custom_config[resolved]
-            if cc.alias:
-                kwargs["alias"] = cc.alias
+            if cc.based_on:
+                kwargs["based_on"] = cc.based_on
             if cc.context_limit is not None:
                 kwargs["context_limit"] = cc.context_limit
         # Mapping-level overrides (higher priority)
-        if spec.alias:
-            kwargs["alias"] = spec.alias
+        if spec.based_on:
+            kwargs["based_on"] = spec.based_on
         if spec.context_limit is not None:
             kwargs["context_limit"] = spec.context_limit
         return resolved, kwargs

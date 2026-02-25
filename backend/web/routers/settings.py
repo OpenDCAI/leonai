@@ -337,7 +337,7 @@ async def toggle_model(request: ModelToggleRequest) -> dict[str, Any]:
 class CustomModelRequest(BaseModel):
     model_id: str
     provider: str
-    alias: str | None = None
+    based_on: str | None = None
     context_limit: int | None = None
 
 
@@ -357,12 +357,12 @@ async def add_custom_model(request: CustomModelRequest) -> dict[str, Any]:
     custom_providers = pool.setdefault("custom_providers", {})
     custom_providers[request.model_id] = request.provider
 
-    # Store alias/context_limit in custom_config
-    if request.alias or request.context_limit:
+    # Store based_on/context_limit in custom_config
+    if request.based_on or request.context_limit:
         custom_config = pool.setdefault("custom_config", {})
         cfg: dict[str, Any] = custom_config.get(request.model_id, {})
-        if request.alias:
-            cfg["alias"] = request.alias
+        if request.based_on:
+            cfg["based_on"] = request.based_on
         if request.context_limit:
             cfg["context_limit"] = request.context_limit
         custom_config[request.model_id] = cfg
@@ -455,19 +455,19 @@ async def remove_custom_model(model_id: str = Query(...)) -> dict[str, Any]:
 
 class CustomModelConfigRequest(BaseModel):
     model_id: str
-    alias: str | None = None
+    based_on: str | None = None
     context_limit: int | None = None
 
 
 @router.post("/models/custom/config")
 async def update_custom_model_config(request: CustomModelConfigRequest) -> dict[str, Any]:
-    """Update alias/context_limit for a custom model."""
+    """Update based_on/context_limit for a custom model."""
     data = load_models()
     pool = data.setdefault("pool", {})
     custom_config = pool.setdefault("custom_config", {})
     cfg: dict[str, Any] = {}
-    if request.alias is not None:
-        cfg["alias"] = request.alias or None
+    if request.based_on is not None:
+        cfg["based_on"] = request.based_on or None
     if request.context_limit is not None:
         cfg["context_limit"] = request.context_limit or None
     custom_config[request.model_id] = cfg

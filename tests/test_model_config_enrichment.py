@@ -1,4 +1,4 @@
-"""Tests for model config enrichment (alias + context_limit)."""
+"""Tests for model config enrichment (based_on + context_limit)."""
 
 import pytest
 from pydantic import ValidationError
@@ -14,21 +14,21 @@ DEFAULT_LIMIT = 128000
 
 
 class TestModelSpecFields:
-    """ModelSpec 和 ActiveModel 支持 alias + context_limit 字段"""
+    """ModelSpec 和 ActiveModel 支持 based_on + context_limit 字段"""
 
-    def test_model_spec_accepts_alias_and_context_limit(self):
-        spec = ModelSpec(model="Alice", alias="claude-sonnet-4.5", context_limit=32768)
-        assert spec.alias == "claude-sonnet-4.5"
+    def test_model_spec_accepts_based_on_and_context_limit(self):
+        spec = ModelSpec(model="Alice", based_on="claude-sonnet-4.5", context_limit=32768)
+        assert spec.based_on == "claude-sonnet-4.5"
         assert spec.context_limit == 32768
 
     def test_model_spec_defaults_none(self):
         spec = ModelSpec(model="Alice")
-        assert spec.alias is None
+        assert spec.based_on is None
         assert spec.context_limit is None
 
-    def test_active_model_accepts_alias_and_context_limit(self):
-        active = ActiveModel(model="Alice", alias="claude-sonnet-4.5", context_limit=32768)
-        assert active.alias == "claude-sonnet-4.5"
+    def test_active_model_accepts_based_on_and_context_limit(self):
+        active = ActiveModel(model="Alice", based_on="claude-sonnet-4.5", context_limit=32768)
+        assert active.based_on == "claude-sonnet-4.5"
         assert active.context_limit == 32768
 
     def test_context_limit_rejects_zero_or_negative(self):
@@ -39,15 +39,15 @@ class TestModelSpecFields:
 
 
 class TestResolveModelOverrides:
-    """resolve_model 把 alias/context_limit 放入 overrides"""
+    """resolve_model 把 based_on/context_limit 放入 overrides"""
 
-    def test_virtual_model_passes_alias(self):
+    def test_virtual_model_passes_based_on(self):
         config = ModelsConfig(mapping={
-            "leon:custom": ModelSpec(model="Alice", alias="claude-sonnet-4.5")
+            "leon:custom": ModelSpec(model="Alice", based_on="claude-sonnet-4.5")
         })
         name, overrides = config.resolve_model("leon:custom")
         assert name == "Alice"
-        assert overrides["alias"] == "claude-sonnet-4.5"
+        assert overrides["based_on"] == "claude-sonnet-4.5"
 
     def test_virtual_model_passes_context_limit(self):
         config = ModelsConfig(mapping={
@@ -58,11 +58,11 @@ class TestResolveModelOverrides:
 
     def test_non_virtual_model_passes_active_overrides(self):
         config = ModelsConfig(active=ActiveModel(
-            model="Alice", alias="claude-sonnet-4.5", context_limit=32768
+            model="Alice", based_on="claude-sonnet-4.5", context_limit=32768
         ))
         name, overrides = config.resolve_model("Alice")
         assert name == "Alice"
-        assert overrides["alias"] == "claude-sonnet-4.5"
+        assert overrides["based_on"] == "claude-sonnet-4.5"
         assert overrides["context_limit"] == 32768
 
     def test_non_virtual_no_active_returns_empty(self):
@@ -71,7 +71,7 @@ class TestResolveModelOverrides:
         assert name == "Alice"
         assert overrides == {}
 
-    def test_non_virtual_active_no_alias_no_context_returns_empty(self):
+    def test_non_virtual_active_no_based_on_no_context_returns_empty(self):
         config = ModelsConfig(active=ActiveModel(model="Alice"))
         name, overrides = config.resolve_model("Alice")
         assert overrides == {}
@@ -82,39 +82,39 @@ class TestResolveModelOverrides:
             mapping={"leon:medium": ModelSpec(model="Day53")},
             pool=PoolConfig(
                 custom=["Day53"],
-                custom_config={"Day53": CustomModelConfig(alias="deepseek-chat", context_limit=65536)},
+                custom_config={"Day53": CustomModelConfig(based_on="deepseek-chat", context_limit=65536)},
             ),
         )
         name, overrides = config.resolve_model("leon:medium")
         assert name == "Day53"
-        assert overrides["alias"] == "deepseek-chat"
+        assert overrides["based_on"] == "deepseek-chat"
         assert overrides["context_limit"] == 65536
 
     def test_virtual_model_mapping_overrides_custom_config(self):
-        """mapping 级别的 alias/context_limit 优先于 custom_config"""
+        """mapping 级别的 based_on/context_limit 优先于 custom_config"""
         config = ModelsConfig(
-            mapping={"leon:medium": ModelSpec(model="Day53", alias="gpt-4o", context_limit=128000)},
+            mapping={"leon:medium": ModelSpec(model="Day53", based_on="gpt-4o", context_limit=128000)},
             pool=PoolConfig(
-                custom_config={"Day53": CustomModelConfig(alias="deepseek-chat", context_limit=65536)},
+                custom_config={"Day53": CustomModelConfig(based_on="deepseek-chat", context_limit=65536)},
             ),
         )
         name, overrides = config.resolve_model("leon:medium")
-        assert overrides["alias"] == "gpt-4o"
+        assert overrides["based_on"] == "gpt-4o"
         assert overrides["context_limit"] == 128000
 
 
 class TestMonitorUpdateModel:
-    """update_model 用 alias 查找 pricing 和 context_limit"""
+    """update_model 用 based_on 查找 pricing 和 context_limit"""
 
-    def test_update_model_with_alias(self):
+    def test_update_model_with_based_on(self):
         mw = MonitorMiddleware(model_name="claude-sonnet-4.5")
-        mw.update_model("Alice", overrides={"alias": "claude-sonnet-4.5"})
+        mw.update_model("Alice", overrides={"based_on": "claude-sonnet-4.5"})
         assert mw._context_monitor.context_limit == SONNET_LIMIT
 
     def test_update_model_with_explicit_context_limit(self):
         mw = MonitorMiddleware(model_name="claude-sonnet-4.5")
         mw.update_model("Alice", overrides={
-            "alias": "claude-sonnet-4.5",
+            "based_on": "claude-sonnet-4.5",
             "context_limit": 32768,
         })
         assert mw._context_monitor.context_limit == 32768
@@ -124,14 +124,14 @@ class TestMonitorUpdateModel:
         mw.update_model("claude-sonnet-4.5")
         assert mw._context_monitor.context_limit == SONNET_LIMIT
 
-    def test_update_model_unknown_no_alias_gets_default(self):
+    def test_update_model_unknown_no_based_on_gets_default(self):
         mw = MonitorMiddleware(model_name="claude-sonnet-4.5")
         mw.update_model("totally-unknown-model")
         assert mw._context_monitor.context_limit == DEFAULT_LIMIT
 
-    def test_update_model_alias_affects_cost_calculator(self):
+    def test_update_model_based_on_affects_cost_calculator(self):
         mw = MonitorMiddleware(model_name="claude-sonnet-4.5")
-        mw.update_model("Alice", overrides={"alias": "claude-sonnet-4.5"})
+        mw.update_model("Alice", overrides={"based_on": "claude-sonnet-4.5"})
         assert mw._token_monitor.cost_calculator.costs != {}
 
 
@@ -141,17 +141,17 @@ class TestThreeLevelPriority:
     def test_user_context_limit_overrides_lookup(self):
         mw = MonitorMiddleware(model_name="claude-sonnet-4.5")
         mw.update_model("Alice", overrides={
-            "alias": "claude-sonnet-4.5",
+            "based_on": "claude-sonnet-4.5",
             "context_limit": 32768,
         })
         assert mw._context_monitor.context_limit == 32768
 
-    def test_alias_lookup_overrides_default(self):
+    def test_based_on_lookup_overrides_default(self):
         mw = MonitorMiddleware(model_name="gpt-4o")
-        mw.update_model("MyModel", overrides={"alias": "claude-sonnet-4.5"})
+        mw.update_model("MyModel", overrides={"based_on": "claude-sonnet-4.5"})
         assert mw._context_monitor.context_limit == SONNET_LIMIT
 
-    def test_no_alias_no_user_config_falls_to_default(self):
+    def test_no_based_on_no_user_config_falls_to_default(self):
         mw = MonitorMiddleware(model_name="gpt-4o")
         mw.update_model("totally-unknown")
         assert mw._context_monitor.context_limit == DEFAULT_LIMIT
