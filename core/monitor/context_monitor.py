@@ -39,14 +39,15 @@ class ContextMonitor(BaseMonitor):
             self.message_count = self._last_request_messages + new_messages
 
             # 从 usage_metadata 取真实 input_tokens（含 system + tools + messages）
+            # input_tokens 在 LangChain 中对所有 provider 都是总量（含缓存），
+            # 不需要额外加 cache_read / cache_write（否则会双重计算）
             for msg in reversed(messages):
                 usage = getattr(msg, "usage_metadata", None)
                 if usage:
                     input_tokens = usage.get("input_tokens", 0) or 0
-                    cache_read = (usage.get("input_token_details") or {}).get("cache_read", 0) or 0
-                    cache_write = (usage.get("input_token_details") or {}).get("cache_creation", 0) or 0
-                    self.estimated_tokens = input_tokens + cache_read + cache_write
-                    return
+                    if input_tokens > 0:
+                        self.estimated_tokens = input_tokens
+                        return
 
     def _estimate_tokens(self, messages: list) -> int:
         """估算消息的 token 数
