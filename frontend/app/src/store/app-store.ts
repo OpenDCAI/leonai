@@ -67,7 +67,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
   librarySkills: [],
   libraryMcps: [],
   libraryAgents: [],
-  userProfile: { name: "用户名", initials: "YZ", email: "user@example.com" },
+  userProfile: { name: "User", initials: "U", email: "" },
   loaded: false,
   error: null,
 
