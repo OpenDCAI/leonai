@@ -5,6 +5,7 @@ import ModelPoolSection from "../components/ModelPoolSection";
 import ObservationSection from "../components/ObservationSection";
 import ProvidersSection from "../components/ProvidersSection";
 import SandboxSection from "../components/SandboxSection";
+import WorkspaceSection from "../components/WorkspaceSection";
 
 interface AvailableModelsData {
   models: Array<{
@@ -82,11 +83,11 @@ export default function SettingsPage() {
     void loadData();
   }, [loadData]);
 
-  const handleAddCustomModel = async (modelId: string, provider?: string, basedOn?: string, contextLimit?: number) => {
+  const handleAddCustomModel = async (modelId: string, provider: string, basedOn?: string, contextLimit?: number) => {
     const res = await fetch("/api/settings/models/custom", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model_id: modelId, provider: provider || null, based_on: basedOn || null, context_limit: contextLimit || null }),
+      body: JSON.stringify({ model_id: modelId, provider, based_on: basedOn || null, context_limit: contextLimit || null }),
     });
     const data = await res.json();
     if (data.success) {
@@ -244,12 +245,18 @@ export default function SettingsPage() {
           )}
 
           {tab === "sandbox" && (
-            <SandboxSection
-              sandboxes={sandboxes}
-              onUpdate={(name, config) => {
-                setSandboxes({ ...sandboxes, [name]: config });
-              }}
-            />
+            <>
+              <WorkspaceSection
+                defaultWorkspace={settings.default_workspace}
+                onUpdate={(ws) => setSettings({ ...settings, default_workspace: ws })}
+              />
+              <SandboxSection
+                sandboxes={sandboxes}
+                onUpdate={(name, config) => {
+                  setSandboxes({ ...sandboxes, [name]: config });
+                }}
+              />
+            </>
           )}
 
           {tab === "observation" && (
