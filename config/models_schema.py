@@ -32,6 +32,8 @@ class ModelSpec(BaseModel):
     temperature: float | None = Field(None, ge=0.0, le=2.0)
     max_tokens: int | None = Field(None, gt=0)
     description: str | None = None
+    alias: str | None = None
+    context_limit: int | None = Field(None, gt=0)
 
 
 class ActiveModel(BaseModel):
@@ -39,6 +41,8 @@ class ActiveModel(BaseModel):
 
     model: str = "claude-sonnet-4-5-20250929"
     provider: str | None = None
+    alias: str | None = None
+    context_limit: int | None = Field(None, gt=0)
 
 
 class PoolConfig(BaseModel):
@@ -92,6 +96,14 @@ class ModelsConfig(BaseModel):
             ValueError: If virtual model name not found in mapping
         """
         if not name.startswith("leon:"):
+            # Non-virtual: pass active model's alias/context_limit if set
+            if self.active:
+                overrides: dict[str, Any] = {}
+                if self.active.alias:
+                    overrides["alias"] = self.active.alias
+                if self.active.context_limit is not None:
+                    overrides["context_limit"] = self.active.context_limit
+                return name, overrides
             return name, {}
 
         if name not in self.mapping:
@@ -106,6 +118,10 @@ class ModelsConfig(BaseModel):
             kwargs["temperature"] = spec.temperature
         if spec.max_tokens is not None:
             kwargs["max_tokens"] = spec.max_tokens
+        if spec.alias:
+            kwargs["alias"] = spec.alias
+        if spec.context_limit is not None:
+            kwargs["context_limit"] = spec.context_limit
         return spec.model, kwargs
 
     def get_provider(self, name: str) -> ProviderConfig | None:
