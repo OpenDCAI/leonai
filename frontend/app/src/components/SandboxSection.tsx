@@ -108,6 +108,8 @@ export default function SandboxSection({ sandboxes, onUpdate }: SandboxSectionPr
     const showKeyId = `${configName}-${field.key}`;
     const isSecret = field.type === "password";
     const showKey = showKeys[showKeyId] || false;
+    // @@@masked-secret-input-guard - keep masked secrets non-editable to avoid persisting placeholder asterisks as real credentials
+    const isMaskedSecret = isSecret && !showKey && value.length > 0;
 
     if (field.type === "select") {
       return (
@@ -127,9 +129,14 @@ export default function SandboxSection({ sandboxes, onUpdate }: SandboxSectionPr
       <div className="relative flex-1 min-w-0">
         <input
           type={isSecret && !showKey ? "password" : "text"}
-          value={isSecret && !showKey ? maskValue(value) : value}
-          onChange={(e) => void handleSave(configName, setNestedValue(config, field, e.target.value))}
+          value={isMaskedSecret ? maskValue(value) : value}
+          readOnly={isMaskedSecret}
+          onChange={(e) => {
+            if (isMaskedSecret) return;
+            void handleSave(configName, setNestedValue(config, field, e.target.value));
+          }}
           placeholder={field.placeholder}
+          title={isMaskedSecret ? "Click the eye icon to edit" : undefined}
           className="w-full px-2 py-1 pr-7 border border-[#e2e8f0] rounded text-xs text-[#1e293b] bg-[#f8fafc] font-mono focus:outline-none focus:border-[#0ea5e9] transition-colors"
         />
         {isSecret && value && (

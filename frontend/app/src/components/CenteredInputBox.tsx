@@ -139,11 +139,12 @@ export default function CenteredInputBox({
             }
           }}
           placeholder="告诉 Leon 你需要什么帮助..."
-          className="w-full bg-transparent text-base resize-none outline-none border-none text-[#171717] placeholder:text-[#a3a3a3] mb-4"
+          className="w-full bg-transparent text-base resize-none outline-none border-none text-[#171717] placeholder:text-[#a3a3a3] mb-2"
           rows={6}
           disabled={sending}
           style={{ boxShadow: "none" }}
         />
+        <p className="text-[11px] text-[#a3a3a3] mb-4">Enter 发送，Shift + Enter 换行</p>
 
         <div className="flex items-center gap-2">
           <Select value={sandbox} onValueChange={setSandbox}>
