@@ -1014,32 +1014,6 @@ function SessionDetailPage() {
         <div><strong>Last Active:</strong> {data.info.last_active_ago}</div>
         <div><strong>Ended:</strong> {data.info.ended_ago || '-'}</div>
       </section>
-
-      <section>
-        <h2>{data.commands.title} ({data.commands.count})</h2>
-        <table>
-          <thead>
-            <tr>
-              <th>Status</th>
-              <th>Command</th>
-              <th>CWD</th>
-              <th>Created</th>
-              <th>Exit</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data.commands.items.map((c: any) => (
-              <tr key={c.command_id}>
-                <td>{c.status}</td>
-                <td className="mono">{c.command_line}</td>
-                <td className="mono">{c.cwd}</td>
-                <td>{c.created_ago}</td>
-                <td>{c.exit_code ?? '-'}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </section>
     </div>
   );
 }
