@@ -22,7 +22,7 @@ interface AvailableModelsData {
 }
 
 interface Settings {
-  model_mapping: Record<string, string>;
+  model_mapping: Record<string, { model: string; alias?: string | null; context_limit?: number | null }>;
   enabled_models: string[];
   providers: Record<string, { api_key: string | null; base_url: string | null }>;
   default_workspace: string | null;

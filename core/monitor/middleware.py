@@ -67,10 +67,14 @@ class MonitorMiddleware(AgentMiddleware):
         """添加自定义 Monitor"""
         self._monitors.append(monitor)
 
-    def update_model(self, model_name: str) -> None:
+    def update_model(self, model_name: str, overrides: dict | None = None) -> None:
         """更新 cost calculator 和 context_limit（不重建 middleware）"""
-        self._token_monitor.cost_calculator = CostCalculator(model_name)
-        self._context_monitor.context_limit = get_model_context_limit(model_name)
+        overrides = overrides or {}
+        lookup_name = overrides.get("alias") or model_name
+        self._token_monitor.cost_calculator = CostCalculator(lookup_name)
+        self._context_monitor.context_limit = (
+            overrides.get("context_limit") or get_model_context_limit(lookup_name)
+        )
 
     def mark_ready(self) -> None:
         """标记 Agent 就绪（初始化完成后调用）"""

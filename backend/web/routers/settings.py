@@ -102,7 +102,7 @@ class UserSettings(BaseModel):
     default_workspace: str | None = None
     recent_workspaces: list[str] = []
     default_model: str = "leon:large"
-    model_mapping: dict[str, str] = {}
+    model_mapping: dict[str, dict[str, Any]] = {}
     enabled_models: list[str] = []
     custom_models: list[str] = []
     providers: dict[str, ProviderConfig] = {}
@@ -115,7 +115,10 @@ async def get_settings() -> UserSettings:
     models = load_merged_models()
 
     # Build compat view
-    mapping = {k: v.model for k, v in models.mapping.items()}
+    mapping = {
+        k: {"model": v.model, "alias": v.alias, "context_limit": v.context_limit}
+        for k, v in models.mapping.items()
+    }
     providers = {k: ProviderConfig(api_key=v.api_key, base_url=v.base_url) for k, v in models.providers.items()}
 
     return UserSettings(
@@ -283,20 +286,20 @@ async def get_available_models() -> dict[str, Any]:
 
 
 class ModelMappingRequest(BaseModel):
-    mapping: dict[str, str]
+    mapping: dict[str, dict[str, Any]]
 
 
 @router.post("/model-mapping")
 async def update_model_mapping(request: ModelMappingRequest) -> dict[str, Any]:
     """Update virtual model mapping → models.json."""
     data = load_models()
-    # Convert simple {name: model} to ModelSpec format
     mapping = data.get("mapping", {})
-    for name, model_id in request.mapping.items():
-        if name in mapping and isinstance(mapping[name], dict):
-            mapping[name]["model"] = model_id
-        else:
-            mapping[name] = {"model": model_id}
+    for name, spec in request.mapping.items():
+        if isinstance(spec, dict):
+            if name in mapping and isinstance(mapping[name], dict):
+                mapping[name].update(spec)
+            else:
+                mapping[name] = spec
     data["mapping"] = mapping
     save_models(data)
     return {"success": True, "model_mapping": request.mapping}

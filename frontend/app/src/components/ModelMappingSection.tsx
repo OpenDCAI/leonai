@@ -12,12 +12,18 @@ interface Model {
   name: string;
 }
 
+interface ModelMappingValue {
+  model: string;
+  alias?: string | null;
+  context_limit?: number | null;
+}
+
 interface ModelMappingSectionProps {
   virtualModels: VirtualModel[];
   availableModels: Model[];
-  modelMapping: Record<string, string>;
+  modelMapping: Record<string, ModelMappingValue>;
   enabledModels: string[];
-  onUpdate: (mapping: Record<string, string>) => void;
+  onUpdate: (mapping: Record<string, ModelMappingValue>) => void;
 }
 
 export default function ModelMappingSection({
@@ -30,10 +36,8 @@ export default function ModelMappingSection({
   const [saving, setSaving] = useState(false);
   const [successMessage, setSuccessMessage] = useState(false);
 
-  const handleMappingChange = async (virtualId: string, modelId: string) => {
-    const newMapping = { ...modelMapping, [virtualId]: modelId };
+  const saveMapping = async (newMapping: Record<string, ModelMappingValue>) => {
     onUpdate(newMapping);
-
     setSaving(true);
     try {
       await fetch("/api/settings/model-mapping", {
@@ -41,8 +45,6 @@ export default function ModelMappingSection({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ mapping: newMapping }),
       });
-
-      // Show success feedback
       setSuccessMessage(true);
       setTimeout(() => setSuccessMessage(false), 2000);
     } catch (error) {
@@ -50,6 +52,19 @@ export default function ModelMappingSection({
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleMappingChange = async (virtualId: string, modelId: string) => {
+    const prev = modelMapping[virtualId] || { model: "" };
+    const newMapping = { ...modelMapping, [virtualId]: { ...prev, model: modelId } };
+    await saveMapping(newMapping);
+  };
+
+  const handleFieldChange = async (virtualId: string, field: "alias" | "context_limit", value: string) => {
+    const prev = modelMapping[virtualId] || { model: "" };
+    const parsed = field === "context_limit" ? (value ? Number(value) : null) : (value || null);
+    const newMapping = { ...modelMapping, [virtualId]: { ...prev, [field]: parsed } };
+    await saveMapping(newMapping);
   };
 
   const enabledModelsList = availableModels.filter((m) => enabledModels.includes(m.id));
@@ -80,7 +95,8 @@ export default function ModelMappingSection({
       {/* Virtual models grid */}
       <div className="grid grid-cols-2 gap-4">
         {virtualModels.map((vm, index) => {
-          const currentModel = modelMapping[vm.id] || "";
+          const entry = modelMapping[vm.id] || { model: "" };
+          const currentModel = entry.model || "";
           return (
             <div
               key={vm.id}
@@ -121,6 +137,31 @@ export default function ModelMappingSection({
                     </option>
                   ))}
                 </select>
+                <div className="relative flex gap-2 mt-2">
+                  <input
+                    type="text"
+                    placeholder="alias (e.g. claude-sonnet-4.5)"
+                    value={entry.alias || ""}
+                    onBlur={(e) => void handleFieldChange(vm.id, "alias", e.target.value)}
+                    onChange={(e) => {
+                      const newMapping = { ...modelMapping, [vm.id]: { ...entry, alias: e.target.value || null } };
+                      onUpdate(newMapping);
+                    }}
+                    className="flex-1 px-2 py-1.5 border border-[#e2e8f0] rounded-lg text-xs text-[#475569] bg-[#f8fafc] font-mono placeholder:text-[#cbd5e1] hover:border-[#0ea5e9] focus:outline-none focus:border-[#0ea5e9] focus:ring-1 focus:ring-[#0ea5e9]/20 transition-all duration-200"
+                  />
+                  <input
+                    type="number"
+                    placeholder="context limit"
+                    value={entry.context_limit ?? ""}
+                    onBlur={(e) => void handleFieldChange(vm.id, "context_limit", e.target.value)}
+                    onChange={(e) => {
+                      const val = e.target.value ? Number(e.target.value) : null;
+                      const newMapping = { ...modelMapping, [vm.id]: { ...entry, context_limit: val } };
+                      onUpdate(newMapping);
+                    }}
+                    className="w-28 px-2 py-1.5 border border-[#e2e8f0] rounded-lg text-xs text-[#475569] bg-[#f8fafc] font-mono placeholder:text-[#cbd5e1] hover:border-[#0ea5e9] focus:outline-none focus:border-[#0ea5e9] focus:ring-1 focus:ring-[#0ea5e9]/20 transition-all duration-200"
+                  />
+                </div>
               )}
             </div>
           );

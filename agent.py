@@ -567,12 +567,15 @@ class LeonAgent:
 
         # Update monitor (cost calculator + context_limit)
         if hasattr(self, "_monitor_middleware"):
-            self._monitor_middleware.update_model(resolved_model)
+            self._monitor_middleware.update_model(resolved_model, overrides=model_overrides)
 
         # Update memory middleware context_limit
         if hasattr(self, "_memory_middleware"):
             from core.monitor.cost import get_model_context_limit
-            self._memory_middleware.set_context_limit(get_model_context_limit(resolved_model))
+            lookup_name = model_overrides.get("alias") or resolved_model
+            self._memory_middleware.set_context_limit(
+                model_overrides.get("context_limit") or get_model_context_limit(lookup_name)
+            )
 
         # Update task middleware references
         if hasattr(self, "_task_middleware"):
