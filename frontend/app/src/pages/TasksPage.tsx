@@ -32,7 +32,7 @@ type ViewMode = "table" | "board";
 export default function Tasks() {
   const isMobile = useIsMobile();
   const tasks = useAppStore((s) => s.taskList);
-  const staffList = useAppStore((s) => s.staffList);
+  const memberList = useAppStore((s) => s.memberList);
   const loadAll = useAppStore((s) => s.loadAll);
   const error = useAppStore((s) => s.error);
   const retry = useAppStore((s) => s.retry);
@@ -57,10 +57,10 @@ export default function Tasks() {
   // Editing state for the panel
   const [editForm, setEditForm] = useState<Task | null>(null);
 
-  // Helper: resolve assignee name/avatar from staffList
+  // Helper: resolve assignee name/avatar from memberList
   const getAssigneeInfo = (assigneeId: string) => {
-    const staff = staffList.find((s) => s.id === assigneeId);
-    const name = staff?.name || "";
+    const member = memberList.find((s) => s.id === assigneeId);
+    const name = member?.name || "";
     const avatar = name.split(" ").map((w) => w[0]).join("").slice(0, 2);
     return { name, avatar };
   };
@@ -288,7 +288,7 @@ export default function Tasks() {
             className="w-full px-3 py-2 rounded-lg bg-card border border-border text-sm text-foreground outline-none focus:border-primary/40 transition-colors"
           >
             <option value="">未分配</option>
-            {staffList.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            {memberList.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
         </div>
         {/* Deadline */}

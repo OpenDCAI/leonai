@@ -16,20 +16,20 @@ interface Props {
   onOpenChange: (open: boolean) => void;
 }
 
-export default function CreateStaffDialog({ open, onOpenChange }: Props) {
+export default function CreateMemberDialog({ open, onOpenChange }: Props) {
   const navigate = useNavigate();
-  const addStaff = useAppStore(s => s.addStaff);
+  const addMember = useAppStore(s => s.addMember);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
 
   const handleCreate = async () => {
     if (!name.trim()) return;
     try {
-      const staff = await addStaff(name.trim(), description.trim());
+      const member = await addMember(name.trim(), description.trim());
       onOpenChange(false);
       setName("");
       setDescription("");
-      navigate(`/staff/${staff.id}`);
+      navigate(`/members/${member.id}`);
     } catch (e) {
       toast.error("创建失败，请重试");
     }
@@ -44,8 +44,8 @@ export default function CreateStaffDialog({ open, onOpenChange }: Props) {
               <Bot className="w-4.5 h-4.5 text-primary" />
             </div>
             <div>
-              <DialogTitle className="text-base">创建新员工</DialogTitle>
-              <DialogDescription className="text-xs mt-0.5">定义一名新的 AI 员工</DialogDescription>
+              <DialogTitle className="text-base">创建新成员</DialogTitle>
+              <DialogDescription className="text-xs mt-0.5">定义一名新的 AI 成员</DialogDescription>
             </div>
           </div>
         </DialogHeader>
@@ -56,7 +56,7 @@ export default function CreateStaffDialog({ open, onOpenChange }: Props) {
           </div>
           <div className="space-y-2">
             <Label htmlFor="desc" className="text-sm">描述 <span className="text-muted-foreground text-xs">（可选）</span></Label>
-            <Textarea id="desc" placeholder="简要描述这名员工的职责..." value={description} onChange={(e) => setDescription(e.target.value)} rows={3} />
+            <Textarea id="desc" placeholder="简要描述这名成员的职责..." value={description} onChange={(e) => setDescription(e.target.value)} rows={3} />
           </div>
         </div>
         <DialogFooter>

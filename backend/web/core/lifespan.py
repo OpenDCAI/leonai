@@ -23,9 +23,9 @@ async def lifespan(app: FastAPI):
 
     init_event_store()
 
-    from backend.web.services.panel_service import init_panel_tables
+    from backend.web.services.panel_service import ensure_directories
 
-    init_panel_tables()
+    ensure_directories()
 
     # Initialize app state
     app.state.agent_pool: dict[str, Any] = {}

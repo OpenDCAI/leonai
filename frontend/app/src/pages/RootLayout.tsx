@@ -2,14 +2,14 @@ import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { MessageSquare, Users, ListTodo, Library, Settings, Plus, ChevronLeft, ChevronRight } from "lucide-react";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import CreateStaffDialog from "@/components/CreateStaffDialog";
+import CreateMemberDialog from "@/components/CreateMemberDialog";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useAppStore } from "@/store/app-store";
 import { toast } from "sonner";
 
 const navItems = [
   { to: "/chat", icon: MessageSquare, label: "消息" },
-  { to: "/staff", icon: Users, label: "员工" },
+  { to: "/members", icon: Users, label: "成员" },
   { to: "/tasks", icon: ListTodo, label: "任务" },
   { to: "/library", icon: Library, label: "能力库" },
 ];
@@ -19,7 +19,7 @@ export default function RootLayout() {
   const navigate = useNavigate();
   const isMobile = useIsMobile();
   const [showCreate, setShowCreate] = useState(false);
-  const [createStaffOpen, setCreateStaffOpen] = useState(false);
+  const [createMemberOpen, setCreateMemberOpen] = useState(false);
 
   const userProfile = useAppStore((s) => s.userProfile);
   const loadAll = useAppStore((s) => s.loadAll);
@@ -53,7 +53,7 @@ export default function RootLayout() {
   const handleCreateAction = useCallback(async (action: string) => {
     setShowCreate(false);
     switch (action) {
-      case "staff": setCreateStaffOpen(true); break;
+      case "staff": setCreateMemberOpen(true); break;
       case "chat": navigate("/chat"); break;
       case "task":
         try {
@@ -169,7 +169,7 @@ export default function RootLayout() {
           })}
         </nav>
 
-        <CreateStaffDialog open={createStaffOpen} onOpenChange={setCreateStaffOpen} />
+        <CreateMemberDialog open={createMemberOpen} onOpenChange={setCreateMemberOpen} />
       </div>
     );
   }
@@ -249,7 +249,7 @@ export default function RootLayout() {
       </div>
 
       <main className="flex-1 overflow-hidden"><Outlet /></main>
-      <CreateStaffDialog open={createStaffOpen} onOpenChange={setCreateStaffOpen} />
+      <CreateMemberDialog open={createMemberOpen} onOpenChange={setCreateMemberOpen} />
     </div>
   );
 }
@@ -286,7 +286,7 @@ function CreateDropdown({
         style={{ top: pos.top, left: pos.left }}
       >
         <button onClick={() => onAction("staff")} className="w-full px-3 py-2 text-left text-sm text-foreground hover:bg-muted transition-colors flex items-center gap-2.5">
-          <Users className="w-3.5 h-3.5 text-muted-foreground" /> 新建员工
+          <Users className="w-3.5 h-3.5 text-muted-foreground" /> 新建成员
         </button>
         <button onClick={() => onAction("chat")} className="w-full px-3 py-2 text-left text-sm text-foreground hover:bg-muted transition-colors flex items-center gap-2.5">
           <MessageSquare className="w-3.5 h-3.5 text-muted-foreground" /> 新建对话

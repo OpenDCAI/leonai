@@ -37,7 +37,7 @@ export default function AgentTemplateDetail({ agent, onClose }: Props) {
             <Tag className="w-3.5 h-3.5" /> 分类: <span className="text-foreground">{agent.category}</span>
           </div>
           <div className="flex items-center gap-2 text-muted-foreground">
-            <Users className="w-3.5 h-3.5" /> 引用: <span className="text-foreground">{usedBy} 位员工</span>
+            <Users className="w-3.5 h-3.5" /> 引用: <span className="text-foreground">{usedBy} 位成员</span>
           </div>
           <div className="flex items-center gap-2 text-muted-foreground">
             <Calendar className="w-3.5 h-3.5" /> 更新于 {updatedText}
@@ -46,7 +46,7 @@ export default function AgentTemplateDetail({ agent, onClose }: Props) {
         <div className="pt-2 border-t border-border">
           <p className="text-xs font-medium text-foreground mb-2">模板说明</p>
           <p className="text-xs text-muted-foreground leading-relaxed">
-            此 Agent 模板可被员工引用，作为子代理或能力来源。模板定义了基础 Prompt、默认工具集和行为规则。
+            此 Agent 模板可被成员引用，作为子代理或能力来源。模板定义了基础 Prompt、默认工具集和行为规则。
           </p>
         </div>
       </div>

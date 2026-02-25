@@ -53,7 +53,7 @@ export default function SkillDetail({ skill, onClose }: Props) {
           <p className="text-sm text-muted-foreground">{skill.desc}</p>
           <div className="flex items-center gap-4 mt-3 text-xs text-muted-foreground">
             <span className="flex items-center gap-1"><Tag className="w-3 h-3" /> {skill.category}</span>
-            <span className="flex items-center gap-1"><Users className="w-3 h-3" /> {usedBy} 位员工使用</span>
+            <span className="flex items-center gap-1"><Users className="w-3 h-3" /> {usedBy} 位成员使用</span>
             <span className="flex items-center gap-1"><Calendar className="w-3 h-3" /> {updatedText}</span>
           </div>
         </div>

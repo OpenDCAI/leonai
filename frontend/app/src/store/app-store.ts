@@ -1,14 +1,14 @@
 import { create } from "zustand";
 import type {
-  Staff, Task, ResourceItem, UserProfile,
-  StaffConfig, TaskStatus, Priority,
+  Member, Task, ResourceItem, UserProfile,
+  MemberConfig, TaskStatus, Priority,
 } from "./types";
 
 const API = "/api/panel";
 
 interface AppState {
   // ── Data ──
-  staffList: Staff[];
+  memberList: Member[];
   taskList: Task[];
   librarySkills: ResourceItem[];
   libraryMcps: ResourceItem[];
@@ -21,14 +21,14 @@ interface AppState {
   loadAll: () => Promise<void>;
   retry: () => Promise<void>;
 
-  // ── Staff ──
-  fetchStaff: () => Promise<void>;
-  addStaff: (name: string, description?: string) => Promise<Staff>;
-  updateStaff: (id: string, fields: Partial<Staff>) => Promise<void>;
-  updateStaffConfig: (id: string, patch: Partial<StaffConfig>) => Promise<void>;
-  publishStaff: (id: string, bumpType: string) => Promise<Staff>;
-  deleteStaff: (id: string) => Promise<void>;
-  getStaffById: (id: string) => Staff | undefined;
+  // ── Members ──
+  fetchMembers: () => Promise<void>;
+  addMember: (name: string, description?: string) => Promise<Member>;
+  updateMember: (id: string, fields: Partial<Member>) => Promise<void>;
+  updateMemberConfig: (id: string, patch: Partial<MemberConfig>) => Promise<void>;
+  publishMember: (id: string, bumpType: string) => Promise<Member>;
+  deleteMember: (id: string) => Promise<void>;
+  getMemberById: (id: string) => Member | undefined;
 
   // ── Tasks ──
   fetchTasks: () => Promise<void>;
@@ -48,7 +48,7 @@ interface AppState {
   updateProfile: (fields: Partial<UserProfile>) => Promise<void>;
 
   // ── Helpers ──
-  getStaffNames: () => { id: string; name: string }[];
+  getMemberNames: () => { id: string; name: string }[];
   getResourceUsedBy: (type: string, name: string) => number;
 }
 
@@ -62,7 +62,7 @@ async function api<T = unknown>(path: string, opts?: RequestInit): Promise<T> {
 }
 
 export const useAppStore = create<AppState>()((set, get) => ({
-  staffList: [],
+  memberList: [],
   taskList: [],
   librarySkills: [],
   libraryMcps: [],
@@ -76,7 +76,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
     set({ error: null });
     try {
       await Promise.all([
-        get().fetchStaff(),
+        get().fetchMembers(),
         get().fetchTasks(),
         get().fetchLibrary("skill"),
         get().fetchLibrary("mcp"),
@@ -95,52 +95,52 @@ export const useAppStore = create<AppState>()((set, get) => ({
     await get().loadAll();
   },
 
-  // ── Staff ──
-  fetchStaff: async () => {
-    const data = await api<{ items: Staff[] }>("/staff");
-    set({ staffList: data.items });
+  // ── Members ──
+  fetchMembers: async () => {
+    const data = await api<{ items: Member[] }>("/members");
+    set({ memberList: data.items });
   },
 
-  addStaff: async (name, description = "") => {
-    const staff = await api<Staff>("/staff", {
+  addMember: async (name, description = "") => {
+    const member = await api<Member>("/members", {
       method: "POST",
       body: JSON.stringify({ name, description }),
     });
-    set((s) => ({ staffList: [staff, ...s.staffList] }));
-    return staff;
+    set((s) => ({ memberList: [member, ...s.memberList] }));
+    return member;
   },
 
-  updateStaff: async (id, fields) => {
-    const updated = await api<Staff>(`/staff/${id}`, {
+  updateMember: async (id, fields) => {
+    const updated = await api<Member>(`/members/${id}`, {
       method: "PUT",
       body: JSON.stringify(fields),
     });
-    set((s) => ({ staffList: s.staffList.map((x) => (x.id === id ? updated : x)) }));
+    set((s) => ({ memberList: s.memberList.map((x) => (x.id === id ? updated : x)) }));
   },
 
-  updateStaffConfig: async (id, patch) => {
-    const updated = await api<Staff>(`/staff/${id}/config`, {
+  updateMemberConfig: async (id, patch) => {
+    const updated = await api<Member>(`/members/${id}/config`, {
       method: "PUT",
       body: JSON.stringify(patch),
     });
-    set((s) => ({ staffList: s.staffList.map((x) => (x.id === id ? updated : x)) }));
+    set((s) => ({ memberList: s.memberList.map((x) => (x.id === id ? updated : x)) }));
   },
 
-  publishStaff: async (id, bumpType) => {
-    const updated = await api<Staff>(`/staff/${id}/publish`, {
+  publishMember: async (id, bumpType) => {
+    const updated = await api<Member>(`/members/${id}/publish`, {
       method: "PUT",
       body: JSON.stringify({ bump_type: bumpType }),
     });
-    set((s) => ({ staffList: s.staffList.map((x) => (x.id === id ? updated : x)) }));
+    set((s) => ({ memberList: s.memberList.map((x) => (x.id === id ? updated : x)) }));
     return updated;
   },
 
-  deleteStaff: async (id) => {
-    await api(`/staff/${id}`, { method: "DELETE" });
-    set((s) => ({ staffList: s.staffList.filter((x) => x.id !== id) }));
+  deleteMember: async (id) => {
+    await api(`/members/${id}`, { method: "DELETE" });
+    set((s) => ({ memberList: s.memberList.filter((x) => x.id !== id) }));
   },
 
-  getStaffById: (id) => get().staffList.find((x) => x.id === id),
+  getMemberById: (id) => get().memberList.find((x) => x.id === id),
 
   // ── Tasks ──
   fetchTasks: async () => {
@@ -237,13 +237,12 @@ export const useAppStore = create<AppState>()((set, get) => ({
   },
 
   // ── Helpers ──
-  getStaffNames: () => get().staffList.map((s) => ({ id: s.id, name: s.name })),
+  getMemberNames: () => get().memberList.map((s) => ({ id: s.id, name: s.name })),
 
   getResourceUsedBy: (type, name) => {
     const key = type === "skill" ? "skills" : type === "mcp" ? "mcps" : "subAgents";
-    return get().staffList.filter((s) =>
+    return get().memberList.filter((s) =>
       (s.config?.[key as keyof typeof s.config] as { name: string }[] | undefined)?.some((i) => i.name === name)
     ).length;
   },
 }));
-

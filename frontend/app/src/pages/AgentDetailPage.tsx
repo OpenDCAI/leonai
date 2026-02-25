@@ -54,8 +54,8 @@ export default function AgentDetail() {
   const [showPublish, setShowPublish] = useState(false);
 
   // Store
-  const staff = useAppStore(s => s.getStaffById(id || ""));
-  const updateStaffConfig = useAppStore(s => s.updateStaffConfig);
+  const member = useAppStore(s => s.getMemberById(id || ""));
+  const updateMemberConfig = useAppStore(s => s.updateMemberConfig);
   const loadAll = useAppStore(s => s.loadAll);
 
   useEffect(() => { loadAll(); }, [loadAll]);
@@ -79,7 +79,7 @@ export default function AgentDetail() {
 
   const statusLabels: Record<string, string> = { active: "在岗", draft: "草稿", inactive: "离线" };
 
-  if (!staff) {
+  if (!member) {
     return (
       <div className="h-full flex items-center justify-center">
         <p className="text-sm text-muted-foreground">加载中...</p>
@@ -88,10 +88,10 @@ export default function AgentDetail() {
   }
 
   const getItemsForModule = (mod: ModuleId) => {
-    if (mod === "tools") return staff.config.tools;
-    if (mod === "mcp") return staff.config.mcps;
-    if (mod === "skills") return staff.config.skills;
-    if (mod === "subagents") return staff.config.subAgents.map(sa => ({ ...sa, enabled: true }));
+    if (mod === "tools") return member.config.tools;
+    if (mod === "mcp") return member.config.mcps;
+    if (mod === "skills") return member.config.skills;
+    if (mod === "subagents") return member.config.subAgents.map(sa => ({ ...sa, enabled: true }));
     return [];
   };
 
@@ -107,19 +107,19 @@ export default function AgentDetail() {
   };
 
   const handleAdd = async () => {
-    if (!addName.trim() || !staff) return;
+    if (!addName.trim() || !member) return;
     const newId = Date.now().toString();
     const newItem = { id: newId, name: addName.trim(), desc: addDesc.trim(), enabled: true };
     try {
       if (addDialogTarget === "tools") {
-        await updateStaffConfig(staff.id, { tools: [...staff.config.tools, newItem] });
+        await updateMemberConfig(member.id, { tools: [...member.config.tools, newItem] });
       } else if (addDialogTarget === "mcp") {
-        await updateStaffConfig(staff.id, { mcps: [...staff.config.mcps, newItem] });
+        await updateMemberConfig(member.id, { mcps: [...member.config.mcps, newItem] });
       } else if (addDialogTarget === "skills") {
-        await updateStaffConfig(staff.id, { skills: [...staff.config.skills, newItem] });
+        await updateMemberConfig(member.id, { skills: [...member.config.skills, newItem] });
       } else if (addDialogTarget === "subagents") {
         const newSa = { id: newId, name: addName.trim(), desc: addDesc.trim() };
-        await updateStaffConfig(staff.id, { subAgents: [...staff.config.subAgents, newSa] });
+        await updateMemberConfig(member.id, { subAgents: [...member.config.subAgents, newSa] });
       }
       toast.success(`${addName.trim()} 已添加`);
       setAddDialogOpen(false);
@@ -129,16 +129,16 @@ export default function AgentDetail() {
   };
 
   const handleDeleteItem = async (mod: ModuleId, itemId: string) => {
-    if (!staff) return;
+    if (!member) return;
     try {
       if (mod === "tools") {
-        await updateStaffConfig(staff.id, { tools: staff.config.tools.filter(i => i.id !== itemId) });
+        await updateMemberConfig(member.id, { tools: member.config.tools.filter(i => i.id !== itemId) });
       } else if (mod === "mcp") {
-        await updateStaffConfig(staff.id, { mcps: staff.config.mcps.filter(i => i.id !== itemId) });
+        await updateMemberConfig(member.id, { mcps: member.config.mcps.filter(i => i.id !== itemId) });
       } else if (mod === "skills") {
-        await updateStaffConfig(staff.id, { skills: staff.config.skills.filter(i => i.id !== itemId) });
+        await updateMemberConfig(member.id, { skills: member.config.skills.filter(i => i.id !== itemId) });
       } else if (mod === "subagents") {
-        await updateStaffConfig(staff.id, { subAgents: staff.config.subAgents.filter(i => i.id !== itemId) });
+        await updateMemberConfig(member.id, { subAgents: member.config.subAgents.filter(i => i.id !== itemId) });
       }
       if ("itemId" in selection && selection.itemId === itemId) {
         setSelection({ module: mod } as Selection);
@@ -150,16 +150,16 @@ export default function AgentDetail() {
   };
 
   const handleToggle = async (mod: ModuleId, itemId: string, enabled: boolean) => {
-    if (!staff) return;
+    if (!member) return;
     const update = (items: { id: string; name: string; desc: string; enabled: boolean }[]) =>
       items.map(i => i.id === itemId ? { ...i, enabled } : i);
     try {
       if (mod === "tools") {
-        await updateStaffConfig(staff.id, { tools: update(staff.config.tools) });
+        await updateMemberConfig(member.id, { tools: update(member.config.tools) });
       } else if (mod === "mcp") {
-        await updateStaffConfig(staff.id, { mcps: update(staff.config.mcps) });
+        await updateMemberConfig(member.id, { mcps: update(member.config.mcps) });
       } else if (mod === "skills") {
-        await updateStaffConfig(staff.id, { skills: update(staff.config.skills) });
+        await updateMemberConfig(member.id, { skills: update(member.config.skills) });
       }
     } catch (e) {
       toast.error("更新失败，请重试");
@@ -298,9 +298,9 @@ export default function AgentDetail() {
         <TextEditor
           key={mod}
           label={labels[mod]}
-          initialValue={staff.config[mod] || ""}
+          initialValue={member.config[mod] || ""}
           onSave={async (val) => {
-            await updateStaffConfig(staff.id, { [mod]: val });
+            await updateMemberConfig(member.id, { [mod]: val });
             toast.success(`${labels[mod]} 已保存`);
           }}
         />
@@ -310,7 +310,7 @@ export default function AgentDetail() {
     // CrudItem modules (tools, mcp, skills)
     if (mod === "tools" || mod === "mcp" || mod === "skills") {
       const configKey = mod === "tools" ? "tools" : mod === "mcp" ? "mcps" : "skills";
-      const items = staff.config[configKey] as CrudItem[];
+      const items = member.config[configKey] as CrudItem[];
       const labels = { tools: "工具", mcp: "MCP", skills: "技能" };
 
       if (selectedItemId) {
@@ -320,7 +320,7 @@ export default function AgentDetail() {
           <CrudItemEditor
             item={item}
             onSave={async (name, desc) => {
-              await updateStaffConfig(staff.id, { [configKey]: items.map(i => i.id === selectedItemId ? { ...i, name, desc } : i) });
+              await updateMemberConfig(member.id, { [configKey]: items.map(i => i.id === selectedItemId ? { ...i, name, desc } : i) });
               toast.success("已更新");
             }}
             onDelete={() => handleDeleteItem(mod, selectedItemId)}
@@ -343,7 +343,7 @@ export default function AgentDetail() {
 
     // Sub-agents
     if (mod === "subagents") {
-      const saItems = staff.config.subAgents;
+      const saItems = member.config.subAgents;
       if (selectedItemId) {
         const sa = saItems.find(i => i.id === selectedItemId);
         if (!sa) return <div className="text-sm text-muted-foreground p-6">未找到该项</div>;
@@ -351,7 +351,7 @@ export default function AgentDetail() {
           <SubAgentEditor
             item={sa}
             onSave={async (name, desc) => {
-              await updateStaffConfig(staff.id, { subAgents: saItems.map(i => i.id === selectedItemId ? { ...i, name, desc } : i) });
+              await updateMemberConfig(member.id, { subAgents: saItems.map(i => i.id === selectedItemId ? { ...i, name, desc } : i) });
               toast.success("已更新");
             }}
             onDelete={() => handleDeleteItem("subagents", selectedItemId)}
@@ -403,21 +403,21 @@ export default function AgentDetail() {
       {/* Header */}
       <div className="h-14 border-b border-border flex items-center justify-between px-4 md:px-6 shrink-0 bg-card">
         <div className="flex items-center gap-3 min-w-0">
-          <button onClick={() => navigate("/staff")} className="p-1.5 rounded-md hover:bg-muted transition-colors shrink-0">
+          <button onClick={() => navigate("/members")} className="p-1.5 rounded-md hover:bg-muted transition-colors shrink-0">
             <ArrowLeft className="w-4 h-4 text-muted-foreground" />
           </button>
           <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
             <Bot className="w-4 h-4 text-primary" />
           </div>
-          <h2 className="text-sm font-semibold text-foreground truncate">{staff.name}</h2>
+          <h2 className="text-sm font-semibold text-foreground truncate">{member.name}</h2>
           <div className="hidden md:flex items-center gap-1.5 ml-1">
-            <div className={`w-1.5 h-1.5 rounded-full ${staff.status === "active" ? "bg-success" : staff.status === "draft" ? "bg-warning" : "bg-muted-foreground"}`} />
-            <span className="text-[11px] text-muted-foreground">{statusLabels[staff.status] || staff.status}</span>
+            <div className={`w-1.5 h-1.5 rounded-full ${member.status === "active" ? "bg-success" : member.status === "draft" ? "bg-warning" : "bg-muted-foreground"}`} />
+            <span className="text-[11px] text-muted-foreground">{statusLabels[member.status] || member.status}</span>
           </div>
-          <span className="hidden md:inline text-xs font-mono text-muted-foreground bg-muted px-1.5 py-0.5 rounded ml-2">v{staff.version}</span>
+          <span className="hidden md:inline text-xs font-mono text-muted-foreground bg-muted px-1.5 py-0.5 rounded ml-2">v{member.version}</span>
         </div>
         <div className="flex items-center gap-1 md:gap-2">
-          <button onClick={() => navigate("/staff/" + id + "?history=true")} className="hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
+          <button onClick={() => navigate("/members/" + id + "?history=true")} className="hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
             <History className="w-3.5 h-3.5" />
             历史
           </button>
@@ -454,7 +454,7 @@ export default function AgentDetail() {
                 {renderCenterContent()}
               </div>
             </div>
-            {showTest && <TestPanel staffName={staff.name} onClose={() => setShowTest(false)} />}
+            {showTest && <TestPanel memberName={member.name} onClose={() => setShowTest(false)} />}
           </>
         )}
       </div>
@@ -462,7 +462,7 @@ export default function AgentDetail() {
       {/* Mobile test panel */}
       {isMobile && showTest && (
         <div className="fixed inset-0 z-50 bg-background flex flex-col">
-          <TestPanel staffName={staff.name} onClose={() => setShowTest(false)} />
+          <TestPanel memberName={member.name} onClose={() => setShowTest(false)} />
         </div>
       )}
 
@@ -485,7 +485,7 @@ export default function AgentDetail() {
         </DialogContent>
       </Dialog>
 
-      <PublishDialog open={showPublish} onOpenChange={setShowPublish} staffId={staff.id} />
+      <PublishDialog open={showPublish} onOpenChange={setShowPublish} memberId={member.id} />
     </div>
   );
 }

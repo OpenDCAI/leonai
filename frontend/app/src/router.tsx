@@ -4,7 +4,7 @@ import AppLayout from './pages/AppLayout';
 import ChatPage from './pages/ChatPage';
 import NewChatPage from './pages/NewChatPage';
 import SettingsPage from './pages/SettingsPage';
-import StaffPage from './pages/StaffPage';
+import MembersPage from './pages/MembersPage';
 import AgentDetailPage from './pages/AgentDetailPage';
 import TasksPage from './pages/TasksPage';
 import LibraryPage from './pages/LibraryPage';
@@ -12,7 +12,7 @@ import LibraryPage from './pages/LibraryPage';
 export const router = createBrowserRouter([
   {
     path: '/',
-    element: <Navigate to="/staff" replace />,
+    element: <Navigate to="/chat" replace />,
   },
   {
     path: '/',
@@ -33,11 +33,11 @@ export const router = createBrowserRouter([
         ],
       },
       {
-        path: 'staff',
-        element: <StaffPage />,
+        path: 'members',
+        element: <MembersPage />,
       },
       {
-        path: 'staff/:id',
+        path: 'members/:id',
         element: <AgentDetailPage />,
       },
       {

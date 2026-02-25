@@ -215,7 +215,7 @@ export default function LibraryPage() {
                       <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">{item.category}</span>
                     </div>
                     <p className="text-xs text-muted-foreground mt-1">{item.desc}</p>
-                    <p className="text-[11px] text-muted-foreground mt-2">被 <span className="text-foreground font-medium">{getResourceUsedBy(typeMap[tab], item.name)}</span> 位员工使用</p>
+                    <p className="text-[11px] text-muted-foreground mt-2">被 <span className="text-foreground font-medium">{getResourceUsedBy(typeMap[tab], item.name)}</span> 位成员使用</p>
                   </div>
                 </div>
                 {/* Edit/Delete hover actions */}

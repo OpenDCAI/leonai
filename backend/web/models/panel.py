@@ -1,11 +1,11 @@
-"""Pydantic models for panel API (Staff, Tasks, Library, Profile)."""
+"""Pydantic models for panel API (Members, Tasks, Library, Profile)."""
 
 from pydantic import BaseModel
 
 
-# ── Staff ──
+# ── Members ──
 
-class StaffConfigPayload(BaseModel):
+class MemberConfigPayload(BaseModel):
     prompt: str | None = None
     rules: str | None = None
     memory: str | None = None
@@ -15,19 +15,18 @@ class StaffConfigPayload(BaseModel):
     subAgents: list[dict] | None = None
 
 
-class CreateStaffRequest(BaseModel):
+class CreateMemberRequest(BaseModel):
     name: str
     description: str = ""
 
 
-class UpdateStaffRequest(BaseModel):
+class UpdateMemberRequest(BaseModel):
     name: str | None = None
-    role: str | None = None
     description: str | None = None
     status: str | None = None
 
 
-class PublishStaffRequest(BaseModel):
+class PublishMemberRequest(BaseModel):
     bump_type: str = "patch"  # patch | minor | major
     notes: str = ""
 
@@ -77,3 +76,11 @@ class UpdateProfileRequest(BaseModel):
     name: str | None = None
     initials: str | None = None
     email: str | None = None
+
+
+# ── Backward compatibility aliases ──
+
+StaffConfigPayload = MemberConfigPayload
+CreateStaffRequest = CreateMemberRequest
+UpdateStaffRequest = UpdateMemberRequest
+PublishStaffRequest = PublishMemberRequest

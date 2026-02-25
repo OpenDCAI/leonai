@@ -12,7 +12,7 @@ import { toast } from "sonner";
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  staffId: string;
+  memberId: string;
 }
 
 type BumpType = "patch" | "minor" | "major";
@@ -24,22 +24,22 @@ function bumpVersion(version: string, type: BumpType): string {
   return `${major}.${minor}.${patch + 1}`;
 }
 
-export default function PublishDialog({ open, onOpenChange, staffId }: Props) {
-  const staff = useAppStore(s => s.getStaffById(staffId));
-  const publishStaff = useAppStore(s => s.publishStaff);
+export default function PublishDialog({ open, onOpenChange, memberId }: Props) {
+  const member = useAppStore(s => s.getMemberById(memberId));
+  const publishMember = useAppStore(s => s.publishMember);
   const [bumpType, setBumpType] = useState<BumpType>("patch");
   const [notes, setNotes] = useState("");
   const [publishing, setPublishing] = useState(false);
 
-  if (!staff) return null;
+  if (!member) return null;
 
-  const newVersion = bumpVersion(staff.version, bumpType);
+  const newVersion = bumpVersion(member.version, bumpType);
 
   const handlePublish = async () => {
     try {
       setPublishing(true);
-      await publishStaff(staffId, bumpType);
-      toast.success(`${staff.name} v${newVersion} 已发布`);
+      await publishMember(memberId, bumpType);
+      toast.success(`${member.name} v${newVersion} 已发布`);
       onOpenChange(false);
     } catch (e) {
       toast.error("发布失败，请重试");
@@ -63,9 +63,9 @@ export default function PublishDialog({ open, onOpenChange, staffId }: Props) {
               <Tag className="w-4 h-4 text-primary" />
             </div>
             <div>
-              <DialogTitle className="text-base">发布 {staff.name}</DialogTitle>
+              <DialogTitle className="text-base">发布 {member.name}</DialogTitle>
               <DialogDescription className="text-xs mt-0.5">
-                当前版本 <span className="font-mono text-foreground">v{staff.version}</span>
+                当前版本 <span className="font-mono text-foreground">v{member.version}</span>
               </DialogDescription>
             </div>
           </div>

@@ -2,20 +2,20 @@ import { useState } from "react";
 import { X, Send, Bot, Circle } from "lucide-react";
 
 interface Props {
-  staffName: string;
+  memberName: string;
   onClose: () => void;
 }
 
-export default function TestPanel({ staffName, onClose }: Props) {
+export default function TestPanel({ memberName, onClose }: Props) {
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<{ role: "user" | "assistant"; content: string }[]>([]);
 
   const mockResponses = [
-    (msg: string) => `[${staffName}] 收到你的消息: "${msg}"。这是一条模拟回复。`,
-    (msg: string) => `[${staffName}] 正在处理你的请求: "${msg}"。请稍候...分析完成，一切正常。`,
-    (msg: string) => `[${staffName}] 已理解指令。关于 "${msg}"，我建议分步骤执行以确保质量。`,
-    (msg: string) => `[${staffName}] 好的，我来处理 "${msg}"。预计需要几分钟时间完成。`,
-    (msg: string) => `[${staffName}] 收到！"${msg}" 这个任务我很擅长，马上开始。`,
+    (msg: string) => `[${memberName}] 收到你的消息: "${msg}"。这是一条模拟回复。`,
+    (msg: string) => `[${memberName}] 正在处理你的请求: "${msg}"。请稍候...分析完成，一切正常。`,
+    (msg: string) => `[${memberName}] 已理解指令。关于 "${msg}"，我建议分步骤执行以确保质量。`,
+    (msg: string) => `[${memberName}] 好的，我来处理 "${msg}"。预计需要几分钟时间完成。`,
+    (msg: string) => `[${memberName}] 收到！"${msg}" 这个任务我很擅长，马上开始。`,
   ];
 
   const handleSend = () => {
@@ -50,7 +50,7 @@ export default function TestPanel({ staffName, onClose }: Props) {
             <div className="w-10 h-10 rounded-xl bg-primary/8 flex items-center justify-center mb-3">
               <Bot className="w-5 h-5 text-primary" />
             </div>
-            <p className="text-sm text-muted-foreground">发送消息测试 {staffName}</p>
+            <p className="text-sm text-muted-foreground">发送消息测试 {memberName}</p>
           </div>
         )}
         {messages.map((msg, i) => (
