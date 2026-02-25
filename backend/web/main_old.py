@@ -129,23 +129,14 @@ def _init_providers_and_managers() -> tuple[dict, dict]:
     providers: dict[str, Any] = {
         "local": LocalSessionProvider(default_cwd=str(LOCAL_WORKSPACE_ROOT)),
     }
-    state_modes: dict[str, str] = {"local": "always"}
     if not SANDBOXES_DIR.exists():
-        managers = {
-            name: SandboxManager(
-                provider=p,
-                db_path=SANDBOX_DB_PATH,
-                state_persist_mode=state_modes.get(name, "always"),
-            )
-            for name, p in providers.items()
-        }
+        managers = {name: SandboxManager(provider=p, db_path=SANDBOX_DB_PATH) for name, p in providers.items()}
         return providers, managers
 
     for config_file in SANDBOXES_DIR.glob("*.json"):
         name = config_file.stem
         try:
             config = SandboxConfig.load(name)
-            state_modes[name] = config.state_persist_mode
             if config.provider == "agentbay":
                 from sandbox.providers.agentbay import AgentBayProvider
 
@@ -189,14 +180,7 @@ def _init_providers_and_managers() -> tuple[dict, dict]:
         except Exception as e:
             print(f"[sandbox] Failed to load {name}: {e}")
 
-    managers = {
-        name: SandboxManager(
-            provider=p,
-            db_path=SANDBOX_DB_PATH,
-            state_persist_mode=state_modes.get(name, "always"),
-        )
-        for name, p in providers.items()
-    }
+    managers = {name: SandboxManager(provider=p, db_path=SANDBOX_DB_PATH) for name, p in providers.items()}
     return providers, managers
 
 

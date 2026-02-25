@@ -47,7 +47,6 @@ class SandboxConfig(BaseModel):
     e2b: E2BConfig = Field(default_factory=E2BConfig)
     daytona: DaytonaConfig = Field(default_factory=DaytonaConfig)
     on_exit: str = "pause"
-    state_persist_mode: str = "always"
     init_commands: list[str] = Field(default_factory=list)
 
     @classmethod
@@ -68,11 +67,7 @@ class SandboxConfig(BaseModel):
         path = Path.home() / ".leon" / "sandboxes" / f"{name}.json"
         path.parent.mkdir(parents=True, exist_ok=True)
 
-        data = {
-            "provider": self.provider,
-            "on_exit": self.on_exit,
-            "state_persist_mode": self.state_persist_mode,
-        }
+        data = {"provider": self.provider, "on_exit": self.on_exit}
         if self.init_commands:
             data["init_commands"] = self.init_commands
         if self.provider in ("agentbay", "docker", "e2b", "daytona"):

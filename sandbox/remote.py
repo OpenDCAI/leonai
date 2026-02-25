@@ -38,7 +38,6 @@ class RemoteSandbox(Sandbox):
         self._manager = SandboxManager(
             provider=provider,
             db_path=db_path,
-            state_persist_mode=config.state_persist_mode,
         )
         self._on_exit = config.on_exit
 

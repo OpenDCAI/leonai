@@ -44,7 +44,6 @@ REQUIRED_CHAT_SESSION_COLUMNS = {
     "ended_at",
     "close_reason",
 }
-VALID_STATE_PERSIST_MODES = {"always", "boundary"}
 
 
 def _connect(db_path: Path) -> sqlite3.Connection:
@@ -160,17 +159,10 @@ class ChatSessionManager:
         provider: SandboxProvider,
         db_path: Path = DEFAULT_DB_PATH,
         default_policy: ChatSessionPolicy | None = None,
-        state_persist_mode: str = "always",
     ):
-        if state_persist_mode not in VALID_STATE_PERSIST_MODES:
-            raise RuntimeError(
-                f"Invalid state_persist_mode '{state_persist_mode}'. "
-                f"Expected one of {sorted(VALID_STATE_PERSIST_MODES)}"
-            )
         self.provider = provider
         self.db_path = db_path
         self.default_policy = default_policy or ChatSessionPolicy()
-        self.state_persist_mode = state_persist_mode
         self._live_sessions: dict[str, ChatSession] = {}
         self._ensure_tables()
 
@@ -283,20 +275,7 @@ class ChatSessionManager:
     def _build_runtime(self, terminal: AbstractTerminal, lease: SandboxLease) -> PhysicalTerminalRuntime:
         from sandbox.runtime import create_runtime
 
-        return create_runtime(
-            self.provider,
-            terminal,
-            lease,
-            state_persist_mode=self.state_persist_mode,
-        )
-
-    def get_live(self, thread_id: str, terminal_id: str) -> ChatSession | None:
-        session = self._live_sessions.get(terminal_id)
-        if session is None:
-            return None
-        if session.thread_id != thread_id:
-            return None
-        return session
+        return create_runtime(self.provider, terminal, lease)
 
     def _load_status(self, session_id: str) -> str | None:
         with _connect(self.db_path) as conn:
@@ -384,9 +363,6 @@ class ChatSessionManager:
 
         existing = self._live_sessions.get(terminal.terminal_id)
         if existing and existing.session_id != session_id:
-            if self.state_persist_mode == "boundary":
-                # @@@boundary-runtime-handoff - Boundary mode snapshots at runtime handoff before superseding live owner.
-                existing.runtime.sync_terminal_state_snapshot(timeout=10.0)
             self._close_runtime(existing, reason="superseded")
             self._live_sessions.pop(terminal.terminal_id, None)
 

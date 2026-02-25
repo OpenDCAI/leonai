@@ -465,67 +465,6 @@ class TestSessionLifecycle:
         )
 
 
-class TestStatePersistMode:
-    def test_always_mode_persists_after_each_command(self, temp_db, mock_provider):
-        thread_id = "test-thread-mode-always"
-        manager = SandboxManager(provider=mock_provider, db_path=temp_db, state_persist_mode="always")
-        capability = manager.get_sandbox(thread_id)
-
-        asyncio.run(capability.command.execute("export ALWAYS_MODE_FLAG=on; cd /"))
-
-        state = manager.terminal_store.get(thread_id).get_state()
-        assert state.cwd == "/"
-        assert state.env_delta.get("ALWAYS_MODE_FLAG") == "on"
-
-    @pytest.mark.asyncio
-    async def test_boundary_mode_snapshots_on_background_handoff(self, temp_db, mock_provider):
-        thread_id = "test-thread-mode-boundary-handoff"
-        manager = SandboxManager(provider=mock_provider, db_path=temp_db, state_persist_mode="boundary")
-        capability = manager.get_sandbox(thread_id)
-
-        await capability.command.execute("export BOUNDARY_HANDOFF_FLAG=on; cd /")
-        default_state = manager.terminal_store.get(thread_id).get_state()
-        assert default_state.cwd == "/tmp"
-        assert default_state.env_delta.get("BOUNDARY_HANDOFF_FLAG") is None
-
-        async_cmd = await capability.command.execute_async("echo bg-handoff")
-        done = await capability.command.wait_for(async_cmd.command_id, timeout=5.0)
-        assert done is not None
-        assert done.exit_code == 0
-
-        terminals = manager.terminal_store.list_by_thread(thread_id)
-        assert len(terminals) == 2
-        background_terminal = next(t for t in terminals if t.terminal_id != capability._session.terminal.terminal_id)
-        state = background_terminal.get_state()
-        assert state.cwd == "/"
-        assert state.env_delta.get("BOUNDARY_HANDOFF_FLAG") == "on"
-
-    @pytest.mark.asyncio
-    async def test_boundary_mode_pause_resume_recovers_state(self, temp_db, mock_provider):
-        thread_id = "test-thread-mode-boundary-pause-resume"
-        manager1 = SandboxManager(provider=mock_provider, db_path=temp_db, state_persist_mode="boundary")
-        capability1 = manager1.get_sandbox(thread_id)
-
-        await capability1.command.execute("export BOUNDARY_PAUSE_FLAG=on; cd /")
-        pre_pause = manager1.terminal_store.get(thread_id).get_state()
-        assert pre_pause.cwd == "/tmp"
-        assert pre_pause.env_delta.get("BOUNDARY_PAUSE_FLAG") is None
-
-        assert manager1.pause_session(thread_id)
-        paused_state = manager1.terminal_store.get(thread_id).get_state()
-        assert paused_state.cwd == "/"
-        assert paused_state.env_delta.get("BOUNDARY_PAUSE_FLAG") == "on"
-
-        manager2 = SandboxManager(provider=mock_provider, db_path=temp_db, state_persist_mode="boundary")
-        assert manager2.resume_session(thread_id)
-        capability2 = manager2.get_sandbox(thread_id)
-
-        restored = await capability2.command.execute("pwd; echo $BOUNDARY_PAUSE_FLAG")
-        lines = [line.strip() for line in restored.stdout.splitlines() if line.strip()]
-        assert "/" in lines
-        assert "on" in lines
-
-
 class TestMultiThreadScenarios:
     """Test scenarios with multiple threads."""
 

@@ -232,7 +232,6 @@ def _init_sandbox_providers() -> tuple[dict, dict]:
     from sandbox.manager import SandboxManager
 
     providers: dict[str, object] = {}
-    state_modes: dict[str, str] = {}
     sandboxes_dir = Path.home() / ".leon" / "sandboxes"
     if not sandboxes_dir.exists():
         return {}, {}
@@ -244,14 +243,10 @@ def _init_sandbox_providers() -> tuple[dict, dict]:
             provider = _create_provider(config)
             if provider:
                 providers[config.provider] = provider
-                state_modes[config.provider] = config.state_persist_mode
         except Exception as e:
             print(f"[sandbox] Failed to load {name}: {e}")
 
-    managers = {
-        name: SandboxManager(provider=provider, state_persist_mode=state_modes.get(name, "always"))
-        for name, provider in providers.items()
-    }
+    managers = {name: SandboxManager(provider=provider) for name, provider in providers.items()}
     return providers, managers
 
 

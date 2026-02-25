@@ -45,11 +45,8 @@ class SandboxManagerApp(App):
 
     def __init__(self, api_key: str | None):
         super().__init__()
-        self._providers, self._state_modes = self._init_providers(api_key)
-        self._managers = {
-            name: SandboxManager(provider=provider, state_persist_mode=self._state_modes.get(name, "always"))
-            for name, provider in self._providers.items()
-        }
+        self._providers = self._init_providers(api_key)
+        self._managers = {name: SandboxManager(provider=provider) for name, provider in self._providers.items()}
         self.sessions: list[dict] = []
         self._pause_resume_support_by_session: dict[str, bool] = {}
 
@@ -79,19 +76,17 @@ class SandboxManagerApp(App):
     def set_status(self, msg: str) -> None:
         self.query_one("#status", Static).update(msg)
 
-    def _init_providers(self, api_key: str | None) -> tuple[dict[str, object], dict[str, str]]:
+    def _init_providers(self, api_key: str | None) -> dict[str, object]:
         """Load providers from ~/.leon/sandboxes/*.json config files."""
         providers: dict[str, object] = {}
-        state_modes: dict[str, str] = {}
         sandboxes_dir = Path.home() / ".leon" / "sandboxes"
         if not sandboxes_dir.exists():
-            return providers, state_modes
+            return providers
 
         for config_file in sandboxes_dir.glob("*.json"):
             name = config_file.stem
             try:
                 config = SandboxConfig.load(name)
-                state_modes[config.provider] = config.state_persist_mode
                 if config.provider == "agentbay":
                     from sandbox.providers.agentbay import AgentBayProvider
 
@@ -135,7 +130,7 @@ class SandboxManagerApp(App):
             except Exception as e:
                 print(f"[SandboxManager] Failed to load {name}: {e}")
 
-        return providers, state_modes
+        return providers
 
     def action_refresh(self) -> None:
         self.do_refresh()

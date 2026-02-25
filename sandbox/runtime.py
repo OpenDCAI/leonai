@@ -37,7 +37,6 @@ from sandbox.interfaces.executor import AsyncCommand, ExecuteResult
 from sandbox.shell_output import normalize_pty_result
 
 ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-VALID_STATE_PERSIST_MODES = {"always", "boundary"}
 
 
 class PhysicalTerminalRuntime(ABC):
@@ -63,16 +62,9 @@ class PhysicalTerminalRuntime(ABC):
         self,
         terminal: AbstractTerminal,
         lease: SandboxLease,
-        state_persist_mode: str = "always",
     ):
-        if state_persist_mode not in VALID_STATE_PERSIST_MODES:
-            raise RuntimeError(
-                f"Invalid state_persist_mode '{state_persist_mode}'. "
-                f"Expected one of {sorted(VALID_STATE_PERSIST_MODES)}"
-            )
         self.terminal = terminal
         self.lease = lease
-        self.state_persist_mode = state_persist_mode
         self.runtime_id = f"runtime-{uuid.uuid4().hex[:12]}"
         self.chat_session_id: str | None = None
         self._commands: dict[str, AsyncCommand] = {}
@@ -368,9 +360,6 @@ class PhysicalTerminalRuntime(ABC):
         """Update terminal state after command execution."""
         self.terminal.update_state(state)
 
-    def sync_terminal_state_snapshot(self, timeout: float | None = None) -> None:
-        raise RuntimeError(f"{self.__class__.__name__} does not implement sync_terminal_state_snapshot()")
-
 
 def _parse_env_output(raw: str) -> dict[str, str]:
     env_map: dict[str, str] = {}
@@ -555,14 +544,16 @@ class LocalPersistentShellRuntime(PhysicalTerminalRuntime):
         terminal: AbstractTerminal,
         lease: SandboxLease,
         shell_command: tuple[str, ...] = ("/bin/bash",),
-        state_persist_mode: str = "always",
     ):
-        super().__init__(terminal, lease, state_persist_mode=state_persist_mode)
+        super().__init__(terminal, lease)
         self.shell_command = shell_command
         self._pty_session: _SubprocessPtySession | None = None
         self._session: subprocess.Popen[bytes] | None = None
         self._session_lock = asyncio.Lock()
         self._baseline_env: dict[str, str] | None = None
+        self._snapshot_task: asyncio.Task[None] | None = None
+        self._snapshot_generation = 0
+        self._snapshot_error: str | None = None
 
     def _ensure_session_sync(self, timeout: float | None) -> _SubprocessPtySession:
         if self._pty_session and self._pty_session.is_alive():
@@ -591,11 +582,8 @@ class LocalPersistentShellRuntime(PhysicalTerminalRuntime):
         if self.lease.observed_state == "paused":
             raise RuntimeError(f"Sandbox lease {self.lease.lease_id} is paused. Resume before executing commands.")
 
-        state = self.terminal.get_state()
         pty_session = self._ensure_session_sync(timeout)
         stdout, stderr, exit_code = pty_session.run(command, timeout, on_stdout_chunk=on_stdout_chunk)
-        if self.state_persist_mode == "always":
-            self._sync_terminal_state_snapshot_sync(timeout, state)
 
         return ExecuteResult(
             exit_code=exit_code,
@@ -604,27 +592,42 @@ class LocalPersistentShellRuntime(PhysicalTerminalRuntime):
             timed_out=False,
         )
 
-    def _sync_terminal_state_snapshot_sync(self, timeout: float | None, state=None) -> None:
+    def _sync_terminal_state_snapshot_sync(self, timeout: float | None) -> None:
         if self._pty_session is None:
             return
         if not self._pty_session.is_alive():
             raise RuntimeError("Local PTY session is not running; cannot snapshot terminal state")
-        current_state = state or self.terminal.get_state()
+        state = self.terminal.get_state()
+
+        # Capture state snapshot after each command so new ChatSession can hydrate from DB.
         pwd_stdout, _, _ = self._pty_session.run("pwd", timeout)
         env_stdout, _, _ = self._pty_session.run("env", timeout)
         pwd_lines = [line.strip() for line in pwd_stdout.splitlines() if line.strip()]
-        new_cwd = pwd_lines[-1] if pwd_lines else current_state.cwd
+        new_cwd = pwd_lines[-1] if pwd_lines else state.cwd
         env_map = _parse_env_output(env_stdout)
         baseline_env = self._baseline_env or {}
-        persisted_keys = set(current_state.env_delta.keys())
+        persisted_keys = set(state.env_delta.keys())
         env_delta = {k: v for k, v in env_map.items() if baseline_env.get(k) != v or k in persisted_keys}
+
         if new_cwd:
             from sandbox.terminal import TerminalState
 
             self.update_terminal_state(TerminalState(cwd=new_cwd, env_delta=env_delta))
 
-    def sync_terminal_state_snapshot(self, timeout: float | None = None) -> None:
-        self._sync_terminal_state_snapshot_sync(timeout)
+    async def _snapshot_state_async(self, generation: int, timeout: float | None) -> None:
+        async with self._session_lock:
+            if generation != self._snapshot_generation:
+                return
+            try:
+                await asyncio.to_thread(self._sync_terminal_state_snapshot_sync, timeout)
+                self._snapshot_error = None
+            except Exception as exc:
+                self._snapshot_error = str(exc)
+
+    def _schedule_snapshot(self, generation: int, timeout: float | None) -> None:
+        if self._snapshot_task and not self._snapshot_task.done():
+            self._snapshot_task.cancel()
+        self._snapshot_task = asyncio.create_task(self._snapshot_state_async(generation, timeout))
 
     async def _execute_background_command(
         self,
@@ -633,8 +636,10 @@ class LocalPersistentShellRuntime(PhysicalTerminalRuntime):
         on_stdout_chunk: Callable[[str], None] | None = None,
     ) -> ExecuteResult:
         async with self._session_lock:
+            if self._snapshot_error:
+                return ExecuteResult(exit_code=1, stdout="", stderr=f"Error: snapshot failed: {self._snapshot_error}")
             try:
-                return await asyncio.to_thread(self._execute_once_sync, command, timeout, on_stdout_chunk)
+                first = await asyncio.to_thread(self._execute_once_sync, command, timeout, on_stdout_chunk)
             except TimeoutError:
                 return ExecuteResult(
                     exit_code=-1,
@@ -649,12 +654,33 @@ class LocalPersistentShellRuntime(PhysicalTerminalRuntime):
                     stderr=f"Error: {e}",
                 )
 
+            self._snapshot_generation += 1
+            generation = self._snapshot_generation
+
+        # @@@local-async-snapshot - keep command latency independent from snapshot I/O.
+        snapshot_timeout = None if timeout is None else max(float(timeout), 10.0)
+        self._schedule_snapshot(generation, snapshot_timeout)
+        return first
+
     async def execute(self, command: str, timeout: float | None = None) -> ExecuteResult:
         """Execute command in local shell."""
         return await self._execute_background_command(command, timeout=timeout)
 
     async def close(self) -> None:
         """Close the shell session."""
+        if self._snapshot_task and not self._snapshot_task.done():
+            self._snapshot_task.cancel()
+            try:
+                current_loop = asyncio.get_running_loop()
+            except RuntimeError:
+                current_loop = None
+            task_loop = self._snapshot_task.get_loop()
+            if current_loop is task_loop:
+                try:
+                    await self._snapshot_task
+                except asyncio.CancelledError:
+                    pass
+        self._snapshot_task = None
         if self._pty_session:
             await asyncio.to_thread(self._pty_session.close)
             self._session = self._pty_session.process
@@ -666,9 +692,8 @@ class _RemoteRuntimeBase(PhysicalTerminalRuntime):
         terminal: AbstractTerminal,
         lease: SandboxLease,
         provider: SandboxProvider,
-        state_persist_mode: str = "always",
     ):
-        super().__init__(terminal, lease, state_persist_mode=state_persist_mode)
+        super().__init__(terminal, lease)
         self.provider = provider
 
     @staticmethod
@@ -729,52 +754,8 @@ class RemoteWrappedRuntime(_RemoteRuntimeBase):
         terminal: AbstractTerminal,
         lease: SandboxLease,
         provider: SandboxProvider,
-        state_persist_mode: str = "always",
     ):
-        super().__init__(terminal, lease, provider, state_persist_mode=state_persist_mode)
-
-    def _sync_terminal_state_snapshot_sync(self, timeout: float | None = None) -> None:
-        instance = self.lease.ensure_active_instance(self.provider)
-        state = self.terminal.get_state()
-        timeout_ms = int(timeout * 1000) if timeout else 30000
-        start_marker = f"__LEON_STATE_START_{uuid.uuid4().hex[:8]}__"
-        end_marker = f"__LEON_STATE_END_{uuid.uuid4().hex[:8]}__"
-        exports = "\n".join(f"export {key}={shlex.quote(value)}" for key, value in state.env_delta.items())
-        wrapped = "\n".join(
-            part
-            for part in [
-                f"cd {shlex.quote(state.cwd)} || exit 1",
-                exports,
-                f"echo {shlex.quote(start_marker)}",
-                "pwd",
-                "env",
-                f"echo {shlex.quote(end_marker)}",
-            ]
-            if part
-        )
-        result = self.provider.execute(
-            instance.instance_id,
-            wrapped,
-            timeout_ms=timeout_ms,
-            cwd=state.cwd,
-        )
-        if result.error:
-            raise RuntimeError(result.error)
-        if result.exit_code != 0:
-            raise RuntimeError(f"Remote snapshot failed with exit code {result.exit_code}")
-        new_cwd, env_map, _ = _extract_state_from_output(
-            result.output or "",
-            start_marker,
-            end_marker,
-            cwd_fallback=state.cwd,
-            env_fallback=state.env_delta,
-        )
-        from sandbox.terminal import TerminalState
-
-        self.update_terminal_state(TerminalState(cwd=new_cwd, env_delta=env_map))
-
-    def sync_terminal_state_snapshot(self, timeout: float | None = None) -> None:
-        self._sync_terminal_state_snapshot_sync(timeout)
+        super().__init__(terminal, lease, provider)
 
     def _execute_once(self, command: str, timeout: float | None = None) -> ExecuteResult:
         instance = self.lease.ensure_active_instance(self.provider)
@@ -813,10 +794,9 @@ class RemoteWrappedRuntime(_RemoteRuntimeBase):
             cwd_fallback=state.cwd,
             env_fallback=state.env_delta,
         )
-        if self.state_persist_mode == "always":
-            from sandbox.terminal import TerminalState
+        from sandbox.terminal import TerminalState
 
-            self.update_terminal_state(TerminalState(cwd=new_cwd, env_delta=env_map))
+        self.update_terminal_state(TerminalState(cwd=new_cwd, env_delta=env_map))
 
         exit_code = result.exit_code
         if result.error and exit_code == 0:
@@ -852,14 +832,8 @@ class RemoteWrappedRuntime(_RemoteRuntimeBase):
 class DaytonaSessionRuntime(_RemoteRuntimeBase):
     """Daytona runtime using native PTY session API (persistent terminal semantics)."""
 
-    def __init__(
-        self,
-        terminal: AbstractTerminal,
-        lease: SandboxLease,
-        provider: SandboxProvider,
-        state_persist_mode: str = "always",
-    ):
-        super().__init__(terminal, lease, provider, state_persist_mode=state_persist_mode)
+    def __init__(self, terminal: AbstractTerminal, lease: SandboxLease, provider: SandboxProvider):
+        super().__init__(terminal, lease, provider)
         self._session_lock = asyncio.Lock()
         self._pty_session_id = f"leon-pty-{terminal.terminal_id[-12:]}"
         self._bound_instance_id: str | None = None
@@ -984,18 +958,12 @@ class DaytonaSessionRuntime(_RemoteRuntimeBase):
         sandbox = self._provider_sandbox(instance.instance_id)
         effective_cwd, effective_env = self._sanitize_terminal_snapshot()
         if self._pty_handle is None:
+            from daytona_sdk.common.pty import PtySize
+
             try:
                 handle = sandbox.process.connect_pty_session(self._pty_session_id)
                 handle.wait_for_connection(timeout=10.0)
             except Exception:
-                try:
-                    from daytona_sdk.common.pty import PtySize
-                except Exception:
-                    class PtySize:  # type: ignore[no-redef]
-                        def __init__(self, *, rows: int, cols: int):
-                            self.rows = rows
-                            self.cols = cols
-
                 try:
                     handle = sandbox.process.create_pty_session(
                         id=self._pty_session_id,
@@ -1094,11 +1062,6 @@ class DaytonaSessionRuntime(_RemoteRuntimeBase):
             self._snapshot_task.cancel()
         self._snapshot_task = asyncio.create_task(self._snapshot_state_async(generation, timeout))
 
-    def sync_terminal_state_snapshot(self, timeout: float | None = None) -> None:
-        if self._pty_handle is None:
-            return
-        self._sync_terminal_state_snapshot_sync(timeout)
-
     async def _execute_background_command(
         self,
         command: str,
@@ -1148,17 +1111,13 @@ class DaytonaSessionRuntime(_RemoteRuntimeBase):
                 except Exception as retry_exc:
                     return ExecuteResult(exit_code=1, stdout="", stderr=f"Error: {retry_exc}")
 
-            if self.state_persist_mode == "always":
-                self._snapshot_generation += 1
-                generation = self._snapshot_generation
-            else:
-                generation = -1
+            self._snapshot_generation += 1
+            generation = self._snapshot_generation
 
-        if self.state_persist_mode == "always":
-            # @@@daytona-async-snapshot - state sync runs in background so command result streaming is not blocked.
-            # @@@daytona-snapshot-timeout - Snapshot reads full env; don't inherit overly aggressive user timeouts.
-            snapshot_timeout = None if timeout is None else max(float(timeout), 10.0)
-            self._schedule_snapshot(generation, snapshot_timeout)
+        # @@@daytona-async-snapshot - state sync runs in background so command result streaming is not blocked.
+        # @@@daytona-snapshot-timeout - Snapshot reads full env; don't inherit overly aggressive user timeouts.
+        snapshot_timeout = None if timeout is None else max(float(timeout), 10.0)
+        self._schedule_snapshot(generation, snapshot_timeout)
         return first
 
     async def execute(self, command: str, timeout: float | None = None) -> ExecuteResult:
@@ -1186,18 +1145,15 @@ class DaytonaSessionRuntime(_RemoteRuntimeBase):
 class DockerPtyRuntime(_RemoteRuntimeBase):
     """Docker runtime using a persistent PTY shell inside container."""
 
-    def __init__(
-        self,
-        terminal: AbstractTerminal,
-        lease: SandboxLease,
-        provider: SandboxProvider,
-        state_persist_mode: str = "always",
-    ):
-        super().__init__(terminal, lease, provider, state_persist_mode=state_persist_mode)
+    def __init__(self, terminal: AbstractTerminal, lease: SandboxLease, provider: SandboxProvider):
+        super().__init__(terminal, lease, provider)
         self._session_lock = asyncio.Lock()
         self._bound_instance_id: str | None = None
         self._pty_session: _SubprocessPtySession | None = None
         self._baseline_env: dict[str, str] | None = None
+        self._snapshot_task: asyncio.Task[None] | None = None
+        self._snapshot_generation = 0
+        self._snapshot_error: str | None = None
 
     def _close_shell_sync(self) -> None:
         if self._pty_session:
@@ -1235,11 +1191,9 @@ class DockerPtyRuntime(_RemoteRuntimeBase):
     ) -> ExecuteResult:
         session = self._ensure_shell_sync(timeout)
         stdout, stderr, exit_code = session.run(command, timeout, on_stdout_chunk=on_stdout_chunk)
-        if self.state_persist_mode == "always":
-            self._sync_terminal_state_snapshot_sync(timeout)
         return ExecuteResult(exit_code=exit_code, stdout=stdout, stderr=stderr)
 
-    def _sync_terminal_state_snapshot_sync(self, timeout: float | None = None) -> None:
+    def _sync_terminal_state_snapshot_sync(self, timeout: float | None) -> None:
         if self._pty_session is None:
             return
         if not self._pty_session.is_alive():
@@ -1263,8 +1217,31 @@ class DockerPtyRuntime(_RemoteRuntimeBase):
 
         self.update_terminal_state(TerminalState(cwd=new_cwd, env_delta=env_delta))
 
-    def sync_terminal_state_snapshot(self, timeout: float | None = None) -> None:
-        self._sync_terminal_state_snapshot_sync(timeout)
+    async def _snapshot_state_async(self, generation: int, timeout: float | None) -> None:
+        async with self._session_lock:
+            if generation != self._snapshot_generation:
+                return
+            try:
+                await asyncio.to_thread(self._sync_terminal_state_snapshot_sync, timeout)
+                self._snapshot_error = None
+            except Exception as exc:
+                message = str(exc)
+                if self._looks_like_infra_error(message):
+                    try:
+                        self._recover_infra()
+                        self._close_shell_sync()
+                        await asyncio.to_thread(self._sync_terminal_state_snapshot_sync, timeout)
+                        self._snapshot_error = None
+                        return
+                    except Exception as retry_exc:
+                        self._snapshot_error = str(retry_exc)
+                        return
+                self._snapshot_error = message
+
+    def _schedule_snapshot(self, generation: int, timeout: float | None) -> None:
+        if self._snapshot_task and not self._snapshot_task.done():
+            self._snapshot_task.cancel()
+        self._snapshot_task = asyncio.create_task(self._snapshot_state_async(generation, timeout))
 
     async def _execute_background_command(
         self,
@@ -1273,8 +1250,18 @@ class DockerPtyRuntime(_RemoteRuntimeBase):
         on_stdout_chunk: Callable[[str], None] | None = None,
     ) -> ExecuteResult:
         async with self._session_lock:
+            if self._snapshot_error:
+                if self._looks_like_infra_error(self._snapshot_error):
+                    try:
+                        self._recover_infra()
+                        self._close_shell_sync()
+                        self._snapshot_error = None
+                    except Exception as exc:
+                        return ExecuteResult(exit_code=1, stdout="", stderr=f"Error: snapshot failed: {exc}")
+                else:
+                    return ExecuteResult(exit_code=1, stdout="", stderr=f"Error: snapshot failed: {self._snapshot_error}")
             try:
-                return await asyncio.to_thread(self._execute_once_sync, command, timeout, on_stdout_chunk)
+                first = await asyncio.to_thread(self._execute_once_sync, command, timeout, on_stdout_chunk)
             except TimeoutError:
                 return ExecuteResult(
                     exit_code=-1, stdout="", stderr=f"Command timed out after {timeout}s", timed_out=True
@@ -1284,33 +1271,51 @@ class DockerPtyRuntime(_RemoteRuntimeBase):
                     self._recover_infra()
                     self._close_shell_sync()
                     try:
-                        return await asyncio.to_thread(self._execute_once_sync, command, timeout, on_stdout_chunk)
+                        first = await asyncio.to_thread(self._execute_once_sync, command, timeout, on_stdout_chunk)
                     except Exception as retry_exc:
                         return ExecuteResult(exit_code=1, stdout="", stderr=f"Error: {retry_exc}")
-                return ExecuteResult(exit_code=1, stdout="", stderr=f"Error: {exc}")
+                else:
+                    return ExecuteResult(exit_code=1, stdout="", stderr=f"Error: {exc}")
+
+            self._snapshot_generation += 1
+            generation = self._snapshot_generation
+
+        snapshot_timeout = None if timeout is None else max(float(timeout), 10.0)
+        self._schedule_snapshot(generation, snapshot_timeout)
+        return first
 
     async def execute(self, command: str, timeout: float | None = None) -> ExecuteResult:
         return await self._execute_background_command(command, timeout=timeout)
 
     async def close(self) -> None:
+        if self._snapshot_task and not self._snapshot_task.done():
+            self._snapshot_task.cancel()
+            try:
+                current_loop = asyncio.get_running_loop()
+            except RuntimeError:
+                current_loop = None
+            task_loop = self._snapshot_task.get_loop()
+            if current_loop is task_loop:
+                try:
+                    await self._snapshot_task
+                except asyncio.CancelledError:
+                    pass
+        self._snapshot_task = None
         await asyncio.to_thread(self._close_shell_sync)
 
 
 class E2BPtyRuntime(_RemoteRuntimeBase):
     """E2B runtime using native SDK PTY handle for persistent shell."""
 
-    def __init__(
-        self,
-        terminal: AbstractTerminal,
-        lease: SandboxLease,
-        provider: SandboxProvider,
-        state_persist_mode: str = "always",
-    ):
-        super().__init__(terminal, lease, provider, state_persist_mode=state_persist_mode)
+    def __init__(self, terminal: AbstractTerminal, lease: SandboxLease, provider: SandboxProvider):
+        super().__init__(terminal, lease, provider)
         self._session_lock = asyncio.Lock()
         self._bound_instance_id: str | None = None
         self._pty_pid: int | None = None
         self._baseline_env: dict[str, str] | None = None
+        self._snapshot_task: asyncio.Task[None] | None = None
+        self._snapshot_generation = 0
+        self._snapshot_error: str | None = None
 
     @staticmethod
     def _extract_marker_exit(raw: str, marker: str, command: str | None = None) -> tuple[str, int]:
@@ -1394,11 +1399,9 @@ class E2BPtyRuntime(_RemoteRuntimeBase):
     def _execute_once_sync(self, command: str, timeout: float | None = None) -> ExecuteResult:
         sandbox, pid = self._ensure_shell_sync(timeout)
         stdout, stderr, exit_code = self._run_pty_command_sync(sandbox, pid, command, timeout)
-        if self.state_persist_mode == "always":
-            self._sync_terminal_state_snapshot_sync(timeout)
         return ExecuteResult(exit_code=exit_code, stdout=stdout, stderr=stderr)
 
-    def _sync_terminal_state_snapshot_sync(self, timeout: float | None = None) -> None:
+    def _sync_terminal_state_snapshot_sync(self, timeout: float | None) -> None:
         if self._pty_pid is None:
             return
         if self._bound_instance_id is None:
@@ -1427,13 +1430,46 @@ class E2BPtyRuntime(_RemoteRuntimeBase):
 
         self.update_terminal_state(TerminalState(cwd=new_cwd, env_delta=env_delta))
 
-    def sync_terminal_state_snapshot(self, timeout: float | None = None) -> None:
-        self._sync_terminal_state_snapshot_sync(timeout)
+    async def _snapshot_state_async(self, generation: int, timeout: float | None) -> None:
+        async with self._session_lock:
+            if generation != self._snapshot_generation:
+                return
+            try:
+                await asyncio.to_thread(self._sync_terminal_state_snapshot_sync, timeout)
+                self._snapshot_error = None
+            except Exception as exc:
+                message = str(exc)
+                if self._looks_like_infra_error(message):
+                    try:
+                        self._recover_infra()
+                        self._pty_pid = None
+                        await asyncio.to_thread(self._sync_terminal_state_snapshot_sync, timeout)
+                        self._snapshot_error = None
+                        return
+                    except Exception as retry_exc:
+                        self._snapshot_error = str(retry_exc)
+                        return
+                self._snapshot_error = message
+
+    def _schedule_snapshot(self, generation: int, timeout: float | None) -> None:
+        if self._snapshot_task and not self._snapshot_task.done():
+            self._snapshot_task.cancel()
+        self._snapshot_task = asyncio.create_task(self._snapshot_state_async(generation, timeout))
 
     async def execute(self, command: str, timeout: float | None = None) -> ExecuteResult:
         async with self._session_lock:
+            if self._snapshot_error:
+                if self._looks_like_infra_error(self._snapshot_error):
+                    try:
+                        self._recover_infra()
+                        self._pty_pid = None
+                        self._snapshot_error = None
+                    except Exception as exc:
+                        return ExecuteResult(exit_code=1, stdout="", stderr=f"Error: snapshot failed: {exc}")
+                else:
+                    return ExecuteResult(exit_code=1, stdout="", stderr=f"Error: snapshot failed: {self._snapshot_error}")
             try:
-                return await asyncio.to_thread(self._execute_once_sync, command, timeout)
+                first = await asyncio.to_thread(self._execute_once_sync, command, timeout)
             except TimeoutError:
                 return ExecuteResult(
                     exit_code=-1, stdout="", stderr=f"Command timed out after {timeout}s", timed_out=True
@@ -1443,12 +1479,34 @@ class E2BPtyRuntime(_RemoteRuntimeBase):
                     self._recover_infra()
                     self._pty_pid = None
                     try:
-                        return await asyncio.to_thread(self._execute_once_sync, command, timeout)
+                        first = await asyncio.to_thread(self._execute_once_sync, command, timeout)
                     except Exception as retry_exc:
                         return ExecuteResult(exit_code=1, stdout="", stderr=f"Error: {retry_exc}")
-                return ExecuteResult(exit_code=1, stdout="", stderr=f"Error: {exc}")
+                else:
+                    return ExecuteResult(exit_code=1, stdout="", stderr=f"Error: {exc}")
+
+            self._snapshot_generation += 1
+            generation = self._snapshot_generation
+
+        # @@@e2b-async-snapshot - keep command return path independent from follow-up snapshot queries.
+        snapshot_timeout = None if timeout is None else max(float(timeout), 10.0)
+        self._schedule_snapshot(generation, snapshot_timeout)
+        return first
 
     async def close(self) -> None:
+        if self._snapshot_task and not self._snapshot_task.done():
+            self._snapshot_task.cancel()
+            try:
+                current_loop = asyncio.get_running_loop()
+            except RuntimeError:
+                current_loop = None
+            task_loop = self._snapshot_task.get_loop()
+            if current_loop is task_loop:
+                try:
+                    await self._snapshot_task
+                except asyncio.CancelledError:
+                    pass
+        self._snapshot_task = None
         if self._pty_pid is None or self._bound_instance_id is None:
             return
         pid = self._pty_pid
@@ -1465,16 +1523,15 @@ def create_runtime(
     provider: SandboxProvider,
     terminal: AbstractTerminal,
     lease: SandboxLease,
-    state_persist_mode: str = "always",
 ) -> PhysicalTerminalRuntime:
     capability = provider.get_capability()
     runtime_kind = str(getattr(capability, "runtime_kind", "remote"))
     if runtime_kind == "local":
-        return LocalPersistentShellRuntime(terminal, lease, state_persist_mode=state_persist_mode)
+        return LocalPersistentShellRuntime(terminal, lease)
     if runtime_kind == "docker_pty":
-        return DockerPtyRuntime(terminal, lease, provider, state_persist_mode=state_persist_mode)
+        return DockerPtyRuntime(terminal, lease, provider)
     if runtime_kind == "daytona_pty":
-        return DaytonaSessionRuntime(terminal, lease, provider, state_persist_mode=state_persist_mode)
+        return DaytonaSessionRuntime(terminal, lease, provider)
     if runtime_kind == "e2b_pty":
-        return E2BPtyRuntime(terminal, lease, provider, state_persist_mode=state_persist_mode)
-    return RemoteWrappedRuntime(terminal, lease, provider, state_persist_mode=state_persist_mode)
+        return E2BPtyRuntime(terminal, lease, provider)
+    return RemoteWrappedRuntime(terminal, lease, provider)

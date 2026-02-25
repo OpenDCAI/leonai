@@ -36,11 +36,7 @@ def create_sandbox(
     if provider == "local":
         from sandbox.local import LocalSandbox
 
-        return LocalSandbox(
-            workspace_root=workspace_root or str(Path.cwd()),
-            db_path=db_path,
-            state_persist_mode=config.state_persist_mode,
-        )
+        return LocalSandbox(workspace_root=workspace_root or str(Path.cwd()), db_path=db_path)
 
     if provider == "agentbay":
         from sandbox.agentbay import AgentBaySandbox

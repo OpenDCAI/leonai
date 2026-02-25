@@ -65,7 +65,6 @@ The file name (minus `.json`) is the sandbox name you pass to `--sandbox`.
 | `docker.image` | `python:3.12-slim` | Docker image to use |
 | `docker.mount_path` | `/workspace` | Working directory inside container |
 | `on_exit` | `pause` | What to do on agent exit: `pause` or `destroy` |
-| `state_persist_mode` | `always` | Terminal state persistence mode: `always` or `boundary` |
 
 **Requirements:** Docker CLI available on the host.
 
@@ -91,7 +90,6 @@ The file name (minus `.json`) is the sandbox name you pass to `--sandbox`.
 | `e2b.cwd` | `/home/user` | Working directory |
 | `e2b.timeout` | `300` | Session timeout in seconds |
 | `on_exit` | `pause` | `pause` or `destroy` |
-| `state_persist_mode` | `always` | Terminal state persistence mode: `always` or `boundary` |
 
 ### Daytona
 
@@ -113,7 +111,6 @@ The file name (minus `.json`) is the sandbox name you pass to `--sandbox`.
 | `daytona.api_url` | `https://app.daytona.io/api` | Daytona API base URL |
 | `daytona.cwd` | `/home/daytona` | Working directory |
 | `on_exit` | `pause` | `pause` or `destroy` |
-| `state_persist_mode` | `always` | Terminal state persistence mode: `always` or `boundary` |
 
 ### AgentBay
 
@@ -136,24 +133,17 @@ The file name (minus `.json`) is the sandbox name you pass to `--sandbox`.
 | `agentbay.context_path` | `/root` | Working directory |
 | `agentbay.image_id` | `null` | Specific image (optional) |
 | `on_exit` | `pause` | `pause` or `destroy` |
-| `state_persist_mode` | `always` | Terminal state persistence mode: `always` or `boundary` |
 
 ### Shared Fields
 
 **`context_id`** (optional, top-level): Enables persistent storage across sessions. For Docker, this creates a named volume. For AgentBay, this enables context sync.
-
-**`state_persist_mode`** (optional, top-level): Controls when terminal `cwd + env_delta` snapshots are persisted.
-
-- `always` (default): persist after every command.
-- `boundary`: persist only at runtime/terminal handoff and right before pause.
 
 ```json
 {
   "provider": "docker",
   "context_id": "my-project",
   "docker": { "image": "python:3.12-slim" },
-  "on_exit": "pause",
-  "state_persist_mode": "boundary"
+  "on_exit": "pause"
 }
 ```
 
