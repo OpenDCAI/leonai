@@ -25,6 +25,11 @@
     --input: 0 0% 90%;
     --ring: 0 0% 9%;
     --radius: 0.5rem;
+    --success: 142 71% 45%;
+    --success-foreground: 0 0% 100%;
+    --warning: 38 92% 50%;
+    --warning-foreground: 0 0% 100%;
+    --chart-1: 220 70% 50%;
     --sidebar-background: 0 0% 98%;
     --sidebar-foreground: 0 0% 9%;
     --sidebar-primary: 0 0% 9%;
@@ -53,7 +58,18 @@
   }
 }
 
-/* Scrollbar — minimal */
+/* Remove default focus outline, use subtle ring only for keyboard nav */
+*:focus {
+  outline: none;
+}
+
+*:focus-visible {
+  outline: 2px solid hsl(var(--primary) / 0.4);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Scrollbar — auto-hide, show on hover */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -64,12 +80,27 @@
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #d4d4d4;
+  background: transparent;
   border-radius: 3px;
+  transition: background 0.2s;
 }
 
-::-webkit-scrollbar-thumb:hover {
+*:hover::-webkit-scrollbar-thumb {
+  background: #d4d4d4;
+}
+
+*:hover::-webkit-scrollbar-thumb:hover {
   background: #a3a3a3;
+}
+
+/* Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+*:hover {
+  scrollbar-color: #d4d4d4 transparent;
 }
 
 /* Code font */
@@ -130,6 +161,17 @@
 }
 
 /* Markdown content */
+/* Utility classes */
+@layer components {
+  .surface-interactive {
+    @apply rounded-xl border border-border bg-card p-0 transition-all hover:shadow-sm hover:border-primary/20;
+  }
+}
+
+.glow-sm {
+  box-shadow: 0 0 0 1px hsl(var(--primary) / 0.15), 0 2px 8px hsl(var(--primary) / 0.08);
+}
+
 .markdown-content h1,
 .markdown-content h2,
 .markdown-content h3,

@@ -36,7 +36,7 @@ export default function NewChatPage() {
       console.error('[NewChatPage] postRun failed:', err);
       // Navigate anyway — the thread exists, user can retry from chat page
     }
-    navigate(`/app/${threadId}`, {
+    navigate(`/chat/${threadId}`, {
       state: { selectedModel: model, runStarted: true, message },
     });
   }
@@ -55,25 +55,25 @@ export default function NewChatPage() {
       <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px]">
         {/* Welcome Section */}
         <div className="text-center mb-8">
-          <h1 className="text-2xl font-medium text-[#171717] mb-2">
+          <h1 className="text-2xl font-medium text-foreground mb-2">
             你好，我是 Leon
           </h1>
-          <p className="text-sm text-[#737373] mb-6">
+          <p className="text-sm text-muted-foreground mb-6">
             你的通用数字员工，随时准备为你工作
           </p>
 
           {/* Capability Tags */}
           <div className="flex flex-wrap justify-center gap-2">
-            <div className="px-3 py-1.5 bg-[#fafafa] border border-[#e5e5e5] rounded-lg text-xs text-[#525252]">
+            <div className="px-3 py-1.5 bg-card border border-border rounded-lg text-xs text-muted-foreground">
               文件操作
             </div>
-            <div className="px-3 py-1.5 bg-[#fafafa] border border-[#e5e5e5] rounded-lg text-xs text-[#525252]">
+            <div className="px-3 py-1.5 bg-card border border-border rounded-lg text-xs text-muted-foreground">
               代码探索
             </div>
-            <div className="px-3 py-1.5 bg-[#fafafa] border border-[#e5e5e5] rounded-lg text-xs text-[#525252]">
+            <div className="px-3 py-1.5 bg-card border border-border rounded-lg text-xs text-muted-foreground">
               命令执行
             </div>
-            <div className="px-3 py-1.5 bg-[#fafafa] border border-[#e5e5e5] rounded-lg text-xs text-[#525252]">
+            <div className="px-3 py-1.5 bg-card border border-border rounded-lg text-xs text-muted-foreground">
               信息检索
             </div>
           </div>

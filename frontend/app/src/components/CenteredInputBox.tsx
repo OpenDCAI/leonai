@@ -128,7 +128,7 @@ export default function CenteredInputBox({
   // ====================================================
   return (
     <div className="w-[600px]">
-      <div className="bg-[#fafafa] rounded-[24px] border border-[#e5e5e5] shadow-lg p-6">
+      <div className="bg-card rounded-[24px] border border-border shadow-lg p-6">
         <textarea
           value={message}
           onChange={(e) => setMessage(e.target.value)}
@@ -139,7 +139,7 @@ export default function CenteredInputBox({
             }
           }}
           placeholder="告诉 Leon 你需要什么帮助..."
-          className="w-full bg-transparent text-base resize-none outline-none border-none text-[#171717] placeholder:text-[#a3a3a3] mb-2"
+          className="w-full bg-transparent text-base resize-none outline-none border-none text-foreground placeholder:text-muted-foreground mb-4"
           rows={6}
           disabled={sending}
           style={{ boxShadow: "none" }}
@@ -286,7 +286,7 @@ export default function CenteredInputBox({
           <Button
             onClick={() => void handleSend()}
             disabled={!message.trim() || sending}
-            className="h-9 px-4 bg-[#171717] text-white hover:bg-[#404040] rounded-lg"
+            className="h-9 px-4 bg-foreground text-white hover:bg-foreground/80 rounded-lg"
           >
             <Send className="w-4 h-4 mr-2" />
             发送

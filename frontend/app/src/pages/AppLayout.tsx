@@ -23,7 +23,7 @@ export default function AppLayout() {
   const sidebarResize = useResizableX(272, 200, 420);
 
   return (
-    <div className="h-screen w-screen bg-white flex overflow-hidden">
+    <div className="h-full w-full bg-background flex overflow-hidden">
       <Sidebar
         threads={threads}
         collapsed={sidebarCollapsed}
