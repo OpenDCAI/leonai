@@ -23,6 +23,10 @@ async def lifespan(app: FastAPI):
 
     init_event_store()
 
+    from backend.web.services.panel_service import init_panel_tables
+
+    init_panel_tables()
+
     # Initialize app state
     app.state.agent_pool: dict[str, Any] = {}
     app.state.thread_sandbox: dict[str, str] = {}
