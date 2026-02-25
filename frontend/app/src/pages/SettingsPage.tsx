@@ -22,8 +22,9 @@ interface AvailableModelsData {
 }
 
 interface Settings {
-  model_mapping: Record<string, { model: string; alias?: string | null; context_limit?: number | null }>;
+  model_mapping: Record<string, string>;
   enabled_models: string[];
+  custom_config: Record<string, { alias?: string | null; context_limit?: number | null }>;
   providers: Record<string, { api_key: string | null; base_url: string | null }>;
   default_workspace: string | null;
   default_model: string;
@@ -74,11 +75,11 @@ export default function SettingsPage() {
     void loadData();
   }, []);
 
-  const handleAddCustomModel = async (modelId: string, provider?: string) => {
+  const handleAddCustomModel = async (modelId: string, provider?: string, alias?: string, contextLimit?: number) => {
     const res = await fetch("/api/settings/models/custom", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model_id: modelId, provider: provider || null }),
+      body: JSON.stringify({ model_id: modelId, provider: provider || null, alias: alias || null, context_limit: contextLimit || null }),
     });
     const data = await res.json();
     if (data.success) {
@@ -212,6 +213,7 @@ export default function SettingsPage() {
                 <ModelPoolSection
                   models={availableModels.models}
                   enabledModels={settings.enabled_models}
+                  customConfig={settings.custom_config || {}}
                   providers={settings.providers}
                   onToggle={(modelId, enabled) => {
                     const newEnabled = enabled

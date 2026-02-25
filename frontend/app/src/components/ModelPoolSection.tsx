@@ -11,13 +11,14 @@ interface Model {
 interface ModelPoolSectionProps {
   models: Model[];
   enabledModels: string[];
+  customConfig: Record<string, { alias?: string | null; context_limit?: number | null }>;
   providers: Record<string, { api_key: string | null; base_url: string | null }>;
   onToggle: (modelId: string, enabled: boolean) => void;
-  onAddCustomModel: (modelId: string, provider?: string) => Promise<void>;
+  onAddCustomModel: (modelId: string, provider?: string, alias?: string, contextLimit?: number) => Promise<void>;
   onRemoveCustomModel: (modelId: string) => Promise<void>;
 }
 
-export default function ModelPoolSection({ models, enabledModels, providers, onToggle, onAddCustomModel, onRemoveCustomModel }: ModelPoolSectionProps) {
+export default function ModelPoolSection({ models, enabledModels, customConfig, providers, onToggle, onAddCustomModel, onRemoveCustomModel }: ModelPoolSectionProps) {
   const [toggling, setToggling] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -25,6 +26,11 @@ export default function ModelPoolSection({ models, enabledModels, providers, onT
   const [testStatus, setTestStatus] = useState<Record<string, "idle" | "testing" | "ok" | "fail">>({});
   const [testError, setTestError] = useState<Record<string, string>>({});
   const [selectedProvider, setSelectedProvider] = useState("");
+  const [addAlias, setAddAlias] = useState("");
+  const [addContextLimit, setAddContextLimit] = useState("");
+  const [editingModel, setEditingModel] = useState<string | null>(null);
+  const [editAlias, setEditAlias] = useState("");
+  const [editContextLimit, setEditContextLimit] = useState("");
 
   const handleToggle = async (modelId: string, enabled: boolean) => {
     setToggling(modelId);
@@ -68,6 +74,25 @@ export default function ModelPoolSection({ models, enabledModels, providers, onT
       setTestError((s) => ({ ...s, [modelId]: "Network error" }));
     }
     setTimeout(() => setTestStatus((s) => ({ ...s, [modelId]: "idle" })), 5000);
+  };
+
+  const handleSaveConfig = async (modelId: string) => {
+    try {
+      await fetch("/api/settings/models/custom/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model_id: modelId,
+          alias: editAlias || null,
+          context_limit: editContextLimit ? Number(editContextLimit) : null,
+        }),
+      });
+      setSuccessMessage("Config saved");
+      setTimeout(() => setSuccessMessage(null), 2000);
+      setEditingModel(null);
+    } catch (e) {
+      console.error("Failed to save config:", e);
+    }
   };
 
   const filteredModels = models.filter((model) =>
@@ -133,8 +158,8 @@ export default function ModelPoolSection({ models, enabledModels, providers, onT
             const isToggling = toggling === model.id;
 
             return (
+              <div key={model.id}>
               <div
-                key={model.id}
                 className="group flex items-center gap-4 px-4 py-3 border-b border-[#f1f5f9] last:border-b-0 hover:bg-[#f8fafc] transition-all duration-200"
                 style={{
                   animation: `slideIn 0.3s ease-out ${index * 0.02}s both`
@@ -170,6 +195,23 @@ export default function ModelPoolSection({ models, enabledModels, providers, onT
                     <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#f1f5f9] text-[#94a3b8] font-medium">
                       custom · {model.provider || "unknown"}
                     </span>
+                    {customConfig[model.id]?.alias && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#0ea5e9]/10 text-[#0ea5e9] font-mono">
+                        {customConfig[model.id].alias}
+                      </span>
+                    )}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const cfg = customConfig[model.id] || {};
+                        setEditAlias(cfg.alias || "");
+                        setEditContextLimit(cfg.context_limit ? String(cfg.context_limit) : "");
+                        setEditingModel(editingModel === model.id ? null : model.id);
+                      }}
+                      className="text-[11px] text-[#94a3b8] hover:text-[#0ea5e9] opacity-0 group-hover:opacity-100 transition-all flex-shrink-0"
+                    >
+                      Config
+                    </button>
                     <button
                       onClick={async (e) => {
                         e.stopPropagation();
@@ -204,6 +246,31 @@ export default function ModelPoolSection({ models, enabledModels, providers, onT
                   );
                 })()}
               </div>
+              {editingModel === model.id && (
+                <div className="flex items-center gap-2 px-4 py-2 bg-[#f8fafc] border-b border-[#f1f5f9]">
+                  <input
+                    type="text"
+                    placeholder="alias (e.g. claude-sonnet-4.5)"
+                    value={editAlias}
+                    onChange={(e) => setEditAlias(e.target.value)}
+                    className="flex-1 px-2 py-1.5 border border-[#e2e8f0] rounded-lg text-xs text-[#475569] bg-white font-mono placeholder:text-[#cbd5e1] focus:outline-none focus:border-[#0ea5e9] focus:ring-1 focus:ring-[#0ea5e9]/20"
+                  />
+                  <input
+                    type="number"
+                    placeholder="context limit"
+                    value={editContextLimit}
+                    onChange={(e) => setEditContextLimit(e.target.value)}
+                    className="w-28 px-2 py-1.5 border border-[#e2e8f0] rounded-lg text-xs text-[#475569] bg-white font-mono placeholder:text-[#cbd5e1] focus:outline-none focus:border-[#0ea5e9] focus:ring-1 focus:ring-[#0ea5e9]/20"
+                  />
+                  <button
+                    onClick={() => void handleSaveConfig(model.id)}
+                    className="px-3 py-1.5 text-xs font-medium text-white rounded-lg bg-[#0ea5e9] hover:bg-[#0284c7] transition-colors"
+                  >
+                    Save
+                  </button>
+                </div>
+              )}
+              </div>
             );
           })}
         </div>
@@ -228,9 +295,16 @@ export default function ModelPoolSection({ models, enabledModels, providers, onT
               onClick={async () => {
                 setAdding(true);
                 try {
-                  await onAddCustomModel(searchQuery.trim(), selectedProvider || undefined);
+                  await onAddCustomModel(
+                    searchQuery.trim(),
+                    selectedProvider || undefined,
+                    addAlias || undefined,
+                    addContextLimit ? Number(addContextLimit) : undefined,
+                  );
                   setSearchQuery("");
                   setSelectedProvider("");
+                  setAddAlias("");
+                  setAddContextLimit("");
                   setSuccessMessage("Model added");
                   setTimeout(() => setSuccessMessage(null), 2000);
                 } catch (e) {
@@ -245,6 +319,22 @@ export default function ModelPoolSection({ models, enabledModels, providers, onT
             >
               {adding ? "Adding..." : `Add "${searchQuery.trim()}" to pool`}
             </button>
+          </div>
+          <div className="flex items-center justify-center gap-2">
+            <input
+              type="text"
+              placeholder="alias (optional)"
+              value={addAlias}
+              onChange={(e) => setAddAlias(e.target.value)}
+              className="h-9 px-3 text-sm border-2 border-[#e2e8f0] rounded-lg bg-white text-[#1e293b] font-mono placeholder:text-[#cbd5e1] focus:outline-none focus:border-[#0ea5e9]"
+            />
+            <input
+              type="number"
+              placeholder="context limit"
+              value={addContextLimit}
+              onChange={(e) => setAddContextLimit(e.target.value)}
+              className="h-9 w-32 px-3 text-sm border-2 border-[#e2e8f0] rounded-lg bg-white text-[#1e293b] font-mono placeholder:text-[#cbd5e1] focus:outline-none focus:border-[#0ea5e9]"
+            />
           </div>
         </div>
       )}
