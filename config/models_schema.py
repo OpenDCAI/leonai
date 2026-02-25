@@ -132,11 +132,20 @@ class ModelsConfig(BaseModel):
             kwargs["temperature"] = spec.temperature
         if spec.max_tokens is not None:
             kwargs["max_tokens"] = spec.max_tokens
+        # Inherit from custom_config of the resolved model (lower priority)
+        resolved = spec.model
+        if resolved in self.pool.custom_config:
+            cc = self.pool.custom_config[resolved]
+            if cc.alias:
+                kwargs["alias"] = cc.alias
+            if cc.context_limit is not None:
+                kwargs["context_limit"] = cc.context_limit
+        # Mapping-level overrides (higher priority)
         if spec.alias:
             kwargs["alias"] = spec.alias
         if spec.context_limit is not None:
             kwargs["context_limit"] = spec.context_limit
-        return spec.model, kwargs
+        return resolved, kwargs
 
     def get_provider(self, name: str) -> ProviderConfig | None:
         """Get provider credentials by name."""

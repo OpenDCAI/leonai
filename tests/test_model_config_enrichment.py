@@ -3,7 +3,7 @@
 import pytest
 from pydantic import ValidationError
 
-from config.models_schema import ActiveModel, ModelSpec, ModelsConfig
+from config.models_schema import ActiveModel, CustomModelConfig, ModelSpec, ModelsConfig, PoolConfig
 from core.monitor.cost import fetch_openrouter_pricing, get_model_context_limit
 from core.monitor.middleware import MonitorMiddleware
 
@@ -75,6 +75,32 @@ class TestResolveModelOverrides:
         config = ModelsConfig(active=ActiveModel(model="Alice"))
         name, overrides = config.resolve_model("Alice")
         assert overrides == {}
+
+    def test_virtual_model_inherits_custom_config(self):
+        """虚拟模型映射到自定义模型时，继承 custom_config"""
+        config = ModelsConfig(
+            mapping={"leon:medium": ModelSpec(model="Day53")},
+            pool=PoolConfig(
+                custom=["Day53"],
+                custom_config={"Day53": CustomModelConfig(alias="deepseek-chat", context_limit=65536)},
+            ),
+        )
+        name, overrides = config.resolve_model("leon:medium")
+        assert name == "Day53"
+        assert overrides["alias"] == "deepseek-chat"
+        assert overrides["context_limit"] == 65536
+
+    def test_virtual_model_mapping_overrides_custom_config(self):
+        """mapping 级别的 alias/context_limit 优先于 custom_config"""
+        config = ModelsConfig(
+            mapping={"leon:medium": ModelSpec(model="Day53", alias="gpt-4o", context_limit=128000)},
+            pool=PoolConfig(
+                custom_config={"Day53": CustomModelConfig(alias="deepseek-chat", context_limit=65536)},
+            ),
+        )
+        name, overrides = config.resolve_model("leon:medium")
+        assert overrides["alias"] == "gpt-4o"
+        assert overrides["context_limit"] == 128000
 
 
 class TestMonitorUpdateModel:
