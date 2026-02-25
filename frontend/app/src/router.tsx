@@ -12,7 +12,7 @@ import LibraryPage from './pages/LibraryPage';
 export const router = createBrowserRouter([
   {
     path: '/',
-    element: <Navigate to="/chat" replace />,
+    element: <Navigate to="/staff" replace />,
   },
   {
     path: '/',

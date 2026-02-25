@@ -104,10 +104,18 @@ export default function RootLayout() {
     return () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
   }, [dragging, dragWidth]);
 
+  const isChat = location.pathname.startsWith("/chat");
   const sidebarPx = dragging && dragWidth !== null ? dragWidth : (expanded ? EXPANDED_W : COLLAPSED_W);
   const showLabels = dragging ? (dragWidth !== null && dragWidth >= SNAP_THRESHOLD) : expanded;
 
-  const isChat = location.pathname.startsWith("/chat");
+  // Auto-collapse sidebar when entering chat route
+  const prevIsChatRef = useRef(isChat);
+  useEffect(() => {
+    if (isChat && !prevIsChatRef.current) {
+      setExpanded(false);
+    }
+    prevIsChatRef.current = isChat;
+  }, [isChat]);
 
   // Shared nav content
   const renderNavItems = (closeMobile?: () => void) => (
@@ -169,7 +177,7 @@ export default function RootLayout() {
   // Desktop layout
   return (
     <div className="flex h-screen overflow-hidden bg-background">
-      {!isChat && <div className="relative shrink-0 flex z-20" style={{ width: sidebarPx }}>
+      <div className="relative shrink-0 flex z-20" style={{ width: sidebarPx }}>
         <aside className={`w-full bg-sidebar flex flex-col py-4 overflow-hidden ${dragging ? "" : "transition-all duration-200"}`}>
           <div className={`flex items-center ${showLabels ? "px-4 gap-3" : "justify-center"} mb-6`}>
             <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center shrink-0">
@@ -238,7 +246,7 @@ export default function RootLayout() {
             {expanded ? <ChevronLeft className="w-3 h-3 text-muted-foreground" /> : <ChevronRight className="w-3 h-3 text-muted-foreground" />}
           </div>
         </div>
-      </div>}
+      </div>
 
       <main className="flex-1 overflow-hidden"><Outlet /></main>
       <CreateStaffDialog open={createStaffOpen} onOpenChange={setCreateStaffOpen} />
