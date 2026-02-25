@@ -7,6 +7,7 @@ class CreateThreadRequest(BaseModel):
     sandbox: str = "local"
     cwd: str | None = None
     model: str | None = None
+    mode: str = "normal"
 
 
 class RunRequest(BaseModel):

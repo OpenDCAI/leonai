@@ -7,10 +7,18 @@ No business logic in frontend.
 
 import json
 import sqlite3
+import uuid
 from datetime import datetime
+from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel, Field
 
+from backend.web.core.config import DB_PATH
+from backend.web.services.agent_pool import get_or_create_agent
+from backend.web.services.streaming_service import start_agent_run
+from backend.web.utils.helpers import init_thread_config
+from core.monitor import AgentState
 from sandbox.db import DEFAULT_DB_PATH
 
 router = APIRouter(prefix="/api/monitor")
@@ -23,6 +31,153 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+class EvaluationCreateRequest(BaseModel):
+    dataset: str = "SWE-bench/SWE-bench_Lite"
+    split: str = "test"
+    start: int = 0
+    count: int = Field(default=5, ge=1, le=50)
+    prompt_profile: str = "heuristic"
+    timeout_sec: int = Field(default=180, ge=30, le=3600)
+    recursion_limit: int = Field(default=24, ge=1, le=128)
+    sandbox: str = "local"
+    cwd: str = "/home/ubuntu/specops0/Projects/leonai-main"
+    arm: str = "monitor"
+
+
+def _ensure_evaluation_tables() -> None:
+    if not DB_PATH.exists():
+        DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(str(DB_PATH)) as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS evaluation_jobs (
+                evaluation_id TEXT PRIMARY KEY,
+                dataset TEXT NOT NULL,
+                split TEXT NOT NULL,
+                start_idx INTEGER NOT NULL,
+                slice_count INTEGER NOT NULL,
+                prompt_profile TEXT NOT NULL,
+                timeout_sec INTEGER NOT NULL,
+                recursion_limit INTEGER NOT NULL,
+                sandbox TEXT NOT NULL,
+                cwd TEXT,
+                arm TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'running',
+                notes TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS evaluation_job_threads (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                evaluation_id TEXT NOT NULL,
+                thread_id TEXT NOT NULL,
+                run_id TEXT,
+                start_idx INTEGER NOT NULL,
+                item_index INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE(evaluation_id, thread_id),
+                FOREIGN KEY (evaluation_id) REFERENCES evaluation_jobs(evaluation_id)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_evaluation_job_threads_eval
+            ON evaluation_job_threads(evaluation_id, item_index)
+            """
+        )
+        conn.commit()
+
+
+def _build_eval_message(
+    *,
+    dataset: str,
+    split: str,
+    start_idx: int,
+    prompt_profile: str,
+    timeout_sec: int,
+    recursion_limit: int,
+    arm: str,
+    run_label: str,
+) -> str:
+    return "\n".join(
+        [
+            "Run a real SWE-bench slice and report trace evidence.",
+            "Always call the `run_command` tool (never `bash`).",
+            "Execute exactly:",
+            (
+                "cd /home/ubuntu/specops0/Projects/leonai-main && "
+                "uv run python eval/swebench/run_slice.py "
+                f"--dataset {dataset} --split {split} --start {start_idx} --count 1 "
+                f"--run-id {run_label} --arm {arm} --prompt-profile {prompt_profile} "
+                f"--timeout-sec {timeout_sec} --recursion-limit {recursion_limit} "
+                "--output-dir artifacts/swebench --no-eval"
+            ),
+            "After it finishes, summarize run_id and output files.",
+        ]
+    )
+
+
+def _load_latest_session(db: sqlite3.Connection, thread_id: str) -> sqlite3.Row | None:
+    return db.execute(
+        """
+        SELECT chat_session_id, status, started_at, last_active_at
+        FROM chat_sessions
+        WHERE thread_id = ?
+        ORDER BY started_at DESC
+        LIMIT 1
+        """,
+        (thread_id,),
+    ).fetchone()
+
+
+def _load_run_stats(thread_id: str, run_id: str | None) -> dict:
+    with sqlite3.connect(str(DB_PATH)) as conn:
+        conn.row_factory = sqlite3.Row
+        if run_id:
+            row = conn.execute(
+                """
+                SELECT run_id, COUNT(*) AS event_count, MAX(seq) AS last_seq, MAX(created_at) AS last_event_at
+                FROM run_events
+                WHERE thread_id = ? AND run_id = ?
+                GROUP BY run_id
+                """,
+                (thread_id, run_id),
+            ).fetchone()
+            if row:
+                return {
+                    "run_id": row["run_id"],
+                    "event_count": int(row["event_count"] or 0),
+                    "last_seq": int(row["last_seq"] or 0),
+                    "last_event_at": row["last_event_at"],
+                    "last_event_ago": format_time_ago(row["last_event_at"]) if row["last_event_at"] else None,
+                }
+        row = conn.execute(
+            """
+            SELECT run_id, COUNT(*) AS event_count, MAX(seq) AS last_seq, MAX(created_at) AS last_event_at
+            FROM run_events
+            WHERE thread_id = ?
+            GROUP BY run_id
+            ORDER BY last_seq DESC
+            LIMIT 1
+            """,
+            (thread_id,),
+        ).fetchone()
+        if not row:
+            return {"run_id": run_id, "event_count": 0, "last_seq": 0, "last_event_at": None, "last_event_ago": None}
+        return {
+            "run_id": row["run_id"],
+            "event_count": int(row["event_count"] or 0),
+            "last_seq": int(row["last_seq"] or 0),
+            "last_event_at": row["last_event_at"],
+            "last_event_ago": format_time_ago(row["last_event_at"]) if row["last_event_at"] else None,
+        }
 
 
 def format_time_ago(iso_timestamp: str) -> str:
@@ -64,6 +219,139 @@ def make_badge(desired, observed):
     }
 
 
+def load_thread_mode_map(thread_ids: list[str]) -> dict[str, dict]:
+    """Load thread mode metadata from thread_config."""
+    if not thread_ids or not DB_PATH.exists():
+        return {}
+    with sqlite3.connect(str(DB_PATH)) as conn:
+        conn.row_factory = sqlite3.Row
+        placeholders = ",".join("?" for _ in thread_ids)
+        rows = conn.execute(
+            f"""
+            SELECT thread_id, thread_mode, keep_full_trace
+            FROM thread_config
+            WHERE thread_id IN ({placeholders})
+            """,
+            thread_ids,
+        ).fetchall()
+    mode_map = {}
+    for row in rows:
+        mode_map[row["thread_id"]] = {
+            "thread_mode": row["thread_mode"] or "normal",
+            "keep_full_trace": str(row["keep_full_trace"] or "0") in {"1", "true", "True"},
+        }
+    return mode_map
+
+
+def load_thread_mode(thread_id: str) -> dict:
+    """Load single thread mode metadata."""
+    mode_map = load_thread_mode_map([thread_id])
+    return mode_map.get(thread_id, {"thread_mode": "normal", "keep_full_trace": False})
+
+
+def load_run_candidates(thread_id: str, limit: int = 20) -> list[dict]:
+    """List recent run_ids for a thread with basic stats."""
+    run_db_path = Path.home() / ".leon" / "leon.db"
+    if not run_db_path.exists():
+        return []
+    # @@@run-candidates - Keep selector data lightweight so session page can switch run trace quickly.
+    with sqlite3.connect(str(run_db_path)) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT
+                run_id,
+                COUNT(*) AS event_count,
+                MIN(seq) AS first_seq,
+                MAX(seq) AS last_seq,
+                MIN(created_at) AS started_at,
+                MAX(created_at) AS ended_at
+            FROM run_events
+            WHERE thread_id = ?
+            GROUP BY run_id
+            ORDER BY MAX(seq) DESC
+            LIMIT ?
+            """,
+            (thread_id, limit),
+        ).fetchall()
+        return [
+            {
+                "run_id": row["run_id"],
+                "event_count": int(row["event_count"] or 0),
+                "first_seq": int(row["first_seq"] or 0),
+                "last_seq": int(row["last_seq"] or 0),
+                "started_at": row["started_at"],
+                "started_ago": format_time_ago(row["started_at"]) if row["started_at"] else None,
+                "ended_at": row["ended_at"],
+                "ended_ago": format_time_ago(row["ended_at"]) if row["ended_at"] else None,
+            }
+            for row in rows
+        ]
+
+
+def load_thread_trace_payload(thread_id: str, run_id: str | None = None, limit: int = 2000) -> dict:
+    """Load persisted trace bound to thread/run (not session)."""
+    run_candidates = load_run_candidates(thread_id, limit=50)
+    if not run_id:
+        run_id = run_candidates[0]["run_id"] if run_candidates else None
+
+    if not run_id:
+        return {
+            "thread_id": thread_id,
+            "run_id": None,
+            "run_candidates": run_candidates,
+            "event_count": 0,
+            "events": [],
+            "event_type_counts": {},
+        }
+
+    run_db_path = Path.home() / ".leon" / "leon.db"
+    if not run_db_path.exists():
+        raise HTTPException(status_code=404, detail="Trace database not found")
+
+    with sqlite3.connect(str(run_db_path)) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT seq, event_type, data, message_id, created_at
+            FROM run_events
+            WHERE thread_id = ? AND run_id = ?
+            ORDER BY seq ASC
+            LIMIT ?
+            """,
+            (thread_id, run_id, limit),
+        ).fetchall()
+
+    events: list[dict] = []
+    event_type_counts: dict[str, int] = {}
+    for row in rows:
+        event_type = row["event_type"]
+        try:
+            payload = json.loads(row["data"]) if row["data"] else {}
+        except json.JSONDecodeError:
+            payload = {"raw": row["data"]}
+        event_type_counts[event_type] = event_type_counts.get(event_type, 0) + 1
+        events.append(
+            {
+                "seq": int(row["seq"]),
+                "event_type": event_type,
+                "payload": payload,
+                "message_id": row["message_id"],
+                "created_at": row["created_at"],
+                "created_ago": format_time_ago(row["created_at"]) if row["created_at"] else None,
+            }
+        )
+
+    return {
+        "thread_id": thread_id,
+        "run_id": run_id,
+        "run_candidates": run_candidates,
+        "event_count": len(events),
+        "events": events,
+        "event_type_counts": event_type_counts,
+    }
+
+
 @router.get("/threads")
 def list_threads(db: sqlite3.Connection = Depends(get_db)):
     rows = db.execute("""
@@ -82,13 +370,17 @@ def list_threads(db: sqlite3.Connection = Depends(get_db)):
         ORDER BY MAX(cs.last_active_at) DESC
     """).fetchall()
 
+    mode_map = load_thread_mode_map([row["thread_id"] for row in rows if row["thread_id"]])
     items = []
     for row in rows:
         badge = make_badge(row["desired_state"], row["observed_state"])
+        mode_info = mode_map.get(row["thread_id"], {"thread_mode": "normal", "keep_full_trace": False})
         items.append(
             {
                 "thread_id": row["thread_id"],
                 "thread_url": f"/thread/{row['thread_id']}",
+                "thread_mode": mode_info["thread_mode"],
+                "keep_full_trace": mode_info["keep_full_trace"],
                 "session_count": row["session_count"],
                 "last_active": row["last_active"],
                 "last_active_ago": format_time_ago(row["last_active"]),
@@ -157,8 +449,11 @@ def get_thread(thread_id: str, db: sqlite3.Connection = Depends(get_db)):
             }
         )
 
+    mode_info = load_thread_mode(thread_id)
     return {
         "thread_id": thread_id,
+        "thread_mode": mode_info["thread_mode"],
+        "keep_full_trace": mode_info["keep_full_trace"],
         "breadcrumb": [
             {"label": "Threads", "url": "/threads"},
             {"label": thread_id[:8], "url": f"/thread/{thread_id}"},
@@ -169,6 +464,381 @@ def get_thread(thread_id: str, db: sqlite3.Connection = Depends(get_db)):
             "items": [{"lease_id": lid, "lease_url": f"/lease/{lid}"} for lid in lease_ids],
         },
     }
+
+
+@router.post("/evaluations")
+async def create_evaluation(payload: EvaluationCreateRequest, request: Request):
+    """Create one evaluation job that fans out into multiple evaluation-mode threads."""
+    _ensure_evaluation_tables()
+    app = request.app
+    now = datetime.now().isoformat()
+    evaluation_id = f"eval-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
+    with sqlite3.connect(str(DB_PATH)) as conn:
+        conn.execute(
+            """
+            INSERT INTO evaluation_jobs (
+                evaluation_id, dataset, split, start_idx, slice_count, prompt_profile,
+                timeout_sec, recursion_limit, sandbox, cwd, arm, status, notes, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', NULL, ?, ?)
+            """,
+            (
+                evaluation_id,
+                payload.dataset,
+                payload.split,
+                payload.start,
+                payload.count,
+                payload.prompt_profile,
+                payload.timeout_sec,
+                payload.recursion_limit,
+                payload.sandbox,
+                payload.cwd,
+                payload.arm,
+                now,
+                now,
+            ),
+        )
+        conn.commit()
+
+    created: list[dict] = []
+    try:
+        for item_index in range(payload.count):
+            start_idx = payload.start + item_index
+            thread_id = str(uuid.uuid4())
+            app.state.thread_sandbox[thread_id] = payload.sandbox
+            if payload.cwd:
+                app.state.thread_cwd[thread_id] = payload.cwd
+            init_thread_config(
+                thread_id,
+                payload.sandbox,
+                payload.cwd,
+                thread_mode="evaluation",
+                keep_full_trace=True,
+            )
+            agent = await get_or_create_agent(app, payload.sandbox, thread_id=thread_id)
+            if hasattr(agent, "runtime") and not agent.runtime.transition(AgentState.ACTIVE):
+                raise RuntimeError(f"Thread {thread_id} is already active")
+            swebench_run_label = f"{evaluation_id}-{item_index:03d}"
+            message = _build_eval_message(
+                dataset=payload.dataset,
+                split=payload.split,
+                start_idx=start_idx,
+                prompt_profile=payload.prompt_profile,
+                timeout_sec=payload.timeout_sec,
+                recursion_limit=payload.recursion_limit,
+                arm=payload.arm,
+                run_label=swebench_run_label,
+            )
+            run_buffer = start_agent_run(agent, thread_id, message, app, enable_trajectory=True)
+            run_id = str(run_buffer.run_id)
+            created.append({"thread_id": thread_id, "run_id": run_id, "start_idx": start_idx, "item_index": item_index})
+            with sqlite3.connect(str(DB_PATH)) as conn:
+                conn.execute(
+                    """
+                    INSERT INTO evaluation_job_threads (
+                        evaluation_id, thread_id, run_id, start_idx, item_index, created_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (evaluation_id, thread_id, run_id, start_idx, item_index, datetime.now().isoformat()),
+                )
+                conn.execute(
+                    "UPDATE evaluation_jobs SET updated_at = ? WHERE evaluation_id = ?",
+                    (datetime.now().isoformat(), evaluation_id),
+                )
+                conn.commit()
+    except Exception as exc:
+        with sqlite3.connect(str(DB_PATH)) as conn:
+            conn.execute(
+                "UPDATE evaluation_jobs SET status = 'error', notes = ?, updated_at = ? WHERE evaluation_id = ?",
+                (str(exc), datetime.now().isoformat(), evaluation_id),
+            )
+            conn.commit()
+        raise HTTPException(status_code=500, detail=f"failed to start evaluation {evaluation_id}: {exc}") from exc
+
+    return {
+        "evaluation_id": evaluation_id,
+        "status": "running",
+        "count": len(created),
+        "dataset": payload.dataset,
+        "split": payload.split,
+        "start": payload.start,
+        "threads": created,
+    }
+
+
+@router.get("/evaluations")
+def list_evaluations(limit: int = 30, request: Request = None):
+    _ensure_evaluation_tables()
+    running_threads = set(getattr(request.app.state, "thread_tasks", {}).keys()) if request else set()
+    with sqlite3.connect(str(DB_PATH)) as conn:
+        conn.row_factory = sqlite3.Row
+        jobs = conn.execute(
+            """
+            SELECT evaluation_id, dataset, split, start_idx, slice_count, prompt_profile, timeout_sec,
+                   recursion_limit, sandbox, cwd, arm, status, notes, created_at, updated_at
+            FROM evaluation_jobs
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        items = []
+        for row in jobs:
+            threads = conn.execute(
+                """
+                SELECT thread_id
+                FROM evaluation_job_threads
+                WHERE evaluation_id = ?
+                """,
+                (row["evaluation_id"],),
+            ).fetchall()
+            thread_ids = [str(t["thread_id"]) for t in threads]
+            running_count = sum(1 for tid in thread_ids if tid in running_threads)
+            total = len(thread_ids)
+            if row["status"] == "error":
+                status = "error"
+            elif running_count > 0:
+                status = "running"
+            elif total > 0:
+                status = "completed"
+            else:
+                status = "pending"
+            items.append(
+                {
+                    "evaluation_id": row["evaluation_id"],
+                    "evaluation_url": f"/evaluation/{row['evaluation_id']}",
+                    "dataset": row["dataset"],
+                    "split": row["split"],
+                    "start_idx": int(row["start_idx"] or 0),
+                    "slice_count": int(row["slice_count"] or 0),
+                    "prompt_profile": row["prompt_profile"],
+                    "timeout_sec": int(row["timeout_sec"] or 0),
+                    "recursion_limit": int(row["recursion_limit"] or 0),
+                    "status": status,
+                    "sandbox": row["sandbox"],
+                    "threads_total": total,
+                    "threads_running": running_count,
+                    "threads_done": max(total - running_count, 0),
+                    "notes": row["notes"],
+                    "created_at": row["created_at"],
+                    "created_ago": format_time_ago(row["created_at"]) if row["created_at"] else None,
+                    "updated_at": row["updated_at"],
+                    "updated_ago": format_time_ago(row["updated_at"]) if row["updated_at"] else None,
+                }
+            )
+    return {"title": "Evaluations", "count": len(items), "items": items}
+
+
+@router.get("/evaluation/{evaluation_id}")
+def get_evaluation_detail(evaluation_id: str, request: Request, db: sqlite3.Connection = Depends(get_db)):
+    _ensure_evaluation_tables()
+    running_threads = set(getattr(request.app.state, "thread_tasks", {}).keys()) if request else set()
+    with sqlite3.connect(str(DB_PATH)) as conn:
+        conn.row_factory = sqlite3.Row
+        job = conn.execute(
+            """
+            SELECT evaluation_id, dataset, split, start_idx, slice_count, prompt_profile, timeout_sec,
+                   recursion_limit, sandbox, cwd, arm, status, notes, created_at, updated_at
+            FROM evaluation_jobs
+            WHERE evaluation_id = ?
+            LIMIT 1
+            """,
+            (evaluation_id,),
+        ).fetchone()
+        if not job:
+            raise HTTPException(status_code=404, detail="evaluation not found")
+        rows = conn.execute(
+            """
+            SELECT thread_id, run_id, start_idx, item_index, created_at
+            FROM evaluation_job_threads
+            WHERE evaluation_id = ?
+            ORDER BY item_index ASC
+            """,
+            (evaluation_id,),
+        ).fetchall()
+
+    thread_items = []
+    running_count = 0
+    for row in rows:
+        thread_id = str(row["thread_id"])
+        session = _load_latest_session(db, thread_id)
+        run = _load_run_stats(thread_id, row["run_id"])
+        running = thread_id in running_threads
+        if running:
+            running_count += 1
+        thread_items.append(
+            {
+                "thread_id": thread_id,
+                "thread_url": f"/thread/{thread_id}",
+                "start_idx": int(row["start_idx"] or 0),
+                "item_index": int(row["item_index"] or 0),
+                "created_at": row["created_at"],
+                "created_ago": format_time_ago(row["created_at"]) if row["created_at"] else None,
+                "run": run,
+                "session": {
+                    "session_id": session["chat_session_id"] if session else None,
+                    "session_url": f"/session/{session['chat_session_id']}" if session else None,
+                    "status": session["status"] if session else None,
+                    "started_ago": format_time_ago(session["started_at"]) if session and session["started_at"] else None,
+                    "last_active_ago": format_time_ago(session["last_active_at"])
+                    if session and session["last_active_at"]
+                    else None,
+                },
+                "status": "running" if running else (session["status"] if session else "idle"),
+                "running": running,
+            }
+        )
+
+    total = len(thread_items)
+    if job["status"] == "error":
+        status = "error"
+    elif running_count > 0:
+        status = "running"
+    elif total > 0:
+        status = "completed"
+    else:
+        status = "pending"
+
+    return {
+        "evaluation_id": evaluation_id,
+        "breadcrumb": [
+            {"label": "Evaluation", "url": "/evaluation"},
+            {"label": evaluation_id, "url": f"/evaluation/{evaluation_id}"},
+        ],
+        "info": {
+            "dataset": job["dataset"],
+            "split": job["split"],
+            "start_idx": int(job["start_idx"] or 0),
+            "slice_count": int(job["slice_count"] or 0),
+            "prompt_profile": job["prompt_profile"],
+            "timeout_sec": int(job["timeout_sec"] or 0),
+            "recursion_limit": int(job["recursion_limit"] or 0),
+            "sandbox": job["sandbox"],
+            "cwd": job["cwd"],
+            "arm": job["arm"],
+            "status": status,
+            "notes": job["notes"],
+            "created_at": job["created_at"],
+            "created_ago": format_time_ago(job["created_at"]) if job["created_at"] else None,
+            "updated_at": job["updated_at"],
+            "updated_ago": format_time_ago(job["updated_at"]) if job["updated_at"] else None,
+            "threads_total": total,
+            "threads_running": running_count,
+            "threads_done": max(total - running_count, 0),
+        },
+        "threads": {"title": "Evaluation Threads", "count": total, "items": thread_items},
+    }
+
+
+@router.get("/evaluation/runs")
+def list_evaluation_runs(limit: int = 30, request: Request = None):
+    """Backward-compatible endpoint, now returns evaluation jobs."""
+    return list_evaluations(limit=limit, request=request)
+
+
+@router.get("/session/{session_id}")
+def get_session(session_id: str, db: sqlite3.Connection = Depends(get_db)):
+    session = db.execute(
+        """
+        SELECT
+            cs.chat_session_id,
+            cs.thread_id,
+            cs.terminal_id,
+            cs.lease_id,
+            cs.status,
+            cs.started_at,
+            cs.last_active_at,
+            cs.ended_at,
+            cs.close_reason,
+            sl.provider_name,
+            sl.desired_state,
+            sl.observed_state,
+            sl.current_instance_id,
+            sl.last_error
+        FROM chat_sessions cs
+        LEFT JOIN sandbox_leases sl ON cs.lease_id = sl.lease_id
+        WHERE cs.chat_session_id = ?
+        LIMIT 1
+        """,
+        (session_id,),
+    ).fetchone()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    commands = db.execute(
+        """
+        SELECT
+            command_id,
+            command_line,
+            cwd,
+            status,
+            exit_code,
+            created_at,
+            updated_at,
+            finished_at,
+            stdout,
+            stderr
+        FROM terminal_commands
+        WHERE chat_session_id = ?
+        ORDER BY created_at DESC
+        LIMIT 20
+        """,
+        (session_id,),
+    ).fetchall()
+
+    return {
+        "session_id": session_id,
+        "thread_id": session["thread_id"],
+        "thread_url": f"/thread/{session['thread_id']}",
+        "breadcrumb": [
+            {"label": "Threads", "url": "/threads"},
+            {"label": session["thread_id"][:8], "url": f"/thread/{session['thread_id']}"},
+            {"label": session_id[:8], "url": f"/session/{session_id}"},
+        ],
+        "info": {
+            "status": session["status"],
+            "terminal_id": session["terminal_id"],
+            "lease_id": session["lease_id"],
+            "provider": session["provider_name"],
+            "instance_id": session["current_instance_id"],
+            "started_at": session["started_at"],
+            "started_ago": format_time_ago(session["started_at"]),
+            "last_active_at": session["last_active_at"],
+            "last_active_ago": format_time_ago(session["last_active_at"]),
+            "ended_at": session["ended_at"],
+            "ended_ago": format_time_ago(session["ended_at"]) if session["ended_at"] else None,
+            "close_reason": session["close_reason"],
+            "error": session["last_error"],
+            "state_badge": make_badge(session["desired_state"], session["observed_state"]),
+        },
+        "commands": {
+            "title": "Terminal Commands",
+            "count": len(commands),
+            "items": [
+                {
+                    "command_id": c["command_id"],
+                    "command_line": c["command_line"],
+                    "cwd": c["cwd"],
+                    "status": c["status"],
+                    "exit_code": c["exit_code"],
+                    "created_at": c["created_at"],
+                    "created_ago": format_time_ago(c["created_at"]),
+                    "updated_at": c["updated_at"],
+                    "finished_at": c["finished_at"],
+                    "stdout": c["stdout"],
+                    "stderr": c["stderr"],
+                }
+                for c in commands
+            ],
+        },
+    }
+
+
+@router.get("/thread/{thread_id}/trace")
+def get_thread_trace(thread_id: str, run_id: str | None = None, limit: int = 2000):
+    """Canonical trace endpoint: trace belongs to thread/run."""
+    return load_thread_trace_payload(thread_id=thread_id, run_id=run_id, limit=limit)
 
 
 @router.get("/leases")

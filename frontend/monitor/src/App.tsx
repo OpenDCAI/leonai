@@ -1,5 +1,5 @@
 import React from 'react';
-import { BrowserRouter, Routes, Route, Link, useParams, useNavigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Link, useParams } from 'react-router-dom';
 import './styles.css';
 
 const API_BASE = '/api/monitor';
@@ -7,7 +7,36 @@ const API_BASE = '/api/monitor';
 // Utility: Fetch JSON from API
 async function fetchAPI(path: string) {
   const res = await fetch(`${API_BASE}${path}`);
-  return res.json();
+  const text = await res.text();
+  let payload: any = {};
+  try {
+    payload = text ? JSON.parse(text) : {};
+  } catch {
+    throw new Error(`Invalid JSON from ${path} (${res.status}): ${text.slice(0, 180)}`);
+  }
+  if (!res.ok) {
+    throw new Error(payload?.detail || `${res.status} ${res.statusText}`);
+  }
+  return payload;
+}
+
+async function fetchJSON(path: string, init?: RequestInit) {
+  const res = await fetch(path, init);
+  const text = await res.text();
+  let payload: any = {};
+  try {
+    payload = text ? JSON.parse(text) : {};
+  } catch {
+    throw new Error(`Invalid JSON from ${path} (${res.status}): ${text.slice(0, 180)}`);
+  }
+  if (!res.ok) {
+    throw new Error(payload?.detail || `${res.status} ${res.statusText}`);
+  }
+  return payload;
+}
+
+async function fetchThreadAPI(path: string) {
+  return fetchJSON(`/api/threads${path}`);
 }
 
 // Component: Breadcrumb navigation
@@ -40,10 +69,48 @@ function StateBadge({ badge }: { badge: any }) {
 // Page: Threads List
 function ThreadsPage() {
   const [data, setData] = React.useState<any>(null);
+  const [loading, setLoading] = React.useState<boolean>(false);
+  const [createMode, setCreateMode] = React.useState<'normal' | 'evaluation'>('normal');
+  const [createSandbox, setCreateSandbox] = React.useState('local');
+  const [createCwd, setCreateCwd] = React.useState('/home/ubuntu/specops0/Projects/leonai-main');
+  const [createError, setCreateError] = React.useState<string | null>(null);
+  const [createdThreadId, setCreatedThreadId] = React.useState<string>('');
+
+  const loadThreads = React.useCallback(async () => {
+    setLoading(true);
+    try {
+      const payload = await fetchAPI('/threads');
+      setData(payload);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  async function handleCreateThread() {
+    setCreateError(null);
+    setCreatedThreadId('');
+    try {
+      const payload = await fetchJSON('/api/threads', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sandbox: createSandbox,
+          cwd: createCwd || null,
+          mode: createMode,
+        }),
+      });
+      const nextThreadId = String(payload?.thread_id || '');
+      if (!nextThreadId) throw new Error('create thread returned empty thread_id');
+      setCreatedThreadId(nextThreadId);
+      await loadThreads();
+    } catch (e: any) {
+      setCreateError(e?.message || String(e));
+    }
+  }
 
   React.useEffect(() => {
-    fetchAPI('/threads').then(setData);
-  }, []);
+    void loadThreads();
+  }, [loadThreads]);
 
   if (!data) return <div>Loading...</div>;
 
@@ -51,34 +118,73 @@ function ThreadsPage() {
     <div className="page">
       <h1>{data.title}</h1>
       <p className="count">Total: {data.count}</p>
-      <table>
-        <thead>
-          <tr>
-            <th>Thread ID</th>
-            <th>Sessions</th>
-            <th>Last Active</th>
-            <th>Lease</th>
-            <th>Provider</th>
-            <th>State</th>
-          </tr>
-        </thead>
-        <tbody>
-          {data.items.map((item: any) => (
-            <tr key={item.thread_id}>
-              <td><Link to={item.thread_url}>{item.thread_id.slice(0, 8)}</Link></td>
-              <td>{item.session_count}</td>
-              <td>{item.last_active_ago}</td>
-              <td>
-                {item.lease.lease_id ? (
-                  <Link to={item.lease.lease_url}>{item.lease.lease_id}</Link>
-                ) : '-'}
-              </td>
-              <td>{item.lease.provider || '-'}</td>
-              <td><StateBadge badge={item.state_badge} /></td>
+      <section>
+        <h2>Create Thread</h2>
+        <p className="description">Choose mode at thread start. Evaluation mode keeps full run_events trace.</p>
+        <div className="info-grid">
+          <label>
+            <strong>Mode:</strong>
+            <select value={createMode} onChange={(e) => setCreateMode(e.target.value as 'normal' | 'evaluation')}>
+              <option value="normal">normal</option>
+              <option value="evaluation">evaluation</option>
+            </select>
+          </label>
+          <label>
+            <strong>Sandbox:</strong>
+            <select value={createSandbox} onChange={(e) => setCreateSandbox(e.target.value)}>
+              <option value="local">local</option>
+              <option value="daytona">daytona</option>
+            </select>
+          </label>
+          <label>
+            <strong>CWD:</strong>
+            <input value={createCwd} onChange={(e) => setCreateCwd(e.target.value)} />
+          </label>
+          <div>
+            <button type="button" onClick={handleCreateThread}>Create Thread</button>
+          </div>
+        </div>
+        {createError && <div className="error">create failed: {createError}</div>}
+        {createdThreadId && (
+          <p className="count">
+            created: <Link to={`/thread/${createdThreadId}`}>{createdThreadId}</Link>
+          </p>
+        )}
+      </section>
+
+      <section>
+        <p className="count">refresh: {loading ? 'loading...' : 'ready'}</p>
+        <table>
+          <thead>
+            <tr>
+              <th>Thread ID</th>
+              <th>Mode</th>
+              <th>Sessions</th>
+              <th>Last Active</th>
+              <th>Lease</th>
+              <th>Provider</th>
+              <th>State</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {data.items.map((item: any) => (
+              <tr key={item.thread_id}>
+                <td><Link to={item.thread_url}>{item.thread_id.slice(0, 8)}</Link></td>
+                <td>{item.thread_mode || 'normal'} / trace={item.keep_full_trace ? 'full' : 'latest'}</td>
+                <td>{item.session_count}</td>
+                <td>{item.last_active_ago}</td>
+                <td>
+                  {item.lease.lease_id ? (
+                    <Link to={item.lease.lease_url}>{item.lease.lease_id}</Link>
+                  ) : '-'}
+                </td>
+                <td>{item.lease.provider || '-'}</td>
+                <td><StateBadge badge={item.state_badge} /></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </section>
     </div>
   );
 }
@@ -93,11 +199,15 @@ function ThreadDetailPage() {
   }, [threadId]);
 
   if (!data) return <div>Loading...</div>;
+  const threadIsActive = Array.isArray(data?.sessions?.items)
+    ? data.sessions.items.some((s: any) => s.status === 'active')
+    : false;
 
   return (
     <div className="page">
       <Breadcrumb items={data.breadcrumb} />
       <h1>Thread: {data.thread_id.slice(0, 8)}</h1>
+      <p className="count">mode: {data.thread_mode || 'normal'} | trace: {data.keep_full_trace ? 'full' : 'latest'}</p>
 
       <section>
         <h2>{data.sessions.title} ({data.sessions.count})</h2>
@@ -142,6 +252,793 @@ function ThreadDetailPage() {
             </li>
           ))}
         </ul>
+      </section>
+
+      <ThreadTraceSection threadId={data.thread_id} autoRefreshEnabled={threadIsActive} />
+    </div>
+  );
+}
+
+function summarizeTraceEvent(eventType: string, payload: any): string {
+  if (eventType === 'tool_call') return `${payload?.name || 'tool'}(${JSON.stringify(payload?.args || {})})`;
+  if (eventType === 'tool_result') return `${payload?.name || 'tool'} -> ${String(payload?.content || '').slice(0, 240)}`;
+  if (eventType === 'text') return String(payload?.content || '').slice(0, 120);
+  if (eventType === 'status') {
+    const state = typeof payload?.state === 'string' ? payload.state : JSON.stringify(payload?.state || '-');
+    return `state=${state} calls=${payload?.call_count ?? '-'}`;
+  }
+  if (eventType === 'error') return payload?.error || 'error';
+  if (eventType === 'done') return 'done';
+  return JSON.stringify(payload).slice(0, 120);
+}
+
+type TraceItem = {
+  seq: number | null;
+  run_id: string | null;
+  created_at?: string | null;
+  created_ago?: string | null;
+  event_type: string;
+  actor: 'assistant' | 'tool' | 'runtime';
+  summary: string;
+  payload: any;
+};
+
+function normalizeTraceEvent(eventType: string, payload: any): TraceItem | null {
+  const seq = payload?._seq ?? null;
+  const run_id = payload?._run_id ?? null;
+
+  if (eventType === 'text') {
+    const content = typeof payload?.content === 'string' ? payload.content : String(payload?.content ?? '');
+    if (!content) return null;
+    return { seq, run_id, event_type: 'assistant_text', actor: 'assistant', summary: content, payload };
+  }
+
+  if (eventType === 'tool_call') {
+    return {
+      seq,
+      run_id,
+      event_type: 'tool_call',
+      actor: 'tool',
+      summary: `${payload?.name || 'tool'}`,
+      payload,
+    };
+  }
+
+  if (eventType === 'tool_result') {
+    return {
+      seq,
+      run_id,
+      event_type: 'tool_result',
+      actor: 'tool',
+      summary: `${payload?.name || 'tool'}`,
+      payload,
+    };
+  }
+
+  if (eventType === 'status') {
+    const state = typeof payload?.state === 'string' ? payload.state : JSON.stringify(payload?.state || '-');
+    return {
+      seq,
+      run_id,
+      event_type: 'status',
+      actor: 'runtime',
+      summary: `state=${state} calls=${payload?.call_count ?? '-'}`,
+      payload,
+    };
+  }
+
+  if (eventType === 'error' || eventType === 'cancelled' || eventType === 'done') {
+    return {
+      seq,
+      run_id,
+      event_type: eventType,
+      actor: 'runtime',
+      summary: summarizeTraceEvent(eventType, payload),
+      payload,
+    };
+  }
+  return null;
+}
+
+function normalizeStoredTraceEvent(row: any, fallbackRunId: string | null): TraceItem | null {
+  const payload = row?.payload || {};
+  if (payload?._seq == null && row?.seq != null) payload._seq = row.seq;
+  if (payload?._run_id == null && fallbackRunId) payload._run_id = fallbackRunId;
+  const normalized = normalizeTraceEvent(String(row?.event_type || ''), payload);
+  if (!normalized) return null;
+  return {
+    ...normalized,
+    seq: row?.seq ?? normalized.seq,
+    run_id: fallbackRunId || normalized.run_id,
+    created_at: row?.created_at || null,
+    created_ago: row?.created_ago || null,
+  };
+}
+
+function mergeTraceItems(prev: TraceItem[], next: TraceItem): TraceItem[] {
+  const last = prev.length ? prev[prev.length - 1] : null;
+
+  // @@@streaming-text-fold - collapse token-level text stream into one assistant step for readable trace timeline.
+  if (next.event_type === 'assistant_text' && last && last.event_type === 'assistant_text' && last.run_id === next.run_id) {
+    const merged = [...prev];
+    merged[merged.length - 1] = {
+      ...last,
+      seq: next.seq ?? last.seq,
+      summary: `${last.summary}${next.summary}`,
+      payload: next.payload,
+    };
+    return merged;
+  }
+
+  // @@@status-coalesce - keep only latest status snapshot for same run to reduce noise.
+  if (next.event_type === 'status' && last && last.event_type === 'status' && last.run_id === next.run_id) {
+    const merged = [...prev];
+    merged[merged.length - 1] = next;
+    return merged;
+  }
+
+  return [...prev, next];
+}
+
+type TraceStep = {
+  step: number;
+  run_id: string | null;
+  seq_start: number | null;
+  seq_end: number | null;
+  created_ago: string | null;
+  assistant_text: string;
+  tool_name: string | null;
+  tool_args: any;
+  command_line: string | null;
+  tool_output: string | null;
+  runtime_notes: string[];
+  raw_items: TraceItem[];
+};
+
+function buildTraceSteps(items: TraceItem[]): TraceStep[] {
+  const steps: TraceStep[] = [];
+  let assistantBuffer: string[] = [];
+  let pending: Omit<TraceStep, 'step'> | null = null;
+
+  const pushStep = (step: Omit<TraceStep, 'step'>) => {
+    steps.push({ ...step, step: steps.length + 1 });
+  };
+
+  for (const item of items) {
+    if (item.event_type === 'assistant_text') {
+      if (pending) {
+        pending.runtime_notes.push(item.summary);
+        pending.raw_items.push(item);
+        pending.seq_end = item.seq ?? pending.seq_end;
+      } else {
+        assistantBuffer.push(item.summary);
+      }
+      continue;
+    }
+
+    if (item.event_type === 'tool_call') {
+      if (pending) {
+        pushStep(pending);
+        pending = null;
+      }
+      pending = {
+        run_id: item.run_id,
+        seq_start: item.seq,
+        seq_end: item.seq,
+        created_ago: item.created_ago || null,
+        assistant_text: assistantBuffer.join('\n').trim(),
+        tool_name: item.payload?.name || item.summary,
+        tool_args: item.payload?.args || {},
+        command_line: item.payload?.args?.CommandLine ? String(item.payload.args.CommandLine) : null,
+        tool_output: null,
+        runtime_notes: [],
+        raw_items: [item],
+      };
+      assistantBuffer = [];
+      continue;
+    }
+
+    if (item.event_type === 'tool_result') {
+      if (pending && !pending.tool_output) {
+        pending.tool_output = String(item.payload?.content || '(no output)');
+        pending.raw_items.push(item);
+        pending.seq_end = item.seq ?? pending.seq_end;
+      } else {
+        pushStep({
+          run_id: item.run_id,
+          seq_start: item.seq,
+          seq_end: item.seq,
+          created_ago: item.created_ago || null,
+          assistant_text: assistantBuffer.join('\n').trim(),
+          tool_name: item.payload?.name || item.summary,
+          tool_args: null,
+          command_line: null,
+          tool_output: String(item.payload?.content || '(no output)'),
+          runtime_notes: [],
+          raw_items: [item],
+        });
+        assistantBuffer = [];
+      }
+      continue;
+    }
+
+    const runtimeNote = item.event_type === 'status' ? formatStatusSummary(item.payload) : item.summary;
+    if (pending) {
+      pending.runtime_notes.push(runtimeNote);
+      pending.raw_items.push(item);
+      pending.seq_end = item.seq ?? pending.seq_end;
+      if (item.event_type === 'error' || item.event_type === 'cancelled' || item.event_type === 'done') {
+        pushStep(pending);
+        pending = null;
+      }
+    } else {
+      pushStep({
+        run_id: item.run_id,
+        seq_start: item.seq,
+        seq_end: item.seq,
+        created_ago: item.created_ago || null,
+        assistant_text: assistantBuffer.join('\n').trim(),
+        tool_name: null,
+        tool_args: null,
+        command_line: null,
+        tool_output: null,
+        runtime_notes: [runtimeNote],
+        raw_items: [item],
+      });
+      assistantBuffer = [];
+    }
+  }
+
+  if (pending) pushStep(pending);
+
+  const remain = assistantBuffer.join('\n').trim();
+  if (remain) {
+    pushStep({
+      run_id: items.length ? items[items.length - 1].run_id : null,
+      seq_start: null,
+      seq_end: null,
+      created_ago: null,
+      assistant_text: remain,
+      tool_name: null,
+      tool_args: null,
+      command_line: null,
+      tool_output: null,
+      runtime_notes: [],
+      raw_items: [],
+    });
+  }
+
+  return steps;
+}
+
+function shortId(value: string | null, size = 8): string {
+  if (!value) return '-';
+  return String(value).slice(0, size);
+}
+
+function formatStatusSummary(payload: any): string {
+  const stateText =
+    typeof payload?.state === 'string'
+      ? payload.state
+      : payload?.state?.state || JSON.stringify(payload?.state || '-');
+  const calls = payload?.call_count ?? '-';
+  const inTokens = payload?.input_tokens ?? payload?.token_count ?? '-';
+  const outTokens = payload?.output_tokens ?? '-';
+  return `state=${stateText} calls=${calls} tokens=${inTokens}/${outTokens}`;
+}
+
+function conversationText(content: any): string {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => {
+        if (typeof part === 'string') return part;
+        if (part && typeof part === 'object' && part.type === 'text') return String(part.text || '');
+        return JSON.stringify(part);
+      })
+      .join('');
+  }
+  if (content == null) return '';
+  return typeof content === 'object' ? JSON.stringify(content, null, 2) : String(content);
+}
+
+function ConversationTraceCard({ message, index }: { message: any; index: number }) {
+  const msgType = String(message?.type || 'Unknown');
+  const text = conversationText(message?.content);
+  const toolCalls = Array.isArray(message?.tool_calls) ? message.tool_calls : [];
+  return (
+    <article className="conversation-card">
+      <header className="trace-card-header">
+        <div className="trace-card-meta">
+          <span className="trace-step">[{index}]</span>
+          <span className="trace-event">{msgType}</span>
+        </div>
+        <span className="mono trace-run-id">id {shortId(message?.id || '-', 12)}</span>
+      </header>
+
+      {toolCalls.length > 0 && (
+        <div className="trace-block-wrap">
+          <div className="trace-label">tool_calls</div>
+          <pre className="trace-block">{JSON.stringify(toolCalls, null, 2)}</pre>
+        </div>
+      )}
+
+      {message?.tool_call_id && (
+        <div className="trace-block-wrap">
+          <div className="trace-label">tool_call_id</div>
+          <pre className="trace-block">{String(message.tool_call_id)}</pre>
+        </div>
+      )}
+
+      <div className="trace-block-wrap">
+        <div className="trace-label">content</div>
+        <pre className="trace-block trace-assistant-text">{text || '(empty)'}</pre>
+      </div>
+
+      <details className="trace-details">
+        <summary>Raw message</summary>
+        <pre className="json-payload trace-payload">{JSON.stringify(message, null, 2)}</pre>
+      </details>
+    </article>
+  );
+}
+
+function TraceCard({ item }: { item: TraceItem }) {
+  const statusText = item.event_type === 'status' ? formatStatusSummary(item.payload) : null;
+  const commandLine = item.payload?.args?.CommandLine;
+  const toolArgs = item.payload?.args;
+  const toolOutput = item.payload?.content;
+  return (
+    <article className={`trace-card trace-card-${item.actor}`}>
+      <header className="trace-card-header">
+        <div className="trace-card-meta">
+          <span className="trace-step">#{item.seq ?? '-'}</span>
+          <span className={`trace-actor trace-${item.actor}`}>{item.actor}</span>
+          <span className="trace-event">{item.event_type}</span>
+        </div>
+        <span className="mono trace-run-id">run {shortId(item.run_id)}</span>
+      </header>
+
+      {item.event_type === 'assistant_text' && (
+        <pre className="trace-block trace-assistant-text">{item.summary}</pre>
+      )}
+
+      {item.event_type === 'tool_call' && (
+        <div className="trace-block-wrap">
+          <div className="trace-label">Tool</div>
+          <pre className="trace-block">{item.payload?.name || item.summary}</pre>
+          {commandLine && (
+            <>
+              <div className="trace-label">CommandLine</div>
+              <pre className="trace-block trace-command">{String(commandLine)}</pre>
+            </>
+          )}
+          <div className="trace-label">Args</div>
+          <pre className="trace-block">{JSON.stringify(toolArgs || {}, null, 2)}</pre>
+        </div>
+      )}
+
+      {item.event_type === 'tool_result' && (
+        <div className="trace-block-wrap">
+          <div className="trace-label">Tool</div>
+          <pre className="trace-block">{item.payload?.name || item.summary}</pre>
+          <div className="trace-label">Output</div>
+          <pre className="trace-block trace-output">{String(toolOutput || '(no output)')}</pre>
+        </div>
+      )}
+
+      {item.event_type === 'status' && (
+        <div className="trace-block-wrap">
+          <div className="trace-label">Runtime</div>
+          <pre className="trace-block">{statusText}</pre>
+        </div>
+      )}
+
+      {(item.event_type === 'error' || item.event_type === 'cancelled' || item.event_type === 'done') && (
+        <pre className="trace-block">{item.summary}</pre>
+      )}
+
+      <details
+        className="trace-details"
+        open={item.event_type === 'tool_call' || item.event_type === 'tool_result'}
+      >
+        <summary>Raw payload</summary>
+        <pre className="json-payload trace-payload">{JSON.stringify(item.payload, null, 2)}</pre>
+      </details>
+    </article>
+  );
+}
+
+function TraceStepCard({ step }: { step: TraceStep }) {
+  return (
+    <article className="trace-step-card">
+      <header className="trace-step-header">
+        <div className="trace-step-meta">
+          <span className="trace-step-index">Step {step.step}</span>
+          <span className="mono">seq {step.seq_start ?? '-'}..{step.seq_end ?? '-'}</span>
+          <span className="mono">run {shortId(step.run_id)}</span>
+        </div>
+        <span className="count">{step.created_ago || '-'}</span>
+      </header>
+
+      {step.assistant_text && (
+        <div className="trace-step-block">
+          <div className="trace-label">Intent</div>
+          <pre className="trace-block trace-assistant-text">{step.assistant_text}</pre>
+        </div>
+      )}
+
+      {step.tool_name && (
+        <div className="trace-step-block">
+          <div className="trace-label">Action</div>
+          <pre className="trace-block">{step.tool_name}</pre>
+          {step.command_line && (
+            <>
+              <div className="trace-label">CommandLine</div>
+              <pre className="trace-block trace-command">{step.command_line}</pre>
+            </>
+          )}
+          {step.tool_args && (
+            <>
+              <div className="trace-label">Args</div>
+              <pre className="trace-block">{JSON.stringify(step.tool_args, null, 2)}</pre>
+            </>
+          )}
+        </div>
+      )}
+
+      {step.tool_output != null && (
+        <div className="trace-step-block">
+          <div className="trace-label">Observation</div>
+          <pre className="trace-block trace-output">{step.tool_output}</pre>
+        </div>
+      )}
+
+      {step.runtime_notes.length > 0 && (
+        <div className="trace-step-block">
+          <div className="trace-label">Runtime</div>
+          <pre className="trace-block">{step.runtime_notes.join('\n')}</pre>
+        </div>
+      )}
+
+      <details className="trace-details">
+        <summary>Raw events ({step.raw_items.length})</summary>
+        {step.raw_items.map((item, idx) => (
+          <div key={`${item.seq || 'na'}-${idx}`} className="trace-raw-item">
+            <div className="trace-raw-item-title">
+              <span className="mono">#{item.seq || '-'}</span>
+              <span>{item.event_type}</span>
+            </div>
+            <pre className="json-payload trace-payload">{JSON.stringify(item.payload, null, 2)}</pre>
+          </div>
+        ))}
+      </details>
+    </article>
+  );
+}
+
+function ThreadTraceSection({ threadId, autoRefreshEnabled }: { threadId: string; autoRefreshEnabled: boolean }) {
+  const [traceEvents, setTraceEvents] = React.useState<TraceItem[]>([]);
+  const [traceError, setTraceError] = React.useState<string | null>(null);
+  const [traceLoading, setTraceLoading] = React.useState<boolean>(false);
+  const [rawEventCount, setRawEventCount] = React.useState<number>(0);
+  const [streamState, setStreamState] = React.useState<'idle' | 'polling' | 'error'>('idle');
+  const [eventFilter, setEventFilter] = React.useState<'all' | 'assistant' | 'tool' | 'runtime'>('all');
+  const [traceView, setTraceView] = React.useState<'conversation' | 'events' | 'steps'>('conversation');
+  const [showRawTable, setShowRawTable] = React.useState<boolean>(false);
+  const [selectedRunId, setSelectedRunId] = React.useState<string>('');
+  const [runCandidates, setRunCandidates] = React.useState<any[]>([]);
+  const [autoRefresh, setAutoRefresh] = React.useState<boolean>(true);
+  const [conversationMessages, setConversationMessages] = React.useState<any[]>([]);
+  const [conversationLoading, setConversationLoading] = React.useState<boolean>(false);
+  const [conversationError, setConversationError] = React.useState<string | null>(null);
+
+  const loadTrace = React.useCallback((runId: string) => {
+    if (!threadId) return;
+    const query = runId ? `?run_id=${encodeURIComponent(runId)}` : '';
+    setTraceLoading(true);
+    setTraceError(null);
+    setStreamState('polling');
+    fetchAPI(`/thread/${threadId}/trace${query}`)
+      .then((payload) => {
+        setRawEventCount(payload?.event_count || 0);
+        setRunCandidates(payload?.run_candidates || []);
+        if (!runId && payload?.run_id) {
+          setSelectedRunId((prev) => prev || String(payload.run_id));
+        }
+        const normalized = (payload?.events || [])
+          .map((row: any) => normalizeStoredTraceEvent(row, payload?.run_id || runId || null))
+          .filter(Boolean) as TraceItem[];
+        const merged = normalized.reduce((acc: TraceItem[], item) => mergeTraceItems(acc, item), []);
+        setTraceEvents(merged);
+        setStreamState('idle');
+      })
+      .catch((e) => {
+        setTraceError(e.message);
+        setStreamState('error');
+      })
+      .finally(() => setTraceLoading(false));
+  }, [threadId]);
+
+  const loadConversation = React.useCallback(() => {
+    if (!threadId) return;
+    setConversationLoading(true);
+    setConversationError(null);
+    fetchThreadAPI(`/${threadId}`)
+      .then((payload) => {
+        setConversationMessages(Array.isArray(payload?.messages) ? payload.messages : []);
+      })
+      .catch((e) => setConversationError(e.message))
+      .finally(() => setConversationLoading(false));
+  }, [threadId]);
+
+  React.useEffect(() => {
+    if (!threadId) return;
+    setTraceEvents([]);
+    setRunCandidates([]);
+    setSelectedRunId('');
+    loadTrace('');
+    loadConversation();
+  }, [threadId, loadTrace, loadConversation]);
+
+  React.useEffect(() => {
+    if (!selectedRunId) return;
+    loadTrace(selectedRunId);
+  }, [selectedRunId, loadTrace]);
+
+  React.useEffect(() => {
+    if (!threadId || !autoRefreshEnabled || !autoRefresh) return;
+    const timer = window.setInterval(() => {
+      loadTrace(selectedRunId);
+      loadConversation();
+    }, 2000);
+    return () => window.clearInterval(timer);
+  }, [threadId, autoRefreshEnabled, autoRefresh, selectedRunId, loadTrace, loadConversation]);
+
+  const traceTail = traceEvents.slice(-300);
+  const visibleTrace = traceTail.filter((item) => eventFilter === 'all' || item.actor === eventFilter);
+  const traceSteps = buildTraceSteps(visibleTrace);
+  const conversationTail = conversationMessages.slice(-200);
+  const traceStats = {
+    assistant: traceTail.filter((item) => item.actor === 'assistant').length,
+    tool: traceTail.filter((item) => item.actor === 'tool').length,
+    runtime: traceTail.filter((item) => item.actor === 'runtime').length,
+  };
+
+  return (
+    <section>
+      <h2>
+        Thread Trace {
+          traceView === 'conversation'
+            ? 'Conversation'
+            : traceView === 'events'
+            ? 'Events'
+            : 'Steps'
+        }
+        {' '}
+        ({
+          traceView === 'conversation'
+            ? `${conversationTail.length} messages`
+            : traceView === 'events'
+            ? `${visibleTrace.length} events`
+            : `${traceSteps.length} steps / ${visibleTrace.length} events`
+        })
+      </h2>
+      <p className="count">
+        status: {streamState} | run: {selectedRunId ? shortId(selectedRunId, 12) : '-'} | raw_events: {rawEventCount} | messages: {conversationTail.length}
+      </p>
+      <div className="trace-toolbar">
+        {traceView !== 'conversation' && (
+          <>
+            <div className="trace-run-select">
+              <span className="trace-label">Run</span>
+              <select value={selectedRunId} onChange={(e) => setSelectedRunId(e.target.value)}>
+                {runCandidates.map((run: any) => (
+                  <option key={run.run_id} value={run.run_id}>
+                    {shortId(run.run_id, 12)} ({run.event_count})
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="trace-filters">
+              {(['all', 'assistant', 'tool', 'runtime'] as const).map((kind) => (
+                <button
+                  key={kind}
+                  type="button"
+                  className={`trace-filter-btn ${eventFilter === kind ? 'is-active' : ''}`}
+                  onClick={() => setEventFilter(kind)}
+                >
+                  {kind}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+        <div className="trace-view-switch">
+          <button
+            type="button"
+            className={`trace-filter-btn ${traceView === 'conversation' ? 'is-active' : ''}`}
+            onClick={() => setTraceView('conversation')}
+          >
+            conversation
+          </button>
+          <button
+            type="button"
+            className={`trace-filter-btn ${traceView === 'events' ? 'is-active' : ''}`}
+            onClick={() => setTraceView('events')}
+          >
+            events
+          </button>
+          <button
+            type="button"
+            className={`trace-filter-btn ${traceView === 'steps' ? 'is-active' : ''}`}
+            onClick={() => setTraceView('steps')}
+          >
+            steps
+          </button>
+        </div>
+        <label className="trace-raw-toggle">
+          <input
+            type="checkbox"
+            checked={showRawTable}
+            onChange={(e) => setShowRawTable(e.target.checked)}
+          />
+          raw table
+        </label>
+        <label className="trace-raw-toggle">
+          <input
+            type="checkbox"
+            checked={autoRefresh}
+            onChange={(e) => setAutoRefresh(e.target.checked)}
+          />
+          auto refresh
+        </label>
+        <button
+          type="button"
+          className="trace-filter-btn"
+          onClick={() => {
+            loadTrace(selectedRunId);
+            loadConversation();
+          }}
+        >
+          refresh
+        </button>
+      </div>
+      {traceView === 'conversation' ? (
+        <div className="trace-metrics">
+          <span>messages: {conversationTail.length}</span>
+          <span>loading: {conversationLoading ? 'yes' : 'no'}</span>
+        </div>
+      ) : (
+        <div className="trace-metrics">
+          <span>assistant: {traceStats.assistant}</span>
+          <span>tool: {traceStats.tool}</span>
+          <span>runtime: {traceStats.runtime}</span>
+          <span>loading: {traceLoading ? 'yes' : 'no'}</span>
+        </div>
+      )}
+      {traceError && <div className="error">Trace load failed: {traceError}</div>}
+      {conversationError && <div className="error">Conversation load failed: {conversationError}</div>}
+      <div className="trace-timeline">
+        {traceView === 'conversation' ? (
+          <>
+            {conversationTail.map((message, idx) => (
+              <ConversationTraceCard key={message?.id || `${message?.type || 'msg'}-${idx}`} message={message} index={idx} />
+            ))}
+            {conversationTail.length === 0 && <div className="trace-empty">No conversation messages yet.</div>}
+          </>
+        ) : traceView === 'events' ? (
+          <>
+            {visibleTrace.map((item, idx) => (
+              <TraceCard key={`${item.seq || 'na'}-${idx}`} item={item} />
+            ))}
+            {visibleTrace.length === 0 && <div className="trace-empty">No trace events for this filter.</div>}
+          </>
+        ) : (
+          <>
+            {traceSteps.map((step) => (
+              <TraceStepCard key={`step-${step.step}-${step.seq_start || 'na'}`} step={step} />
+            ))}
+            {traceSteps.length === 0 && <div className="trace-empty">No trace events for this filter.</div>}
+          </>
+        )}
+      </div>
+
+      {showRawTable && traceView !== 'conversation' && (
+        <details className="trace-raw-table" open>
+          <summary>Raw trace table</summary>
+          <table>
+            <thead>
+              <tr>
+                <th>Step</th>
+                <th>Actor</th>
+                <th>Event</th>
+                <th>Summary</th>
+                <th>Run</th>
+                <th>When</th>
+                <th>Payload</th>
+              </tr>
+            </thead>
+            <tbody>
+              {traceTail.slice().reverse().map((item, idx) => (
+                <tr key={`${item.seq || 'na'}-${idx}`}>
+                  <td>{item.seq || '-'}</td>
+                  <td><span className={`trace-actor trace-${item.actor}`}>{item.actor}</span></td>
+                  <td>{item.event_type}</td>
+                  <td className="mono trace-summary">{item.summary}</td>
+                  <td className="mono">{shortId(item.run_id)}</td>
+                  <td>{item.created_ago || '-'}</td>
+                  <td>
+                    <details className="trace-details">
+                      <summary>view</summary>
+                      <pre className="json-payload trace-payload">{JSON.stringify(item.payload, null, 2)}</pre>
+                    </details>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </details>
+      )}
+    </section>
+  );
+}
+
+// Page: Session Detail
+function SessionDetailPage() {
+  const { sessionId } = useParams();
+  const [data, setData] = React.useState<any>(null);
+  const [error, setError] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (!sessionId) return;
+    setError(null);
+    fetchAPI(`/session/${sessionId}`)
+      .then((payload) => setData(payload))
+      .catch((e) => setError(e.message));
+  }, [sessionId]);
+
+  if (error) return <div className="error">Session load failed: {error}</div>;
+  if (!data) return <div>Loading...</div>;
+
+  return (
+    <div className="page">
+      <Breadcrumb items={data.breadcrumb} />
+      <h1>Session: {data.session_id.slice(0, 8)}</h1>
+
+      <section className="info-grid">
+        <div><strong>Thread:</strong> <Link to={data.thread_url}>{data.thread_id.slice(0, 8)}</Link></div>
+        <div><strong>Status:</strong> {data.info.status}</div>
+        <div><strong>Provider:</strong> {data.info.provider || '-'}</div>
+        <div><strong>Started:</strong> {data.info.started_ago}</div>
+        <div><strong>Last Active:</strong> {data.info.last_active_ago}</div>
+        <div><strong>Ended:</strong> {data.info.ended_ago || '-'}</div>
+      </section>
+
+      <section>
+        <h2>{data.commands.title} ({data.commands.count})</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Status</th>
+              <th>Command</th>
+              <th>CWD</th>
+              <th>Created</th>
+              <th>Exit</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.commands.items.map((c: any) => (
+              <tr key={c.command_id}>
+                <td>{c.status}</td>
+                <td className="mono">{c.command_line}</td>
+                <td className="mono">{c.cwd}</td>
+                <td>{c.created_ago}</td>
+                <td>{c.exit_code ?? '-'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </section>
     </div>
   );
@@ -439,6 +1336,257 @@ function EventDetailPage() {
   );
 }
 
+// Page: Evaluation
+function EvaluationPage() {
+  const [dataset, setDataset] = React.useState('SWE-bench/SWE-bench_Lite');
+  const [split, setSplit] = React.useState('test');
+  const [startIdx, setStartIdx] = React.useState('0');
+  const [sliceCount, setSliceCount] = React.useState('5');
+  const [promptProfile, setPromptProfile] = React.useState('heuristic');
+  const [timeoutSec, setTimeoutSec] = React.useState('180');
+  const [recursionLimit, setRecursionLimit] = React.useState('24');
+  const [sandbox, setSandbox] = React.useState('local');
+  const [runStatus, setRunStatus] = React.useState<'idle' | 'starting' | 'submitted' | 'error'>('idle');
+  const [evaluationId, setEvaluationId] = React.useState('');
+  const [runError, setRunError] = React.useState<string | null>(null);
+  const [evaluations, setEvaluations] = React.useState<any[]>([]);
+  const [runsLoading, setRunsLoading] = React.useState(false);
+
+  async function loadEvaluations() {
+    setRunsLoading(true);
+    try {
+      const payload = await fetchAPI('/evaluations?limit=30');
+      setEvaluations(Array.isArray(payload?.items) ? payload.items : []);
+    } catch (e: any) {
+      setRunError(e?.message || String(e));
+    } finally {
+      setRunsLoading(false);
+    }
+  }
+
+  React.useEffect(() => {
+    void loadEvaluations();
+    const timer = window.setInterval(() => {
+      void loadEvaluations();
+    }, 2500);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  async function handleStart() {
+    if (runStatus === 'starting') return;
+    setRunError(null);
+    setEvaluationId('');
+    setRunStatus('starting');
+
+    try {
+      const payload = await fetchJSON('/api/monitor/evaluations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          dataset,
+          split,
+          start: Number(startIdx),
+          count: Number(sliceCount),
+          prompt_profile: promptProfile,
+          timeout_sec: Number(timeoutSec),
+          recursion_limit: Number(recursionLimit),
+          sandbox,
+          cwd: '/home/ubuntu/specops0/Projects/leonai-main',
+          arm: 'monitor',
+        }),
+      });
+      const nextEvalId = String(payload?.evaluation_id || '');
+      if (!nextEvalId) throw new Error('create evaluation returned empty evaluation_id');
+      setEvaluationId(nextEvalId);
+      setRunStatus('submitted');
+      await loadEvaluations();
+    } catch (e: any) {
+      setRunStatus('error');
+      setRunError(e?.message || String(e));
+    }
+  }
+
+  const currentEval = evaluations.find((item: any) => item.evaluation_id === evaluationId);
+
+  return (
+    <div className="page">
+      <h1>Evaluation</h1>
+      <p className="description">One evaluation contains many threads. Frontend only submits profile and displays persisted state.</p>
+
+      <section className="info-grid">
+        <label>
+          <strong>Dataset:</strong>
+          <select value={dataset} onChange={(e) => setDataset(e.target.value)}>
+            <option value="SWE-bench/SWE-bench_Lite">SWE-bench/SWE-bench_Lite</option>
+            <option value="princeton-nlp/SWE-bench_Verified">princeton-nlp/SWE-bench_Verified</option>
+          </select>
+        </label>
+        <label>
+          <strong>Split:</strong>
+          <select value={split} onChange={(e) => setSplit(e.target.value)}>
+            <option value="test">test</option>
+            <option value="dev">dev</option>
+          </select>
+        </label>
+        <label>
+          <strong>Start:</strong>
+          <input value={startIdx} onChange={(e) => setStartIdx(e.target.value)} />
+        </label>
+        <label>
+          <strong>Slice:</strong>
+          <select value={sliceCount} onChange={(e) => setSliceCount(e.target.value)}>
+            <option value="5">5</option>
+            <option value="10">10</option>
+            <option value="20">20</option>
+          </select>
+        </label>
+        <label>
+          <strong>Prompt Profile:</strong>
+          <select value={promptProfile} onChange={(e) => setPromptProfile(e.target.value)}>
+            <option value="baseline">baseline</option>
+            <option value="heuristic">heuristic</option>
+          </select>
+        </label>
+        <label>
+          <strong>Timeout(s):</strong>
+          <input value={timeoutSec} onChange={(e) => setTimeoutSec(e.target.value)} />
+        </label>
+        <label>
+          <strong>Recursion:</strong>
+          <input value={recursionLimit} onChange={(e) => setRecursionLimit(e.target.value)} />
+        </label>
+        <label>
+          <strong>Sandbox:</strong>
+          <select value={sandbox} onChange={(e) => setSandbox(e.target.value)}>
+            <option value="local">local</option>
+            <option value="daytona">daytona</option>
+          </select>
+        </label>
+        <div>
+          <button onClick={handleStart} disabled={runStatus === 'starting' || !startIdx.trim()}>
+            {runStatus === 'starting' ? 'Starting...' : 'Start Eval'}
+          </button>
+        </div>
+      </section>
+
+      <section>
+        <h2>Current Submission</h2>
+        <div className="mono">evaluation: {evaluationId || '-'}</div>
+        <p className="count">status: {currentEval?.status || runStatus}</p>
+        {runError && <div className="error">run error: {runError}</div>}
+        {evaluationId && (
+          <p className="count">
+            <Link to={`/evaluation/${evaluationId}`}>open evaluation detail</Link>
+          </p>
+        )}
+      </section>
+
+      <section>
+        <h2>Evaluations ({evaluations.length})</h2>
+        <p className="count">Auto refresh: 2.5s {runsLoading ? '| loading...' : ''}</p>
+        <table>
+          <thead>
+            <tr>
+              <th>Evaluation</th>
+              <th>Dataset</th>
+              <th>Range</th>
+              <th>Status</th>
+              <th>Threads</th>
+              <th>Updated</th>
+            </tr>
+          </thead>
+          <tbody>
+            {evaluations.map((item: any) => (
+              <tr key={item.evaluation_id}>
+                <td><Link to={item.evaluation_url}>{shortId(item.evaluation_id, 14)}</Link></td>
+                <td className="mono">{item.dataset}</td>
+                <td>{item.start_idx}..{item.start_idx + item.slice_count - 1}</td>
+                <td>{item.status}</td>
+                <td>{item.threads_running}/{item.threads_total}</td>
+                <td>{item.updated_ago || '-'}</td>
+              </tr>
+            ))}
+            {evaluations.length === 0 && (
+              <tr>
+                <td colSpan={6}>No evaluations yet.</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </section>
+    </div>
+  );
+}
+
+function EvaluationDetailPage() {
+  const { evaluationId } = useParams();
+  const [data, setData] = React.useState<any>(null);
+
+  React.useEffect(() => {
+    fetchAPI(`/evaluation/${evaluationId}`).then(setData);
+  }, [evaluationId]);
+
+  if (!data) return <div>Loading...</div>;
+
+  return (
+    <div className="page">
+      <Breadcrumb items={data.breadcrumb} />
+      <h1>Evaluation: {shortId(data.evaluation_id, 14)}</h1>
+      <p className="count">
+        {data.info.status} | dataset={data.info.dataset} | threads={data.info.threads_running}/{data.info.threads_total}
+      </p>
+
+      <section className="info-grid">
+        <div><strong>Split:</strong> {data.info.split}</div>
+        <div><strong>Start:</strong> {data.info.start_idx}</div>
+        <div><strong>Count:</strong> {data.info.slice_count}</div>
+        <div><strong>Profile:</strong> {data.info.prompt_profile}</div>
+        <div><strong>Timeout:</strong> {data.info.timeout_sec}s</div>
+        <div><strong>Recursion:</strong> {data.info.recursion_limit}</div>
+      </section>
+
+      <section>
+        <h2>{data.threads.title} ({data.threads.count})</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Thread</th>
+              <th>Session</th>
+              <th>Run</th>
+              <th>Events</th>
+              <th>Status</th>
+              <th>Start</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.threads.items.map((item: any) => (
+              <tr key={item.thread_id}>
+                <td>{item.item_index}</td>
+                <td><Link to={item.thread_url}>{shortId(item.thread_id)}</Link></td>
+                <td>
+                  {item.session?.session_url ? (
+                    <Link to={item.session.session_url}>{shortId(item.session.session_id)}</Link>
+                  ) : '-'}
+                </td>
+                <td className="mono">{item.run?.run_id ? shortId(item.run.run_id, 12) : '-'}</td>
+                <td>{item.run?.event_count ?? 0}</td>
+                <td>{item.status}</td>
+                <td>{item.start_idx}</td>
+              </tr>
+            ))}
+            {data.threads.items.length === 0 && (
+              <tr>
+                <td colSpan={7}>No threads in this evaluation.</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </section>
+    </div>
+  );
+}
+
 // Layout: Top navigation
 function Layout({ children }: { children: React.ReactNode }) {
   return (
@@ -450,6 +1598,7 @@ function Layout({ children }: { children: React.ReactNode }) {
           <Link to="/leases">Leases</Link>
           <Link to="/diverged">Diverged</Link>
           <Link to="/events">Events</Link>
+          <Link to="/evaluation">Evaluation</Link>
         </div>
       </nav>
       <main className="content">
@@ -468,11 +1617,14 @@ export default function App() {
           <Route path="/" element={<DivergedPage />} />
           <Route path="/threads" element={<ThreadsPage />} />
           <Route path="/thread/:threadId" element={<ThreadDetailPage />} />
+          <Route path="/session/:sessionId" element={<SessionDetailPage />} />
           <Route path="/leases" element={<LeasesPage />} />
           <Route path="/lease/:leaseId" element={<LeaseDetailPage />} />
           <Route path="/diverged" element={<DivergedPage />} />
           <Route path="/events" element={<EventsPage />} />
           <Route path="/event/:eventId" element={<EventDetailPage />} />
+          <Route path="/evaluation" element={<EvaluationPage />} />
+          <Route path="/evaluation/:evaluationId" element={<EvaluationDetailPage />} />
         </Routes>
       </Layout>
     </BrowserRouter>

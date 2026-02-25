@@ -11,3 +11,5 @@ class ThreadConfig(BaseModel):
     model: str | None = None
     queue_mode: str = "steer"
     observation_provider: str | None = None  # "langfuse" | "langsmith" | None
+    thread_mode: str = "normal"  # "normal" | "evaluation"
+    keep_full_trace: bool = False
