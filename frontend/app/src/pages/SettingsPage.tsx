@@ -153,7 +153,7 @@ export default function SettingsPage() {
                     {t.label}
                   </span>
                 </div>
-                <p className={`text-[11px] mt-0.5 ml-[26px] ${active ? "text-muted-foreground" : "text-muted-foreground/60"}`}>
+                <p className={`text-xs mt-0.5 ml-[26px] ${active ? "text-muted-foreground" : "text-muted-foreground/60"}`}>
                   {t.desc}
                 </p>
               </button>

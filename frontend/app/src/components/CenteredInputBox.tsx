@@ -286,7 +286,7 @@ export default function CenteredInputBox({
           <Button
             onClick={() => void handleSend()}
             disabled={!message.trim() || sending}
-            className="h-9 px-4 bg-foreground text-white hover:bg-foreground/80 rounded-lg"
+            className="h-9 px-4 bg-foreground text-white hover:bg-foreground/80 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed"
           >
             <Send className="w-4 h-4 mr-2" />
             发送
