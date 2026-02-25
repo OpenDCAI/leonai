@@ -1,6 +1,7 @@
 import { MoreHorizontal, Plus, Search, Trash2 } from "lucide-react";
 import { Link, useParams } from "react-router-dom";
 import type { ThreadSummary } from "../api";
+import { useAppStore } from "../store/app-store";
 import { Skeleton } from "./ui/skeleton";
 
 interface SidebarProps {
@@ -35,6 +36,8 @@ export default function Sidebar({
 }: SidebarProps) {
   const { threadId } = useParams<{ threadId?: string }>();
   const activeThreadId = threadId || null;
+  const memberList = useAppStore(s => s.memberList);
+  const memberNameMap = new Map(memberList.map(m => [m.id, m.name]));
   if (collapsed) {
     return (
       <div className="w-14 h-full flex flex-col items-center py-4 bg-card border-r border-border animate-slide-in">
@@ -114,7 +117,7 @@ export default function Sidebar({
                         </span>
                       </div>
                       <div className="text-[11px] mt-0.5 text-muted-foreground/60">
-                        {thread.sandbox ?? "local"}
+                        {thread.agent ? (memberNameMap.get(thread.agent) || thread.agent) : "Leon"}
                       </div>
                     </Link>
                     <div className="absolute right-2 top-2.5 hidden group-hover:flex items-center gap-0.5">

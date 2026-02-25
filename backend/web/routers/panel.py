@@ -1,4 +1,4 @@
-"""Panel API router — Staff, Tasks, Library, Profile."""
+"""Panel API router — Members, Tasks, Library, Profile."""
 
 import asyncio
 from typing import Any
@@ -7,14 +7,14 @@ from fastapi import APIRouter, HTTPException
 
 from backend.web.models.panel import (
     BulkTaskStatusRequest,
+    CreateMemberRequest,
     CreateResourceRequest,
-    CreateStaffRequest,
     CreateTaskRequest,
-    PublishStaffRequest,
-    StaffConfigPayload,
+    MemberConfigPayload,
+    PublishMemberRequest,
+    UpdateMemberRequest,
     UpdateProfileRequest,
     UpdateResourceRequest,
-    UpdateStaffRequest,
     UpdateTaskRequest,
 )
 from backend.web.services import panel_service as svc
@@ -22,55 +22,62 @@ from backend.web.services import panel_service as svc
 router = APIRouter(prefix="/api/panel", tags=["panel"])
 
 
-# ── Staff ──
+# ── Members ──
 
-@router.get("/staff")
-async def list_staff() -> dict[str, Any]:
-    items = await asyncio.to_thread(svc.list_staff)
+@router.get("/members")
+async def list_members() -> dict[str, Any]:
+    items = await asyncio.to_thread(svc.list_members)
     return {"items": items}
 
 
-@router.get("/staff/{staff_id}")
-async def get_staff(staff_id: str) -> dict[str, Any]:
-    item = await asyncio.to_thread(svc.get_staff, staff_id)
+@router.get("/members/{member_id}")
+async def get_member(member_id: str) -> dict[str, Any]:
+    item = await asyncio.to_thread(svc.get_member, member_id)
     if not item:
-        raise HTTPException(404, "Staff not found")
+        raise HTTPException(404, "Member not found")
     return item
 
 
-@router.post("/staff")
-async def create_staff(req: CreateStaffRequest) -> dict[str, Any]:
-    return await asyncio.to_thread(svc.create_staff, req.name, req.description)
+@router.post("/members")
+async def create_member(req: CreateMemberRequest) -> dict[str, Any]:
+    return await asyncio.to_thread(svc.create_member, req.name, req.description)
 
-
-@router.put("/staff/{staff_id}")
-async def update_staff(staff_id: str, req: UpdateStaffRequest) -> dict[str, Any]:
-    item = await asyncio.to_thread(svc.update_staff, staff_id, **req.model_dump())
+@router.put("/members/{member_id}")
+async def update_member(member_id: str, req: UpdateMemberRequest) -> dict[str, Any]:
+    if member_id == "__leon__":
+        raise HTTPException(403, "Cannot modify builtin member")
+    item = await asyncio.to_thread(svc.update_member, member_id, **req.model_dump())
     if not item:
-        raise HTTPException(404, "Staff not found")
+        raise HTTPException(404, "Member not found")
     return item
 
-@router.put("/staff/{staff_id}/config")
-async def update_staff_config(staff_id: str, req: StaffConfigPayload) -> dict[str, Any]:
-    item = await asyncio.to_thread(svc.update_staff_config, staff_id, req.model_dump())
+@router.put("/members/{member_id}/config")
+async def update_member_config(member_id: str, req: MemberConfigPayload) -> dict[str, Any]:
+    if member_id == "__leon__":
+        raise HTTPException(403, "Cannot modify builtin member")
+    item = await asyncio.to_thread(svc.update_member_config, member_id, req.model_dump())
     if not item:
-        raise HTTPException(404, "Staff not found")
-    return item
-
-
-@router.put("/staff/{staff_id}/publish")
-async def publish_staff(staff_id: str, req: PublishStaffRequest) -> dict[str, Any]:
-    item = await asyncio.to_thread(svc.publish_staff, staff_id, req.bump_type)
-    if not item:
-        raise HTTPException(404, "Staff not found")
+        raise HTTPException(404, "Member not found")
     return item
 
 
-@router.delete("/staff/{staff_id}")
-async def delete_staff(staff_id: str) -> dict[str, Any]:
-    ok = await asyncio.to_thread(svc.delete_staff, staff_id)
+@router.put("/members/{member_id}/publish")
+async def publish_member(member_id: str, req: PublishMemberRequest) -> dict[str, Any]:
+    if member_id == "__leon__":
+        raise HTTPException(403, "Cannot modify builtin member")
+    item = await asyncio.to_thread(svc.publish_member, member_id, req.bump_type)
+    if not item:
+        raise HTTPException(404, "Member not found")
+    return item
+
+
+@router.delete("/members/{member_id}")
+async def delete_member(member_id: str) -> dict[str, Any]:
+    if member_id == "__leon__":
+        raise HTTPException(403, "Cannot delete builtin member")
+    ok = await asyncio.to_thread(svc.delete_member, member_id)
     if not ok:
-        raise HTTPException(404, "Staff not found")
+        raise HTTPException(404, "Member not found")
     return {"success": True}
 
 

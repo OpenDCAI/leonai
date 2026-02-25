@@ -1,4 +1,4 @@
-export type StaffStatus = "active" | "draft" | "inactive";
+export type MemberStatus = "active" | "draft" | "inactive";
 
 export interface CrudItem {
   id: string;
@@ -13,7 +13,7 @@ export interface SubAgent {
   desc: string;
 }
 
-export interface StaffConfig {
+export interface MemberConfig {
   prompt: string;
   rules: string;
   memory: string;
@@ -23,16 +23,16 @@ export interface StaffConfig {
   subAgents: SubAgent[];
 }
 
-export interface Staff {
+export interface Member {
   id: string;
   name: string;
-  role: string;
   description: string;
-  status: StaffStatus;
+  status: MemberStatus;
   version: string;
-  config: StaffConfig;
+  config: MemberConfig;
   created_at: number;
   updated_at: number;
+  builtin?: boolean;
 }
 
 export type TaskStatus = "pending" | "running" | "completed" | "failed";
@@ -65,3 +65,8 @@ export interface UserProfile {
   initials: string;
   email: string;
 }
+
+// Backward compatibility aliases
+export type StaffStatus = MemberStatus;
+export type StaffConfig = MemberConfig;
+export type Staff = Member;
