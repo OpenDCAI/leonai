@@ -125,6 +125,7 @@ export default function ModelMappingSection({
                   <span>Enable models in Model Pool section below</span>
                 </div>
               ) : (
+                <>
                 <select
                   value={currentModel}
                   onChange={(e) => void handleMappingChange(vm.id, e.target.value)}
@@ -162,6 +163,7 @@ export default function ModelMappingSection({
                     className="w-28 px-2 py-1.5 border border-[#e2e8f0] rounded-lg text-xs text-[#475569] bg-[#f8fafc] font-mono placeholder:text-[#cbd5e1] hover:border-[#0ea5e9] focus:outline-none focus:border-[#0ea5e9] focus:ring-1 focus:ring-[#0ea5e9]/20 transition-all duration-200"
                   />
                 </div>
+                </>
               )}
             </div>
           );
