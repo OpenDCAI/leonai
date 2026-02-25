@@ -27,16 +27,16 @@ export default function TokenStats({ runtimeStatus }: TokenStatsProps) {
     <div className="bg-white pb-3">
       <div className="max-w-3xl mx-auto px-6">
         <div className="flex items-center gap-3 text-[10px] text-[#a3a3a3]">
-          <span>Tokens: {formatTokens(tokens.total_tokens)}</span>
-          <span>费用: {formatCost(tokens.cost)}</span>
           {context && (
             <>
-              <span>上下文: {context.usage_percent}%</span>
+              <span>上下文: {formatTokens(context.estimated_tokens)} ({context.usage_percent}%)</span>
               {context.near_limit && (
                 <span className="text-amber-500 font-medium">接近上限</span>
               )}
             </>
           )}
+          <span>费用: {formatCost(tokens.cost)}</span>
+          <span className="text-[#c4c4c4]">累计: {formatTokens(tokens.total_tokens)}</span>
         </div>
       </div>
     </div>
