@@ -3,7 +3,6 @@ name: general
 description: 执行复杂多步任务。主 Agent 的全能分身，继承全部工具
 tools:
   - "*"
-max_turns: 100
 ---
 
 # General Agent

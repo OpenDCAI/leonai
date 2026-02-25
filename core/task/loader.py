@@ -24,10 +24,19 @@ class AgentLoader:
         user_dir = Path.home() / ".leon" / "agents"
         self._load_from_dir(user_dir)
 
-        # 3. Project-level agents (highest priority)
+        # 3. Project-level agents
         if self.workspace_root:
             project_dir = self.workspace_root / ".leon" / "agents"
             self._load_from_dir(project_dir)
+
+        # 4. Members (highest priority)
+        members_dir = Path.home() / ".leon" / "members"
+        if members_dir.exists():
+            for member_dir in members_dir.iterdir():
+                if member_dir.is_dir() and (member_dir / "agent.md").exists():
+                    config = self._parse_agent_file(member_dir / "agent.md")
+                    if config:
+                        self._agents[config.name] = config
 
         return self._agents
 
@@ -68,9 +77,8 @@ class AgentLoader:
         return AgentConfig(
             name=frontmatter["name"],
             description=frontmatter.get("description", ""),
-            tools=frontmatter.get("tools", []),
+            tools=frontmatter.get("tools", ["*"]),
             system_prompt=system_prompt,
-            max_turns=frontmatter.get("max_turns", 50),
             model=frontmatter.get("model"),
         )
 

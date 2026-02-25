@@ -9,10 +9,9 @@ class AgentConfig(BaseModel):
     """Agent configuration parsed from .md file."""
 
     name: str
-    description: str
-    tools: list[str]
-    system_prompt: str
-    max_turns: int = 50
+    description: str = ""
+    tools: list[str] = ["*"]
+    system_prompt: str = ""
     model: str | None = None
 
 

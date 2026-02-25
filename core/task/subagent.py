@@ -187,7 +187,7 @@ class SubagentRunner:
 
         # Create subagent with unique thread_id
         subagent_thread_id = f"subagent_{task_id}"
-        max_turns = params.get("MaxTurns") or config.max_turns
+        max_turns = params.get("MaxTurns")
 
         # Check if any middleware has self.tools (BaseTool instances).
         # Only need placeholder if no middleware has tools.
@@ -271,7 +271,7 @@ class SubagentRunner:
 
         # Create subagent with unique thread_id
         subagent_thread_id = f"subagent_{task_id}"
-        max_turns = params.get("MaxTurns") or config.max_turns
+        max_turns = params.get("MaxTurns")
 
         # Check if any middleware has self.tools
         middleware_has_tools = any(getattr(m, "tools", None) for m in middleware)
