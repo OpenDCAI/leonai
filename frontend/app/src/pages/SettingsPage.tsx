@@ -208,7 +208,7 @@ export default function SettingsPage() {
               <ModelPoolSection
                 models={availableModels.models}
                 enabledModels={settings.enabled_models}
-                customConfig={settings.custom_config}
+                customConfig={settings.custom_config || {}}
                 providers={settings.providers}
                 onToggle={(modelId, enabled) => {
                   const newEnabled = enabled
