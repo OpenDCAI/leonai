@@ -7,6 +7,7 @@ No business logic in frontend.
 
 import asyncio
 import json
+import os
 import sqlite3
 import uuid
 from datetime import datetime
@@ -39,6 +40,7 @@ class EvaluationCreateRequest(BaseModel):
     count: int = Field(default=5, ge=1, le=50)
     prompt_profile: str = "heuristic"
     timeout_sec: int = Field(default=180, ge=30, le=3600)
+    git_timeout_sec: int = Field(default=90, ge=15, le=600)
     recursion_limit: int = Field(default=24, ge=1, le=128)
     sandbox: str = "local"
     cwd: str = "/home/ubuntu/specops0/Projects/leonai-main"
@@ -134,6 +136,8 @@ def _build_run_slice_command(payload: EvaluationCreateRequest, evaluation_id: st
         payload.prompt_profile,
         "--timeout-sec",
         str(payload.timeout_sec),
+        "--git-timeout-sec",
+        str(payload.git_timeout_sec),
         "--recursion-limit",
         str(payload.recursion_limit),
         "--output-dir",
@@ -201,9 +205,13 @@ async def _run_evaluation_job(evaluation_id: str, payload: EvaluationCreateReque
     stdout_path = run_dir / "monitor_stdout.log"
     stderr_path = run_dir / "monitor_stderr.log"
     command = _build_run_slice_command(payload, evaluation_id)
+    # @@@monitor-eval-sandbox-env - pass sandbox selection via env so run_slice -> LeonAgent resolves non-local provider, and isolate sandbox state per evaluation run.
+    env = dict(os.environ)
+    env["LEON_SANDBOX"] = payload.sandbox
+    env["LEON_SANDBOX_DB_PATH"] = str(run_dir / "sandbox.db")
     try:
         # @@@monitor-eval-direct-runner - evaluate by invoking SWE runner directly, not by sending a control prompt to another agent.
-        proc = await asyncio.create_subprocess_exec(*command, cwd=cwd, stdout=PIPE, stderr=PIPE)
+        proc = await asyncio.create_subprocess_exec(*command, cwd=cwd, stdout=PIPE, stderr=PIPE, env=env)
         # @@@monitor-eval-hard-timeout - enforce a hard wall time so evaluation jobs cannot stay in "running" forever.
         hard_timeout_sec = payload.timeout_sec * payload.count + 120
         try:
@@ -214,7 +222,7 @@ async def _run_evaluation_job(evaluation_id: str, payload: EvaluationCreateReque
             stdout_path.write_bytes(stdout or b"")
             stderr_path.write_bytes(stderr or b"")
             notes = (
-                f"runner=direct timeout={hard_timeout_sec}s run_dir={run_dir} "
+                f"runner=direct timeout={hard_timeout_sec}s sandbox={payload.sandbox} run_dir={run_dir} "
                 f"stdout_log={stdout_path} stderr_log={stderr_path}"
             )
             _update_evaluation_job_status(evaluation_id, "error", notes)
@@ -223,7 +231,7 @@ async def _run_evaluation_job(evaluation_id: str, payload: EvaluationCreateReque
         stderr_path.write_bytes(stderr or b"")
         if proc.returncode != 0:
             notes = (
-                f"runner=direct rc={proc.returncode} run_dir={run_dir} "
+                f"runner=direct rc={proc.returncode} sandbox={payload.sandbox} run_dir={run_dir} "
                 f"stdout_log={stdout_path} stderr_log={stderr_path}"
             )
             _update_evaluation_job_status(evaluation_id, "error", notes)
@@ -235,7 +243,7 @@ async def _run_evaluation_job(evaluation_id: str, payload: EvaluationCreateReque
             run_dir=run_dir,
         )
         notes = (
-            f"runner=direct rc=0 run_dir={run_dir} stdout_log={stdout_path} "
+            f"runner=direct rc=0 sandbox={payload.sandbox} run_dir={run_dir} stdout_log={stdout_path} "
             f"stderr_log={stderr_path} threads={thread_count}"
         )
         score = _load_evaluation_score(
@@ -246,7 +254,10 @@ async def _run_evaluation_job(evaluation_id: str, payload: EvaluationCreateReque
         final_status = _derive_evaluation_status("completed", score)
         _update_evaluation_job_status(evaluation_id, final_status, notes)
     except Exception as exc:
-        notes = f"runner=direct error={exc} run_dir={run_dir} stdout_log={stdout_path} stderr_log={stderr_path}"
+        notes = (
+            f"runner=direct error={exc} sandbox={payload.sandbox} run_dir={run_dir} "
+            f"stdout_log={stdout_path} stderr_log={stderr_path}"
+        )
         _update_evaluation_job_status(evaluation_id, "error", notes)
 
 
@@ -370,6 +381,18 @@ def _derive_evaluation_status(status: str, score: dict | None) -> str:
     if not score or not bool(score.get("scored")):
         return status
     return "completed_with_errors" if int(score.get("error_instances") or 0) > 0 else "completed"
+
+
+def _count_live_eval_threads(evaluation_id: str) -> int:
+    if not DB_PATH.exists():
+        return 0
+    thread_prefix = f"swebench-{evaluation_id}-%"
+    with sqlite3.connect(str(DB_PATH)) as conn:
+        row = conn.execute(
+            "SELECT COUNT(DISTINCT thread_id) FROM checkpoints WHERE thread_id LIKE ?",
+            (thread_prefix,),
+        ).fetchone()
+    return int(row[0] or 0) if row else 0
 
 
 def _load_evaluation_score(evaluation_id: str, cwd: str | None, notes: str) -> dict:
@@ -981,6 +1004,10 @@ def list_evaluations(limit: int = 30, request: Request = None):
             if row["evaluation_id"] in running_jobs:
                 status = "running"
             running_count = total if status == "running" else 0
+            if status == "running":
+                # @@@eval-live-progress-from-checkpoints - thread rows are ingested after runner exits; use live checkpoint thread ids for in-flight progress.
+                running_count = max(running_count, _count_live_eval_threads(str(row["evaluation_id"])))
+                total = max(total, running_count)
             score = _load_evaluation_score(
                 evaluation_id=str(row["evaluation_id"]),
                 cwd=row["cwd"],
@@ -1097,6 +1124,10 @@ def get_evaluation_detail(evaluation_id: str, request: Request, db: sqlite3.Conn
         )
 
     total = len(thread_items)
+    if status == "running":
+        # @@@eval-live-progress-from-checkpoints - evaluation thread mappings are persisted at the end, so derive interim running count from live checkpoint data.
+        running_count = max(running_count, _count_live_eval_threads(evaluation_id))
+        total = max(total, running_count)
 
     return {
         "evaluation_id": evaluation_id,
