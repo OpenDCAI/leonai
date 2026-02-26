@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
   ArrowLeft, Bot, FileText, Wrench, Plug, Zap, Users, BookOpen,
-  Play, Tag, History, Save, Plus, Trash2, Edit2, Check, Search,
+  Play, Tag, History, Save, Plus, Trash2, Search,
   ChevronRight, ChevronDown, Library,
 } from "lucide-react";
 import TestPanel from "@/components/TestPanel";
