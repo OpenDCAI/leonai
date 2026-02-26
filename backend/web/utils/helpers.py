@@ -49,17 +49,25 @@ def get_lease_timestamps(lease_id: str) -> tuple[str | None, str | None]:
 def extract_webhook_instance_id(payload: dict[str, Any]) -> str | None:
     """Extract provider instance/session id from webhook payload."""
     direct_keys = ("session_id", "sandbox_id", "instance_id", "id")
+
+    # @@@webhook-id-normalize - providers occasionally pad ids; trim whitespace before lease matching.
+    def _normalized_id(value: Any) -> str | None:
+        if not isinstance(value, str):
+            return None
+        normalized = value.strip()
+        return normalized or None
+
     for key in direct_keys:
-        value = payload.get(key)
-        if isinstance(value, str) and value:
-            return value
+        normalized = _normalized_id(payload.get(key))
+        if normalized:
+            return normalized
 
     nested = payload.get("data")
     if isinstance(nested, dict):
         for key in direct_keys:
-            value = nested.get(key)
-            if isinstance(value, str) and value:
-                return value
+            normalized = _normalized_id(nested.get(key))
+            if normalized:
+                return normalized
 
     return None
 

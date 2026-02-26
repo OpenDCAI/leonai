@@ -6,7 +6,7 @@ from fastapi import HTTPException
 
 from backend.web.routers import sandbox as sandbox_router
 from backend.web.routers.settings import browse_filesystem
-from backend.web.utils.helpers import resolve_local_workspace_path
+from backend.web.utils.helpers import extract_webhook_instance_id, resolve_local_workspace_path
 from backend.web.routers import workspace as workspace_router
 from backend.web.services import agent_pool
 
@@ -42,6 +42,14 @@ def test_resolve_local_workspace_path_accepts_relative_workspace_root(tmp_path, 
     resolved = resolve_local_workspace_path("src/main.py", local_workspace_root=Path("workspace"))
 
     assert resolved == (workspace_root / "src/main.py").resolve()
+
+
+def test_extract_webhook_instance_id_trims_whitespace() -> None:
+    assert extract_webhook_instance_id({"session_id": "  sess-123  "}) == "sess-123"
+    assert extract_webhook_instance_id({"data": {"instance_id": "\n inst-9\t"}}) == "inst-9"
+    assert extract_webhook_instance_id({"sandbox_id": "   "}) is None
+
+
 @pytest.mark.asyncio
 async def test_pick_folder_cancel_keeps_400(monkeypatch):
     monkeypatch.setattr(sandbox_router.sys, "platform", "darwin")
