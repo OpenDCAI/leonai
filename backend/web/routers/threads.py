@@ -45,8 +45,22 @@ async def create_thread(
     app: Annotated[Any, Depends(get_app)] = None,
 ) -> dict[str, Any]:
     """Create a new thread with optional sandbox and cwd."""
+    from backend.web.services.sandbox_service import available_sandbox_types
 
-    sandbox_type = payload.sandbox if payload else "local"
+    sandbox_type = (payload.sandbox if payload else "local").strip().lower()
+    available = {"local"}
+    for item in available_sandbox_types():
+        name = item.get("name")
+        if isinstance(name, str):
+            normalized = name.strip().lower()
+            if normalized:
+                available.add(normalized)
+    if sandbox_type not in available:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown sandbox '{sandbox_type}'. Available: {', '.join(sorted(available))}",
+        )
+
     thread_id = str(uuid.uuid4())
     cwd = payload.cwd if payload else None
     app.state.thread_sandbox[thread_id] = sandbox_type

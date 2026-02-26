@@ -8,6 +8,8 @@ from backend.web.routers import sandbox as sandbox_router
 from backend.web.routers.settings import browse_filesystem
 from backend.web.utils.helpers import resolve_local_workspace_path
 from backend.web.routers import workspace as workspace_router
+from backend.web.routers import threads as threads_router
+from backend.web.models.requests import CreateThreadRequest
 from backend.web.services import agent_pool
 
 
@@ -97,3 +99,14 @@ async def test_read_workspace_file_keeps_http_status(monkeypatch):
     with pytest.raises(HTTPException) as exc_info:
         await workspace_router.read_workspace_file("thread-2", path="/tmp/x", app=_make_app())
     assert exc_info.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_create_thread_rejects_unknown_sandbox():
+    app = _make_app()
+
+    with pytest.raises(HTTPException) as exc_info:
+        await threads_router.create_thread(CreateThreadRequest(sandbox="not-a-real-sandbox"), app=app)
+
+    assert exc_info.value.status_code == 400
+    assert "Unknown sandbox" in str(exc_info.value.detail)
