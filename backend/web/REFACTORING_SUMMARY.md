@@ -116,6 +116,6 @@ services/web/
 
 ## Migration Notes
 
-- Old file backed up as `main_old.py`
+- Legacy backup file `main_old.py` was removed after E2E verification (2026-02-26)
 - New structure uses relative imports within `services/web/`
 - All functionality preserved, just reorganized
