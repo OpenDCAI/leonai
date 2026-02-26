@@ -66,3 +66,10 @@ def test_openai_provider_without_max_tokens_stays_unchanged() -> None:
     assert out["temperature"] == 0.2
     assert "max_tokens" not in out
     assert "max_completion_tokens" not in out
+
+
+def test_non_gpt5_openai_keeps_existing_max_completion_tokens() -> None:
+    kwargs = {"model_provider": "openai", "max_completion_tokens": 33}
+    out = normalize_model_kwargs("gpt-4o", kwargs)
+    assert out["max_completion_tokens"] == 33
+    assert "max_tokens" not in out
