@@ -74,7 +74,13 @@ def _ensure_thread_config_table(conn: sqlite3.Connection) -> None:
         "CREATE TABLE IF NOT EXISTS thread_config"
         "(thread_id TEXT PRIMARY KEY, sandbox_type TEXT NOT NULL, cwd TEXT, model TEXT, queue_mode TEXT DEFAULT 'steer')"
     )
-    for col, default in [("model", None), ("queue_mode", "'steer'"), ("observation_provider", None)]:
+    for col, default in [
+        ("model", None),
+        ("queue_mode", "'steer'"),
+        ("observation_provider", None),
+        ("thread_mode", "'normal'"),
+        ("keep_full_trace", "'0'"),
+    ]:
         try:
             default_clause = f" DEFAULT {default}" if default else ""
             conn.execute(f"ALTER TABLE thread_config ADD COLUMN {col} TEXT{default_clause}")
@@ -87,7 +93,15 @@ def save_thread_config(thread_id: str, **fields: Any) -> None:
 
     Usage: save_thread_config(thread_id, model="gpt-4", queue_mode="followup")
     """
-    allowed = {"sandbox_type", "cwd", "model", "queue_mode", "observation_provider"}
+    allowed = {
+        "sandbox_type",
+        "cwd",
+        "model",
+        "queue_mode",
+        "observation_provider",
+        "thread_mode",
+        "keep_full_trace",
+    }
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
         return
@@ -110,7 +124,8 @@ def load_thread_config(thread_id: str):
             conn.row_factory = sqlite3.Row
             _ensure_thread_config_table(conn)
             row = conn.execute(
-                "SELECT sandbox_type, cwd, model, queue_mode, observation_provider FROM thread_config WHERE thread_id = ?",
+                "SELECT sandbox_type, cwd, model, queue_mode, observation_provider, thread_mode, keep_full_trace "
+                "FROM thread_config WHERE thread_id = ?",
                 (thread_id,),
             ).fetchone()
             if not row:
@@ -123,18 +138,28 @@ def load_thread_config(thread_id: str):
                 model=row["model"],
                 queue_mode=row["queue_mode"] or "steer",
                 observation_provider=row["observation_provider"],
+                thread_mode=row["thread_mode"] or "normal",
+                keep_full_trace=str(row["keep_full_trace"] or "0") in {"1", "true", "True"},
             )
     except sqlite3.OperationalError:
         return None
 
 
-def init_thread_config(thread_id: str, sandbox_type: str, cwd: str | None) -> None:
+def init_thread_config(
+    thread_id: str,
+    sandbox_type: str,
+    cwd: str | None,
+    thread_mode: str = "normal",
+    keep_full_trace: bool = False,
+) -> None:
     """Create initial thread config row in SQLite."""
     with sqlite3.connect(str(DB_PATH)) as conn:
         _ensure_thread_config_table(conn)
         conn.execute(
-            "INSERT OR REPLACE INTO thread_config (thread_id, sandbox_type, cwd) VALUES (?, ?, ?)",
-            (thread_id, sandbox_type, cwd),
+            "INSERT OR REPLACE INTO thread_config "
+            "(thread_id, sandbox_type, cwd, thread_mode, keep_full_trace) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (thread_id, sandbox_type, cwd, thread_mode, "1" if keep_full_trace else "0"),
         )
         conn.commit()
 
@@ -156,6 +181,18 @@ def lookup_thread_model(thread_id: str) -> str | None:
     """Look up persisted model for a thread."""
     config = load_thread_config(thread_id)
     return config.model if config else None
+
+
+def lookup_thread_mode(thread_id: str) -> str:
+    """Look up thread mode. Defaults to normal."""
+    config = load_thread_config(thread_id)
+    return config.thread_mode if config and config.thread_mode else "normal"
+
+
+def should_keep_full_trace(thread_id: str) -> bool:
+    """Whether thread run events should be fully retained."""
+    config = load_thread_config(thread_id)
+    return bool(config.keep_full_trace) if config else False
 
 
 def resolve_local_workspace_path(

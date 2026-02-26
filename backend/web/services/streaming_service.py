@@ -422,7 +422,10 @@ async def _run_agent_to_buffer(
         if agent and hasattr(agent, "runtime") and agent.runtime.current_state == AgentState.ACTIVE:
             agent.runtime.transition(AgentState.IDLE)
         try:
-            await cleanup_old_runs(thread_id, keep_latest=1)
+            from backend.web.utils.helpers import should_keep_full_trace
+
+            if not should_keep_full_trace(thread_id):
+                await cleanup_old_runs(thread_id, keep_latest=1)
         except Exception:
             pass
 
