@@ -18,6 +18,7 @@ from backend.web.models.requests import (
     TaskAgentRequest,
 )
 from backend.web.services.agent_pool import get_or_create_agent, resolve_thread_sandbox
+from backend.web.services.file_channel_service import ensure_thread_file_channel
 from backend.web.services.sandbox_service import destroy_thread_resources_sync, init_providers_and_managers
 from backend.web.services.streaming_service import (
     observe_run_events,
@@ -121,6 +122,7 @@ async def create_thread(
     from backend.web.utils.helpers import get_active_observation_provider, init_thread_config, save_thread_config
 
     init_thread_config(thread_id, sandbox_type, cwd)
+    await asyncio.to_thread(ensure_thread_file_channel, thread_id)
     model = payload.model if payload else None
     obs_provider = get_active_observation_provider()
     updates = {}
