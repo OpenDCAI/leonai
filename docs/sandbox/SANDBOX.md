@@ -54,11 +54,6 @@ The file name (minus `.json`) is the sandbox name you pass to `--sandbox`.
   "provider": "docker",
   "docker": {
     "image": "python:3.12-slim",
-    "cwd": "/workspace",
-    "bind_mounts": [
-      { "source": "/srv/leon/tasks", "target": "/home/leon/shared/tasks", "mode": "mount", "read_only": false },
-      { "source": "/srv/leon/bootstrap", "target": "/home/leon/bootstrap", "mode": "copy", "read_only": false }
-    ],
     "mount_path": "/workspace"
   },
   "on_exit": "pause"
@@ -68,9 +63,7 @@ The file name (minus `.json`) is the sandbox name you pass to `--sandbox`.
 | Field | Default | Description |
 |-------|---------|-------------|
 | `docker.image` | `python:3.12-slim` | Docker image to use |
-| `docker.cwd` | `/workspace` | Default command working directory inside container |
-| `docker.bind_mounts` | `[]` | Host mount list using `source/target/mode/read_only` (supports multiple folders in one sandbox) |
-| `docker.mount_path` | `/workspace` | Legacy context volume target used with `context_id` |
+| `docker.mount_path` | `/workspace` | Working directory inside container |
 | `on_exit` | `pause` | What to do on agent exit: `pause` or `destroy` |
 
 **Requirements:** Docker CLI available on the host.
@@ -106,11 +99,7 @@ The file name (minus `.json`) is the sandbox name you pass to `--sandbox`.
   "daytona": {
     "api_key": "dtn_...",
     "api_url": "https://app.daytona.io/api",
-    "cwd": "/home/daytona",
-    "bind_mounts": [
-      { "source": "/srv/leon/tasks", "target": "/home/daytona/shared/tasks", "mode": "mount", "read_only": false },
-      { "source": "/srv/leon/bootstrap", "target": "/home/daytona/bootstrap", "mode": "copy", "read_only": false }
-    ]
+    "cwd": "/home/daytona"
   },
   "on_exit": "pause"
 }
@@ -121,7 +110,6 @@ The file name (minus `.json`) is the sandbox name you pass to `--sandbox`.
 | `daytona.api_key` | — | Daytona API key (or set `DAYTONA_API_KEY` env var) |
 | `daytona.api_url` | `https://app.daytona.io/api` | Daytona API base URL |
 | `daytona.cwd` | `/home/daytona` | Working directory |
-| `daytona.bind_mounts` | `[]` | Host mount list using `source/target/mode/read_only` (supports multiple folders in one sandbox) |
 | `on_exit` | `pause` | `pause` or `destroy` |
 
 ### AgentBay
@@ -158,23 +146,6 @@ The file name (minus `.json`) is the sandbox name you pass to `--sandbox`.
   "on_exit": "pause"
 }
 ```
-
-**`bind_mounts`** (provider field): Standard mount contract for Docker/Daytona.
-
-```json
-{
-  "source": "/host/path",
-  "target": "/sandbox/path",
-  "mode": "mount",
-  "read_only": false
-}
-```
-
-`mode` options:
-- `mount`: live host bind mount (changes are shared both sides)
-- `copy`: one-time copy from host path into sandbox path at session creation
-
-Legacy keys (`host_path` / `mount_path`) are still accepted for backward compatibility.
 
 ### API Key Resolution
 
