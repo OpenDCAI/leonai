@@ -12,6 +12,7 @@ import pytest
 from core.storage import StorageContainer
 from core.memory.checkpoint_repo import SQLiteCheckpointRepo
 from core.storage.supabase_checkpoint_repo import SupabaseCheckpointRepo
+from core.storage.supabase_thread_config_repo import SupabaseThreadConfigRepo
 from sandbox.manager import SandboxManager
 from sandbox.provider import Metrics, ProviderCapability, ProviderExecResult, SandboxProvider, SessionInfo
 
@@ -195,20 +196,22 @@ def test_storage_container_sqlite_strategy_is_non_regression() -> None:
         db.unlink(missing_ok=True)
 
 
-def test_storage_container_supabase_missing_bindings_fails_loudly() -> None:
+def test_storage_container_supabase_thread_config_is_concrete_and_remaining_bindings_fail_loudly() -> None:
     fake_client = _FakeSupabaseClient()
     container = StorageContainer(strategy="supabase", supabase_client=fake_client)
-    repo = container.checkpoint_repo()
-    assert isinstance(repo, SupabaseCheckpointRepo)
+    checkpoint_repo = container.checkpoint_repo()
+    assert isinstance(checkpoint_repo, SupabaseCheckpointRepo)
+    thread_config_repo = container.thread_config_repo()
+    assert isinstance(thread_config_repo, SupabaseThreadConfigRepo)
 
     with pytest.raises(
         RuntimeError,
         match=(
             "Supabase storage strategy has missing bindings: "
-            "thread_config_repo, run_event_repo, file_operation_repo, summary_repo, eval_repo"
+            "run_event_repo, file_operation_repo, summary_repo, eval_repo"
         ),
     ):
-        container.thread_config_repo()
+        container.run_event_repo()
 
 
 def test_storage_container_supabase_checkpoint_requires_client() -> None:
@@ -218,6 +221,15 @@ def test_storage_container_supabase_checkpoint_requires_client() -> None:
         match="Supabase strategy checkpoint_repo requires supabase_client",
     ):
         container.checkpoint_repo()
+
+
+def test_storage_container_supabase_thread_config_requires_client() -> None:
+    container = StorageContainer(strategy="supabase")
+    with pytest.raises(
+        RuntimeError,
+        match="Supabase strategy thread_config_repo requires supabase_client",
+    ):
+        container.thread_config_repo()
 
 
 def test_storage_container_rejects_unknown_strategy() -> None:
