@@ -6,6 +6,7 @@ import uuid
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import JSONResponse
 from sse_starlette.sse import EventSourceResponse
 
 from backend.web.core.dependencies import get_app, get_thread_agent, get_thread_lock
@@ -17,7 +18,7 @@ from backend.web.models.requests import (
     TaskAgentRequest,
 )
 from backend.web.services.agent_pool import get_or_create_agent, resolve_thread_sandbox
-from backend.web.services.sandbox_service import destroy_thread_resources_sync
+from backend.web.services.sandbox_service import destroy_thread_resources_sync, init_providers_and_managers
 from backend.web.services.streaming_service import (
     observe_run_events,
     start_agent_run,
@@ -34,9 +35,69 @@ from backend.web.utils.helpers import delete_thread_in_db
 from backend.web.utils.serializers import serialize_message
 from core.monitor import AgentState
 from core.queue import QueueMode, get_queue_manager
+from sandbox.config import MountSpec
 from sandbox.thread_context import set_current_thread_id
 
 router = APIRouter(prefix="/api/threads", tags=["threads"])
+
+
+def _mount_capability_to_dict(mount_capability: Any) -> dict[str, bool]:
+    return {
+        "supports_mount": bool(getattr(mount_capability, "supports_mount", False)),
+        "supports_copy": bool(getattr(mount_capability, "supports_copy", False)),
+        "supports_read_only": bool(getattr(mount_capability, "supports_read_only", False)),
+    }
+
+
+def _find_mount_capability_mismatch(
+    requested_mounts: list[MountSpec],
+    mount_capability: Any,
+) -> dict[str, Any] | None:
+    capability = _mount_capability_to_dict(mount_capability)
+    for mount in requested_mounts:
+        requested = {"mode": mount.mode, "read_only": mount.read_only}
+        if mount.mode == "mount" and not capability["supports_mount"]:
+            return {"requested": requested, "capability": capability}
+        if mount.mode == "copy" and not capability["supports_copy"]:
+            return {"requested": requested, "capability": capability}
+        if mount.read_only and not capability["supports_read_only"]:
+            return {"requested": requested, "capability": capability}
+    return None
+
+
+async def _validate_mount_capability_gate(
+    sandbox_type: str,
+    requested_mounts: list[MountSpec],
+) -> JSONResponse | None:
+    if not requested_mounts:
+        return None
+
+    providers, _ = await asyncio.to_thread(init_providers_and_managers)
+    provider_obj = providers.get(sandbox_type)
+    if provider_obj is None:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": "sandbox_provider_unavailable",
+                "provider": sandbox_type,
+            },
+        )
+
+    capability = provider_obj.get_capability()
+    mismatch = _find_mount_capability_mismatch(requested_mounts, capability.mount)
+    if mismatch is None:
+        return None
+
+    # @@@request-stage-capability-gate - Fail at create-thread request stage so unsupported mount semantics never enter runtime lifecycle.
+    return JSONResponse(
+        status_code=400,
+        content={
+            "error": "sandbox_capability_mismatch",
+            "provider": sandbox_type,
+            "requested": mismatch["requested"],
+            "capability": mismatch["capability"],
+        },
+    )
 
 
 @router.post("")
@@ -47,6 +108,11 @@ async def create_thread(
     """Create a new thread with optional sandbox and cwd."""
 
     sandbox_type = payload.sandbox if payload else "local"
+    requested_mounts = payload.bind_mounts if payload else []
+    capability_error = await _validate_mount_capability_gate(sandbox_type, requested_mounts)
+    if capability_error is not None:
+        return capability_error
+
     thread_id = str(uuid.uuid4())
     cwd = payload.cwd if payload else None
     app.state.thread_sandbox[thread_id] = sandbox_type

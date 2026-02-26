@@ -1,12 +1,15 @@
 """Pydantic request models for Leon web API."""
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+from sandbox.config import MountSpec
 
 
 class CreateThreadRequest(BaseModel):
     sandbox: str = "local"
     cwd: str | None = None
     model: str | None = None
+    bind_mounts: list[MountSpec] = Field(default_factory=list)
 
 
 class RunRequest(BaseModel):

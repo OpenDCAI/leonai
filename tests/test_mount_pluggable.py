@@ -17,6 +17,60 @@ def test_mount_spec_defaults_to_mount_mode() -> None:
     assert mount.mode == "mount"
 
 
+def test_create_thread_request_parses_bind_mounts_with_legacy_keys() -> None:
+    from backend.web.models.requests import CreateThreadRequest
+
+    payload = CreateThreadRequest.model_validate(
+        {
+            "sandbox": "local",
+            "bind_mounts": [
+                {"source": "/host/tasks", "target": "/sandbox/tasks", "mode": "mount", "read_only": False},
+                {"host_path": "/host/docs", "mount_path": "/sandbox/docs", "mode": "copy", "read_only": True},
+            ],
+        }
+    )
+
+    assert len(payload.bind_mounts) == 2
+    assert payload.bind_mounts[0].source == "/host/tasks"
+    assert payload.bind_mounts[0].target == "/sandbox/tasks"
+    assert payload.bind_mounts[1].source == "/host/docs"
+    assert payload.bind_mounts[1].target == "/sandbox/docs"
+    assert payload.bind_mounts[1].mode == "copy"
+    assert payload.bind_mounts[1].read_only is True
+
+
+def test_mount_capability_gate_detects_mismatch() -> None:
+    from backend.web.routers.threads import _find_mount_capability_mismatch
+    from sandbox.config import MountSpec
+    from sandbox.provider import MountCapability
+
+    requested = [MountSpec.model_validate({"source": "/host/a", "target": "/sandbox/a", "mode": "copy"})]
+    mismatch = _find_mount_capability_mismatch(
+        requested_mounts=requested,
+        mount_capability=MountCapability(supports_mount=True, supports_copy=False, supports_read_only=False),
+    )
+
+    assert mismatch is not None
+    assert mismatch["requested"] == {"mode": "copy", "read_only": False}
+    assert mismatch["capability"]["supports_copy"] is False
+
+
+def test_mount_capability_gate_accepts_supported_combo() -> None:
+    from backend.web.routers.threads import _find_mount_capability_mismatch
+    from sandbox.config import MountSpec
+    from sandbox.provider import MountCapability
+
+    requested = [
+        MountSpec.model_validate({"source": "/host/a", "target": "/sandbox/a", "mode": "mount", "read_only": True}),
+        MountSpec.model_validate({"source": "/host/b", "target": "/sandbox/b", "mode": "copy", "read_only": False}),
+    ]
+    mismatch = _find_mount_capability_mismatch(
+        requested_mounts=requested,
+        mount_capability=MountCapability(supports_mount=True, supports_copy=True, supports_read_only=True),
+    )
+    assert mismatch is None
+
+
 def test_docker_provider_supports_multiple_bind_mount_modes(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
