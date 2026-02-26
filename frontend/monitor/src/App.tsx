@@ -1,5 +1,5 @@
 import React from 'react';
-import { BrowserRouter, Routes, Route, Link, useParams } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Link, NavLink, useLocation, useParams } from 'react-router-dom';
 import './styles.css';
 
 const API_BASE = '/api/monitor';
@@ -70,90 +70,72 @@ function StateBadge({ badge }: { badge: any }) {
 function ThreadsPage() {
   const [data, setData] = React.useState<any>(null);
   const [loading, setLoading] = React.useState<boolean>(false);
-  const [createMode, setCreateMode] = React.useState<'normal' | 'evaluation'>('normal');
-  const [createSandbox, setCreateSandbox] = React.useState('local');
-  const [createCwd, setCreateCwd] = React.useState('/home/ubuntu/specops0/Projects/leonai-main');
-  const [createError, setCreateError] = React.useState<string | null>(null);
-  const [createdThreadId, setCreatedThreadId] = React.useState<string>('');
+  const [offset, setOffset] = React.useState<number>(0);
+  const [limit, setLimit] = React.useState<number>(50);
 
   const loadThreads = React.useCallback(async () => {
     setLoading(true);
     try {
-      const payload = await fetchAPI('/threads');
+      const payload = await fetchAPI(`/threads?offset=${offset}&limit=${limit}`);
       setData(payload);
     } finally {
       setLoading(false);
     }
-  }, []);
-
-  async function handleCreateThread() {
-    setCreateError(null);
-    setCreatedThreadId('');
-    try {
-      const payload = await fetchJSON('/api/threads', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sandbox: createSandbox,
-          cwd: createCwd || null,
-          mode: createMode,
-        }),
-      });
-      const nextThreadId = String(payload?.thread_id || '');
-      if (!nextThreadId) throw new Error('create thread returned empty thread_id');
-      setCreatedThreadId(nextThreadId);
-      await loadThreads();
-    } catch (e: any) {
-      setCreateError(e?.message || String(e));
-    }
-  }
+  }, [offset, limit]);
 
   React.useEffect(() => {
     void loadThreads();
   }, [loadThreads]);
 
   if (!data) return <div>Loading...</div>;
+  const pagination = data.pagination || {};
+  const total = Number(pagination.total || data.count || 0);
+  const currentCount = Number(data.count || 0);
+  const from = total > 0 ? offset + 1 : 0;
+  const to = offset + currentCount;
+  const page = Number(pagination.page || 1);
 
   return (
     <div className="page">
       <h1>{data.title}</h1>
-      <p className="count">Total: {data.count}</p>
+      <p className="count">Showing {from}-{to} of {total} | page {page}</p>
       <section>
-        <h2>Create Thread</h2>
-        <p className="description">Choose mode at thread start. Evaluation mode keeps full run_events trace.</p>
-        <div className="info-grid">
-          <label>
-            <strong>Mode:</strong>
-            <select value={createMode} onChange={(e) => setCreateMode(e.target.value as 'normal' | 'evaluation')}>
-              <option value="normal">normal</option>
-              <option value="evaluation">evaluation</option>
+        <div className="pagination-bar">
+          <div className="pagination-controls">
+            <button
+              className="ghost-btn"
+              onClick={() => setOffset(Number(pagination.prev_offset))}
+              disabled={loading || !pagination.has_prev}
+            >
+              Prev
+            </button>
+            <button
+              className="ghost-btn"
+              onClick={() => setOffset(Number(pagination.next_offset))}
+              disabled={loading || !pagination.has_next}
+            >
+              Next
+            </button>
+            <button className="ghost-btn" onClick={() => void loadThreads()} disabled={loading}>
+              {loading ? 'Refreshing...' : 'Refresh'}
+            </button>
+          </div>
+          <div className="pagination-size">
+            <span>Rows:</span>
+            <select
+              value={limit}
+              onChange={(e) => {
+                setLimit(Number(e.target.value));
+                setOffset(0);
+              }}
+              disabled={loading}
+            >
+              <option value={25}>25</option>
+              <option value={50}>50</option>
+              <option value={100}>100</option>
             </select>
-          </label>
-          <label>
-            <strong>Sandbox:</strong>
-            <select value={createSandbox} onChange={(e) => setCreateSandbox(e.target.value)}>
-              <option value="local">local</option>
-              <option value="daytona">daytona</option>
-            </select>
-          </label>
-          <label>
-            <strong>CWD:</strong>
-            <input value={createCwd} onChange={(e) => setCreateCwd(e.target.value)} />
-          </label>
-          <div>
-            <button type="button" onClick={handleCreateThread}>Create Thread</button>
           </div>
         </div>
-        {createError && <div className="error">create failed: {createError}</div>}
-        {createdThreadId && (
-          <p className="count">
-            created: <Link to={`/thread/${createdThreadId}`}>{createdThreadId}</Link>
-          </p>
-        )}
-      </section>
-
-      <section>
-        <p className="count">refresh: {loading ? 'loading...' : 'ready'}</p>
         <table>
           <thead>
             <tr>
@@ -514,6 +496,18 @@ function buildTraceSteps(items: TraceItem[]): TraceStep[] {
 function shortId(value: string | null, size = 8): string {
   if (!value) return '-';
   return String(value).slice(0, size);
+}
+
+function formatPct(value: any): string {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return '-';
+  return `${num.toFixed(1)}%`;
+}
+
+function formatResolvedScore(item: any): string {
+  const resolved = Number(item?.score?.resolved_instances ?? 0);
+  const total = Number(item?.score?.total_instances ?? 0);
+  return `${resolved}/${total} (${formatPct(item?.score?.resolved_rate_pct)})`;
 }
 
 function formatStatusSummary(payload: any): string {
@@ -1312,6 +1306,7 @@ function EventDetailPage() {
 
 // Page: Evaluation
 function EvaluationPage() {
+  const location = useLocation();
   const [dataset, setDataset] = React.useState('SWE-bench/SWE-bench_Lite');
   const [split, setSplit] = React.useState('test');
   const [startIdx, setStartIdx] = React.useState('0');
@@ -1325,6 +1320,7 @@ function EvaluationPage() {
   const [runError, setRunError] = React.useState<string | null>(null);
   const [evaluations, setEvaluations] = React.useState<any[]>([]);
   const [runsLoading, setRunsLoading] = React.useState(false);
+  const [composerOpen, setComposerOpen] = React.useState(false);
 
   async function loadEvaluations() {
     setRunsLoading(true);
@@ -1373,6 +1369,7 @@ function EvaluationPage() {
       if (!nextEvalId) throw new Error('create evaluation returned empty evaluation_id');
       setEvaluationId(nextEvalId);
       setRunStatus('submitted');
+      setComposerOpen(false);
       await loadEvaluations();
     } catch (e: any) {
       setRunStatus('error');
@@ -1381,92 +1378,106 @@ function EvaluationPage() {
   }
 
   const currentEval = evaluations.find((item: any) => item.evaluation_id === evaluationId);
+  const submissionPreview = {
+    dataset,
+    split,
+    start: Number(startIdx || '0'),
+    count: Number(sliceCount || '0'),
+    prompt_profile: promptProfile,
+    timeout_sec: Number(timeoutSec || '0'),
+    recursion_limit: Number(recursionLimit || '0'),
+    sandbox,
+    arm: 'monitor',
+  };
+  const parameterReference = [
+    ['Dataset', 'Benchmark source', 'Lite for fast iteration, Verified for strict runs'],
+    ['Split', 'Data partition', 'Use test for formal comparison'],
+    ['Start / Slice', 'Case range', 'Run small slices first, then scale up'],
+    ['Prompt Profile', 'Prompt strategy', 'Compare baseline vs heuristic in A/B'],
+    ['Timeout(s)', 'Per-case wall clock limit', '180~300 for initial runs'],
+    ['Recursion', 'Agent iteration budget', '24 default, increase only if needed'],
+    ['Sandbox', 'Execution provider', 'Use local for quick checks, daytona for infra parity'],
+  ];
+  const statusReference = [
+    ['queued', 'Job is persisted and waiting for executor slots.'],
+    ['running', 'At least one thread is active and writing status updates.'],
+    ['completed', 'Runner finished and artifacts were written.'],
+    ['completed_with_errors', 'Runner finished, but summary reports failed items/errors.'],
+    ['error', 'Runner failed; open detail page to inspect stderr and trace.'],
+  ];
+
+  React.useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+  }, []);
+  React.useEffect(() => {
+    // @@@evaluation-query-open - allow deterministic screenshot/review entry to open config panel via ?new=1.
+    const query = new URLSearchParams(location.search);
+    setComposerOpen(query.get('new') === '1');
+  }, [location.search]);
 
   return (
     <div className="page">
       <h1>Evaluation</h1>
-      <p className="description">One evaluation contains many threads. Frontend only submits profile and displays persisted state.</p>
+      <p className="description">One evaluation contains many threads. Start jobs from config panel, track durable progress in list, then drill into thread trace.</p>
 
-      <section className="info-grid">
-        <label>
-          <strong>Dataset:</strong>
-          <select value={dataset} onChange={(e) => setDataset(e.target.value)}>
-            <option value="SWE-bench/SWE-bench_Lite">SWE-bench/SWE-bench_Lite</option>
-            <option value="princeton-nlp/SWE-bench_Verified">princeton-nlp/SWE-bench_Verified</option>
-          </select>
-        </label>
-        <label>
-          <strong>Split:</strong>
-          <select value={split} onChange={(e) => setSplit(e.target.value)}>
-            <option value="test">test</option>
-            <option value="dev">dev</option>
-          </select>
-        </label>
-        <label>
-          <strong>Start:</strong>
-          <input value={startIdx} onChange={(e) => setStartIdx(e.target.value)} />
-        </label>
-        <label>
-          <strong>Slice:</strong>
-          <select value={sliceCount} onChange={(e) => setSliceCount(e.target.value)}>
-            <option value="5">5</option>
-            <option value="10">10</option>
-            <option value="20">20</option>
-          </select>
-        </label>
-        <label>
-          <strong>Prompt Profile:</strong>
-          <select value={promptProfile} onChange={(e) => setPromptProfile(e.target.value)}>
-            <option value="baseline">baseline</option>
-            <option value="heuristic">heuristic</option>
-          </select>
-        </label>
-        <label>
-          <strong>Timeout(s):</strong>
-          <input value={timeoutSec} onChange={(e) => setTimeoutSec(e.target.value)} />
-        </label>
-        <label>
-          <strong>Recursion:</strong>
-          <input value={recursionLimit} onChange={(e) => setRecursionLimit(e.target.value)} />
-        </label>
-        <label>
-          <strong>Sandbox:</strong>
-          <select value={sandbox} onChange={(e) => setSandbox(e.target.value)}>
-            <option value="local">local</option>
-            <option value="daytona">daytona</option>
-          </select>
-        </label>
-        <div>
-          <button onClick={handleStart} disabled={runStatus === 'starting' || !startIdx.trim()}>
-            {runStatus === 'starting' ? 'Starting...' : 'Start Eval'}
+      <section className="evaluation-flow">
+        <article className="hint-box">
+          <h2>1. Submit</h2>
+          <p className="description">Open config, choose scope/profile/sandbox, then submit one batch run.</p>
+        </article>
+        <article className="hint-box">
+          <h2>2. Track</h2>
+          <p className="description">List auto-refreshes every 2.5s and survives reload. Status is backend-persisted.</p>
+        </article>
+        <article className="hint-box">
+          <h2>3. Inspect</h2>
+          <p className="description">Open evaluation detail to jump to per-thread trace and tool-call timeline.</p>
+        </article>
+      </section>
+
+      <section className="evaluation-overview">
+        <div className="hint-box">
+          <h2>Current Submission</h2>
+          <p className="description">Latest evaluation submitted from this page.</p>
+          <div className="mono">evaluation: {evaluationId || '-'}</div>
+          <p className="count">status: {currentEval?.status || runStatus}</p>
+          {runError && <div className="error">run error: {runError}</div>}
+          {evaluationId && (
+            <p className="count">
+              <Link to={`/evaluation/${evaluationId}`}>open evaluation detail</Link>
+            </p>
+          )}
+        </div>
+
+        <div className="hint-box">
+          <h2>Start New Evaluation</h2>
+          <p className="description">Open a focused config panel. After submit, track progress in the evaluation list below.</p>
+          <button className="primary-btn" onClick={() => setComposerOpen(true)} disabled={runStatus === 'starting'}>
+            {runStatus === 'starting' ? 'Starting...' : 'Open Config'}
           </button>
         </div>
       </section>
 
       <section>
-        <h2>Current Submission</h2>
-        <div className="mono">evaluation: {evaluationId || '-'}</div>
-        <p className="count">status: {currentEval?.status || runStatus}</p>
-        {runError && <div className="error">run error: {runError}</div>}
-        {evaluationId && (
-          <p className="count">
-            <Link to={`/evaluation/${evaluationId}`}>open evaluation detail</Link>
-          </p>
-        )}
-      </section>
-
-      <section>
-        <h2>Evaluations ({evaluations.length})</h2>
+        <div className="section-row">
+          <h2>Evaluations ({evaluations.length})</h2>
+          <button className="ghost-btn" onClick={() => setComposerOpen(true)} disabled={runStatus === 'starting'}>
+            New Evaluation
+          </button>
+        </div>
         <p className="count">Auto refresh: 2.5s {runsLoading ? '| loading...' : ''}</p>
+        <p className="description">Evaluation = one batch run. Threads = running/total. Click Evaluation ID for detail trace and thread links.</p>
         <table>
           <thead>
             <tr>
-              <th>Evaluation</th>
-              <th>Dataset</th>
-              <th>Range</th>
-              <th>Status</th>
-              <th>Threads</th>
-              <th>Updated</th>
+              <th title="Unique evaluation id">Evaluation</th>
+              <th title="Benchmark dataset id">Dataset</th>
+              <th title="Case index range inside selected split">Range</th>
+              <th title="prompt_profile / sandbox">Profile / Sandbox</th>
+              <th title="queued / running / completed / completed_with_errors / error">Status</th>
+              <th title="running thread count / total thread count">Threads</th>
+              <th title="resolved / total from SWE-bench summary">Score</th>
+              <th title="Last persisted status update">Updated</th>
             </tr>
           </thead>
           <tbody>
@@ -1475,19 +1486,189 @@ function EvaluationPage() {
                 <td><Link to={item.evaluation_url}>{shortId(item.evaluation_id, 14)}</Link></td>
                 <td className="mono">{item.dataset}</td>
                 <td>{item.start_idx}..{item.start_idx + item.slice_count - 1}</td>
+                <td className="mono">{item.prompt_profile || '-'} / {item.sandbox || '-'}</td>
                 <td>{item.status}</td>
                 <td>{item.threads_running}/{item.threads_total}</td>
+                <td className="mono">
+                  <div>R {formatResolvedScore(item)}</div>
+                  <div>C {formatPct(item.score?.completed_rate_pct)} | T {formatPct(item.score?.tool_call_thread_rate_pct)}</div>
+                </td>
                 <td>{item.updated_ago || '-'}</td>
               </tr>
             ))}
             {evaluations.length === 0 && (
               <tr>
-                <td colSpan={6}>No evaluations yet.</td>
+                <td colSpan={8}>No evaluations yet.</td>
               </tr>
             )}
           </tbody>
         </table>
       </section>
+
+      <section className="evaluation-notes">
+        <article className="hint-box">
+          <h2>Status Guide</h2>
+          <ul>
+            {statusReference.map((row) => (
+              <li key={row[0]}><span className="mono">{row[0]}</span>: {row[1]}</li>
+            ))}
+          </ul>
+        </article>
+        <article className="hint-box">
+          <h2>Field Guide</h2>
+          <ul>
+            {parameterReference.slice(0, 4).map((row) => (
+              <li key={row[0]}><span className="mono">{row[0]}</span>: {row[1]}</li>
+            ))}
+          </ul>
+        </article>
+      </section>
+
+      {composerOpen && (
+        // @@@evaluation-composer-modal - keep config editing in a fixed layer to avoid "tail jump" in long list pages.
+        <div className="eval-composer-backdrop" onClick={() => setComposerOpen(false)}>
+          <section className="eval-composer-panel" onClick={(e) => e.stopPropagation()}>
+            <div className="section-row">
+              <h2>New Evaluation Config</h2>
+              <button className="ghost-btn" onClick={() => setComposerOpen(false)} disabled={runStatus === 'starting'}>
+                Close
+              </button>
+            </div>
+            <p className="description">Configure run scope, profile and runtime, then submit.</p>
+
+            <section className="evaluation-layout">
+              <div className="evaluation-column">
+                <h2>Run Scope</h2>
+                <div className="info-grid evaluation-grid">
+                  <div className="field-group">
+                    <label className="field-label">
+                      <strong>Dataset</strong>
+                    </label>
+                    <select value={dataset} onChange={(e) => setDataset(e.target.value)}>
+                      <option value="SWE-bench/SWE-bench_Lite">SWE-bench/SWE-bench_Lite</option>
+                      <option value="princeton-nlp/SWE-bench_Verified">princeton-nlp/SWE-bench_Verified</option>
+                    </select>
+                    <p className="field-help">Benchmark source. Lite is faster; Verified is stricter and slower.</p>
+                  </div>
+                  <div className="field-group">
+                    <label className="field-label">
+                      <strong>Split</strong>
+                    </label>
+                    <select value={split} onChange={(e) => setSplit(e.target.value)}>
+                      <option value="test">test</option>
+                      <option value="dev">dev</option>
+                    </select>
+                    <p className="field-help">Dataset partition. Use <span className="mono">test</span> for formal comparison.</p>
+                  </div>
+                  <div className="field-group">
+                    <label className="field-label">
+                      <strong>Start</strong>
+                    </label>
+                    <input value={startIdx} onChange={(e) => setStartIdx(e.target.value)} />
+                    <p className="field-help">Starting index inside the selected split.</p>
+                  </div>
+                  <div className="field-group">
+                    <label className="field-label">
+                      <strong>Slice</strong>
+                    </label>
+                    <select value={sliceCount} onChange={(e) => setSliceCount(e.target.value)}>
+                      <option value="5">5</option>
+                      <option value="10">10</option>
+                      <option value="20">20</option>
+                    </select>
+                    <p className="field-help">How many items to run in this evaluation batch.</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="evaluation-column">
+                <h2>Agent Profile</h2>
+                <div className="info-grid evaluation-grid">
+                  <div className="field-group">
+                    <label className="field-label">
+                      <strong>Prompt Profile</strong>
+                    </label>
+                    <select value={promptProfile} onChange={(e) => setPromptProfile(e.target.value)}>
+                      <option value="baseline">baseline</option>
+                      <option value="heuristic">heuristic</option>
+                    </select>
+                    <p className="field-help">Prompt strategy passed to runner. Used for A/B profile comparison.</p>
+                  </div>
+                  <div className="field-group">
+                    <label className="field-label">
+                      <strong>Recursion</strong>
+                    </label>
+                    <input value={recursionLimit} onChange={(e) => setRecursionLimit(e.target.value)} />
+                    <p className="field-help">Agent recursion/iteration budget per item.</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="evaluation-column">
+                <h2>Runtime</h2>
+                <div className="info-grid evaluation-grid">
+                  <div className="field-group">
+                    <label className="field-label">
+                      <strong>Timeout(s)</strong>
+                    </label>
+                    <input value={timeoutSec} onChange={(e) => setTimeoutSec(e.target.value)} />
+                    <p className="field-help">Per-item wall-clock timeout in seconds.</p>
+                  </div>
+                  <div className="field-group">
+                    <label className="field-label">
+                      <strong>Sandbox</strong>
+                    </label>
+                    <select value={sandbox} onChange={(e) => setSandbox(e.target.value)}>
+                      <option value="local">local</option>
+                      <option value="daytona">daytona</option>
+                    </select>
+                    <p className="field-help">Execution environment provider for this run.</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="evaluation-column evaluation-column-action">
+                <div className="evaluation-action-row">
+                  <button className="primary-btn" onClick={handleStart} disabled={runStatus === 'starting' || !startIdx.trim()}>
+                    {runStatus === 'starting' ? 'Starting...' : 'Start Eval'}
+                  </button>
+                  <button className="ghost-btn" onClick={() => setComposerOpen(false)} disabled={runStatus === 'starting'}>
+                    Cancel
+                  </button>
+                </div>
+                <p className="field-help">Submits config to backend and starts an evaluation job.</p>
+              </div>
+            </section>
+
+            <details className="trace-details">
+              <summary>Submission Preview</summary>
+              <pre className="json-payload">{JSON.stringify(submissionPreview, null, 2)}</pre>
+            </details>
+
+            <details className="trace-details">
+              <summary>Parameter Reference</summary>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Field</th>
+                    <th>Meaning</th>
+                    <th>Recommendation</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {parameterReference.map((row) => (
+                    <tr key={row[0]}>
+                      <td>{row[0]}</td>
+                      <td>{row[1]}</td>
+                      <td>{row[2]}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </details>
+          </section>
+        </div>
+      )}
     </div>
   );
 }
@@ -1508,6 +1689,8 @@ function EvaluationDetailPage() {
       <h1>Evaluation: {shortId(data.evaluation_id, 14)}</h1>
       <p className="count">
         {data.info.status} | dataset={data.info.dataset} | threads={data.info.threads_running}/{data.info.threads_total}
+        {' '}| score={data.info.score?.resolved_instances ?? 0}/{data.info.score?.total_instances ?? 0}
+        {' '}({formatPct(data.info.score?.primary_score_pct)})
       </p>
 
       <section className="info-grid">
@@ -1517,6 +1700,22 @@ function EvaluationDetailPage() {
         <div><strong>Profile:</strong> {data.info.prompt_profile}</div>
         <div><strong>Timeout:</strong> {data.info.timeout_sec}s</div>
         <div><strong>Recursion:</strong> {data.info.recursion_limit}</div>
+        <div><strong>Resolved:</strong> {data.info.score?.resolved_instances ?? 0}/{data.info.score?.total_instances ?? 0}</div>
+        <div><strong>Resolved Rate:</strong> {formatPct(data.info.score?.resolved_rate_pct)}</div>
+        <div><strong>Completed:</strong> {data.info.score?.completed_instances ?? 0}/{data.info.score?.total_instances ?? 0}</div>
+        <div><strong>Completed Rate:</strong> {formatPct(data.info.score?.completed_rate_pct)}</div>
+        <div><strong>Non-empty Patch:</strong> {data.info.score?.non_empty_patch_instances ?? 0}/{data.info.score?.total_instances ?? 0}</div>
+        <div><strong>Non-empty Rate:</strong> {formatPct(data.info.score?.non_empty_patch_rate_pct)}</div>
+        <div><strong>Empty Patch:</strong> {data.info.score?.empty_patch_instances ?? 0}/{data.info.score?.total_instances ?? 0}</div>
+        <div><strong>Errors:</strong> {data.info.score?.error_instances ?? 0}</div>
+        <div><strong>Trace Active:</strong> {data.info.score?.active_trace_threads ?? 0}/{data.info.score?.total_instances ?? 0}</div>
+        <div><strong>Tool-call Threads:</strong> {data.info.score?.tool_call_threads ?? 0}/{data.info.score?.total_instances ?? 0}</div>
+        <div><strong>Tool-call Coverage:</strong> {formatPct(data.info.score?.tool_call_thread_rate_pct)}</div>
+        <div><strong>Tool Calls Total:</strong> {data.info.score?.tool_calls_total ?? 0}</div>
+        <div><strong>Avg Tool Calls(active):</strong> {data.info.score?.avg_tool_calls_per_active_thread ?? '-'}</div>
+        <div><strong>Recursion Cap Hits:</strong> {data.info.score?.recursion_cap_hits ?? 0}{data.info.score?.recursion_limit ? ` / cap ${data.info.score.recursion_limit}` : ''}</div>
+        <div><strong>Summary:</strong> {data.info.score?.eval_summary_path ? 'ready' : 'missing'}</div>
+        <div><strong>Run Dir:</strong> <span className="mono">{data.info.score?.run_dir || '-'}</span></div>
       </section>
 
       <section>
@@ -1562,17 +1761,34 @@ function EvaluationDetailPage() {
 }
 
 // Layout: Top navigation
+function ScrollToTopOnRouteChange() {
+  const { pathname } = useLocation();
+  React.useEffect(() => {
+    // @@@history-scroll-restore-disable - browser may restore stale scroll offsets and make user land at page tail.
+    const prev = window.history.scrollRestoration;
+    window.history.scrollRestoration = 'manual';
+    return () => {
+      window.history.scrollRestoration = prev;
+    };
+  }, []);
+  React.useEffect(() => {
+    // @@@route-scroll-reset - switch tabs/details should always start from top to avoid "tail landing" confusion.
+    window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+  }, [pathname]);
+  return null;
+}
+
 function Layout({ children }: { children: React.ReactNode }) {
   return (
     <div className="app">
       <nav className="top-nav">
         <h1 className="logo">Leon Sandbox Monitor</h1>
         <div className="nav-links">
-          <Link to="/threads">Threads</Link>
-          <Link to="/leases">Leases</Link>
-          <Link to="/diverged">Diverged</Link>
-          <Link to="/events">Events</Link>
-          <Link to="/evaluation">Evaluation</Link>
+          <NavLink to="/threads">Threads</NavLink>
+          <NavLink to="/leases">Leases</NavLink>
+          <NavLink to="/diverged">Diverged</NavLink>
+          <NavLink to="/events">Events</NavLink>
+          <NavLink to="/evaluation">Evaluation</NavLink>
         </div>
       </nav>
       <main className="content">
@@ -1586,6 +1802,7 @@ function Layout({ children }: { children: React.ReactNode }) {
 export default function App() {
   return (
     <BrowserRouter>
+      <ScrollToTopOnRouteChange />
       <Layout>
         <Routes>
           <Route path="/" element={<DivergedPage />} />
