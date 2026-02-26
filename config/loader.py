@@ -1,4 +1,9 @@
-"""Three-tier runtime configuration loader with merge strategies.
+"""Unified agent & runtime configuration loader.
+
+Combines:
+- Three-tier runtime config merge (system > user > project) — for default agent
+- Agent .md parsing (YAML frontmatter + system prompt) — from old core/task/loader
+- Bundle discovery (meta.json, rules/, agents/, skills/, .mcp.json, runtime.json) — for members
 
 Configuration priority (highest to lowest):
 1. CLI overrides
@@ -6,30 +11,39 @@ Configuration priority (highest to lowest):
 3. User config (~/.leon/runtime.json)
 4. System defaults (config/defaults/runtime.json)
 
-Merge strategies:
-- Runtime/Memory/Tools configs: deep merge (system + user + project)
-- MCP/Skills: lookup (first found wins, no merge)
-- System prompt: lookup (project > user > system)
-
-Model identity (model name, provider, API keys) is handled by ModelsLoader.
+Member loading: system defaults + member bundle (no user/project inheritance).
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import os
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from config.schema import LeonSettings
+from config.types import (
+    AgentBundle,
+    AgentConfig,
+    McpServerConfig,
+    RuntimeResourceConfig,
+)
+
+logger = logging.getLogger(__name__)
 
 
-class ConfigLoader:
-    """Three-tier runtime configuration loader."""
+class AgentLoader:
+    """Unified loader for runtime config, agent definitions, and agent bundles."""
 
-    def __init__(self, workspace_root: str | None = None):
+    def __init__(self, workspace_root: str | Path | None = None):
         self.workspace_root = Path(workspace_root).resolve() if workspace_root else None
         self._system_defaults_dir = Path(__file__).parent / "defaults"
+        self._agents: dict[str, AgentConfig] = {}
+
+    # ── Three-tier runtime config (unchanged) ──
 
     def load(self, cli_overrides: dict[str, Any] | None = None) -> LeonSettings:
         """Load runtime configuration with three-tier merge."""
@@ -44,18 +58,12 @@ class ConfigLoader:
             project_config.get("runtime", {}),
         )
 
-        # Backward compat: if old-style top-level keys exist, fold them into runtime
+        # Backward compat: old-style top-level keys fold into runtime
         for cfg in (system_config, user_config, project_config):
             for key in (
-                "context_limit",
-                "enable_audit_log",
-                "allowed_extensions",
-                "block_dangerous_commands",
-                "block_network_commands",
-                "queue_mode",
-                "temperature",
-                "max_tokens",
-                "model_kwargs",
+                "context_limit", "enable_audit_log", "allowed_extensions",
+                "block_dangerous_commands", "block_network_commands",
+                "queue_mode", "temperature", "max_tokens", "model_kwargs",
             ):
                 if key in cfg and key not in merged_runtime:
                     merged_runtime[key] = cfg[key]
@@ -65,7 +73,6 @@ class ConfigLoader:
             user_config.get("memory", {}),
             project_config.get("memory", {}),
         )
-
         merged_tools = self._deep_merge(
             system_config.get("tools", {}),
             user_config.get("tools", {}),
@@ -100,10 +107,204 @@ class ConfigLoader:
 
         return LeonSettings(**final_config)
 
+    # ── Agent .md parsing (merged from core/task/loader) ──
+
+    def load_all_agents(self) -> dict[str, AgentConfig]:
+        """Load all agents by priority (low -> high, later overrides earlier)."""
+        self._agents = {}
+
+        # 1. Built-in agents (lowest priority)
+        self._load_agents_from_dir(self._system_defaults_dir / "agents")
+
+        # 2. User-level agents
+        self._load_agents_from_dir(Path.home() / ".leon" / "agents")
+
+        # 3. Project-level agents
+        if self.workspace_root:
+            self._load_agents_from_dir(self.workspace_root / ".leon" / "agents")
+
+        # 4. Members (highest priority)
+        members_dir = Path.home() / ".leon" / "members"
+        if members_dir.exists():
+            for member_dir in members_dir.iterdir():
+                if member_dir.is_dir() and (member_dir / "agent.md").exists():
+                    config = self.parse_agent_file(member_dir / "agent.md")
+                    if config:
+                        self._agents[config.name] = config
+
+        return self._agents
+
+    def _load_agents_from_dir(self, dir_path: Path) -> None:
+        """Load all .md files from a directory."""
+        if not dir_path.exists():
+            return
+        for md_file in dir_path.glob("*.md"):
+            config = self.parse_agent_file(md_file)
+            if config:
+                self._agents[config.name] = config
+
+    @staticmethod
+    def parse_agent_file(path: Path) -> AgentConfig | None:
+        """Parse Markdown file with YAML frontmatter into AgentConfig."""
+        try:
+            content = path.read_text(encoding="utf-8")
+        except OSError:
+            return None
+
+        if not content.startswith("---"):
+            return None
+        parts = content.split("---", 2)
+        if len(parts) < 3:
+            return None
+
+        try:
+            fm = yaml.safe_load(parts[1])
+        except yaml.YAMLError:
+            return None
+
+        if not fm or "name" not in fm:
+            return None
+
+        return AgentConfig(
+            name=fm["name"],
+            description=fm.get("description", ""),
+            tools=fm.get("tools", ["*"]),
+            system_prompt=parts[2].strip(),
+            model=fm.get("model"),
+            source_dir=path.resolve().parent,
+        )
+
+    def get_agent(self, name: str) -> AgentConfig | None:
+        """Get a specific agent by name."""
+        return self._agents.get(name)
+
+    def list_agents(self) -> list[str]:
+        """List all available agent names."""
+        return list(self._agents.keys())
+
+    # ── Bundle discovery (for members / standalone agents) ──
+
+    def load_bundle(self, agent_dir: Path) -> AgentBundle:
+        """Load a complete agent bundle from a directory.
+
+        Used for members: system defaults + member bundle (no user/project inheritance).
+        """
+        agent_dir = agent_dir.resolve()
+        agent = self.parse_agent_file(agent_dir / "agent.md")
+        if not agent:
+            raise ValueError(f"No valid agent.md in {agent_dir}")
+
+        return AgentBundle(
+            agent=agent,
+            meta=self._discover_meta(agent_dir),
+            runtime=self._discover_runtime(agent_dir),
+            rules=self._discover_rules(agent_dir),
+            agents=self._discover_agents(agent_dir),
+            skills=self._discover_skills(agent_dir),
+            mcp=self._discover_mcp(agent_dir),
+        )
+
+    @staticmethod
+    def _discover_meta(agent_dir: Path) -> dict[str, Any]:
+        """Read meta.json."""
+        path = agent_dir / "meta.json"
+        if not path.exists():
+            return {}
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return {}
+
+    @staticmethod
+    def _discover_runtime(agent_dir: Path) -> dict[str, RuntimeResourceConfig]:
+        """Read runtime.json → {resource_name: RuntimeResourceConfig}."""
+        path = agent_dir / "runtime.json"
+        if not path.exists():
+            return {}
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return {}
+        result: dict[str, RuntimeResourceConfig] = {}
+        for name, cfg in data.items():
+            if isinstance(cfg, dict):
+                result[name] = RuntimeResourceConfig(**cfg)
+        return result
+
+    @staticmethod
+    def _discover_rules(agent_dir: Path) -> list[dict[str, str]]:
+        """Scan rules/*.md → [{name, content}]."""
+        rules_dir = agent_dir / "rules"
+        if not rules_dir.is_dir():
+            return []
+        rules = []
+        for md in sorted(rules_dir.glob("*.md")):
+            try:
+                content = md.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            rules.append({"name": md.stem, "content": content})
+        return rules
+
+    @staticmethod
+    def _discover_agents(agent_dir: Path) -> list[AgentConfig]:
+        """Scan agents/*.md → [AgentConfig]."""
+        agents_dir = agent_dir / "agents"
+        if not agents_dir.is_dir():
+            return []
+        agents = []
+        for md in sorted(agents_dir.glob("*.md")):
+            config = AgentLoader.parse_agent_file(md)
+            if config:
+                agents.append(config)
+        return agents
+
+    @staticmethod
+    def _discover_skills(agent_dir: Path) -> list[dict[str, Any]]:
+        """Scan skills/*/SKILL.md → [{name, path}]."""
+        skills_dir = agent_dir / "skills"
+        if not skills_dir.is_dir():
+            return []
+        skills = []
+        for skill_dir in sorted(skills_dir.iterdir()):
+            if not skill_dir.is_dir():
+                continue
+            skill_md = skill_dir / "SKILL.md"
+            if skill_md.exists():
+                skills.append({"name": skill_dir.name, "path": str(skill_dir)})
+            elif any(skill_dir.glob("*.md")):
+                # Fallback: any .md in skill dir
+                skills.append({"name": skill_dir.name, "path": str(skill_dir)})
+        return skills
+
+    @staticmethod
+    def _discover_mcp(agent_dir: Path) -> dict[str, McpServerConfig]:
+        """Read .mcp.json → {server_name: McpServerConfig}."""
+        path = agent_dir / ".mcp.json"
+        if not path.exists():
+            return {}
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return {}
+        # .mcp.json has {"mcpServers": {...}} or flat {...}
+        servers = data.get("mcpServers", data)
+        if not isinstance(servers, dict):
+            return {}
+        result: dict[str, McpServerConfig] = {}
+        for name, cfg in servers.items():
+            if isinstance(cfg, dict):
+                result[name] = McpServerConfig(**{
+                    k: v for k, v in cfg.items()
+                    if k in McpServerConfig.model_fields
+                })
+        return result
+
+    # ── Internal helpers ──
+
     def _load_system_defaults(self) -> dict[str, Any]:
         """Load system defaults from runtime.json."""
-        path = self._system_defaults_dir / "runtime.json"
-        return self._load_json(path)
+        return self._load_json(self._system_defaults_dir / "runtime.json")
 
     def _load_user_config(self) -> dict[str, Any]:
         """Load user config from ~/.leon/runtime.json."""
@@ -173,15 +374,17 @@ class ConfigLoader:
         paths = skills.get("paths")
         if not isinstance(paths, list):
             return
-
         default_home_skills = Path.home() / ".leon" / "skills"
         for raw_path in paths:
             if not isinstance(raw_path, str):
                 continue
             path = Path(raw_path).expanduser()
-            # @@@skills-default-bootstrap - keep strict path validation while avoiding first-run failure for default home skills dir
             if path == default_home_skills and not path.exists():
                 path.mkdir(parents=True, exist_ok=True)
+
+
+# Backward compat alias
+ConfigLoader = AgentLoader
 
 
 def load_config(
@@ -189,4 +392,4 @@ def load_config(
     cli_overrides: dict[str, Any] | None = None,
 ) -> LeonSettings:
     """Convenience function to load runtime configuration."""
-    return ConfigLoader(workspace_root=workspace_root).load(cli_overrides=cli_overrides)
+    return AgentLoader(workspace_root=workspace_root).load(cli_overrides=cli_overrides)

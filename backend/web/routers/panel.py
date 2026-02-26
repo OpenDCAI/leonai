@@ -44,8 +44,6 @@ async def create_member(req: CreateMemberRequest) -> dict[str, Any]:
 
 @router.put("/members/{member_id}")
 async def update_member(member_id: str, req: UpdateMemberRequest) -> dict[str, Any]:
-    if member_id == "__leon__":
-        raise HTTPException(403, "Cannot modify builtin member")
     item = await asyncio.to_thread(member_service.update_member, member_id, **req.model_dump())
     if not item:
         raise HTTPException(404, "Member not found")
@@ -53,8 +51,6 @@ async def update_member(member_id: str, req: UpdateMemberRequest) -> dict[str, A
 
 @router.put("/members/{member_id}/config")
 async def update_member_config(member_id: str, req: MemberConfigPayload) -> dict[str, Any]:
-    if member_id == "__leon__":
-        raise HTTPException(403, "Cannot modify builtin member")
     item = await asyncio.to_thread(member_service.update_member_config, member_id, req.model_dump())
     if not item:
         raise HTTPException(404, "Member not found")
@@ -64,7 +60,7 @@ async def update_member_config(member_id: str, req: MemberConfigPayload) -> dict
 @router.put("/members/{member_id}/publish")
 async def publish_member(member_id: str, req: PublishMemberRequest) -> dict[str, Any]:
     if member_id == "__leon__":
-        raise HTTPException(403, "Cannot modify builtin member")
+        raise HTTPException(403, "Cannot publish builtin member")
     item = await asyncio.to_thread(member_service.publish_member, member_id, req.bump_type)
     if not item:
         raise HTTPException(404, "Member not found")

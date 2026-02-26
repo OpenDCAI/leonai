@@ -33,7 +33,7 @@ if _env_file.exists():
             os.environ[key] = value
 
 from config import LeonSettings
-from config.loader import ConfigLoader
+from config.loader import AgentLoader
 from config.models_loader import ModelsLoader
 from config.models_schema import ModelsConfig
 from config.observation_loader import ObservationLoader
@@ -349,7 +349,7 @@ class LeonAgent:
             cli_overrides.setdefault("tools", {}).setdefault("web", {})["enabled"] = enable_web_tools
 
         # Load runtime config
-        loader = ConfigLoader(workspace_root=workspace_root)
+        loader = AgentLoader(workspace_root=workspace_root)
         config = loader.load(cli_overrides=cli_overrides if cli_overrides else None)
 
         # Load models config
@@ -359,19 +359,22 @@ class LeonAgent:
         models_loader = ModelsLoader(workspace_root=workspace_root)
         models_config = models_loader.load(cli_overrides=models_cli if models_cli else None)
 
-        # If agent specified, load Task Agent definition to override system_prompt and tools
+        # If agent specified, load agent definition to override system_prompt and tools
         if agent_name:
-            from core.task.loader import AgentLoader
-
-            agent_loader = AgentLoader(workspace_root=Path(workspace_root) if workspace_root else None)
-            all_agents = agent_loader.load_all()
+            all_agents = loader.load_all_agents()
             agent_def = all_agents.get(agent_name)
             if not agent_def:
                 available = ", ".join(sorted(all_agents.keys()))
                 raise ValueError(f"Unknown agent: {agent_name}. Available: {available}")
+            # If agent has source_dir (member), load full bundle
+            if agent_def.source_dir:
+                self._agent_bundle = loader.load_bundle(agent_def.source_dir)
+            else:
+                self._agent_bundle = None
             self._agent_override = agent_def
         else:
             self._agent_override = None
+            self._agent_bundle = None
 
         if self.verbose:
             active_name = models_config.active.model if models_config.active else model_name
@@ -532,7 +535,7 @@ class LeonAgent:
         # Reload runtime config if tool overrides provided
         if tool_overrides:
             cli_overrides = {"tools": tool_overrides}
-            loader = ConfigLoader(workspace_root=self.workspace_root)
+            loader = AgentLoader(workspace_root=self.workspace_root)
             self.config = loader.load(cli_overrides=cli_overrides)
 
         if model is None:

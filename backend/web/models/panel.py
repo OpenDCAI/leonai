@@ -7,8 +7,7 @@ from pydantic import BaseModel
 
 class MemberConfigPayload(BaseModel):
     prompt: str | None = None
-    rules: str | None = None
-    memory: str | None = None
+    rules: list[dict] | None = None
     tools: list[dict] | None = None
     mcps: list[dict] | None = None
     skills: list[dict] | None = None

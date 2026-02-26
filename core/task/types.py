@@ -1,18 +1,20 @@
-"""Type definitions for Task middleware."""
+"""Type definitions for Task middleware.
+
+Agent/bundle types are defined in config.types and re-exported here
+for backward compatibility.
+"""
 
 from typing import NotRequired, TypedDict
 
 from pydantic import BaseModel
 
-
-class AgentConfig(BaseModel):
-    """Agent configuration parsed from .md file."""
-
-    name: str
-    description: str = ""
-    tools: list[str] = ["*"]
-    system_prompt: str = ""
-    model: str | None = None
+# Re-export from config.types (canonical location)
+from config.types import (
+    AgentBundle,
+    AgentConfig,
+    McpServerConfig,
+    RuntimeResourceConfig,
+)
 
 
 class TaskParams(TypedDict):
@@ -31,7 +33,7 @@ class TaskResult(BaseModel):
     """Result from task execution."""
 
     task_id: str
-    thread_id: str | None = None  # Sub-agent thread_id
+    thread_id: str | None = None
     status: str  # completed/running/error
     result: str | None = None
     error: str | None = None
