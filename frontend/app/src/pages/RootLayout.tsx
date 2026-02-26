@@ -54,7 +54,7 @@ export default function RootLayout() {
     setShowCreate(false);
     switch (action) {
       case "staff": setCreateMemberOpen(true); break;
-      case "chat": navigate("/chat"); break;
+      case "chat": navigate("/members"); break;
       case "task":
         try {
           await storeAddTask();
@@ -289,7 +289,7 @@ function CreateDropdown({
           <Users className="w-3.5 h-3.5 text-muted-foreground" /> 新建成员
         </button>
         <button onClick={() => onAction("chat")} className="w-full px-3 py-2 text-left text-sm text-foreground hover:bg-muted transition-colors flex items-center gap-2.5">
-          <MessageSquare className="w-3.5 h-3.5 text-muted-foreground" /> 新建对话
+          <MessageSquare className="w-3.5 h-3.5 text-muted-foreground" /> 发起会话
         </button>
         <button onClick={() => onAction("task")} className="w-full px-3 py-2 text-left text-sm text-foreground hover:bg-muted transition-colors flex items-center gap-2.5">
           <ListTodo className="w-3.5 h-3.5 text-muted-foreground" /> 新建任务

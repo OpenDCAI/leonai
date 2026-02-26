@@ -1,24 +1,36 @@
 export type MemberStatus = "active" | "draft" | "inactive";
 
 export interface CrudItem {
-  id: string;
+  id?: string;
   name: string;
   desc: string;
   enabled: boolean;
 }
 
 export interface SubAgent {
-  id: string;
+  id?: string;
   name: string;
   desc: string;
 }
 
+export interface RuleItem {
+  name: string;
+  content: string;
+}
+
+export interface McpItem {
+  name: string;
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+  disabled: boolean;
+}
+
 export interface MemberConfig {
   prompt: string;
-  rules: string;
-  memory: string;
+  rules: RuleItem[];
   tools: CrudItem[];
-  mcps: CrudItem[];
+  mcps: McpItem[];
   skills: CrudItem[];
   subAgents: SubAgent[];
 }

@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
-  ArrowLeft, Bot, FileText, Wrench, Plug, Zap, Users, BookOpen, Brain,
+  ArrowLeft, Bot, FileText, Wrench, Plug, Zap, Users, BookOpen,
   Play, Tag, History, Save, Plus, Trash2, Edit2, Check, Search,
   ChevronRight, ChevronDown,
 } from "lucide-react";
@@ -14,11 +14,11 @@ import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useAppStore } from "@/store/app-store";
-import type { CrudItem, SubAgent } from "@/store/types";
+import type { CrudItem, SubAgent, RuleItem, McpItem } from "@/store/types";
 
 // ==================== Types ====================
 
-type ModuleId = "prompt" | "tools" | "mcp" | "skills" | "subagents" | "rules" | "memory";
+type ModuleId = "prompt" | "tools" | "mcp" | "skills" | "subagents" | "rules";
 
 interface ModuleDef {
   id: ModuleId;
@@ -33,15 +33,14 @@ const moduleConfig: ModuleDef[] = [
   { id: "mcp", label: "MCP", icon: Plug, hasChildren: true },
   { id: "skills", label: "Skills", icon: Zap, hasChildren: true },
   { id: "subagents", label: "Sub-agents", icon: Users, hasChildren: true },
-  { id: "rules", label: "Rules", icon: BookOpen, hasChildren: false },
-  { id: "memory", label: "Memory", icon: Brain, hasChildren: false },
+  { id: "rules", label: "Rules", icon: BookOpen, hasChildren: true },
 ];
 
 // ==================== Selection state ====================
 
 type Selection =
-  | { module: "prompt" | "rules" | "memory" }
-  | { module: "tools" | "mcp" | "skills"; itemId?: string }
+  | { module: "prompt" }
+  | { module: "tools" | "mcp" | "skills" | "rules"; itemId?: string }
   | { module: "subagents"; itemId?: string };
 
 // ==================== Main Component ====================
@@ -65,7 +64,7 @@ export default function AgentDetail() {
 
   // Collapsed state for tree sections
   const [collapsed, setCollapsed] = useState<Record<ModuleId, boolean>>({
-    prompt: false, tools: false, mcp: false, skills: false, subagents: false, rules: false, memory: false,
+    prompt: false, tools: false, mcp: false, skills: false, subagents: false, rules: false,
   });
 
   // Search in tree
@@ -87,11 +86,12 @@ export default function AgentDetail() {
     );
   }
 
-  const getItemsForModule = (mod: ModuleId) => {
+  const getItemsForModule = (mod: ModuleId): { name: string; [k: string]: any }[] => {
     if (mod === "tools") return member.config.tools;
     if (mod === "mcp") return member.config.mcps;
     if (mod === "skills") return member.config.skills;
     if (mod === "subagents") return member.config.subAgents.map(sa => ({ ...sa, enabled: true }));
+    if (mod === "rules") return member.config.rules;
     return [];
   };
 
@@ -108,39 +108,42 @@ export default function AgentDetail() {
 
   const handleAdd = async () => {
     if (!addName.trim() || !member) return;
-    const newId = Date.now().toString();
-    const newItem = { id: newId, name: addName.trim(), desc: addDesc.trim(), enabled: true };
+    const trimName = addName.trim();
+    const trimDesc = addDesc.trim();
     try {
       if (addDialogTarget === "tools") {
-        await updateMemberConfig(member.id, { tools: [...member.config.tools, newItem] });
+        await updateMemberConfig(member.id, { tools: [...member.config.tools, { name: trimName, desc: trimDesc, enabled: true }] });
       } else if (addDialogTarget === "mcp") {
-        await updateMemberConfig(member.id, { mcps: [...member.config.mcps, newItem] });
+        await updateMemberConfig(member.id, { mcps: [...member.config.mcps, { name: trimName, command: "", args: [], env: {}, disabled: false }] });
       } else if (addDialogTarget === "skills") {
-        await updateMemberConfig(member.id, { skills: [...member.config.skills, newItem] });
+        await updateMemberConfig(member.id, { skills: [...member.config.skills, { name: trimName, desc: trimDesc, enabled: true }] });
       } else if (addDialogTarget === "subagents") {
-        const newSa = { id: newId, name: addName.trim(), desc: addDesc.trim() };
-        await updateMemberConfig(member.id, { subAgents: [...member.config.subAgents, newSa] });
+        await updateMemberConfig(member.id, { subAgents: [...member.config.subAgents, { name: trimName, desc: trimDesc }] });
+      } else if (addDialogTarget === "rules") {
+        await updateMemberConfig(member.id, { rules: [...member.config.rules, { name: trimName, content: "" }] });
       }
-      toast.success(`${addName.trim()} 已添加`);
+      toast.success(`${trimName} 已添加`);
       setAddDialogOpen(false);
     } catch (e) {
       toast.error("添加失败，请重试");
     }
   };
 
-  const handleDeleteItem = async (mod: ModuleId, itemId: string) => {
+  const handleDeleteItem = async (mod: ModuleId, itemName: string) => {
     if (!member) return;
     try {
       if (mod === "tools") {
-        await updateMemberConfig(member.id, { tools: member.config.tools.filter(i => i.id !== itemId) });
+        await updateMemberConfig(member.id, { tools: member.config.tools.filter(i => i.name !== itemName) });
       } else if (mod === "mcp") {
-        await updateMemberConfig(member.id, { mcps: member.config.mcps.filter(i => i.id !== itemId) });
+        await updateMemberConfig(member.id, { mcps: member.config.mcps.filter(i => i.name !== itemName) });
       } else if (mod === "skills") {
-        await updateMemberConfig(member.id, { skills: member.config.skills.filter(i => i.id !== itemId) });
+        await updateMemberConfig(member.id, { skills: member.config.skills.filter(i => i.name !== itemName) });
       } else if (mod === "subagents") {
-        await updateMemberConfig(member.id, { subAgents: member.config.subAgents.filter(i => i.id !== itemId) });
+        await updateMemberConfig(member.id, { subAgents: member.config.subAgents.filter(i => i.name !== itemName) });
+      } else if (mod === "rules") {
+        await updateMemberConfig(member.id, { rules: member.config.rules.filter(i => i.name !== itemName) });
       }
-      if ("itemId" in selection && selection.itemId === itemId) {
+      if ("itemId" in selection && selection.itemId === itemName) {
         setSelection({ module: mod } as Selection);
       }
       toast.success("已删除");
@@ -149,17 +152,15 @@ export default function AgentDetail() {
     }
   };
 
-  const handleToggle = async (mod: ModuleId, itemId: string, enabled: boolean) => {
+  const handleToggle = async (mod: ModuleId, itemName: string, enabled: boolean) => {
     if (!member) return;
-    const update = (items: { id: string; name: string; desc: string; enabled: boolean }[]) =>
-      items.map(i => i.id === itemId ? { ...i, enabled } : i);
     try {
       if (mod === "tools") {
-        await updateMemberConfig(member.id, { tools: update(member.config.tools) });
+        await updateMemberConfig(member.id, { tools: member.config.tools.map(i => i.name === itemName ? { ...i, enabled } : i) });
       } else if (mod === "mcp") {
-        await updateMemberConfig(member.id, { mcps: update(member.config.mcps) });
+        await updateMemberConfig(member.id, { mcps: member.config.mcps.map(i => i.name === itemName ? { ...i, disabled: !enabled } : i) });
       } else if (mod === "skills") {
-        await updateMemberConfig(member.id, { skills: update(member.config.skills) });
+        await updateMemberConfig(member.id, { skills: member.config.skills.map(i => i.name === itemName ? { ...i, enabled } : i) });
       }
     } catch (e) {
       toast.error("更新失败，请重试");
@@ -167,7 +168,7 @@ export default function AgentDetail() {
   };
 
   // Filter tree items by search
-  const filterItems = (items: { id: string; name: string }[]) => {
+  const filterItems = (items: { name: string }[]) => {
     if (!treeSearch) return items;
     return items.filter(i => i.name.toLowerCase().includes(treeSearch.toLowerCase()));
   };
@@ -251,11 +252,11 @@ export default function AgentDetail() {
               {mod.hasChildren && isExpanded && (
                 <div className="ml-4 pl-2 border-l border-border/50 space-y-0.5 mt-0.5">
                   {items.map(item => {
-                    const isItemSelected = selection.module === mod.id && "itemId" in selection && selection.itemId === item.id;
+                    const isItemSelected = selection.module === mod.id && "itemId" in selection && selection.itemId === item.name;
                     return (
                       <div
-                        key={item.id}
-                        onClick={() => setSelection({ module: mod.id, itemId: item.id } as Selection)}
+                        key={item.name}
+                        onClick={() => setSelection({ module: mod.id, itemId: item.name } as Selection)}
                         className={`flex items-center justify-between px-2 py-1.5 rounded-md text-xs cursor-pointer group/item transition-all ${
                           isItemSelected
                             ? "bg-primary/5 text-foreground font-medium"
@@ -264,7 +265,7 @@ export default function AgentDetail() {
                       >
                         <span className="truncate flex-1">{item.name}</span>
                         <button
-                          onClick={(e) => { e.stopPropagation(); handleDeleteItem(mod.id, item.id); }}
+                          onClick={(e) => { e.stopPropagation(); handleDeleteItem(mod.id, item.name); }}
                           className="p-0.5 rounded hover:bg-destructive/10 opacity-0 group-hover/item:opacity-100 transition-all shrink-0"
                           title="删除"
                         >
@@ -291,36 +292,87 @@ export default function AgentDetail() {
     const mod = selection.module;
     const selectedItemId = "itemId" in selection ? selection.itemId : undefined;
 
-    // Text editors (Prompt, Rules, Memory)
-    if (mod === "prompt" || mod === "rules" || mod === "memory") {
-      const labels: Record<string, string> = { prompt: "System Prompt", rules: "Rules", memory: "Memory" };
+    // Text editor (Prompt only)
+    if (mod === "prompt") {
       return (
         <TextEditor
           key={mod}
-          label={labels[mod]}
-          initialValue={member.config[mod] || ""}
+          label="System Prompt"
+          initialValue={member.config.prompt || ""}
           onSave={async (val) => {
-            await updateMemberConfig(member.id, { [mod]: val });
-            toast.success(`${labels[mod]} 已保存`);
+            await updateMemberConfig(member.id, { prompt: val });
+            toast.success("System Prompt 已保存");
           }}
         />
       );
     }
 
-    // CrudItem modules (tools, mcp, skills)
-    if (mod === "tools" || mod === "mcp" || mod === "skills") {
-      const configKey = mod === "tools" ? "tools" : mod === "mcp" ? "mcps" : "skills";
+    // Rules — file-folder UI
+    if (mod === "rules") {
+      const rules = member.config.rules;
+      if (selectedItemId) {
+        const rule = rules.find(r => r.name === selectedItemId);
+        if (!rule) return <div className="text-sm text-muted-foreground p-6">未找到该规则</div>;
+        return (
+          <RuleEditor
+            rule={rule}
+            onSave={async (content) => {
+              await updateMemberConfig(member.id, { rules: rules.map(r => r.name === selectedItemId ? { ...r, content } : r) });
+              toast.success("规则已保存");
+            }}
+            onDelete={() => handleDeleteItem("rules", selectedItemId)}
+          />
+        );
+      }
+      return (
+        <RulesOverview
+          rules={rules}
+          onAdd={() => openAddDialog("rules")}
+          onSelect={(name) => setSelection({ module: "rules", itemId: name })}
+          onDelete={(name) => handleDeleteItem("rules", name)}
+        />
+      );
+    }
+
+    // MCP — list with disabled toggle
+    if (mod === "mcp") {
+      const mcps = member.config.mcps;
+      if (selectedItemId) {
+        const mcp = mcps.find(m => m.name === selectedItemId);
+        if (!mcp) return <div className="text-sm text-muted-foreground p-6">未找到该 MCP</div>;
+        return (
+          <McpEditor
+            item={mcp}
+            onToggle={async (enabled) => handleToggle("mcp", selectedItemId, enabled)}
+            onDelete={() => handleDeleteItem("mcp", selectedItemId)}
+          />
+        );
+      }
+      return (
+        <McpOverview
+          items={mcps}
+          onAdd={() => openAddDialog("mcp")}
+          onSelect={(name) => setSelection({ module: "mcp", itemId: name })}
+          onDelete={(name) => handleDeleteItem("mcp", name)}
+          onToggle={(name, enabled) => handleToggle("mcp", name, enabled)}
+        />
+      );
+    }
+
+    // CrudItem modules (tools, skills)
+    if (mod === "tools" || mod === "skills") {
+      const configKey = mod === "tools" ? "tools" : "skills";
       const items = member.config[configKey] as CrudItem[];
-      const labels = { tools: "工具", mcp: "MCP", skills: "技能" };
+      const labels = { tools: "工具", skills: "技能" };
 
       if (selectedItemId) {
-        const item = items.find(i => i.id === selectedItemId);
+        const item = items.find(i => i.name === selectedItemId);
         if (!item) return <div className="text-sm text-muted-foreground p-6">未找到该项</div>;
         return (
           <CrudItemEditor
             item={item}
             onSave={async (name, desc) => {
-              await updateMemberConfig(member.id, { [configKey]: items.map(i => i.id === selectedItemId ? { ...i, name, desc } : i) });
+              await updateMemberConfig(member.id, { [configKey]: items.map(i => i.name === selectedItemId ? { ...i, name, desc } : i) });
               toast.success("已更新");
             }}
             onDelete={() => handleDeleteItem(mod, selectedItemId)}
@@ -334,9 +386,9 @@ export default function AgentDetail() {
           title={labels[mod]}
           items={items}
           onAdd={() => openAddDialog(mod)}
-          onSelect={(itemId) => setSelection({ module: mod, itemId })}
-          onDelete={(itemId) => handleDeleteItem(mod, itemId)}
-          onToggle={(itemId, enabled) => handleToggle(mod, itemId, enabled)}
+          onSelect={(name) => setSelection({ module: mod, itemId: name })}
+          onDelete={(name) => handleDeleteItem(mod, name)}
+          onToggle={(name, enabled) => handleToggle(mod, name, enabled)}
         />
       );
     }
@@ -345,13 +397,13 @@ export default function AgentDetail() {
     if (mod === "subagents") {
       const saItems = member.config.subAgents;
       if (selectedItemId) {
-        const sa = saItems.find(i => i.id === selectedItemId);
+        const sa = saItems.find(i => i.name === selectedItemId);
         if (!sa) return <div className="text-sm text-muted-foreground p-6">未找到该项</div>;
         return (
           <SubAgentEditor
             item={sa}
             onSave={async (name, desc) => {
-              await updateMemberConfig(member.id, { subAgents: saItems.map(i => i.id === selectedItemId ? { ...i, name, desc } : i) });
+              await updateMemberConfig(member.id, { subAgents: saItems.map(i => i.name === selectedItemId ? { ...i, name, desc } : i) });
               toast.success("已更新");
             }}
             onDelete={() => handleDeleteItem("subagents", selectedItemId)}
@@ -363,8 +415,8 @@ export default function AgentDetail() {
         <SubAgentOverview
           items={saItems}
           onAdd={() => openAddDialog("subagents")}
-          onSelect={(itemId) => setSelection({ module: "subagents", itemId })}
-          onDelete={(itemId) => handleDeleteItem("subagents", itemId)}
+          onSelect={(name) => setSelection({ module: "subagents", itemId: name })}
+          onDelete={(name) => handleDeleteItem("subagents", name)}
         />
       );
     }
@@ -471,7 +523,7 @@ export default function AgentDetail() {
         <DialogContent className="max-w-sm">
           <DialogHeader>
             <DialogTitle>
-              添加{addDialogTarget === "tools" ? "工具" : addDialogTarget === "mcp" ? "MCP" : addDialogTarget === "skills" ? "技能" : "Sub-agent"}
+              添加{addDialogTarget === "tools" ? "工具" : addDialogTarget === "mcp" ? "MCP" : addDialogTarget === "skills" ? "技能" : addDialogTarget === "rules" ? "规则" : "Sub-agent"}
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
@@ -543,9 +595,9 @@ function ModuleOverview({
   title: string;
   items: CrudItem[];
   onAdd: () => void;
-  onSelect: (id: string) => void;
-  onDelete: (id: string) => void;
-  onToggle: (id: string, enabled: boolean) => void;
+  onSelect: (name: string) => void;
+  onDelete: (name: string) => void;
+  onToggle: (name: string, enabled: boolean) => void;
 }) {
   return (
     <div className="space-y-3">
@@ -559,19 +611,19 @@ function ModuleOverview({
       <div className="space-y-2">
         {items.map(item => (
           <div
-            key={item.id}
+            key={item.name}
             className="flex items-center justify-between p-3 rounded-lg bg-card border border-border group cursor-pointer hover:border-primary/20 transition-colors"
-            onClick={() => onSelect(item.id)}
+            onClick={() => onSelect(item.name)}
           >
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium text-foreground">{item.name}</p>
               <p className="text-xs text-muted-foreground">{item.desc}</p>
             </div>
             <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
-              <button onClick={() => onDelete(item.id)} className="p-1 rounded hover:bg-destructive/10 opacity-0 group-hover:opacity-100 transition-all" title="删除">
+              <button onClick={() => onDelete(item.name)} className="p-1 rounded hover:bg-destructive/10 opacity-0 group-hover:opacity-100 transition-all" title="删除">
                 <Trash2 className="w-3 h-3 text-muted-foreground hover:text-destructive" />
               </button>
-              <Switch checked={item.enabled} onCheckedChange={checked => onToggle(item.id, checked)} />
+              <Switch checked={item.enabled} onCheckedChange={checked => onToggle(item.name, checked)} />
             </div>
           </div>
         ))}
@@ -639,8 +691,8 @@ function SubAgentOverview({
 }: {
   items: SubAgent[];
   onAdd: () => void;
-  onSelect: (id: string) => void;
-  onDelete: (id: string) => void;
+  onSelect: (name: string) => void;
+  onDelete: (name: string) => void;
 }) {
   return (
     <div className="space-y-3">
@@ -654,9 +706,9 @@ function SubAgentOverview({
       <div className="space-y-2">
         {items.map(sa => (
           <div
-            key={sa.id}
+            key={sa.name}
             className="flex items-center gap-3 p-3 rounded-lg bg-card border border-border group cursor-pointer hover:border-primary/20 transition-colors"
-            onClick={() => onSelect(sa.id)}
+            onClick={() => onSelect(sa.name)}
           >
             <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
               <Bot className="w-4 h-4 text-primary" />
@@ -666,7 +718,7 @@ function SubAgentOverview({
               <p className="text-xs text-muted-foreground">{sa.desc}</p>
             </div>
             <button
-              onClick={e => { e.stopPropagation(); onDelete(sa.id); }}
+              onClick={e => { e.stopPropagation(); onDelete(sa.name); }}
               className="p-1 rounded hover:bg-destructive/10 opacity-0 group-hover:opacity-100 transition-all"
               title="删除"
             >
@@ -726,6 +778,213 @@ function SubAgentEditor({
           </Button>
         </div>
       )}
+    </div>
+  );
+}
+
+// ==================== Rules Overview ====================
+
+function RulesOverview({
+  rules, onAdd, onSelect, onDelete,
+}: {
+  rules: RuleItem[];
+  onAdd: () => void;
+  onSelect: (name: string) => void;
+  onDelete: (name: string) => void;
+}) {
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-foreground">Rules ({rules.length})</h3>
+        <Button variant="outline" size="sm" onClick={onAdd} className="gap-1.5">
+          <Plus className="w-3 h-3" />
+          添加
+        </Button>
+      </div>
+      <div className="space-y-2">
+        {rules.map(rule => (
+          <div
+            key={rule.name}
+            className="flex items-center justify-between p-3 rounded-lg bg-card border border-border group cursor-pointer hover:border-primary/20 transition-colors"
+            onClick={() => onSelect(rule.name)}
+          >
+            <div className="flex items-center gap-2 flex-1 min-w-0">
+              <BookOpen className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-foreground">{rule.name}.md</p>
+                <p className="text-xs text-muted-foreground truncate">{rule.content.slice(0, 80) || "空规则"}</p>
+              </div>
+            </div>
+            <button
+              onClick={e => { e.stopPropagation(); onDelete(rule.name); }}
+              className="p-1 rounded hover:bg-destructive/10 opacity-0 group-hover:opacity-100 transition-all shrink-0"
+              title="删除"
+            >
+              <Trash2 className="w-3 h-3 text-muted-foreground hover:text-destructive" />
+            </button>
+          </div>
+        ))}
+        {rules.length === 0 && (
+          <div className="text-center py-8 text-xs text-muted-foreground">暂无规则，点击上方按钮添加</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ==================== Rule Editor ====================
+
+function RuleEditor({
+  rule, onSave, onDelete,
+}: {
+  rule: RuleItem;
+  onSave: (content: string) => Promise<void>;
+  onDelete: () => void;
+}) {
+  const [content, setContent] = useState(rule.content);
+  const [savedContent, setSavedContent] = useState(rule.content);
+  const [saving, setSaving] = useState(false);
+  const isDirty = content !== savedContent;
+
+  useEffect(() => { setContent(rule.content); setSavedContent(rule.content); }, [rule.content]);
+
+  const handleSave = async () => {
+    try {
+      setSaving(true);
+      await onSave(content);
+      setSavedContent(content);
+    } catch (e) {
+      toast.error("保存失败，请重试");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+          <BookOpen className="w-4 h-4 text-primary" />
+          {rule.name}.md
+        </h3>
+        <Button variant="ghost" size="sm" onClick={onDelete} className="text-destructive hover:text-destructive hover:bg-destructive/10 gap-1">
+          <Trash2 className="w-3 h-3" />
+          删除
+        </Button>
+      </div>
+      <textarea
+        value={content}
+        onChange={e => setContent(e.target.value)}
+        rows={16}
+        className="w-full bg-background border border-border rounded-lg px-4 py-3 text-sm text-foreground font-mono leading-relaxed outline-none focus:border-primary/40 resize-none transition-colors"
+      />
+      {isDirty && (
+        <div className="flex items-center justify-between">
+          <span className="text-xs text-warning">有未保存的更改</span>
+          <Button size="sm" onClick={handleSave} disabled={saving} className="gap-1.5">
+            <Save className="w-3 h-3" />
+            保存
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ==================== MCP Overview ====================
+
+function McpOverview({
+  items, onAdd, onSelect, onDelete, onToggle,
+}: {
+  items: McpItem[];
+  onAdd: () => void;
+  onSelect: (name: string) => void;
+  onDelete: (name: string) => void;
+  onToggle: (name: string, enabled: boolean) => void;
+}) {
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-foreground">MCP ({items.length})</h3>
+        <Button variant="outline" size="sm" onClick={onAdd} className="gap-1.5">
+          <Plus className="w-3 h-3" />
+          添加
+        </Button>
+      </div>
+      <div className="space-y-2">
+        {items.map(item => (
+          <div
+            key={item.name}
+            className="flex items-center justify-between p-3 rounded-lg bg-card border border-border group cursor-pointer hover:border-primary/20 transition-colors"
+            onClick={() => onSelect(item.name)}
+          >
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-foreground">{item.name}</p>
+              <p className="text-xs text-muted-foreground font-mono">{item.command || "未配置"}</p>
+            </div>
+            <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
+              <button onClick={() => onDelete(item.name)} className="p-1 rounded hover:bg-destructive/10 opacity-0 group-hover:opacity-100 transition-all" title="删除">
+                <Trash2 className="w-3 h-3 text-muted-foreground hover:text-destructive" />
+              </button>
+              <Switch checked={!item.disabled} onCheckedChange={checked => onToggle(item.name, checked)} />
+            </div>
+          </div>
+        ))}
+        {items.length === 0 && (
+          <div className="text-center py-8 text-xs text-muted-foreground">暂无 MCP，点击上方按钮添加</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ==================== MCP Editor ====================
+
+function McpEditor({
+  item, onToggle, onDelete,
+}: {
+  item: McpItem;
+  onToggle: (enabled: boolean) => void;
+  onDelete: () => void;
+}) {
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+          <Plug className="w-4 h-4 text-primary" />
+          {item.name}
+        </h3>
+        <div className="flex items-center gap-2">
+          <Switch checked={!item.disabled} onCheckedChange={onToggle} />
+          <Button variant="ghost" size="sm" onClick={onDelete} className="text-destructive hover:text-destructive hover:bg-destructive/10 gap-1">
+            <Trash2 className="w-3 h-3" />
+            删除
+          </Button>
+        </div>
+      </div>
+      <div className="space-y-3">
+        <div>
+          <label className="text-xs text-muted-foreground mb-1 block">Command</label>
+          <div className="px-3 py-2 rounded-md bg-muted text-sm font-mono text-foreground">{item.command || "—"}</div>
+        </div>
+        {item.args.length > 0 && (
+          <div>
+            <label className="text-xs text-muted-foreground mb-1 block">Args</label>
+            <div className="px-3 py-2 rounded-md bg-muted text-sm font-mono text-foreground">{item.args.join(" ")}</div>
+          </div>
+        )}
+        {Object.keys(item.env).length > 0 && (
+          <div>
+            <label className="text-xs text-muted-foreground mb-1 block">Env</label>
+            <div className="px-3 py-2 rounded-md bg-muted text-xs font-mono text-foreground space-y-1">
+              {Object.entries(item.env).map(([k, v]) => (
+                <div key={k}>{k}={v.length > 20 ? v.slice(0, 20) + "..." : v}</div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+      <p className="text-xs text-muted-foreground">MCP 配置请直接编辑 .mcp.json 文件</p>
     </div>
   );
 }

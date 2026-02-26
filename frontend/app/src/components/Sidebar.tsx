@@ -42,7 +42,7 @@ export default function Sidebar({
     return (
       <div className="w-14 h-full flex flex-col items-center py-4 bg-card border-r border-border animate-slide-in">
         <Link
-          to="/chat"
+          to="/members"
           className="w-9 h-9 rounded-lg flex items-center justify-center mb-2 text-muted-foreground hover:bg-muted hover:text-foreground"
         >
           <Plus className="w-4.5 h-4.5" />
@@ -67,11 +67,11 @@ export default function Sidebar({
       {/* Actions */}
       <div className="px-3 pb-3 space-y-2">
         <Link
-          to="/chat"
+          to="/members"
           className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm border border-border text-muted-foreground hover:bg-muted hover:text-foreground"
         >
           <Plus className="w-4 h-4" />
-          <span>新建会话</span>
+          <span>发起会话</span>
         </Link>
         <button
           className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-muted-foreground/60 hover:bg-muted hover:text-foreground"
@@ -108,16 +108,16 @@ export default function Sidebar({
                           : "border-l-2 border-l-transparent hover:bg-muted"
                       }`}
                     >
-                      <div className={`flex items-center gap-1.5 ${isActive ? "text-foreground font-medium" : "text-muted-foreground"}`}>
+                      <div className={`flex items-center gap-1.5 ${isActive ? "text-foreground font-medium" : "text-foreground"}`}>
                         {thread.running && (
                           <span className="w-3 h-3 rounded-full border-2 border-muted-foreground border-t-foreground animate-spin flex-shrink-0" />
                         )}
-                        <span className="text-sm truncate">
-                          {thread.preview || thread.thread_id.slice(0, 14)}
+                        <span className="text-sm font-medium truncate">
+                          {thread.agent ? (memberNameMap.get(thread.agent) || thread.agent) : "Leon"}
                         </span>
                       </div>
-                      <div className="text-[11px] mt-0.5 text-muted-foreground/60">
-                        {thread.agent ? (memberNameMap.get(thread.agent) || thread.agent) : "Leon"}
+                      <div className="text-[11px] mt-0.5 text-muted-foreground/60 truncate">
+                        {thread.preview || thread.thread_id.slice(0, 14)}
                       </div>
                     </Link>
                     <div className="absolute right-2 top-2.5 hidden group-hover:flex items-center gap-0.5">
@@ -148,7 +148,7 @@ export default function Sidebar({
               })}
               {threads.length === 0 && (
                 <p className="text-xs px-3 py-6 text-center text-muted-foreground/60">
-                  暂无对话，点击"新建会话"开始。
+                  暂无对话，点击"发起会话"开始。
                 </p>
               )}
             </>

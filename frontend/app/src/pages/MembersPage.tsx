@@ -130,11 +130,7 @@ export default function MembersPage() {
               const initials = member.name.split(" ").map((w) => w[0]).join("").slice(0, 2);
               const isBuiltin = (member as any).builtin === true;
               const handleCardClick = () => {
-                if (isBuiltin) {
-                  navigate("/chat", { state: { startWith: member.id, memberName: member.name } });
-                } else {
-                  navigate(`/members/${member.id}`);
-                }
+                navigate(`/members/${member.id}`);
               };
               const handleStartChat = (e: React.MouseEvent) => {
                 e.stopPropagation();
@@ -154,25 +150,19 @@ export default function MembersPage() {
                   <p className="text-xs text-muted-foreground mb-3 line-clamp-2">{member.description}</p>
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
-                      {!isBuiltin && (
-                        <>
-                          <Tooltip><TooltipTrigger asChild><span className="flex items-center gap-1 cursor-default"><Zap className="w-3 h-3" /> {member.config.skills.length}</span></TooltipTrigger><TooltipContent side="bottom"><p>技能数</p></TooltipContent></Tooltip>
-                          <Tooltip><TooltipTrigger asChild><span className="flex items-center gap-1 cursor-default"><Wrench className="w-3 h-3" /> {member.config.tools.length}</span></TooltipTrigger><TooltipContent side="bottom"><p>工具数</p></TooltipContent></Tooltip>
-                          <Tooltip><TooltipTrigger asChild><span className="flex items-center gap-1 cursor-default"><Plug className="w-3 h-3" /> {member.config.mcps.length}</span></TooltipTrigger><TooltipContent side="bottom"><p>MCP 服务</p></TooltipContent></Tooltip>
-                          <Tooltip><TooltipTrigger asChild><span className="flex items-center gap-1 cursor-default"><Users className="w-3 h-3" /> {member.config.subAgents.length}</span></TooltipTrigger><TooltipContent side="bottom"><p>Sub-agents</p></TooltipContent></Tooltip>
-                        </>
-                      )}
+                      <Tooltip><TooltipTrigger asChild><span className="flex items-center gap-1 cursor-default"><Zap className="w-3 h-3" /> {member.config.skills.length}</span></TooltipTrigger><TooltipContent side="bottom"><p>技能数</p></TooltipContent></Tooltip>
+                      <Tooltip><TooltipTrigger asChild><span className="flex items-center gap-1 cursor-default"><Wrench className="w-3 h-3" /> {member.config.tools.length}</span></TooltipTrigger><TooltipContent side="bottom"><p>工具数</p></TooltipContent></Tooltip>
+                      <Tooltip><TooltipTrigger asChild><span className="flex items-center gap-1 cursor-default"><Plug className="w-3 h-3" /> {member.config.mcps.length}</span></TooltipTrigger><TooltipContent side="bottom"><p>MCP 服务</p></TooltipContent></Tooltip>
+                      <Tooltip><TooltipTrigger asChild><span className="flex items-center gap-1 cursor-default"><Users className="w-3 h-3" /> {member.config.subAgents.length}</span></TooltipTrigger><TooltipContent side="bottom"><p>Sub-agents</p></TooltipContent></Tooltip>
                     </div>
-                    {!isBuiltin && (
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <button onClick={handleStartChat} className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:bg-primary/10 hover:text-primary transition-colors opacity-0 group-hover:opacity-100">
-                            <MessageSquare className="w-3.5 h-3.5" />
-                          </button>
-                        </TooltipTrigger>
-                        <TooltipContent side="bottom"><p>发起会话</p></TooltipContent>
-                      </Tooltip>
-                    )}
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button onClick={handleStartChat} className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:bg-primary/10 hover:text-primary transition-colors opacity-0 group-hover:opacity-100">
+                          <MessageSquare className="w-3.5 h-3.5" />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom"><p>发起会话</p></TooltipContent>
+                    </Tooltip>
                   </div>
                 </div>
               );
