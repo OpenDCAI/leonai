@@ -27,6 +27,7 @@ def _capability_to_dict(capability: ProviderCapability) -> dict[str, Any]:
             "supports_mount": capability.mount.supports_mount,
             "supports_copy": capability.mount.supports_copy,
             "supports_read_only": capability.mount.supports_read_only,
+            "mode_handlers": dict(capability.mount.mode_handlers or {}),
         },
     }
 

@@ -71,6 +71,27 @@ def test_mount_capability_gate_accepts_supported_combo() -> None:
     assert mismatch is None
 
 
+def test_mount_capability_gate_respects_mode_handlers() -> None:
+    from backend.web.routers.threads import _find_mount_capability_mismatch
+    from sandbox.config import MountSpec
+    from sandbox.provider import MountCapability
+
+    requested = [MountSpec.model_validate({"source": "/host/a", "target": "/sandbox/a", "mode": "copy"})]
+    mismatch = _find_mount_capability_mismatch(
+        requested_mounts=requested,
+        mount_capability=MountCapability(
+            supports_mount=True,
+            supports_copy=True,
+            supports_read_only=True,
+            mode_handlers={"mount": True, "copy": False},
+        ),
+    )
+
+    assert mismatch is not None
+    assert mismatch["requested"] == {"mode": "copy", "read_only": False}
+    assert mismatch["capability"]["mode_handlers"]["copy"] is False
+
+
 def test_docker_provider_supports_multiple_bind_mount_modes(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

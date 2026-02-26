@@ -42,11 +42,12 @@ from sandbox.thread_context import set_current_thread_id
 router = APIRouter(prefix="/api/threads", tags=["threads"])
 
 
-def _mount_capability_to_dict(mount_capability: Any) -> dict[str, bool]:
+def _mount_capability_to_dict(mount_capability: Any) -> dict[str, Any]:
     return {
         "supports_mount": bool(getattr(mount_capability, "supports_mount", False)),
         "supports_copy": bool(getattr(mount_capability, "supports_copy", False)),
         "supports_read_only": bool(getattr(mount_capability, "supports_read_only", False)),
+        "mode_handlers": dict(getattr(mount_capability, "mode_handlers", {}) or {}),
     }
 
 
@@ -55,11 +56,21 @@ def _find_mount_capability_mismatch(
     mount_capability: Any,
 ) -> dict[str, Any] | None:
     capability = _mount_capability_to_dict(mount_capability)
+    mode_handlers = capability.get("mode_handlers", {})
     for mount in requested_mounts:
         requested = {"mode": mount.mode, "read_only": mount.read_only}
-        if mount.mode == "mount" and not capability["supports_mount"]:
-            return {"requested": requested, "capability": capability}
-        if mount.mode == "copy" and not capability["supports_copy"]:
+        # @@@mode-handler-gate - Prefer explicit per-mode capability declaration; fall back to legacy booleans for backward compatibility.
+        mode_supported = None
+        if mode_handlers:
+            mode_supported = bool(mode_handlers.get(mount.mode, False))
+        elif mount.mode == "mount":
+            mode_supported = capability["supports_mount"]
+        elif mount.mode == "copy":
+            mode_supported = capability["supports_copy"]
+        else:
+            mode_supported = False
+
+        if not mode_supported:
             return {"requested": requested, "capability": capability}
         if mount.read_only and not capability["supports_read_only"]:
             return {"requested": requested, "capability": capability}

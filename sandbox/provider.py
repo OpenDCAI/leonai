@@ -12,6 +12,7 @@ class MountCapability:
     supports_mount: bool = False
     supports_copy: bool = False
     supports_read_only: bool = False
+    mode_handlers: dict[str, bool] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
