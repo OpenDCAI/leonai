@@ -478,8 +478,9 @@ async def list_sandbox_configs() -> dict[str, Any]:
             try:
                 with open(f, encoding="utf-8") as fh:
                     sandboxes[f.stem] = json.load(fh)
-            except Exception:
-                sandboxes[f.stem] = {}
+            except Exception as e:
+                # @@@fail-loud-config-read - Corrupt sandbox config files must surface immediately for user-visible repair.
+                raise HTTPException(status_code=500, detail=f"Failed to load sandbox config '{f.name}': {e}") from e
     return {"sandboxes": sandboxes}
 
 
