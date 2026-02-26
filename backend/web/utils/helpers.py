@@ -132,7 +132,8 @@ def resolve_local_workspace_path(
             meta = lookup_thread_metadata(thread_id)
             if meta:
                 thread_cwd = meta[1]
-    base = Path(thread_cwd).resolve() if thread_cwd else local_workspace_root
+    # @@@workspace-root-normalization - boundary check needs absolute base path to avoid false escape on relative roots.
+    base = Path(thread_cwd).resolve() if thread_cwd else Path(local_workspace_root).resolve()
 
     if not raw_path:
         return base
