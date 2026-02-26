@@ -93,8 +93,11 @@ async def pick_folder() -> dict[str, Any]:
             raise HTTPException(400, "User cancelled folder selection")
     except subprocess.TimeoutExpired:
         raise HTTPException(408, "Folder selection timed out")
+    # @@@http_passthrough - keep explicit business/status errors from selection branches intact
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(500, f"Failed to open folder picker: {str(e)}")
+        raise HTTPException(500, f"Failed to open folder picker: {str(e)}") from e
 
 
 @router.get("/sessions")

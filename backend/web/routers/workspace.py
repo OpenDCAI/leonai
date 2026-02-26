@@ -48,6 +48,9 @@ async def list_workspace_path(
     try:
         set_current_thread_id(thread_id)
         agent = await get_or_create_agent(app, sandbox_type, thread_id=thread_id)
+    # @@@http_passthrough - preserve policy/validation errors from agent creation
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(503, f"Sandbox agent init failed for {sandbox_type}: {e}") from e
 
@@ -107,6 +110,9 @@ async def read_workspace_file(
     try:
         set_current_thread_id(thread_id)
         agent = await get_or_create_agent(app, sandbox_type, thread_id=thread_id)
+    # @@@http_passthrough - preserve policy/validation errors from agent creation
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(503, f"Sandbox agent init failed for {sandbox_type}: {e}") from e
 
