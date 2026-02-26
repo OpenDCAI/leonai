@@ -13,6 +13,21 @@ from core.monitor import AgentState
 from sandbox.thread_context import set_current_thread_id
 
 
+def _resolve_run_event_repo(agent: Any) -> Any | None:
+    storage_container = getattr(agent, "storage_container", None)
+    if storage_container is None:
+        return None
+
+    run_event_repo_factory = getattr(storage_container, "run_event_repo", None)
+    if not callable(run_event_repo_factory):
+        raise RuntimeError(
+            "Agent storage_container must expose callable run_event_repo() for runtime event persistence."
+        )
+
+    # @@@runtime-storage-consumer - runtime run lifecycle must consume injected storage container, not assignment-only wiring.
+    return run_event_repo_factory()
+
+
 async def prime_sandbox(agent: Any, thread_id: str) -> None:
     """Prime sandbox session before tool calls to avoid race conditions."""
 
@@ -129,9 +144,16 @@ async def _run_agent_to_buffer(
     from backend.web.services.event_store import append_event
 
     run_id = buf.run_id
+    run_event_repo = _resolve_run_event_repo(agent)
 
     async def emit(event: dict, message_id: str | None = None) -> None:
-        seq = await append_event(thread_id, run_id, event, message_id)
+        seq = await append_event(
+            thread_id,
+            run_id,
+            event,
+            message_id,
+            run_event_repo=run_event_repo,
+        )
         try:
             data = json.loads(event.get("data", "{}")) if isinstance(event.get("data"), str) else event.get("data", {})
         except (json.JSONDecodeError, TypeError):
@@ -422,9 +444,13 @@ async def _run_agent_to_buffer(
         if agent and hasattr(agent, "runtime") and agent.runtime.current_state == AgentState.ACTIVE:
             agent.runtime.transition(AgentState.IDLE)
         try:
-            await cleanup_old_runs(thread_id, keep_latest=1)
+            await cleanup_old_runs(thread_id, keep_latest=1, run_event_repo=run_event_repo)
         except Exception:
             pass
+        if run_event_repo is not None:
+            close_fn = getattr(run_event_repo, "close", None)
+            if callable(close_fn):
+                close_fn()
 
 
 # ---------------------------------------------------------------------------

@@ -1,6 +1,7 @@
 """Persistent event log backed by SQLite — enables SSE reconnection after restart."""
 
 import asyncio
+import json
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -56,8 +57,22 @@ async def append_event(
     run_id: str,
     event: dict[str, Any],
     message_id: str | None = None,
+    run_event_repo: Any | None = None,
 ) -> int:
     """Persist one SSE event and return its sequence number."""
+    if run_event_repo is not None:
+        payload = _event_payload_to_dict(event)
+        return int(
+            await asyncio.to_thread(
+                run_event_repo.append_event,
+                thread_id,
+                run_id,
+                event.get("event", ""),
+                payload,
+                message_id,
+            )
+        )
+
     conn = await _get_conn()
     cur = await conn.execute(
         "INSERT INTO run_events (thread_id, run_id, event_type, data, message_id) VALUES (?, ?, ?, ?, ?)",
@@ -71,8 +86,27 @@ async def read_events_after(
     thread_id: str,
     run_id: str,
     after_seq: int = 0,
+    run_event_repo: Any | None = None,
 ) -> list[dict[str, Any]]:
     """Return events with seq > after_seq for the given run."""
+    if run_event_repo is not None:
+        rows = await asyncio.to_thread(
+            run_event_repo.list_events,
+            thread_id,
+            run_id,
+            after=after_seq,
+            limit=10000,
+        )
+        return [
+            {
+                "seq": row.get("seq"),
+                "event": row.get("event_type", ""),
+                "data": json.dumps(row.get("data", {}), ensure_ascii=False),
+                "message_id": row.get("message_id"),
+            }
+            for row in rows
+        ]
+
     conn = await _get_conn()
     cur = await conn.execute(
         "SELECT seq, event_type, data, message_id FROM run_events "
@@ -83,16 +117,22 @@ async def read_events_after(
     return [{"seq": r[0], "event": r[1], "data": r[2], "message_id": r[3]} for r in rows]
 
 
-async def get_last_seq(thread_id: str) -> int:
+async def get_last_seq(thread_id: str, run_event_repo: Any | None = None) -> int:
     """Return the highest seq for a thread, or 0."""
+    if run_event_repo is not None:
+        return int(await asyncio.to_thread(run_event_repo.latest_seq, thread_id))
+
     conn = await _get_conn()
     cur = await conn.execute("SELECT MAX(seq) FROM run_events WHERE thread_id = ?", (thread_id,))
     row = await cur.fetchone()
     return row[0] or 0
 
 
-async def get_latest_run_id(thread_id: str) -> str | None:
+async def get_latest_run_id(thread_id: str, run_event_repo: Any | None = None) -> str | None:
     """Return the run_id of the most recent run for a thread, or None."""
+    if run_event_repo is not None:
+        return await asyncio.to_thread(run_event_repo.latest_run_id, thread_id)
+
     conn = await _get_conn()
     cur = await conn.execute(
         "SELECT run_id FROM run_events WHERE thread_id = ? ORDER BY seq DESC LIMIT 1",
@@ -102,8 +142,19 @@ async def get_latest_run_id(thread_id: str) -> str | None:
     return row[0] if row else None
 
 
-async def cleanup_old_runs(thread_id: str, keep_latest: int = 1) -> int:
+async def cleanup_old_runs(
+    thread_id: str,
+    keep_latest: int = 1,
+    run_event_repo: Any | None = None,
+) -> int:
     """Delete all but the N most recent runs for a thread. Returns deleted count."""
+    if run_event_repo is not None:
+        run_ids = await asyncio.to_thread(run_event_repo.list_run_ids, thread_id)
+        if len(run_ids) <= keep_latest:
+            return 0
+        old_ids = run_ids[keep_latest:]
+        return int(await asyncio.to_thread(run_event_repo.delete_runs, thread_id, old_ids))
+
     conn = await _get_conn()
     cur = await conn.execute(
         "SELECT DISTINCT run_id FROM run_events WHERE thread_id = ? ORDER BY seq DESC",
@@ -123,9 +174,35 @@ async def cleanup_old_runs(thread_id: str, keep_latest: int = 1) -> int:
     return cur.rowcount
 
 
-async def cleanup_thread(thread_id: str) -> int:
+async def cleanup_thread(thread_id: str, run_event_repo: Any | None = None) -> int:
     """Delete all events for a thread. Returns deleted count."""
+    if run_event_repo is not None:
+        return int(await asyncio.to_thread(run_event_repo.delete_thread_events, thread_id))
+
     conn = await _get_conn()
     cur = await conn.execute("DELETE FROM run_events WHERE thread_id = ?", (thread_id,))
     await conn.commit()
     return cur.rowcount
+
+
+def _event_payload_to_dict(event: dict[str, Any]) -> dict[str, Any]:
+    raw_data = event.get("data", {})
+    if isinstance(raw_data, dict):
+        return raw_data
+    if raw_data in (None, ""):
+        return {}
+    if not isinstance(raw_data, str):
+        raise RuntimeError(
+            "Run event data must be a dict or JSON string when using storage_container run_event_repo."
+        )
+    try:
+        payload = json.loads(raw_data)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            "Run event data must be valid JSON when using storage_container run_event_repo."
+        ) from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError(
+            "Run event data JSON must decode to an object when using storage_container run_event_repo."
+        )
+    return payload
