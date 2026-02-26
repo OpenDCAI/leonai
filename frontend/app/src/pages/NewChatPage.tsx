@@ -18,7 +18,7 @@ export default function NewChatPage() {
   const location = useLocation();
   const { tm } = useOutletContext<OutletContext>();
   const { sandboxTypes, selectedSandbox, handleCreateThread } = tm;
-  const { settings, loading, setDefaultWorkspace, hasWorkspace } = useWorkspaceSettings();
+  const { settings, loading, hasWorkspace } = useWorkspaceSettings();
   const [showWorkspaceSetup, setShowWorkspaceSetup] = useState(false);
 
   const startWith = (location.state as any)?.startWith as string | undefined;
@@ -45,7 +45,7 @@ export default function NewChatPage() {
     });
   }
 
-  function handleWorkspaceSet(workspace: string) {
+  function handleWorkspaceSet(_workspace: string) {
     setShowWorkspaceSetup(false);
     // Workspace is now set, user can try sending again
   }
