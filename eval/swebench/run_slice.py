@@ -10,6 +10,8 @@ import re
 import shutil
 import sqlite3
 import subprocess
+import sys
+import traceback
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
@@ -23,8 +25,22 @@ from agent import LeonAgent
 from sandbox.thread_context import set_current_thread_id
 
 
-def run(cmd: list[str], cwd: Path | None = None) -> str:
-    proc = subprocess.run(cmd, cwd=str(cwd) if cwd else None, text=True, capture_output=True)
+def run(cmd: list[str], cwd: Path | None = None, timeout_sec: int | None = None) -> str:
+    env = dict(os.environ)
+    env.setdefault("GIT_TERMINAL_PROMPT", "0")
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=str(cwd) if cwd else None,
+            text=True,
+            capture_output=True,
+            timeout=timeout_sec,
+            env=env,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(
+            f"command timeout after {timeout_sec}s\ncmd={' '.join(cmd)}"
+        ) from exc
     if proc.returncode != 0:
         raise RuntimeError(
             f"command failed rc={proc.returncode}\ncmd={' '.join(cmd)}\nstdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
@@ -32,13 +48,34 @@ def run(cmd: list[str], cwd: Path | None = None) -> str:
     return proc.stdout
 
 
-def ensure_repo_cache(repo: str, cache_root: Path) -> Path:
+def _has_commit(repo_dir: Path, commit: str) -> bool:
+    env = dict(os.environ)
+    env.setdefault("GIT_NO_LAZY_FETCH", "1")
+    env.setdefault("GIT_TERMINAL_PROMPT", "0")
+    proc = subprocess.run(
+        ["git", "-C", str(repo_dir), "cat-file", "-e", f"{commit}^{{commit}}"],
+        text=True,
+        capture_output=True,
+        env=env,
+    )
+    return proc.returncode == 0
+
+
+def ensure_repo_cache(repo: str, base_commit: str, cache_root: Path, git_timeout_sec: int) -> Path:
     repo_dir = cache_root / repo.replace("/", "__")
     if not repo_dir.exists():
         repo_dir.parent.mkdir(parents=True, exist_ok=True)
-        run(["git", "clone", f"https://github.com/{repo}.git", str(repo_dir)])
-    else:
-        run(["git", "-C", str(repo_dir), "fetch", "--all", "--prune"])
+        # @@@repo-cache-partial-clone - use blobless clone for faster first-time cache warmup on large repos.
+        run(
+            ["git", "clone", "--filter=blob:none", "--no-checkout", f"https://github.com/{repo}.git", str(repo_dir)],
+            timeout_sec=git_timeout_sec,
+        )
+    if not _has_commit(repo_dir, base_commit):
+        # @@@fetch-target-commit-only - fetch only missing target commit to avoid expensive full remote fetch on every instance.
+        run(
+            ["git", "-C", str(repo_dir), "fetch", "--no-tags", "origin", base_commit, "--depth=1"],
+            timeout_sec=git_timeout_sec,
+        )
     return repo_dir
 
 
@@ -87,10 +124,15 @@ def build_prompt(row: dict[str, Any], prompt_profile: str) -> str:
         prompt.extend(
             [
                 "",
-                "Execution constraints:",
+                "Execution constraints (strict):",
                 "- Use tool name `run_command` instead of `bash`.",
                 "- Use `python3` instead of `python` in commands.",
-                "- If you already changed files and validated key tests, stop and summarize.",
+                "- Keep a tight budget: at most 12 tool calls total for this task.",
+                "- Stop early once you have enough evidence for a minimal fix; do not continue exploring.",
+                "- If the same command pattern fails twice without new information, stop tool use.",
+                "- If key tests pass OR you cannot make further progress with high confidence, stop tool use immediately.",
+                "- Final turn must be plain text only: provide (1) files changed, (2) why the fix works, (3) tests run + results, (4) remaining risks.",
+                "- After the final summary, do not call any tools.",
             ]
         )
     prompt.extend(
@@ -214,31 +256,33 @@ async def run_instance(
     repo_cache_root: Path,
     workspaces_root: Path,
     timeout_sec: int,
+    git_timeout_sec: int,
     recursion_limit: int,
     keep_worktree: bool,
     thread_id: str,
     prompt_profile: str,
+    model_name: str,
 ) -> dict[str, Any]:
     instance_id = row["instance_id"]
     repo = row["repo"]
     base_commit = row["base_commit"]
     print(f"[slice] start {instance_id} repo={repo} commit={base_commit}")
 
-    repo_cache = ensure_repo_cache(repo, repo_cache_root)
+    repo_cache = ensure_repo_cache(repo, base_commit, repo_cache_root, git_timeout_sec=git_timeout_sec)
     workspace = workspaces_root / instance_id
-    run(["git", "-C", str(repo_cache), "worktree", "prune"])
+    run(["git", "-C", str(repo_cache), "worktree", "prune"], timeout_sec=git_timeout_sec)
     if workspace.exists():
         try:
-            run(["git", "-C", str(repo_cache), "worktree", "remove", "--force", str(workspace)])
+            run(["git", "-C", str(repo_cache), "worktree", "remove", "--force", str(workspace)], timeout_sec=git_timeout_sec)
         except Exception:
             shutil.rmtree(workspace)
 
     # @@@git-worktree-lifecycle - worktree gives clean per-instance state without recloning full repo each run.
-    run(["git", "-C", str(repo_cache), "worktree", "add", "--detach", str(workspace), base_commit])
+    run(["git", "-C", str(repo_cache), "worktree", "add", "--detach", str(workspace), base_commit], timeout_sec=git_timeout_sec)
     agent: LeonAgent | None = None
     try:
         prompt = build_prompt(row, prompt_profile=prompt_profile)
-        agent = LeonAgent(workspace_root=workspace)
+        agent = LeonAgent(workspace_root=workspace, model_name=model_name)
         if getattr(agent, "_needs_async_init", False):
             await agent.ainit()
         set_current_thread_id(thread_id)
@@ -249,7 +293,7 @@ async def run_instance(
             ),
             timeout=timeout_sec,
         )
-        patch = run(["git", "-C", str(workspace), "diff"])
+        patch = run(["git", "-C", str(workspace), "diff"], timeout_sec=120)
         if not patch.strip():
             print(f"[slice] warning empty patch for {instance_id}")
         return {
@@ -265,7 +309,15 @@ async def run_instance(
         if keep_worktree:
             print(f"[slice] keep workspace {workspace}")
         else:
-            run(["git", "-C", str(repo_cache), "worktree", "remove", "--force", str(workspace)])
+            try:
+                run(
+                    ["git", "-C", str(repo_cache), "worktree", "remove", "--force", "--force", str(workspace)],
+                    timeout_sec=git_timeout_sec,
+                )
+            except Exception as cleanup_exc:
+                # @@@worktree-cleanup-fallback - don't mask the real task error with cleanup failures.
+                print(f"[slice] cleanup_warning {instance_id}: {cleanup_exc}")
+                shutil.rmtree(workspace, ignore_errors=True)
 
 
 def parse_args() -> argparse.Namespace:
@@ -275,11 +327,14 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--start", type=int, default=0)
     p.add_argument("--count", type=int, default=5)
     p.add_argument("--timeout-sec", type=int, default=900)
+    p.add_argument("--git-timeout-sec", type=int, default=240)
     p.add_argument("--recursion-limit", type=int, default=60)
+    p.add_argument("--eval-timeout-sec", type=int, default=1800)
     p.add_argument("--output-dir", default="artifacts/swebench")
     p.add_argument("--keep-worktree", action="store_true")
     p.add_argument("--run-id", default="")
     p.add_argument("--arm", default="A")
+    p.add_argument("--model-name", default="")
     p.add_argument("--prompt-profile", choices=["baseline", "heuristic"], default="baseline")
     p.add_argument("--thread-prefix", default="swebench")
     p.add_argument("--source-trace-db", default=str(Path.home() / ".leon" / "leon.db"))
@@ -310,13 +365,15 @@ async def amain() -> None:
 
     print(
         f"[slice] run_id={run_stamp} arm={args.arm} prompt_profile={args.prompt_profile} "
-        f"dataset={args.dataset} split={args.split} start={args.start} count={args.count}"
+        f"dataset={args.dataset} split={args.split} start={args.start} count={args.count} "
+        f"model_name={args.model_name or '(active)'}"
     )
     ds = load_dataset(args.dataset, split=args.split)
     rows = [ds[i] for i in range(args.start, args.start + args.count)]
 
     predictions: list[dict[str, Any]] = []
     trace_summaries: list[dict[str, Any]] = []
+    trace_targets: list[dict[str, str]] = []
     instance_ids: list[str] = []
     errors: list[dict[str, str]] = []
     for row in rows:
@@ -328,15 +385,19 @@ async def amain() -> None:
                 repo_cache_root=cache_root,
                 workspaces_root=workspaces_root,
                 timeout_sec=args.timeout_sec,
+                git_timeout_sec=args.git_timeout_sec,
                 recursion_limit=args.recursion_limit,
                 keep_worktree=args.keep_worktree,
                 thread_id=thread_id,
                 prompt_profile=args.prompt_profile,
+                model_name=args.model_name,
             )
         except Exception as exc:
-            msg = str(exc)
-            print(f"[slice] error {instance_id}: {msg}")
-            errors.append({"instance_id": instance_id, "thread_id": thread_id, "error": msg})
+            msg = f"{type(exc).__name__}: {exc}"
+            tb = traceback.format_exc()
+            # @@@slice-error-traceback - print full traceback so run failures can be attributed without guesswork.
+            print(f"[slice] error {instance_id}: {msg}\n{tb}")
+            errors.append({"instance_id": instance_id, "thread_id": thread_id, "error": msg, "traceback": tb})
             pred = {
                 KEY_INSTANCE_ID: instance_id,
                 KEY_MODEL: "leonai-main",
@@ -344,14 +405,20 @@ async def amain() -> None:
             }
         predictions.append(pred)
         instance_ids.append(str(pred[KEY_INSTANCE_ID]))
+        trace_targets.append({"instance_id": instance_id, "thread_id": thread_id})
+        print(f"[slice] done {pred[KEY_INSTANCE_ID]} patch_len={len(pred[KEY_PREDICTION])}")
 
+    # @@@trace-snapshot-once - snapshot the shared trace DB once per run to avoid O(N) full-file copies for multi-instance slices.
+    if trace_targets:
         snapshot_sqlite_db(source_db=source_trace_db, snapshot_db=trace_db)
-        summary = collect_trace_summary(thread_id=thread_id, instance_id=instance_id, db_path=trace_db)
-        trace_summaries.append(summary)
-        print(
-            f"[slice] done {pred[KEY_INSTANCE_ID]} patch_len={len(pred[KEY_PREDICTION])} "
-            f"checkpoints={summary.get('checkpoint_count', 0)}"
-        )
+        for target in trace_targets:
+            summary = collect_trace_summary(
+                thread_id=target["thread_id"],
+                instance_id=target["instance_id"],
+                db_path=trace_db,
+            )
+            trace_summaries.append(summary)
+            print(f"[slice] trace {target['instance_id']} checkpoints={summary.get('checkpoint_count', 0)}")
 
     predictions_path = run_dir / "predictions.jsonl"
     with predictions_path.open("w", encoding="utf-8") as f:
@@ -374,10 +441,11 @@ async def amain() -> None:
         print(f"[slice] errors={errors_path}")
 
     eval_summary_path = ""
+    eval_error = ""
     if not args.no_eval:
         # @@@swebench-eval-contract - pass explicit instance ids so harness evaluates only this small slice.
         eval_cmd = [
-            "python3",
+            sys.executable,
             "-m",
             "swebench.harness.run_evaluation",
             "--dataset_name",
@@ -396,24 +464,31 @@ async def amain() -> None:
             str(run_dir),
         ]
         print(f"[slice] eval_cmd={' '.join(eval_cmd)}")
-        run(eval_cmd)
-        print(f"[slice] evaluation complete run_dir={run_dir}")
-        candidate = Path.cwd() / f"leonai-main.{run_stamp}.json"
-        if candidate.exists():
-            eval_summary_path = str(candidate)
-            print(f"[slice] eval_summary={candidate}")
+        try:
+            # @@@harness-timeout - fail loud on harness hangs instead of blocking the whole run indefinitely.
+            run(eval_cmd, timeout_sec=args.eval_timeout_sec)
+            print(f"[slice] evaluation complete run_dir={run_dir}")
+            candidate = Path.cwd() / f"leonai-main.{run_stamp}.json"
+            if candidate.exists():
+                eval_summary_path = str(candidate)
+                print(f"[slice] eval_summary={candidate}")
+        except Exception as exc:
+            eval_error = str(exc)
+            print(f"[slice] evaluation_error={eval_error}")
     else:
         print("[slice] skip evaluation (--no-eval)")
 
     manifest = {
         "run_id": run_stamp,
         "arm": args.arm,
+        "model_name": args.model_name,
         "prompt_profile": args.prompt_profile,
         "dataset": args.dataset,
         "split": args.split,
         "start": args.start,
         "count": args.count,
         "timeout_sec": args.timeout_sec,
+        "git_timeout_sec": args.git_timeout_sec,
         "recursion_limit": args.recursion_limit,
         "thread_prefix": args.thread_prefix,
         "source_trace_db": str(source_trace_db),
@@ -426,10 +501,13 @@ async def amain() -> None:
         "instance_ids_path": str(ids_path),
         "trace_summaries_path": str(trace_path),
         "eval_summary_path": eval_summary_path,
+        "eval_error": eval_error,
     }
     manifest_path = run_dir / "run_manifest.json"
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(f"[slice] manifest={manifest_path}")
+    if eval_error:
+        raise RuntimeError(f"evaluation failed after manifest write: {eval_error}")
 
 
 if __name__ == "__main__":
