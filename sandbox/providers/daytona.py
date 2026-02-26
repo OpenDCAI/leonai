@@ -9,8 +9,10 @@ Important: runtime semantics remain PTY-backed (`daytona_pty`) for both SaaS and
 from __future__ import annotations
 
 import os
+import shlex
 import time
 import uuid
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -61,14 +63,27 @@ class DaytonaProvider(SandboxProvider):
     def create_session(self, context_id: str | None = None) -> SessionInfo:
         from daytona_sdk import CreateSandboxFromSnapshotParams
 
-        if self.bind_mounts:
+        mount_mounts: list[dict[str, Any]] = []
+        copy_mounts: list[tuple[str, str]] = []
+        for mount in self.bind_mounts:
+            source, target, _read_only, mode = self._normalize_mount(mount)
+            if mode == "copy":
+                copy_mounts.append((source, target))
+            else:
+                mount_mounts.append(mount)
+
+        if mount_mounts:
             # @@@daytona-bindmount-http-create - SDK currently lacks bind_mounts field, so self-host bind mounts use direct API create.
-            sandbox_id = self._create_via_http(bind_mounts=self.bind_mounts)
+            sandbox_id = self._create_via_http(bind_mounts=mount_mounts)
             self._wait_until_started(sandbox_id)
             sb = self.client.find_one(sandbox_id)
         else:
             params = CreateSandboxFromSnapshotParams(auto_stop_interval=0)
             sb = self.client.create(params)
+
+        for source, target in copy_mounts:
+            self._copy_host_path_into_sandbox(sb, source=source, target=target)
+
         self._sandboxes[sb.id] = sb
         return SessionInfo(session_id=sb.id, provider=self.name, status="running")
 
@@ -172,18 +187,23 @@ class DaytonaProvider(SandboxProvider):
     def _api_auth_headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
 
-    def _normalize_mount(self, mount: dict[str, Any]) -> tuple[str, str, bool]:
+    def _normalize_mount(self, mount: dict[str, Any]) -> tuple[str, str, bool, str]:
         # @@@mount-key-compat - Keep runtime compatible with both legacy host_path/mount_path and new source/target config keys.
         source = mount.get("source") or mount.get("host_path")
         target = mount.get("target") or mount.get("mount_path")
         if not source or not target:
             raise RuntimeError(f"Invalid bind mount spec (expected source+target): {mount!r}")
-        return str(source), str(target), bool(mount.get("read_only", False))
+        mode = str(mount.get("mode", "mount")).lower()
+        if mode not in {"mount", "copy"}:
+            raise RuntimeError(f"Invalid mount mode '{mode}' for mount: {mount!r}")
+        return str(source), str(target), bool(mount.get("read_only", False)), mode
 
     def _create_via_http(self, bind_mounts: list[dict[str, Any]]) -> str:
         normalized_mounts: list[dict[str, Any]] = []
         for mount in bind_mounts:
-            source, target, read_only = self._normalize_mount(mount)
+            source, target, read_only, mode = self._normalize_mount(mount)
+            if mode != "mount":
+                continue
             normalized_mounts.append({"hostPath": source, "mountPath": target, "readOnly": read_only})
         payload = {
             "name": f"leon-{uuid.uuid4().hex[:12]}",
@@ -198,6 +218,37 @@ class DaytonaProvider(SandboxProvider):
         if not sandbox_id:
             raise RuntimeError(f"Daytona create sandbox response missing id: {response.text}")
         return str(sandbox_id)
+
+    def _copy_host_path_into_sandbox(self, sb: Any, *, source: str, target: str) -> None:
+        source_path = Path(source)
+        if not source_path.exists():
+            raise RuntimeError(f"Copy source path does not exist: {source}")
+
+        self._mkdir_in_sandbox(sb, target if source_path.is_dir() else str(Path(target).parent))
+
+        if source_path.is_file():
+            sb.fs.upload_file(source_path.read_bytes(), target)
+            return
+        if source_path.is_dir():
+            for local_path in source_path.rglob("*"):
+                if local_path.is_dir():
+                    rel_dir = local_path.relative_to(source_path)
+                    self._mkdir_in_sandbox(sb, str(Path(target) / rel_dir))
+                    continue
+                if local_path.is_file():
+                    remote_file = str(Path(target) / local_path.relative_to(source_path))
+                    self._mkdir_in_sandbox(sb, str(Path(remote_file).parent))
+                    sb.fs.upload_file(local_path.read_bytes(), remote_file)
+                    continue
+                raise RuntimeError(f"Unsupported copy source path type: {local_path}")
+            return
+        raise RuntimeError(f"Unsupported copy source path type: {source}")
+
+    def _mkdir_in_sandbox(self, sb: Any, path: str) -> None:
+        quoted = shlex.quote(path)
+        result = sb.process.exec(f"mkdir -p {quoted}", cwd=self.default_cwd, timeout=30)
+        if int(result.exit_code or 0) != 0:
+            raise RuntimeError(f"Failed to create directory in sandbox: {path}; stderr={result.result!r}")
 
     def _wait_until_started(self, sandbox_id: str, timeout_seconds: int = 120) -> None:
         deadline = time.time() + timeout_seconds

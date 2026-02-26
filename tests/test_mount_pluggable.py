@@ -5,21 +5,36 @@ from __future__ import annotations
 import subprocess
 import sys
 import types
+from pathlib import Path
 
 import pytest
 
 
-def test_docker_provider_supports_multiple_bind_mounts(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_mount_spec_defaults_to_mount_mode() -> None:
+    from sandbox.config import MountSpec
+
+    mount = MountSpec.model_validate({"source": "/host/x", "target": "/sandbox/x"})
+    assert mount.mode == "mount"
+
+
+def test_docker_provider_supports_multiple_bind_mount_modes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     from sandbox.providers.docker import DockerProvider
+
+    copy_source = tmp_path / "bootstrap"
+    copy_source.mkdir(parents=True, exist_ok=True)
+    (copy_source / "seed.txt").write_text("hello")
 
     provider = DockerProvider(
         image="python:3.12-slim",
         mount_path="/workspace",
         default_cwd="/home/leon",
         bind_mounts=[
-            {"source": "/host/tasks", "target": "/home/leon/shared/tasks", "read_only": False},
-            {"source": "/host/docs", "target": "/home/leon/shared/docs", "read_only": True},
-            {"host_path": "/host/issues", "mount_path": "/home/leon/shared/issues", "read_only": False},
+            {"source": "/host/tasks", "target": "/home/leon/shared/tasks", "mode": "mount", "read_only": False},
+            {"source": "/host/docs", "target": "/home/leon/shared/docs", "mode": "mount", "read_only": True},
+            {"source": str(copy_source), "target": "/home/leon/bootstrap", "mode": "copy", "read_only": False},
+            {"host_path": "/host/issues", "mount_path": "/home/leon/shared/issues", "mode": "mount", "read_only": False},
         ],
     )
 
@@ -34,12 +49,16 @@ def test_docker_provider_supports_multiple_bind_mounts(monkeypatch: pytest.Monke
     session = provider.create_session(context_id="ctx-volume")
     assert session.status == "running"
 
-    cmd = calls[-1]
-    volume_specs = [cmd[i + 1] for i, token in enumerate(cmd) if token == "-v"]
+    run_cmd = calls[0]
+    volume_specs = [run_cmd[i + 1] for i, token in enumerate(run_cmd) if token == "-v"]
     assert "/host/tasks:/home/leon/shared/tasks" in volume_specs
     assert "/host/docs:/home/leon/shared/docs:ro" in volume_specs
     assert "/host/issues:/home/leon/shared/issues" in volume_specs
     assert "ctx-volume:/workspace" in volume_specs
+    assert all(str(copy_source) not in spec for spec in volume_specs)
+
+    serialized_calls = [" ".join(cmd) for cmd in calls]
+    assert any("docker cp" in cmd and "bootstrap/." in cmd and "container-123:/home/leon/bootstrap" in cmd for cmd in serialized_calls)
 
 
 def test_daytona_provider_maps_multiple_mounts_to_http_payload(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -86,9 +105,10 @@ def test_daytona_provider_maps_multiple_mounts_to_http_payload(monkeypatch: pyte
         api_key="token-1",
         api_url="http://127.0.0.1:3000/api",
         bind_mounts=[
-            {"source": "/host/tasks", "target": "/home/daytona/shared/tasks", "read_only": False},
-            {"source": "/host/docs", "target": "/home/daytona/shared/docs", "read_only": True},
-            {"host_path": "/host/issues", "mount_path": "/home/daytona/shared/issues", "read_only": False},
+            {"source": "/host/tasks", "target": "/home/daytona/shared/tasks", "mode": "mount", "read_only": False},
+            {"source": "/host/docs", "target": "/home/daytona/shared/docs", "mode": "mount", "read_only": True},
+            {"source": "/host/bootstrap", "target": "/home/daytona/bootstrap", "mode": "copy", "read_only": False},
+            {"host_path": "/host/issues", "mount_path": "/home/daytona/shared/issues", "mode": "mount", "read_only": False},
         ],
     )
 

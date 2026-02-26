@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -15,6 +16,7 @@ from pydantic import BaseModel, Field, model_validator
 class MountSpec(BaseModel):
     source: str
     target: str
+    mode: Literal["mount", "copy"] = "mount"
     read_only: bool = False
 
     @model_validator(mode="before")

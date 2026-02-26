@@ -9,6 +9,7 @@ from __future__ import annotations
 import shlex
 import subprocess
 import uuid
+from pathlib import Path
 from typing import Any
 
 from sandbox.provider import Metrics, ProviderCapability, ProviderExecResult, SandboxProvider, SessionInfo
@@ -67,8 +68,12 @@ class DockerProvider(SandboxProvider):
             f"leon.session_id={session_id}",
         ]
 
+        copy_mounts: list[tuple[str, str]] = []
         for mount in self.bind_mounts:
-            source, target, read_only = self._normalize_mount(mount)
+            source, target, read_only, mode = self._normalize_mount(mount)
+            if mode == "copy":
+                copy_mounts.append((source, target))
+                continue
             volume_arg = f"{source}:{target}"
             if read_only:
                 volume_arg = f"{volume_arg}:ro"
@@ -84,6 +89,9 @@ class DockerProvider(SandboxProvider):
         container_id = result.stdout.strip()
         if not container_id:
             raise RuntimeError("Failed to create docker container session")
+
+        for source, target in copy_mounts:
+            self._copy_host_path_into_container(container_id, source=source, target=target)
 
         self._sessions[session_id] = container_id
         return SessionInfo(session_id=session_id, provider=self.name, status="running")
@@ -250,13 +258,43 @@ class DockerProvider(SandboxProvider):
             network_tx_kbps=net_tx,
         )
 
-    def _normalize_mount(self, mount: dict[str, Any]) -> tuple[str, str, bool]:
+    def _normalize_mount(self, mount: dict[str, Any]) -> tuple[str, str, bool, str]:
         # @@@mount-key-compat - Docker accepts the same mount spec as Daytona (source/target) while still reading legacy host_path/mount_path.
         source = mount.get("source") or mount.get("host_path")
         target = mount.get("target") or mount.get("mount_path")
         if not source or not target:
             raise RuntimeError(f"Invalid bind mount spec (expected source+target): {mount!r}")
-        return str(source), str(target), bool(mount.get("read_only", False))
+        mode = str(mount.get("mode", "mount")).lower()
+        if mode not in {"mount", "copy"}:
+            raise RuntimeError(f"Invalid mount mode '{mode}' for mount: {mount!r}")
+        return str(source), str(target), bool(mount.get("read_only", False)), mode
+
+    def _copy_host_path_into_container(self, container_id: str, *, source: str, target: str) -> None:
+        source_path = Path(source)
+        if not source_path.exists():
+            raise RuntimeError(f"Copy source path does not exist: {source}")
+        if source_path.is_dir():
+            self._run(
+                ["docker", "exec", container_id, "/bin/sh", "-lc", f"mkdir -p {shlex.quote(target)}"],
+                timeout=self.command_timeout_sec,
+            )
+            self._run(
+                ["docker", "cp", f"{source_path}/.", f"{container_id}:{target}"],
+                timeout=self.command_timeout_sec,
+            )
+            return
+        if source_path.is_file():
+            parent = str(Path(target).parent)
+            self._run(
+                ["docker", "exec", container_id, "/bin/sh", "-lc", f"mkdir -p {shlex.quote(parent)}"],
+                timeout=self.command_timeout_sec,
+            )
+            self._run(
+                ["docker", "cp", str(source_path), f"{container_id}:{target}"],
+                timeout=self.command_timeout_sec,
+            )
+            return
+        raise RuntimeError(f"Unsupported copy source path type: {source}")
 
     def _get_container_id(self, session_id: str, allow_missing: bool = False) -> str | None:
         container_id = self._sessions.get(session_id)
