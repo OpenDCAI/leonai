@@ -12,6 +12,7 @@ import pytest
 from core.storage import StorageContainer
 from core.memory.checkpoint_repo import SQLiteCheckpointRepo
 from core.storage.supabase_checkpoint_repo import SupabaseCheckpointRepo
+from core.storage.supabase_eval_repo import SupabaseEvalRepo
 from core.storage.supabase_file_operation_repo import SupabaseFileOperationRepo
 from core.storage.supabase_run_event_repo import SupabaseRunEventRepo
 from core.storage.supabase_summary_repo import SupabaseSummaryRepo
@@ -199,7 +200,7 @@ def test_storage_container_sqlite_strategy_is_non_regression() -> None:
         db.unlink(missing_ok=True)
 
 
-def test_storage_container_supabase_repos_are_concrete_and_remaining_bindings_fail_loudly() -> None:
+def test_storage_container_supabase_repos_are_concrete() -> None:
     fake_client = _FakeSupabaseClient()
     container = StorageContainer(strategy="supabase", supabase_client=fake_client)
     checkpoint_repo = container.checkpoint_repo()
@@ -212,15 +213,8 @@ def test_storage_container_supabase_repos_are_concrete_and_remaining_bindings_fa
     assert isinstance(file_operation_repo, SupabaseFileOperationRepo)
     summary_repo = container.summary_repo()
     assert isinstance(summary_repo, SupabaseSummaryRepo)
-
-    with pytest.raises(
-        RuntimeError,
-        match=(
-            "Supabase storage strategy has missing bindings: "
-            "eval_repo"
-        ),
-    ):
-        container.eval_repo()
+    eval_repo = container.eval_repo()
+    assert isinstance(eval_repo, SupabaseEvalRepo)
 
 
 def test_storage_container_supabase_checkpoint_requires_client() -> None:
@@ -266,6 +260,15 @@ def test_storage_container_supabase_summary_requires_client() -> None:
         match="Supabase strategy summary_repo requires supabase_client",
     ):
         container.summary_repo()
+
+
+def test_storage_container_supabase_eval_requires_client() -> None:
+    container = StorageContainer(strategy="supabase")
+    with pytest.raises(
+        RuntimeError,
+        match="Supabase strategy eval_repo requires supabase_client",
+    ):
+        container.eval_repo()
 
 
 def test_storage_container_rejects_unknown_strategy() -> None:

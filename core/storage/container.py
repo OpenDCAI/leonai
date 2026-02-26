@@ -17,9 +17,6 @@ class StorageContainer:
     """Composition root: instantiates phase-2 repos from DB paths."""
 
     _SUPPORTED_STRATEGIES = {"sqlite", "supabase"}
-    _SUPABASE_BINDING_NAMES = (
-        "eval_repo",
-    )
 
     def __init__(
         self,
@@ -38,7 +35,6 @@ class StorageContainer:
         self._main_db = Path(main_db_path) if main_db_path else root / "leon.db"
         self._eval_db = Path(eval_db_path) if eval_db_path else root / "eval.db"
         self._strategy: StorageStrategy = strategy
-        self._supabase_bindings: dict[str, Any] = dict(supabase_bindings or {})
         self._supabase_client = supabase_client
 
     def checkpoint_repo(self):
@@ -77,7 +73,7 @@ class StorageContainer:
 
     def eval_repo(self):
         if self._strategy == "supabase":
-            return self._build_supabase_binding_repo("eval_repo")
+            return self._build_supabase_eval_repo()
         from eval.repo import SQLiteEvalRepo
         return SQLiteEvalRepo(db_path=self._eval_db)
 
@@ -131,17 +127,12 @@ class StorageContainer:
             )
         return SupabaseSummaryRepo(client=self._supabase_client)
 
-    def _build_supabase_binding_repo(self, binding_name: str):
-        missing_bindings = [
-            name for name in self._SUPABASE_BINDING_NAMES if name not in self._supabase_bindings
-        ]
-        # @@@supabase-binding-contract - keep explicit contract for repos not shipped as concrete supabase adapters yet.
-        if missing_bindings:
+    def _build_supabase_eval_repo(self):
+        from core.storage.supabase_eval_repo import SupabaseEvalRepo
+
+        if self._supabase_client is None:
             raise RuntimeError(
-                "Supabase storage strategy has missing bindings: "
-                + ", ".join(missing_bindings)
+                "Supabase strategy eval_repo requires supabase_client. "
+                "Pass supabase_client=... into StorageContainer."
             )
-        binding = self._supabase_bindings[binding_name]
-        if callable(binding):
-            return binding()
-        return binding
+        return SupabaseEvalRepo(client=self._supabase_client)
