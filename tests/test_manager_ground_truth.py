@@ -11,6 +11,7 @@ import pytest
 
 from core.storage import StorageContainer
 from core.memory.checkpoint_repo import SQLiteCheckpointRepo
+from core.storage.supabase_checkpoint_repo import SupabaseCheckpointRepo
 from sandbox.manager import SandboxManager
 from sandbox.provider import Metrics, ProviderCapability, ProviderExecResult, SandboxProvider, SessionInfo
 
@@ -81,6 +82,11 @@ class FakeProvider(SandboxProvider):
         return [
             SessionInfo(session_id=sid, provider=self.name, status=status) for sid, status in self._statuses.items()
         ]
+
+
+class _FakeSupabaseClient:
+    def table(self, table_name: str):
+        raise AssertionError(f"table() should not be called in this container wiring test: {table_name}")
 
 
 def _temp_db() -> Path:
@@ -190,13 +196,26 @@ def test_storage_container_sqlite_strategy_is_non_regression() -> None:
 
 
 def test_storage_container_supabase_missing_bindings_fails_loudly() -> None:
-    container = StorageContainer(strategy="supabase", supabase_bindings={"checkpoint_repo": object()})
+    fake_client = _FakeSupabaseClient()
+    container = StorageContainer(strategy="supabase", supabase_client=fake_client)
+    repo = container.checkpoint_repo()
+    assert isinstance(repo, SupabaseCheckpointRepo)
+
     with pytest.raises(
         RuntimeError,
         match=(
             "Supabase storage strategy has missing bindings: "
             "thread_config_repo, run_event_repo, file_operation_repo, summary_repo, eval_repo"
         ),
+    ):
+        container.thread_config_repo()
+
+
+def test_storage_container_supabase_checkpoint_requires_client() -> None:
+    container = StorageContainer(strategy="supabase")
+    with pytest.raises(
+        RuntimeError,
+        match="Supabase strategy checkpoint_repo requires supabase_client",
     ):
         container.checkpoint_repo()
 
