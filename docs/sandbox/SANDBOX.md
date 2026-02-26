@@ -68,7 +68,7 @@ The file name (minus `.json`) is the sandbox name you pass to `--sandbox`.
 |-------|---------|-------------|
 | `docker.image` | `python:3.12-slim` | Docker image to use |
 | `docker.cwd` | `/workspace` | Default command working directory inside container |
-| `docker.bind_mounts` | `[]` | Host mount list using `source/target/read_only` |
+| `docker.bind_mounts` | `[]` | Host mount list using `source/target/read_only` (supports multiple folders in one sandbox) |
 | `docker.mount_path` | `/workspace` | Legacy context volume target used with `context_id` |
 | `on_exit` | `pause` | What to do on agent exit: `pause` or `destroy` |
 
@@ -119,7 +119,7 @@ The file name (minus `.json`) is the sandbox name you pass to `--sandbox`.
 | `daytona.api_key` | — | Daytona API key (or set `DAYTONA_API_KEY` env var) |
 | `daytona.api_url` | `https://app.daytona.io/api` | Daytona API base URL |
 | `daytona.cwd` | `/home/daytona` | Working directory |
-| `daytona.bind_mounts` | `[]` | Host mount list using `source/target/read_only` |
+| `daytona.bind_mounts` | `[]` | Host mount list using `source/target/read_only` (supports multiple folders in one sandbox) |
 | `on_exit` | `pause` | `pause` or `destroy` |
 
 ### AgentBay
