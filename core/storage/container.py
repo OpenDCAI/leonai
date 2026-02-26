@@ -18,7 +18,6 @@ class StorageContainer:
 
     _SUPPORTED_STRATEGIES = {"sqlite", "supabase"}
     _SUPABASE_BINDING_NAMES = (
-        "run_event_repo",
         "file_operation_repo",
         "summary_repo",
         "eval_repo",
@@ -58,7 +57,7 @@ class StorageContainer:
 
     def run_event_repo(self):
         if self._strategy == "supabase":
-            return self._build_supabase_binding_repo("run_event_repo")
+            return self._build_supabase_run_event_repo()
         from core.memory.run_event_repo import SQLiteRunEventRepo
         return SQLiteRunEventRepo(db_path=self._main_db)
 
@@ -103,6 +102,16 @@ class StorageContainer:
                 "Pass supabase_client=... into StorageContainer."
             )
         return SupabaseThreadConfigRepo(client=self._supabase_client)
+
+    def _build_supabase_run_event_repo(self):
+        from core.storage.supabase_run_event_repo import SupabaseRunEventRepo
+
+        if self._supabase_client is None:
+            raise RuntimeError(
+                "Supabase strategy run_event_repo requires supabase_client. "
+                "Pass supabase_client=... into StorageContainer."
+            )
+        return SupabaseRunEventRepo(client=self._supabase_client)
 
     def _build_supabase_binding_repo(self, binding_name: str):
         missing_bindings = [
