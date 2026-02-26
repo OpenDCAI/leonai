@@ -154,8 +154,6 @@ def _init_providers_and_managers() -> tuple[dict, dict]:
                 providers["docker"] = DockerProvider(
                     image=config.docker.image,
                     mount_path=config.docker.mount_path,
-                    default_cwd=config.docker.cwd,
-                    bind_mounts=[mount.model_dump() for mount in config.docker.bind_mounts],
                 )
             elif config.provider == "e2b":
                 from sandbox.providers.e2b import E2BProvider
@@ -178,7 +176,6 @@ def _init_providers_and_managers() -> tuple[dict, dict]:
                         api_url=config.daytona.api_url,
                         target=config.daytona.target,
                         default_cwd=config.daytona.cwd,
-                        bind_mounts=[mount.model_dump() for mount in config.daytona.bind_mounts],
                     )
         except Exception as e:
             print(f"[sandbox] Failed to load {name}: {e}")
