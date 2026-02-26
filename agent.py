@@ -96,6 +96,7 @@ class LeonAgent:
         firecrawl_api_key: str | None = None,
         jina_api_key: str | None = None,
         sandbox: Any = None,
+        storage_container: Any = None,
         verbose: bool = False,
     ):
         """
@@ -157,6 +158,7 @@ class LeonAgent:
         # Initialize workspace and configuration
         self.workspace_root = self._resolve_workspace_root()
         self._init_config_attributes()
+        self.storage_container = storage_container
         self._sandbox = self._init_sandbox(sandbox)
 
         # Override workspace_root for sandbox mode
@@ -1190,6 +1192,7 @@ def create_leon_agent(
     api_key: str | None = None,
     workspace_root: str | Path | None = None,
     sandbox: Any = None,
+    storage_container: Any = None,
     **kwargs,
 ) -> LeonAgent:
     """Create Leon Agent.
@@ -1199,6 +1202,7 @@ def create_leon_agent(
         api_key: API key
         workspace_root: Workspace directory
         sandbox: Sandbox instance, name string, or None for local
+        storage_container: Optional pre-built storage container (runtime wiring injection)
         **kwargs: Additional configuration parameters
 
     Returns:
@@ -1219,6 +1223,7 @@ def create_leon_agent(
         api_key=api_key,
         workspace_root=workspace_root,
         sandbox=sandbox,
+        storage_container=storage_container,
         **kwargs,
     )
 
