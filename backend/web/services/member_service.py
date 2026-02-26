@@ -26,6 +26,15 @@ logger = logging.getLogger(__name__)
 
 LEON_HOME = Path.home() / ".leon"
 MEMBERS_DIR = LEON_HOME / "members"
+_TOOLS_CATALOG_PATH = Path(__file__).resolve().parents[3] / "config" / "defaults" / "tools.json"
+
+
+def _load_tools_catalog() -> dict[str, dict[str, str]]:
+    """Load the system tool catalog (name → {desc, group})."""
+    try:
+        return json.loads(_TOOLS_CATALOG_PATH.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
 
 
 def ensure_members_dir() -> None:
@@ -163,15 +172,22 @@ def _member_to_dict(member_dir: Path) -> dict[str, Any] | None:
     agent = bundle.agent
     meta = bundle.meta
 
-    # Convert runtime resources to CrudItem-like lists for frontend
+    # Build full tools list from catalog + runtime overrides
+    catalog = _load_tools_catalog()
     tools_list = []
+    for tool_name, tool_info in catalog.items():
+        runtime_key = f"tools:{tool_name}"
+        if runtime_key in bundle.runtime:
+            rc = bundle.runtime[runtime_key]
+            tools_list.append({"name": tool_name, "enabled": rc.enabled, "desc": rc.desc or tool_info.get("desc", ""), "group": tool_info.get("group", "")})
+        else:
+            tools_list.append({"name": tool_name, "enabled": True, "desc": tool_info.get("desc", ""), "group": tool_info.get("group", "")})
+
+    # Skills from runtime only (no catalog)
     skills_list = []
     for key, rc in bundle.runtime.items():
-        entry = {"name": key.split(":", 1)[-1], "enabled": rc.enabled, "desc": rc.desc}
-        if key.startswith("tools:"):
-            tools_list.append(entry)
-        elif key.startswith("skills:"):
-            skills_list.append(entry)
+        if key.startswith("skills:"):
+            skills_list.append({"name": key.split(":", 1)[-1], "enabled": rc.enabled, "desc": rc.desc})
 
     # Convert rules to list of {name, content}
     rules_list = bundle.rules
@@ -216,17 +232,21 @@ def _member_to_dict(member_dir: Path) -> dict[str, Any] | None:
 
 # ── Leon builtin ──
 
-LEON_BUILTIN: dict[str, Any] = {
-    "id": "__leon__",
-    "name": "Leon",
-    "description": "通用数字成员，随时准备为你工作",
-    "status": "active",
-    "version": "1.0.0",
-    "config": {"prompt": "", "rules": [], "tools": [], "mcps": [], "skills": [], "subAgents": []},
-    "created_at": 0,
-    "updated_at": 0,
-    "builtin": True,
-}
+def _leon_builtin() -> dict[str, Any]:
+    """Build Leon builtin member dict with full tool catalog."""
+    catalog = _load_tools_catalog()
+    tools = [{"name": k, "enabled": True, "desc": v.get("desc", ""), "group": v.get("group", "")} for k, v in catalog.items()]
+    return {
+        "id": "__leon__",
+        "name": "Leon",
+        "description": "通用数字成员，随时准备为你工作",
+        "status": "active",
+        "version": "1.0.0",
+        "config": {"prompt": "", "rules": [], "tools": tools, "mcps": [], "skills": [], "subAgents": []},
+        "created_at": 0,
+        "updated_at": 0,
+        "builtin": True,
+    }
 
 
 def _ensure_leon_dir() -> Path:
@@ -235,7 +255,7 @@ def _ensure_leon_dir() -> Path:
     leon_dir.mkdir(parents=True, exist_ok=True)
     if not (leon_dir / "agent.md").exists():
         _write_agent_md(leon_dir / "agent.md", name="Leon",
-                        description=LEON_BUILTIN["description"])
+                        description="通用数字成员，随时准备为你工作")
     if not (leon_dir / "meta.json").exists():
         _write_json(leon_dir / "meta.json", {
             "status": "active", "version": "1.0.0",
@@ -248,7 +268,7 @@ def _ensure_leon_dir() -> Path:
 
 def list_members() -> list[dict[str, Any]]:
     leon = get_member("__leon__")
-    results: list[dict[str, Any]] = [leon] if leon else [dict(LEON_BUILTIN)]
+    results: list[dict[str, Any]] = [leon] if leon else [_leon_builtin()]
     if MEMBERS_DIR.exists():
         for d in sorted(MEMBERS_DIR.iterdir(), reverse=True):
             if d.is_dir() and d.name != "__leon__" and (d / "agent.md").exists():
@@ -266,7 +286,7 @@ def get_member(member_id: str) -> dict[str, Any] | None:
             if item:
                 item["builtin"] = True
                 return item
-        return dict(LEON_BUILTIN)
+        return _leon_builtin()
     member_dir = MEMBERS_DIR / member_id
     if not member_dir.is_dir():
         return None

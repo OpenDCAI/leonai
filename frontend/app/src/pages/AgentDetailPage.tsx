@@ -25,15 +25,16 @@ interface ModuleDef {
   label: string;
   icon: typeof FileText;
   hasChildren: boolean;
+  canAdd?: boolean;
 }
 
 const moduleConfig: ModuleDef[] = [
   { id: "prompt", label: "System Prompt", icon: FileText, hasChildren: false },
-  { id: "tools", label: "Tools", icon: Wrench, hasChildren: true },
-  { id: "mcp", label: "MCP", icon: Plug, hasChildren: true },
-  { id: "skills", label: "Skills", icon: Zap, hasChildren: true },
-  { id: "subagents", label: "Sub-agents", icon: Users, hasChildren: true },
-  { id: "rules", label: "Rules", icon: BookOpen, hasChildren: true },
+  { id: "tools", label: "Tools", icon: Wrench, hasChildren: true, canAdd: false },
+  { id: "mcp", label: "MCP", icon: Plug, hasChildren: true, canAdd: true },
+  { id: "skills", label: "Skills", icon: Zap, hasChildren: true, canAdd: true },
+  { id: "subagents", label: "Sub-agents", icon: Users, hasChildren: true, canAdd: true },
+  { id: "rules", label: "Rules", icon: BookOpen, hasChildren: true, canAdd: true },
 ];
 
 // ==================== Selection state ====================
@@ -237,13 +238,15 @@ export default function AgentDetail() {
                 {mod.hasChildren && (
                   <div className="flex items-center gap-1 shrink-0">
                     <span className="text-[10px] font-mono text-muted-foreground">{allItems.length}</span>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); openAddDialog(mod.id); }}
-                      className="p-0.5 rounded hover:bg-primary/10 opacity-0 group-hover:opacity-100 transition-all"
-                      title="添加"
-                    >
-                      <Plus className="w-3 h-3 text-primary" />
-                    </button>
+                    {mod.canAdd !== false && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); openAddDialog(mod.id); }}
+                        className="p-0.5 rounded hover:bg-primary/10 opacity-0 group-hover:opacity-100 transition-all"
+                        title="添加"
+                      >
+                        <Plus className="w-3 h-3 text-primary" />
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
@@ -359,11 +362,20 @@ export default function AgentDetail() {
       );
     }
 
-    // CrudItem modules (tools, skills)
-    if (mod === "tools" || mod === "skills") {
-      const configKey = mod === "tools" ? "tools" : "skills";
-      const items = member.config[configKey] as CrudItem[];
-      const labels = { tools: "工具", skills: "技能" };
+    // Tools — full catalog with toggles (no add/delete)
+    if (mod === "tools") {
+      const items = member.config.tools as CrudItem[];
+      return (
+        <ToolsCatalog
+          items={items}
+          onToggle={(name, enabled) => handleToggle("tools", name, enabled)}
+        />
+      );
+    }
+
+    // Skills — CRUD list
+    if (mod === "skills") {
+      const items = member.config.skills as CrudItem[];
 
       if (selectedItemId) {
         const item = items.find(i => i.name === selectedItemId);
@@ -372,23 +384,23 @@ export default function AgentDetail() {
           <CrudItemEditor
             item={item}
             onSave={async (name, desc) => {
-              await updateMemberConfig(member.id, { [configKey]: items.map(i => i.name === selectedItemId ? { ...i, name, desc } : i) });
+              await updateMemberConfig(member.id, { skills: items.map(i => i.name === selectedItemId ? { ...i, name, desc } : i) });
               toast.success("已更新");
             }}
-            onDelete={() => handleDeleteItem(mod, selectedItemId)}
-            onToggle={(enabled) => handleToggle(mod, selectedItemId, enabled)}
+            onDelete={() => handleDeleteItem("skills", selectedItemId)}
+            onToggle={(enabled) => handleToggle("skills", selectedItemId, enabled)}
           />
         );
       }
 
       return (
         <ModuleOverview
-          title={labels[mod]}
+          title="技能"
           items={items}
-          onAdd={() => openAddDialog(mod)}
-          onSelect={(name) => setSelection({ module: mod, itemId: name })}
-          onDelete={(name) => handleDeleteItem(mod, name)}
-          onToggle={(name, enabled) => handleToggle(mod, name, enabled)}
+          onAdd={() => openAddDialog("skills")}
+          onSelect={(name) => setSelection({ module: "skills", itemId: name })}
+          onDelete={(name) => handleDeleteItem("skills", name)}
+          onToggle={(name, enabled) => handleToggle("skills", name, enabled)}
         />
       );
     }
@@ -985,6 +997,68 @@ function McpEditor({
         )}
       </div>
       <p className="text-xs text-muted-foreground">MCP 配置请直接编辑 .mcp.json 文件</p>
+    </div>
+  );
+}
+
+// ==================== Tools Catalog (full system tools with toggles) ====================
+
+const GROUP_LABELS: Record<string, string> = {
+  filesystem: "文件系统",
+  search: "搜索",
+  command: "命令执行",
+  web: "网络",
+  task: "任务委派",
+  todo: "待办管理",
+  skills: "技能",
+};
+
+function ToolsCatalog({
+  items, onToggle,
+}: {
+  items: CrudItem[];
+  onToggle: (name: string, enabled: boolean) => void;
+}) {
+  const groups = useMemo(() => {
+    const map = new Map<string, CrudItem[]>();
+    for (const item of items) {
+      const g = item.group || "other";
+      if (!map.has(g)) map.set(g, []);
+      map.get(g)!.push(item);
+    }
+    return map;
+  }, [items]);
+
+  const enabledCount = items.filter(i => i.enabled).length;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-foreground">
+          工具 ({enabledCount}/{items.length})
+        </h3>
+      </div>
+      {[...groups.entries()].map(([group, groupItems]) => (
+        <div key={group} className="space-y-1.5">
+          <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+            {GROUP_LABELS[group] || group}
+          </h4>
+          <div className="space-y-1">
+            {groupItems.map(item => (
+              <div
+                key={item.name}
+                className="flex items-center justify-between px-3 py-2 rounded-lg bg-card border border-border transition-colors"
+              >
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-mono text-foreground">{item.name}</p>
+                  <p className="text-xs text-muted-foreground">{item.desc}</p>
+                </div>
+                <Switch checked={item.enabled} onCheckedChange={checked => onToggle(item.name, checked)} />
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

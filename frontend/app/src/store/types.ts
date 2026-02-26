@@ -5,6 +5,7 @@ export interface CrudItem {
   name: string;
   desc: string;
   enabled: boolean;
+  group?: string;
 }
 
 export interface SubAgent {
