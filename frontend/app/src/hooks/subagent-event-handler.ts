@@ -1,8 +1,8 @@
-import type { AssistantTurn } from "../api";
+import type { AssistantTurn, ToolStep } from "../api";
 import type { UpdateEntries, StreamEvent } from "./stream-event-handlers";
 
 type EventPayload = Record<string, unknown>;
-type SubagentStream = NonNullable<AssistantTurn["segments"][0] extends { step: infer S } ? S extends { subagent_stream?: infer R } ? R : never : never>;
+type SubagentStream = NonNullable<ToolStep["subagent_stream"]>;
 type Mutator = (stream: SubagentStream, data: EventPayload) => void;
 
 const MUTATORS: Record<string, Mutator> = {

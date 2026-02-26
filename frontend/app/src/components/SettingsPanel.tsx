@@ -29,7 +29,7 @@ export default function SettingsPanel({
     return () => document.removeEventListener("mousedown", handler);
   }, [settingsOpen]);
 
-  async function handleWorkspaceSet(workspace: string) {
+  async function handleWorkspaceSet(_workspace: string) {
     await refreshSettings();
     setWorkspaceModalOpen(false);
     setSettingsOpen(false);
