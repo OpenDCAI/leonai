@@ -441,6 +441,12 @@ class SearchMiddleware(AgentMiddleware):
                     if count >= self.max_results:
                         break
 
+                    # @@@recurse-before-type-filter - Keep traversal complete even when result type is restricted to files.
+                    if item.is_dir():
+                        search_recursive(item, depth + 1)
+                        if count >= self.max_results:
+                            break
+
                     # 类型过滤
                     if type_filter == "file" and not item.is_file():
                         continue
@@ -457,10 +463,6 @@ class SearchMiddleware(AgentMiddleware):
                     if item.match(pattern):
                         results.append(str(item))
                         count += 1
-
-                    # 递归搜索子目录
-                    if item.is_dir():
-                        search_recursive(item, depth + 1)
 
             except PermissionError:
                 pass
