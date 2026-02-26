@@ -12,6 +12,7 @@ import pytest
 from core.storage import StorageContainer
 from core.memory.checkpoint_repo import SQLiteCheckpointRepo
 from core.storage.supabase_checkpoint_repo import SupabaseCheckpointRepo
+from core.storage.supabase_file_operation_repo import SupabaseFileOperationRepo
 from core.storage.supabase_run_event_repo import SupabaseRunEventRepo
 from core.storage.supabase_thread_config_repo import SupabaseThreadConfigRepo
 from sandbox.manager import SandboxManager
@@ -197,7 +198,7 @@ def test_storage_container_sqlite_strategy_is_non_regression() -> None:
         db.unlink(missing_ok=True)
 
 
-def test_storage_container_supabase_thread_config_and_run_event_are_concrete_and_remaining_bindings_fail_loudly() -> None:
+def test_storage_container_supabase_repos_are_concrete_and_remaining_bindings_fail_loudly() -> None:
     fake_client = _FakeSupabaseClient()
     container = StorageContainer(strategy="supabase", supabase_client=fake_client)
     checkpoint_repo = container.checkpoint_repo()
@@ -206,15 +207,17 @@ def test_storage_container_supabase_thread_config_and_run_event_are_concrete_and
     assert isinstance(thread_config_repo, SupabaseThreadConfigRepo)
     run_event_repo = container.run_event_repo()
     assert isinstance(run_event_repo, SupabaseRunEventRepo)
+    file_operation_repo = container.file_operation_repo()
+    assert isinstance(file_operation_repo, SupabaseFileOperationRepo)
 
     with pytest.raises(
         RuntimeError,
         match=(
             "Supabase storage strategy has missing bindings: "
-            "file_operation_repo, summary_repo, eval_repo"
+            "summary_repo, eval_repo"
         ),
     ):
-        container.file_operation_repo()
+        container.summary_repo()
 
 
 def test_storage_container_supabase_checkpoint_requires_client() -> None:
@@ -242,6 +245,15 @@ def test_storage_container_supabase_run_event_requires_client() -> None:
         match="Supabase strategy run_event_repo requires supabase_client",
     ):
         container.run_event_repo()
+
+
+def test_storage_container_supabase_file_operation_requires_client() -> None:
+    container = StorageContainer(strategy="supabase")
+    with pytest.raises(
+        RuntimeError,
+        match="Supabase strategy file_operation_repo requires supabase_client",
+    ):
+        container.file_operation_repo()
 
 
 def test_storage_container_rejects_unknown_strategy() -> None:
