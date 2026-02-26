@@ -73,3 +73,10 @@ def test_non_gpt5_openai_keeps_existing_max_completion_tokens() -> None:
     out = normalize_model_kwargs("gpt-4o", kwargs)
     assert out["max_completion_tokens"] == 33
     assert "max_tokens" not in out
+
+
+def test_gpt5_without_provider_keeps_existing_max_completion_tokens() -> None:
+    kwargs = {"max_completion_tokens": 17}
+    out = normalize_model_kwargs("gpt-5.2", kwargs)
+    assert out["max_completion_tokens"] == 17
+    assert "max_tokens" not in out
