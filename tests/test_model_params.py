@@ -44,3 +44,25 @@ def test_openai_provider_matching_is_case_insensitive() -> None:
     out = normalize_model_kwargs("gpt-5.2", kwargs)
     assert "max_tokens" not in out
     assert out["max_completion_tokens"] == 256
+
+
+def test_openai_provider_with_surrounding_spaces_is_normalized() -> None:
+    kwargs = {"model_provider": "  OpenAI  ", "max_tokens": 144}
+    out = normalize_model_kwargs("gpt-5.2", kwargs)
+    assert "max_tokens" not in out
+    assert out["max_completion_tokens"] == 144
+
+
+def test_openai_provider_with_empty_model_name_keeps_max_tokens() -> None:
+    kwargs = {"model_provider": "openai", "max_tokens": 73}
+    out = normalize_model_kwargs("", kwargs)
+    assert out["max_tokens"] == 73
+    assert "max_completion_tokens" not in out
+
+
+def test_openai_provider_without_max_tokens_stays_unchanged() -> None:
+    kwargs = {"model_provider": "openai", "temperature": 0.2}
+    out = normalize_model_kwargs("gpt-5.2", kwargs)
+    assert out["temperature"] == 0.2
+    assert "max_tokens" not in out
+    assert "max_completion_tokens" not in out
