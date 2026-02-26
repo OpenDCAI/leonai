@@ -7,6 +7,10 @@ import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import pytest
+
+from core.storage import StorageContainer
+from core.memory.checkpoint_repo import SQLiteCheckpointRepo
 from sandbox.manager import SandboxManager
 from sandbox.provider import Metrics, ProviderCapability, ProviderExecResult, SandboxProvider, SessionInfo
 
@@ -173,3 +177,33 @@ def test_enforce_idle_timeouts_continues_on_pause_failure() -> None:
         assert mgr.session_manager.get("thread-1") is not None
     finally:
         db.unlink(missing_ok=True)
+
+
+def test_storage_container_sqlite_strategy_is_non_regression() -> None:
+    db = _temp_db()
+    try:
+        container = StorageContainer(main_db_path=db, strategy="sqlite")
+        repo = container.checkpoint_repo()
+        assert isinstance(repo, SQLiteCheckpointRepo)
+    finally:
+        db.unlink(missing_ok=True)
+
+
+def test_storage_container_supabase_missing_bindings_fails_loudly() -> None:
+    container = StorageContainer(strategy="supabase", supabase_bindings={"checkpoint_repo": object()})
+    with pytest.raises(
+        RuntimeError,
+        match=(
+            "Supabase storage strategy has missing bindings: "
+            "thread_config_repo, run_event_repo, file_operation_repo, summary_repo, eval_repo"
+        ),
+    ):
+        container.checkpoint_repo()
+
+
+def test_storage_container_rejects_unknown_strategy() -> None:
+    with pytest.raises(
+        ValueError,
+        match="Unsupported storage strategy: redis. Supported strategies: sqlite, supabase",
+    ):
+        StorageContainer(strategy="redis")  # type: ignore[arg-type]
