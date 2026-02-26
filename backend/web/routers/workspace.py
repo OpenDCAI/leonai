@@ -76,6 +76,9 @@ async def list_workspace_path(
 
     try:
         payload = await asyncio.to_thread(_list_remote)
+    # @@@http_passthrough - preserve explicit status from remote capability path
+    except HTTPException:
+        raise
     except RuntimeError as e:
         raise HTTPException(400, str(e)) from e
     return {"thread_id": thread_id, **payload}
