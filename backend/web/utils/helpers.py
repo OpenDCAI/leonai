@@ -52,15 +52,19 @@ def extract_webhook_instance_id(payload: dict[str, Any]) -> str | None:
     direct_keys = ("session_id", "sandbox_id", "instance_id", "id")
     for key in direct_keys:
         value = payload.get(key)
-        if isinstance(value, str) and value:
-            return value
+        if isinstance(value, str):
+            normalized = value.strip()
+            if normalized:
+                return normalized
 
     nested = payload.get("data")
     if isinstance(nested, dict):
         for key in direct_keys:
             value = nested.get(key)
-            if isinstance(value, str) and value:
-                return value
+            if isinstance(value, str):
+                normalized = value.strip()
+                if normalized:
+                    return normalized
 
     return None
 
