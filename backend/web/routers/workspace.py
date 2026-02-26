@@ -129,6 +129,9 @@ async def read_workspace_file(
 
     try:
         payload = await asyncio.to_thread(_read_remote)
+    # @@@http_passthrough - preserve explicit status from remote capability path
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(400, str(e)) from e
     return {"thread_id": thread_id, **payload}
