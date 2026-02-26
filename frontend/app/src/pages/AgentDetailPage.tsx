@@ -684,51 +684,49 @@ function ModuleOverview({
   );
 }
 
-// ==================== CrudItem Editor (single item detail) ====================
+// ==================== Skill Ref Viewer (read-only, Library reference) ====================
 
 function CrudItemEditor({
-  item, onSave, onDelete, onToggle,
+  item, onDelete, onToggle,
 }: {
   item: CrudItem;
   onSave: (name: string, desc: string) => void;
   onDelete: () => void;
   onToggle: (enabled: boolean) => void;
 }) {
-  const [name, setName] = useState(item.name);
-  const [desc, setDesc] = useState(item.desc);
-  const isDirty = name !== item.name || desc !== item.desc;
+  const navigate = useNavigate();
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-foreground">编辑: {item.name}</h3>
+        <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+          <Zap className="w-4 h-4 text-primary" />
+          {item.name}
+        </h3>
         <div className="flex items-center gap-2">
           <Switch checked={item.enabled} onCheckedChange={onToggle} />
           <Button variant="ghost" size="sm" onClick={onDelete} className="text-destructive hover:text-destructive hover:bg-destructive/10 gap-1">
             <Trash2 className="w-3 h-3" />
-            删除
+            移除
           </Button>
         </div>
       </div>
       <div className="space-y-3">
         <div>
           <label className="text-xs text-muted-foreground mb-1 block">名称</label>
-          <Input value={name} onChange={e => setName(e.target.value)} />
+          <div className="px-3 py-2 rounded-md bg-muted text-sm text-foreground">{item.name}</div>
         </div>
         <div>
           <label className="text-xs text-muted-foreground mb-1 block">描述</label>
-          <Input value={desc} onChange={e => setDesc(e.target.value)} />
+          <div className="px-3 py-2 rounded-md bg-muted text-sm text-foreground">{item.desc || "—"}</div>
         </div>
       </div>
-      {isDirty && (
-        <div className="flex items-center justify-between pt-2">
-          <span className="text-xs text-warning">有未保存的更改</span>
-          <Button size="sm" onClick={() => onSave(name.trim(), desc.trim())} disabled={!name.trim()} className="gap-1.5">
-            <Save className="w-3 h-3" />
-            保存
-          </Button>
-        </div>
-      )}
+      <button
+        onClick={() => navigate("/library")}
+        className="text-xs text-primary hover:underline"
+      >
+        去 Library 编辑 →
+      </button>
     </div>
   );
 }
@@ -783,50 +781,45 @@ function SubAgentOverview({
   );
 }
 
-// ==================== Sub-agent Editor ====================
+// ==================== Sub-agent Ref Viewer (read-only, Library reference) ====================
 
 function SubAgentEditor({
-  item, onSave, onDelete,
+  item, onDelete,
 }: {
   item: SubAgent;
   onSave: (name: string, desc: string) => void;
   onDelete: () => void;
 }) {
-  const [name, setName] = useState(item.name);
-  const [desc, setDesc] = useState(item.desc);
-  const isDirty = name !== item.name || desc !== item.desc;
+  const navigate = useNavigate();
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
           <Bot className="w-4 h-4 text-primary" />
-          编辑: {item.name}
+          {item.name}
         </h3>
         <Button variant="ghost" size="sm" onClick={onDelete} className="text-destructive hover:text-destructive hover:bg-destructive/10 gap-1">
           <Trash2 className="w-3 h-3" />
-          删除
+          移除
         </Button>
       </div>
       <div className="space-y-3">
         <div>
           <label className="text-xs text-muted-foreground mb-1 block">名称</label>
-          <Input value={name} onChange={e => setName(e.target.value)} />
+          <div className="px-3 py-2 rounded-md bg-muted text-sm text-foreground">{item.name}</div>
         </div>
         <div>
           <label className="text-xs text-muted-foreground mb-1 block">描述</label>
-          <Input value={desc} onChange={e => setDesc(e.target.value)} />
+          <div className="px-3 py-2 rounded-md bg-muted text-sm text-foreground">{item.desc || "—"}</div>
         </div>
       </div>
-      {isDirty && (
-        <div className="flex items-center justify-between pt-2">
-          <span className="text-xs text-warning">有未保存的更改</span>
-          <Button size="sm" onClick={() => onSave(name.trim(), desc.trim())} disabled={!name.trim()} className="gap-1.5">
-            <Save className="w-3 h-3" />
-            保存
-          </Button>
-        </div>
-      )}
+      <button
+        onClick={() => navigate("/library")}
+        className="text-xs text-primary hover:underline"
+      >
+        去 Library 编辑 →
+      </button>
     </div>
   );
 }
@@ -996,6 +989,8 @@ function McpEditor({
   onToggle: (enabled: boolean) => void;
   onDelete: () => void;
 }) {
+  const navigate = useNavigate();
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -1007,7 +1002,7 @@ function McpEditor({
           <Switch checked={!item.disabled} onCheckedChange={onToggle} />
           <Button variant="ghost" size="sm" onClick={onDelete} className="text-destructive hover:text-destructive hover:bg-destructive/10 gap-1">
             <Trash2 className="w-3 h-3" />
-            删除
+            移除
           </Button>
         </div>
       </div>
@@ -1033,7 +1028,12 @@ function McpEditor({
           </div>
         )}
       </div>
-      <p className="text-xs text-muted-foreground">MCP 配置请直接编辑 .mcp.json 文件</p>
+      <button
+        onClick={() => navigate("/library")}
+        className="text-xs text-primary hover:underline"
+      >
+        去 Library 编辑 →
+      </button>
     </div>
   );
 }
