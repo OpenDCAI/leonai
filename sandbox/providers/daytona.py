@@ -9,7 +9,11 @@ Important: runtime semantics remain PTY-backed (`daytona_pty`) for both SaaS and
 from __future__ import annotations
 
 import os
+import time
+import uuid
 from typing import Any
+
+import httpx
 
 from sandbox.provider import Metrics, ProviderCapability, ProviderExecResult, SandboxProvider, SessionInfo
 
@@ -34,6 +38,7 @@ class DaytonaProvider(SandboxProvider):
         api_url: str = "https://app.daytona.io/api",
         target: str = "local",
         default_cwd: str = "/home/daytona",
+        bind_mounts: list[dict[str, Any]] | None = None,
         provider_name: str | None = None,
     ):
         from daytona_sdk import Daytona
@@ -44,6 +49,7 @@ class DaytonaProvider(SandboxProvider):
         self.api_url = api_url
         self.target = target
         self.default_cwd = default_cwd
+        self.bind_mounts = bind_mounts or []
 
         os.environ["DAYTONA_API_KEY"] = api_key
         os.environ["DAYTONA_API_URL"] = api_url
@@ -55,8 +61,14 @@ class DaytonaProvider(SandboxProvider):
     def create_session(self, context_id: str | None = None) -> SessionInfo:
         from daytona_sdk import CreateSandboxFromSnapshotParams
 
-        params = CreateSandboxFromSnapshotParams(auto_stop_interval=0)
-        sb = self.client.create(params)
+        if self.bind_mounts:
+            # @@@daytona-bindmount-http-create - SDK currently lacks bind_mounts field, so self-host bind mounts use direct API create.
+            sandbox_id = self._create_via_http(bind_mounts=self.bind_mounts)
+            self._wait_until_started(sandbox_id)
+            sb = self.client.find_one(sandbox_id)
+        else:
+            params = CreateSandboxFromSnapshotParams(auto_stop_interval=0)
+            sb = self.client.create(params)
         self._sandboxes[sb.id] = sb
         return SessionInfo(session_id=sb.id, provider=self.name, status="running")
 
@@ -156,3 +168,46 @@ class DaytonaProvider(SandboxProvider):
     def get_runtime_sandbox(self, session_id: str):
         """Expose native SDK sandbox for runtime-level persistent terminal handling."""
         return self._get_sandbox(session_id)
+
+    def _api_auth_headers(self) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
+
+    def _create_via_http(self, bind_mounts: list[dict[str, Any]]) -> str:
+        payload = {
+            "name": f"leon-{uuid.uuid4().hex[:12]}",
+            "autoStopInterval": 0,
+            "bindMounts": [
+                {
+                    "hostPath": str(mount["host_path"]),
+                    "mountPath": str(mount["mount_path"]),
+                    "readOnly": bool(mount.get("read_only", False)),
+                }
+                for mount in bind_mounts
+            ],
+        }
+        with httpx.Client(timeout=30.0) as client:
+            response = client.post(f"{self.api_url.rstrip('/')}/sandbox", headers=self._api_auth_headers(), json=payload)
+        if response.status_code != 200:
+            raise RuntimeError(f"Daytona create sandbox failed ({response.status_code}): {response.text}")
+        sandbox_id = response.json().get("id")
+        if not sandbox_id:
+            raise RuntimeError(f"Daytona create sandbox response missing id: {response.text}")
+        return str(sandbox_id)
+
+    def _wait_until_started(self, sandbox_id: str, timeout_seconds: int = 120) -> None:
+        deadline = time.time() + timeout_seconds
+        with httpx.Client(timeout=15.0) as client:
+            while time.time() < deadline:
+                response = client.get(f"{self.api_url.rstrip('/')}/sandbox/{sandbox_id}", headers=self._api_auth_headers())
+                if response.status_code != 200:
+                    raise RuntimeError(
+                        f"Daytona get sandbox failed while waiting for started ({response.status_code}): {response.text}"
+                    )
+                body = response.json()
+                state = str(body.get("state") or "")
+                if state == "started":
+                    return
+                if state in {"destroyed", "destroying", "error", "failed"}:
+                    raise RuntimeError(f"Daytona sandbox entered bad state '{state}': {response.text}")
+                time.sleep(2)
+        raise RuntimeError(f"Timed out waiting for Daytona sandbox {sandbox_id} to reach started state")

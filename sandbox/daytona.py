@@ -28,6 +28,7 @@ class DaytonaSandbox(RemoteSandbox):
             api_url=dt.api_url,
             target=dt.target,
             default_cwd=dt.cwd,
+            bind_mounts=[mount.model_dump() for mount in dt.bind_mounts],
             provider_name=config.name,
         )
         super().__init__(

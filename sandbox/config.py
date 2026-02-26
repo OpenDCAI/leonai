@@ -32,10 +32,16 @@ class E2BConfig(BaseModel):
 
 
 class DaytonaConfig(BaseModel):
+    class BindMount(BaseModel):
+        host_path: str
+        mount_path: str
+        read_only: bool = False
+
     api_key: str | None = None
     api_url: str = "https://app.daytona.io/api"
     target: str = "local"
     cwd: str = "/home/daytona"
+    bind_mounts: list[BindMount] = Field(default_factory=list)
 
 
 class SandboxConfig(BaseModel):
