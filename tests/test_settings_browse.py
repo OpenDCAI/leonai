@@ -1,4 +1,3 @@
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -39,9 +38,11 @@ def test_resolve_local_workspace_path_accepts_relative_workspace_root(tmp_path, 
     workspace_root.mkdir()
     monkeypatch.chdir(tmp_path)
 
-    resolved = resolve_local_workspace_path("src/main.py", local_workspace_root=Path("workspace"))
+    resolved = resolve_local_workspace_path("src/main.py", local_workspace_root="workspace")
 
     assert resolved == (workspace_root / "src/main.py").resolve()
+
+
 @pytest.mark.asyncio
 async def test_pick_folder_cancel_keeps_400(monkeypatch):
     monkeypatch.setattr(sandbox_router.sys, "platform", "darwin")
