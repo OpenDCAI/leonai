@@ -179,7 +179,8 @@ def resolve_local_workspace_path(
             tc = load_thread_config(thread_id)
             if tc:
                 thread_cwd = tc.cwd
-    base = Path(thread_cwd).resolve() if thread_cwd else local_workspace_root
+    # @@@workspace-base-normalize - relative LOCAL_WORKSPACE_ROOT must be normalized, or target.relative_to(base) always fails.
+    base = Path(thread_cwd).resolve() if thread_cwd else local_workspace_root.resolve()
 
     if not raw_path:
         return base
