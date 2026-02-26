@@ -32,6 +32,8 @@ class ModelSpec(BaseModel):
     temperature: float | None = Field(None, ge=0.0, le=2.0)
     max_tokens: int | None = Field(None, gt=0)
     description: str | None = None
+    based_on: str | None = None
+    context_limit: int | None = Field(None, gt=0)
 
 
 class ActiveModel(BaseModel):
@@ -39,6 +41,15 @@ class ActiveModel(BaseModel):
 
     model: str = "claude-sonnet-4-5-20250929"
     provider: str | None = None
+    based_on: str | None = None
+    context_limit: int | None = Field(None, gt=0)
+
+
+class CustomModelConfig(BaseModel):
+    """Custom model metadata (based_on, context_limit)."""
+
+    based_on: str | None = None
+    context_limit: int | None = Field(None, gt=0)
 
 
 class PoolConfig(BaseModel):
@@ -46,6 +57,7 @@ class PoolConfig(BaseModel):
 
     enabled: list[str] = Field(default_factory=list)
     custom: list[str] = Field(default_factory=list)
+    custom_config: dict[str, CustomModelConfig] = Field(default_factory=dict)
 
 
 class CatalogEntry(BaseModel):
@@ -92,7 +104,21 @@ class ModelsConfig(BaseModel):
             ValueError: If virtual model name not found in mapping
         """
         if not name.startswith("leon:"):
-            return name, {}
+            overrides: dict[str, Any] = {}
+            # From active model config
+            if self.active:
+                if self.active.based_on:
+                    overrides["based_on"] = self.active.based_on
+                if self.active.context_limit is not None:
+                    overrides["context_limit"] = self.active.context_limit
+            # From custom_config (higher priority for custom models)
+            if name in self.pool.custom_config:
+                cc = self.pool.custom_config[name]
+                if cc.based_on:
+                    overrides["based_on"] = cc.based_on
+                if cc.context_limit is not None:
+                    overrides["context_limit"] = cc.context_limit
+            return name, overrides
 
         if name not in self.mapping:
             available = ", ".join(self.mapping.keys())
@@ -106,7 +132,20 @@ class ModelsConfig(BaseModel):
             kwargs["temperature"] = spec.temperature
         if spec.max_tokens is not None:
             kwargs["max_tokens"] = spec.max_tokens
-        return spec.model, kwargs
+        # Inherit from custom_config of the resolved model (lower priority)
+        resolved = spec.model
+        if resolved in self.pool.custom_config:
+            cc = self.pool.custom_config[resolved]
+            if cc.based_on:
+                kwargs["based_on"] = cc.based_on
+            if cc.context_limit is not None:
+                kwargs["context_limit"] = cc.context_limit
+        # Mapping-level overrides (higher priority)
+        if spec.based_on:
+            kwargs["based_on"] = spec.based_on
+        if spec.context_limit is not None:
+            kwargs["context_limit"] = spec.context_limit
+        return resolved, kwargs
 
     def get_provider(self, name: str) -> ProviderConfig | None:
         """Get provider credentials by name."""

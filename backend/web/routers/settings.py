@@ -105,6 +105,7 @@ class UserSettings(BaseModel):
     model_mapping: dict[str, str] = {}
     enabled_models: list[str] = []
     custom_models: list[str] = []
+    custom_config: dict[str, dict[str, Any]] = {}
     providers: dict[str, ProviderConfig] = {}
 
 
@@ -117,6 +118,8 @@ async def get_settings() -> UserSettings:
     # Build compat view
     mapping = {k: v.model for k, v in models.mapping.items()}
     providers = {k: ProviderConfig(api_key=v.api_key, base_url=v.base_url) for k, v in models.providers.items()}
+    raw = load_models()
+    custom_config = raw.get("pool", {}).get("custom_config", {})
 
     return UserSettings(
         default_workspace=ws.default_workspace,
@@ -125,6 +128,7 @@ async def get_settings() -> UserSettings:
         model_mapping=mapping,
         enabled_models=models.pool.enabled,
         custom_models=models.pool.custom,
+        custom_config=custom_config,
         providers=providers,
     )
 
@@ -263,9 +267,11 @@ async def get_available_models() -> dict[str, Any]:
 
         # Merge custom + orphaned enabled models
         mc = load_merged_models()
+        data = load_models()
+        custom_providers = data.get("pool", {}).get("custom_providers", {})
         extra_ids = set(mc.pool.custom) | (set(mc.pool.enabled) - pricing_ids)
         for mid in sorted(extra_ids):
-            models_list.append({"id": mid, "name": mid, "custom": True})
+            models_list.append({"id": mid, "name": mid, "custom": True, "provider": custom_providers.get(mid)})
 
         # Virtual models from system defaults
         virtual_models = [vm.model_dump() for vm in mc.virtual_models]
@@ -281,20 +287,20 @@ async def get_available_models() -> dict[str, Any]:
 
 
 class ModelMappingRequest(BaseModel):
-    mapping: dict[str, str]
+    mapping: dict[str, dict[str, Any]]
 
 
 @router.post("/model-mapping")
 async def update_model_mapping(request: ModelMappingRequest) -> dict[str, Any]:
     """Update virtual model mapping → models.json."""
     data = load_models()
-    # Convert simple {name: model} to ModelSpec format
     mapping = data.get("mapping", {})
-    for name, model_id in request.mapping.items():
-        if name in mapping and isinstance(mapping[name], dict):
-            mapping[name]["model"] = model_id
-        else:
-            mapping[name] = {"model": model_id}
+    for name, spec in request.mapping.items():
+        if isinstance(spec, dict):
+            if name in mapping and isinstance(mapping[name], dict):
+                mapping[name].update(spec)
+            else:
+                mapping[name] = spec
     data["mapping"] = mapping
     save_models(data)
     return {"success": True, "model_mapping": request.mapping}
@@ -330,7 +336,9 @@ async def toggle_model(request: ModelToggleRequest) -> dict[str, Any]:
 
 class CustomModelRequest(BaseModel):
     model_id: str
-    provider: str | None = None
+    provider: str
+    based_on: str | None = None
+    context_limit: int | None = None
 
 
 @router.post("/models/custom")
@@ -346,10 +354,18 @@ async def add_custom_model(request: CustomModelRequest) -> dict[str, Any]:
     if request.model_id not in enabled:
         enabled.append(request.model_id)
 
-    # Store provider mapping if specified
-    if request.provider:
-        custom_providers = pool.setdefault("custom_providers", {})
-        custom_providers[request.model_id] = request.provider
+    custom_providers = pool.setdefault("custom_providers", {})
+    custom_providers[request.model_id] = request.provider
+
+    # Store based_on/context_limit in custom_config
+    if request.based_on or request.context_limit:
+        custom_config = pool.setdefault("custom_config", {})
+        cfg: dict[str, Any] = custom_config.get(request.model_id, {})
+        if request.based_on:
+            cfg["based_on"] = request.based_on
+        if request.context_limit:
+            cfg["context_limit"] = request.context_limit
+        custom_config[request.model_id] = cfg
 
     save_models(data)
     return {"success": True, "custom_models": custom, "enabled_models": enabled}
@@ -376,14 +392,13 @@ async def test_model(request: ModelTestRequest) -> dict[str, Any]:
     if request.model_id in custom_providers:
         provider_name = custom_providers[request.model_id]
 
-    # Get credentials from specific provider, fallback to any available
-    p = mc.get_provider(provider_name) if provider_name else None
-    api_key = (p.api_key if p else None) or mc.get_api_key()
-    if not api_key:
-        return {"success": False, "error": "No API key configured"}
+    # Infer provider from model name if still unknown
+    if not provider_name:
+        from langchain.chat_models.base import _attempt_infer_model_provider
+        provider_name = _attempt_infer_model_provider(resolved)
 
-    base_url = (p.base_url if p else None) or mc.get_base_url()
-    model_provider = provider_name or mc.get_model_provider()
+    # Get credentials from providers config
+    p = mc.get_provider(provider_name) if provider_name else None
 
     try:
         from langchain.chat_models import init_chat_model
@@ -391,18 +406,20 @@ async def test_model(request: ModelTestRequest) -> dict[str, Any]:
         from core.model_params import normalize_model_kwargs
 
         kwargs: dict[str, Any] = {}
-        if model_provider:
-            kwargs["model_provider"] = model_provider
-        if base_url:
-            url = base_url.rstrip("/")
+        if provider_name:
+            kwargs["model_provider"] = provider_name
+        if p and p.api_key:
+            kwargs["api_key"] = p.api_key
+        if p and p.base_url:
+            url = p.base_url.rstrip("/")
             if url.endswith("/v1"):
                 url = url[:-3]
-            if model_provider != "anthropic":
+            if provider_name != "anthropic":
                 url = f"{url}/v1"
             kwargs["base_url"] = url
 
         kwargs = normalize_model_kwargs(resolved, kwargs)
-        model = init_chat_model(resolved, api_key=api_key, **kwargs)
+        model = init_chat_model(resolved, **kwargs)
 
         response = await asyncio.wait_for(model.ainvoke("hi"), timeout=15)
         content = response.content if hasattr(response, "content") else str(response)
@@ -426,12 +443,36 @@ async def remove_custom_model(model_id: str = Query(...)) -> dict[str, Any]:
     if model_id in enabled:
         enabled.remove(model_id)
 
-    # Clean up custom_providers
+    # Clean up custom_providers and custom_config
     custom_providers = pool.get("custom_providers", {})
     custom_providers.pop(model_id, None)
+    custom_config = pool.get("custom_config", {})
+    custom_config.pop(model_id, None)
 
     save_models(data)
     return {"success": True, "custom_models": custom}
+
+
+class CustomModelConfigRequest(BaseModel):
+    model_id: str
+    based_on: str | None = None
+    context_limit: int | None = None
+
+
+@router.post("/models/custom/config")
+async def update_custom_model_config(request: CustomModelConfigRequest) -> dict[str, Any]:
+    """Update based_on/context_limit for a custom model."""
+    data = load_models()
+    pool = data.setdefault("pool", {})
+    custom_config = pool.setdefault("custom_config", {})
+    cfg: dict[str, Any] = custom_config.get(request.model_id, {})
+    if request.based_on is not None:
+        cfg["based_on"] = request.based_on or None
+    if request.context_limit is not None:
+        cfg["context_limit"] = request.context_limit or None
+    custom_config[request.model_id] = cfg
+    save_models(data)
+    return {"success": True, "custom_config": custom_config}
 
 
 # ============================================================================

@@ -197,6 +197,7 @@ async def _run_agent_to_buffer(
                     cfg = obs_config.langfuse
                     if cfg.secret_key and cfg.public_key:
                         obs_active = "langfuse"
+                        # Initialize global Langfuse client (CallbackHandler uses it)
                         Langfuse(
                             public_key=cfg.public_key,
                             secret_key=cfg.secret_key,

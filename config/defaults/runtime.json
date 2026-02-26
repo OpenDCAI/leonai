@@ -1,5 +1,5 @@
 {
-  "context_limit": 100000,
+  "context_limit": 0,
   "enable_audit_log": true,
   "allowed_extensions": null,
   "block_dangerous_commands": true,

@@ -91,7 +91,11 @@ class ModelsLoader:
             base_mapping = result.get("mapping", {})
             for name, spec in override["mapping"].items():
                 if name in base_mapping and isinstance(base_mapping[name], dict) and isinstance(spec, dict):
-                    base_mapping[name] = {**base_mapping[name], **{k: v for k, v in spec.items() if v is not None}}
+                    merged_spec = {**base_mapping[name], **{k: v for k, v in spec.items() if v is not None}}
+                    # If model changed but provider not explicitly overridden, clear inherited provider
+                    if "model" in spec and "provider" not in spec:
+                        merged_spec.pop("provider", None)
+                    base_mapping[name] = merged_spec
                 else:
                     base_mapping[name] = spec
             result["mapping"] = base_mapping

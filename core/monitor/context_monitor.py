@@ -32,12 +32,22 @@ class ContextMonitor(BaseMonitor):
         self.estimated_tokens = self._estimate_tokens(messages)
 
     def on_response(self, request: dict[str, Any], response: dict[str, Any]) -> None:
-        """响应后：更新消息计数"""
+        """响应后：用 API 返回的真实 input_tokens 更新上下文大小"""
         messages = response.get("messages", [])
         if isinstance(messages, list):
-            # 响应中的新消息数
             new_messages = len(messages)
             self.message_count = self._last_request_messages + new_messages
+
+            # 从 usage_metadata 取真实 input_tokens（含 system + tools + messages）
+            # input_tokens 在 LangChain 中对所有 provider 都是总量（含缓存），
+            # 不需要额外加 cache_read / cache_write（否则会双重计算）
+            for msg in reversed(messages):
+                usage = getattr(msg, "usage_metadata", None)
+                if usage:
+                    input_tokens = usage.get("input_tokens", 0) or 0
+                    if input_tokens > 0:
+                        self.estimated_tokens = input_tokens
+                        return
 
     def _estimate_tokens(self, messages: list) -> int:
         """估算消息的 token 数

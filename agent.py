@@ -48,7 +48,7 @@ from core.command.hooks.path_security import PathSecurityHook
 from core.filesystem import FileSystemMiddleware
 from core.memory import MemoryMiddleware
 from core.model_params import normalize_model_kwargs
-from core.monitor import MonitorMiddleware
+from core.monitor import MonitorMiddleware, apply_usage_patches
 from core.prompt_caching import PromptCachingMiddleware
 from core.queue import SteeringMiddleware
 from core.search import SearchMiddleware
@@ -59,6 +59,9 @@ from core.web import WebMiddleware
 
 # Import file operation recorder for time travel
 from tui.operations import get_recorder
+
+# @@@langchain-anthropic-streaming-usage-regression
+apply_usage_patches()
 
 
 class LeonAgent:
@@ -138,7 +141,7 @@ class LeonAgent:
         self._model_overrides = model_overrides
 
         # Resolve API key (prefer resolved provider from mapping)
-        provider_name = self._model_overrides.get("model_provider") if hasattr(self, "_model_overrides") else None
+        provider_name = self._resolve_provider_name(resolved_model, model_overrides)
         p = self.models_config.get_provider(provider_name) if provider_name else None
         self.api_key = api_key or (p.api_key if p else None) or self.models_config.get_api_key()
 
@@ -420,6 +423,18 @@ class LeonAgent:
 
         raise TypeError(f"sandbox must be Sandbox, str, or None, got {type(sandbox)}")
 
+    def _resolve_provider_name(self, model_name: str, overrides: dict | None = None) -> str | None:
+        """Resolve provider: overrides → custom_providers → infer from model name → env fallback."""
+        if overrides and overrides.get("model_provider"):
+            return overrides["model_provider"]
+        if self.models_config.active and self.models_config.active.provider:
+            return self.models_config.active.provider
+        from langchain.chat_models.base import _attempt_infer_model_provider
+        inferred = _attempt_infer_model_provider(model_name)
+        if inferred and self.models_config.get_provider(inferred):
+            return inferred
+        return self.models_config.get_model_provider()
+
     def _resolve_env_api_key(self) -> str | None:
         """Resolve API key from environment variables based on model_provider."""
         return self.models_config.get_api_key()
@@ -484,8 +499,8 @@ class LeonAgent:
         if hasattr(self, "_model_overrides"):
             kwargs.update(self._model_overrides)
 
-        # Use provider from model overrides (mapping) first, then global
-        provider = kwargs.get("model_provider") or self.models_config.get_model_provider()
+        # Use provider from model overrides (mapping) first, then infer
+        provider = self._resolve_provider_name(self.model_name, kwargs if kwargs else None)
         if provider:
             kwargs["model_provider"] = provider
 
@@ -501,6 +516,9 @@ class LeonAgent:
             kwargs["max_tokens"] = self.config.runtime.max_tokens
 
         kwargs.update(self.config.runtime.model_kwargs)
+
+        # Enable usage reporting in streaming mode
+        kwargs.setdefault("stream_usage", True)
 
         return kwargs
 
@@ -532,7 +550,7 @@ class LeonAgent:
         self._model_overrides = model_overrides
 
         # Resolve provider credentials
-        provider_name = model_overrides.get("model_provider")
+        provider_name = self._resolve_provider_name(resolved_model, model_overrides)
         p = self.models_config.get_provider(provider_name) if provider_name else None
         self.api_key = (p.api_key if p else None) or self.models_config.get_api_key()
         base_url = (p.base_url if p else None) or self.models_config.get_base_url()
@@ -547,9 +565,17 @@ class LeonAgent:
             "base_url": base_url,
         }
 
-        # Update cost calculator (lightweight)
+        # Update monitor (cost calculator + context_limit)
         if hasattr(self, "_monitor_middleware"):
-            self._monitor_middleware.update_model(resolved_model)
+            self._monitor_middleware.update_model(resolved_model, overrides=model_overrides)
+
+        # Update memory middleware context_limit
+        if hasattr(self, "_memory_middleware"):
+            from core.monitor.cost import get_model_context_limit
+            lookup_name = model_overrides.get("based_on") or resolved_model
+            self._memory_middleware.set_context_limit(
+                model_overrides.get("context_limit") or get_model_context_limit(lookup_name)
+            )
 
         # Update task middleware references
         if hasattr(self, "_task_middleware"):

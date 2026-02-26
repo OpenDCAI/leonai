@@ -12,7 +12,7 @@ from langchain.agents.middleware.types import (
 
 from .base import BaseMonitor
 from .context_monitor import ContextMonitor
-from .cost import CostCalculator, fetch_openrouter_pricing
+from .cost import CostCalculator, fetch_openrouter_pricing, get_model_context_limit
 from .runtime import AgentRuntime
 from .state_monitor import StateMonitor
 from .token_monitor import TokenMonitor
@@ -27,18 +27,24 @@ class MonitorMiddleware(AgentMiddleware):
 
     tools = []  # 不注入工具
 
-    def __init__(self, context_limit: int = 100000, model_name: str = "", verbose: bool = False):
+    def __init__(self, context_limit: int = 0, model_name: str = "", verbose: bool = False):
         self.verbose = verbose
 
         # 内置 monitors
         self._token_monitor = TokenMonitor()
-        self._context_monitor = ContextMonitor(context_limit=context_limit)
         self._state_monitor = StateMonitor()
 
-        # 注入成本计算器（先拉取 OpenRouter 定价）
+        # 注入成本计算器 + 从模型推导 context_limit（先拉取 OpenRouter 定价）
         if model_name:
             fetch_openrouter_pricing()
             self._token_monitor.cost_calculator = CostCalculator(model_name)
+            if context_limit <= 0:
+                context_limit = get_model_context_limit(model_name)
+
+        if context_limit <= 0:
+            context_limit = 128000
+
+        self._context_monitor = ContextMonitor(context_limit=context_limit)
 
         # 可扩展的 monitors 列表
         self._monitors: list[BaseMonitor] = [
@@ -61,9 +67,14 @@ class MonitorMiddleware(AgentMiddleware):
         """添加自定义 Monitor"""
         self._monitors.append(monitor)
 
-    def update_model(self, model_name: str) -> None:
-        """更新 cost calculator（不重建 middleware）"""
-        self._token_monitor.cost_calculator = CostCalculator(model_name)
+    def update_model(self, model_name: str, overrides: dict | None = None) -> None:
+        """更新 cost calculator 和 context_limit（不重建 middleware）"""
+        overrides = overrides or {}
+        lookup_name = overrides.get("based_on") or model_name
+        self._token_monitor.cost_calculator = CostCalculator(lookup_name)
+        self._context_monitor.context_limit = (
+            overrides.get("context_limit") or get_model_context_limit(lookup_name)
+        )
 
     def mark_ready(self) -> None:
         """标记 Agent 就绪（初始化完成后调用）"""

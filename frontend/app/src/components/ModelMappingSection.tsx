@@ -39,10 +39,8 @@ export default function ModelMappingSection({
       await fetch("/api/settings/model-mapping", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mapping: newMapping }),
+        body: JSON.stringify({ mapping: { [virtualId]: { model: modelId } } }),
       });
-
-      // Show success feedback
       setSuccessMessage(true);
       setTimeout(() => setSuccessMessage(false), 2000);
     } catch (error) {
@@ -56,7 +54,6 @@ export default function ModelMappingSection({
 
   return (
     <div className="space-y-4 relative">
-      {/* Section header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="w-1 h-6 bg-gradient-to-b from-[#0ea5e9] to-[#0284c7] rounded-full" />
@@ -77,7 +74,6 @@ export default function ModelMappingSection({
         )}
       </div>
 
-      {/* Virtual models grid */}
       <div className="grid grid-cols-2 gap-4">
         {virtualModels.map((vm, index) => {
           const currentModel = modelMapping[vm.id] || "";
@@ -85,13 +81,9 @@ export default function ModelMappingSection({
             <div
               key={vm.id}
               className="group relative border border-[#e2e8f0] rounded-xl p-5 bg-white hover:border-[#0ea5e9] hover:shadow-lg hover:shadow-[#0ea5e9]/10 transition-all duration-300"
-              style={{
-                animation: `fadeInUp 0.5s ease-out ${index * 0.1}s both`
-              }}
+              style={{ animation: `fadeInUp 0.5s ease-out ${index * 0.1}s both` }}
             >
-              {/* Gradient overlay on hover */}
               <div className="absolute inset-0 bg-gradient-to-br from-[#0ea5e9]/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 rounded-xl" />
-
               <div className="relative flex items-start gap-3 mb-4">
                 <div className="flex-1">
                   <h3 className="text-sm font-bold text-[#1e293b]" style={{ fontFamily: 'Inter, system-ui, sans-serif' }}>
@@ -100,7 +92,6 @@ export default function ModelMappingSection({
                   <p className="text-xs text-[#64748b] mt-1">{vm.description}</p>
                 </div>
               </div>
-
               {enabledModelsList.length === 0 ? (
                 <div className="w-full px-3 py-2.5 border border-[#e2e8f0] rounded-lg text-sm bg-[#f8fafc] text-[#94a3b8] flex items-center gap-2">
                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -116,9 +107,7 @@ export default function ModelMappingSection({
                 >
                   {!currentModel && <option value="">Select model...</option>}
                   {enabledModelsList.map((model) => (
-                    <option key={model.id} value={model.id}>
-                      {model.id}
-                    </option>
+                    <option key={model.id} value={model.id}>{model.id}</option>
                   ))}
                 </select>
               )}
@@ -129,28 +118,14 @@ export default function ModelMappingSection({
 
       <style>{`
         @keyframes fadeInUp {
-          from {
-            opacity: 0;
-            transform: translateY(20px);
-          }
-          to {
-            opacity: 1;
-            transform: translateY(0);
-          }
+          from { opacity: 0; transform: translateY(20px); }
+          to { opacity: 1; transform: translateY(0); }
         }
-
         @keyframes fadeIn {
-          from {
-            opacity: 0;
-          }
-          to {
-            opacity: 1;
-          }
+          from { opacity: 0; }
+          to { opacity: 1; }
         }
-
-        .animate-fadeIn {
-          animation: fadeIn 0.3s ease-out;
-        }
+        .animate-fadeIn { animation: fadeIn 0.3s ease-out; }
       `}</style>
     </div>
   );

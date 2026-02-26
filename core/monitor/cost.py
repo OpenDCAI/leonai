@@ -15,6 +15,7 @@ from typing import Any
 
 # 定价数据（运行时填充）
 _pricing_data: dict[str, dict[str, Decimal]] = {}
+_context_limits: dict[str, int] = {}  # model_name → context_length
 _initialized = False
 
 # 路径
@@ -26,8 +27,8 @@ M = Decimal("1000000")
 _PER_TOKEN_TO_PER_M = Decimal("1000000")
 
 
-def _parse_openrouter_model(model: dict[str, Any]) -> tuple[str, dict[str, Decimal]] | None:
-    """从 OpenRouter 模型数据中提取定价
+def _parse_openrouter_model(model: dict[str, Any]) -> tuple[str, dict[str, Decimal], int] | None:
+    """从 OpenRouter 模型数据中提取定价和上下文窗口大小
 
     OpenRouter pricing 字段是 per-token（字符串），转换为 per-1M-tokens（Decimal）。
     模型 ID 格式为 "provider/model-name"，提取 model-name 部分。
@@ -36,6 +37,7 @@ def _parse_openrouter_model(model: dict[str, Any]) -> tuple[str, dict[str, Decim
     pricing = model.get("pricing")
     if not pricing or not model_id:
         return None
+    context_length = model.get("context_length", 0) or 0
 
     prompt_price = pricing.get("prompt", "0")
     completion_price = pricing.get("completion", "0")
@@ -66,7 +68,7 @@ def _parse_openrouter_model(model: dict[str, Any]) -> tuple[str, dict[str, Decim
     }
 
     short_name = model_id.split("/", 1)[-1] if "/" in model_id else model_id
-    return short_name, costs
+    return short_name, costs, context_length
 
 
 def _parse_cache_price(price_str: str | None) -> Decimal:
@@ -100,24 +102,26 @@ def _infer_cache_prices(
     return cache_read, cache_write
 
 
-def _load_cache() -> dict[str, dict[str, str]] | None:
-    """从磁盘缓存加载定价数据"""
+def _load_cache() -> tuple[dict[str, dict[str, str]], dict[str, int]] | None:
+    """从磁盘缓存加载定价数据和上下文窗口大小"""
     if not _CACHE_PATH.exists():
         return None
     try:
         data = json.loads(_CACHE_PATH.read_text())
         if time.time() - data.get("timestamp", 0) > _CACHE_TTL:
             return None
-        return data.get("models", {})
+        models = data.get("models", {})
+        ctx = data.get("context_limits", {})
+        return models, ctx
     except Exception:
         return None
 
 
-def _save_cache(models: dict[str, dict[str, str]]) -> None:
-    """保存定价数据到磁盘缓存"""
+def _save_cache(models: dict[str, dict[str, str]], context_limits: dict[str, int]) -> None:
+    """保存定价数据和上下文窗口大小到磁盘缓存"""
     try:
         _CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        data = {"timestamp": time.time(), "models": models}
+        data = {"timestamp": time.time(), "models": models, "context_limits": context_limits}
         _CACHE_PATH.write_text(json.dumps(data))
     except Exception:
         pass
@@ -143,15 +147,18 @@ def fetch_openrouter_pricing() -> dict[str, dict[str, Decimal]]:
     """加载定价数据：API 缓存 → OpenRouter API → bundled 文件
 
     同步调用（启动时一次性），超时 5 秒。
+    同时加载上下文窗口大小数据。
     """
-    global _pricing_data, _initialized
+    global _pricing_data, _context_limits, _initialized
 
     if _initialized:
         return _pricing_data
 
     cached = _load_cache()
     if cached:
-        _pricing_data = _deserialize_costs(cached)
+        models_raw, ctx = cached
+        _pricing_data = _deserialize_costs(models_raw)
+        _context_limits = ctx
         _initialized = True
         return _pricing_data
 
@@ -161,7 +168,8 @@ def fetch_openrouter_pricing() -> dict[str, dict[str, Decimal]]:
 
 
 def _fetch_from_openrouter() -> dict[str, dict[str, Decimal]] | None:
-    """从 OpenRouter API 拉取定价数据"""
+    """从 OpenRouter API 拉取定价数据和上下文窗口大小"""
+    global _context_limits
     try:
         import urllib.request
 
@@ -173,15 +181,19 @@ def _fetch_from_openrouter() -> dict[str, dict[str, Decimal]] | None:
             data = json.loads(resp.read())
 
         result: dict[str, dict[str, Decimal]] = {}
+        ctx_result: dict[str, int] = {}
         for model in data.get("data", []):
             parsed = _parse_openrouter_model(model)
             if parsed:
-                name, costs = parsed
+                name, costs, ctx_len = parsed
                 if name not in result:
                     result[name] = costs
+                    if ctx_len > 0:
+                        ctx_result[name] = ctx_len
 
         if result:
-            _save_cache(_serialize_costs(result))
+            _context_limits = ctx_result
+            _save_cache(_serialize_costs(result), ctx_result)
             return result
     except Exception:
         pass
@@ -198,6 +210,59 @@ def _load_bundled() -> dict[str, dict[str, Decimal]]:
         return _deserialize_costs(data.get("models", data))
     except Exception:
         return {}
+
+
+# 常见模型的上下文窗口大小（兜底，OpenRouter 数据优先）
+_BUNDLED_CONTEXT_LIMITS: dict[str, int] = {
+    "claude-3-haiku": 200000,
+    "claude-3.5-haiku": 200000,
+    "claude-haiku-4.5": 200000,
+    "claude-3.5-sonnet": 200000,
+    "claude-sonnet-4-5": 200000,
+    "claude-sonnet-4.5": 200000,
+    "claude-3.7-sonnet": 200000,
+    "claude-opus-4": 200000,
+    "claude-opus-4.1": 200000,
+    "claude-sonnet-4.6": 1000000,
+    "claude-opus-4.6": 1000000,
+    "gpt-4o": 128000,
+    "gpt-4o-mini": 128000,
+    "gpt-4.1": 1047576,
+    "gpt-4.1-mini": 1047576,
+    "gpt-4.1-nano": 1047576,
+    "gpt-5": 128000,
+    "gpt-5-turbo": 128000,
+    "gpt-5.2": 128000,
+    "o1": 200000,
+    "o3": 200000,
+    "o3-mini": 200000,
+    "o4-mini": 200000,
+    "deepseek-chat": 65536,
+    "deepseek-reasoner": 65536,
+}
+
+_DEFAULT_CONTEXT_LIMIT = 128000
+
+
+def get_model_context_limit(model_name: str) -> int:
+    """查询模型的上下文窗口大小
+
+    查找优先级：OpenRouter 精确/规范化 → bundled 精确/规范化 → 默认值
+    不使用前缀匹配，因为不同变体的上下文窗口可能完全不同（如 gpt-5 vs gpt-5-turbo）。
+    """
+    normalized = CostCalculator._normalize_model_name(model_name)
+
+    # 1. OpenRouter 数据（精确 → 规范化）
+    for name in (model_name, normalized):
+        if name in _context_limits:
+            return _context_limits[name]
+
+    # 2. Bundled 兜底（精确 → 规范化）
+    for name in (model_name, normalized):
+        if name in _BUNDLED_CONTEXT_LIMITS:
+            return _BUNDLED_CONTEXT_LIMITS[name]
+
+    return _DEFAULT_CONTEXT_LIMIT
 
 
 class CostCalculator:
