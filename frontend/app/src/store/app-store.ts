@@ -39,6 +39,7 @@ interface AppState {
 
   // ── Library ──
   fetchLibrary: (type: string) => Promise<void>;
+  fetchLibraryNames: (type: string) => Promise<{ name: string; desc: string }[]>;
   addResource: (type: string, name: string, desc?: string, category?: string) => Promise<ResourceItem>;
   updateResource: (type: string, id: string, fields: Partial<ResourceItem>) => Promise<void>;
   deleteResource: (type: string, id: string) => Promise<void>;
@@ -190,6 +191,11 @@ export const useAppStore = create<AppState>()((set, get) => ({
     if (type === "skill") set({ librarySkills: data.items });
     else if (type === "mcp") set({ libraryMcps: data.items });
     else set({ libraryAgents: data.items });
+  },
+
+  fetchLibraryNames: async (type) => {
+    const data = await api<{ items: { name: string; desc: string }[] }>(`/library/${type}/names`);
+    return data.items;
   },
 
   addResource: async (type, name, desc = "", category = "") => {

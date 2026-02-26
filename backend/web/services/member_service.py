@@ -183,11 +183,16 @@ def _member_to_dict(member_dir: Path) -> dict[str, Any] | None:
         else:
             tools_list.append({"name": tool_name, "enabled": True, "desc": tool_info.get("desc", ""), "group": tool_info.get("group", "")})
 
-    # Skills from runtime only (no catalog)
+    # Skills from runtime — enrich desc from Library if empty
     skills_list = []
     for key, rc in bundle.runtime.items():
         if key.startswith("skills:"):
-            skills_list.append({"name": key.split(":", 1)[-1], "enabled": rc.enabled, "desc": rc.desc})
+            skill_name = key.split(":", 1)[-1]
+            desc = rc.desc
+            if not desc:
+                from backend.web.services.library_service import get_library_skill_desc
+                desc = get_library_skill_desc(skill_name)
+            skills_list.append({"name": skill_name, "enabled": rc.enabled, "desc": desc})
 
     # Convert rules to list of {name, content}
     rules_list = bundle.rules
@@ -399,7 +404,9 @@ def _write_rules(member_dir: Path, rules: list[dict[str, str]]) -> None:
 
 
 def _write_sub_agents(member_dir: Path, agents: list[dict[str, Any]]) -> None:
-    """Write sub-agents list to agents/ directory. Replaces all existing."""
+    """Write sub-agents list to agents/ directory. New assignments copy desc from Library."""
+    from backend.web.services.library_service import get_library_agent_desc
+
     agents_dir = member_dir / "agents"
     if agents_dir.exists():
         shutil.rmtree(agents_dir)
@@ -408,10 +415,13 @@ def _write_sub_agents(member_dir: Path, agents: list[dict[str, Any]]) -> None:
     agents_dir.mkdir(exist_ok=True)
     for item in agents:
         if isinstance(item, dict) and item.get("name"):
+            desc = item.get("desc", "")
+            if not desc:
+                desc = get_library_agent_desc(item["name"])
             _write_agent_md(
                 agents_dir / f"{item['name']}.md",
                 name=item["name"],
-                description=item.get("desc", ""),
+                description=desc,
             )
 
 
@@ -447,16 +457,35 @@ def _write_runtime_resources(member_dir: Path, config_patch: dict[str, Any]) -> 
 
 
 def _write_mcps(member_dir: Path, mcps: list[dict[str, Any]]) -> None:
-    """Write MCP list to .mcp.json."""
+    """Write MCP list to .mcp.json. New assignments (no command) copy from Library."""
+    from backend.web.services.library_service import get_mcp_server_config
+
     servers: dict[str, Any] = {}
     for item in mcps:
         if isinstance(item, dict) and item.get("name"):
-            servers[item["name"]] = {
-                "command": item.get("command", ""),
-                "args": item.get("args", []),
-                "env": item.get("env", {}),
-                "disabled": item.get("disabled", False),
-            }
+            if item.get("command"):
+                # Existing/customized — write as-is
+                servers[item["name"]] = {
+                    "command": item["command"],
+                    "args": item.get("args", []),
+                    "env": item.get("env", {}),
+                    "disabled": item.get("disabled", False),
+                }
+            else:
+                # New assignment from Library — copy config
+                lib_cfg = get_mcp_server_config(item["name"])
+                if lib_cfg:
+                    servers[item["name"]] = {
+                        "command": lib_cfg.get("command", ""),
+                        "args": lib_cfg.get("args", []),
+                        "env": lib_cfg.get("env", {}),
+                        "disabled": item.get("disabled", False),
+                    }
+                else:
+                    servers[item["name"]] = {
+                        "command": "", "args": [], "env": {},
+                        "disabled": item.get("disabled", False),
+                    }
     if servers:
         _write_json(member_dir / ".mcp.json", {"mcpServers": servers})
     else:

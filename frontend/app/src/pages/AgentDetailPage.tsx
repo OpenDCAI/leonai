@@ -3,7 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import {
   ArrowLeft, Bot, FileText, Wrench, Plug, Zap, Users, BookOpen,
   Play, Tag, History, Save, Plus, Trash2, Edit2, Check, Search,
-  ChevronRight, ChevronDown,
+  ChevronRight, ChevronDown, Library,
 } from "lucide-react";
 import TestPanel from "@/components/TestPanel";
 import PublishDialog from "@/components/PublishDialog";
@@ -57,6 +57,9 @@ export default function AgentDetail() {
   const member = useAppStore(s => s.getMemberById(id || ""));
   const updateMemberConfig = useAppStore(s => s.updateMemberConfig);
   const loadAll = useAppStore(s => s.loadAll);
+  const librarySkills = useAppStore(s => s.librarySkills);
+  const libraryMcps = useAppStore(s => s.libraryMcps);
+  const libraryAgents = useAppStore(s => s.libraryAgents);
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
@@ -71,11 +74,13 @@ export default function AgentDetail() {
   // Search in tree
   const [treeSearch, setTreeSearch] = useState("");
 
-  // Dialog state for adding items
+  // Dialog state for adding rules (only rules use inline creation)
   const [addDialogOpen, setAddDialogOpen] = useState(false);
-  const [addDialogTarget, setAddDialogTarget] = useState<ModuleId>("tools");
   const [addName, setAddName] = useState("");
-  const [addDesc, setAddDesc] = useState("");
+
+  // Picker state for Library resources (MCP/Skills/Sub-agents)
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerTarget, setPickerTarget] = useState<ModuleId>("skills");
 
   const statusLabels: Record<string, string> = { active: "在岗", draft: "草稿", inactive: "离线" };
 
@@ -101,32 +106,49 @@ export default function AgentDetail() {
   };
 
   const openAddDialog = (target: ModuleId) => {
-    setAddDialogTarget(target);
-    setAddName("");
-    setAddDesc("");
-    setAddDialogOpen(true);
+    if (target === "rules") {
+      setAddName("");
+      setAddDialogOpen(true);
+    } else {
+      // MCP/Skills/Sub-agents use Library Picker
+      setPickerTarget(target);
+      setPickerOpen(true);
+    }
   };
 
-  const handleAdd = async () => {
+  const handleAddRule = async () => {
     if (!addName.trim() || !member) return;
-    const trimName = addName.trim();
-    const trimDesc = addDesc.trim();
     try {
-      if (addDialogTarget === "tools") {
-        await updateMemberConfig(member.id, { tools: [...member.config.tools, { name: trimName, desc: trimDesc, enabled: true }] });
-      } else if (addDialogTarget === "mcp") {
-        await updateMemberConfig(member.id, { mcps: [...member.config.mcps, { name: trimName, command: "", args: [], env: {}, disabled: false }] });
-      } else if (addDialogTarget === "skills") {
-        await updateMemberConfig(member.id, { skills: [...member.config.skills, { name: trimName, desc: trimDesc, enabled: true }] });
-      } else if (addDialogTarget === "subagents") {
-        await updateMemberConfig(member.id, { subAgents: [...member.config.subAgents, { name: trimName, desc: trimDesc }] });
-      } else if (addDialogTarget === "rules") {
-        await updateMemberConfig(member.id, { rules: [...member.config.rules, { name: trimName, content: "" }] });
-      }
-      toast.success(`${trimName} 已添加`);
+      await updateMemberConfig(member.id, { rules: [...member.config.rules, { name: addName.trim(), content: "" }] });
+      toast.success(`${addName.trim()} 已添加`);
       setAddDialogOpen(false);
     } catch (e) {
       toast.error("添加失败，请重试");
+    }
+  };
+
+  const handleAssign = async (mod: ModuleId, selectedNames: string[]) => {
+    if (!member) return;
+    try {
+      if (mod === "mcp") {
+        const existing = member.config.mcps.filter(m => selectedNames.includes(m.name));
+        const newNames = selectedNames.filter(n => !member.config.mcps.some(m => m.name === n));
+        const newItems: McpItem[] = newNames.map(name => ({ name, command: "", args: [], env: {}, disabled: false }));
+        await updateMemberConfig(member.id, { mcps: [...existing, ...newItems] });
+      } else if (mod === "skills") {
+        const existing = member.config.skills.filter(s => selectedNames.includes(s.name));
+        const newNames = selectedNames.filter(n => !member.config.skills.some(s => s.name === n));
+        const newItems: CrudItem[] = newNames.map(name => ({ name, desc: "", enabled: true }));
+        await updateMemberConfig(member.id, { skills: [...existing, ...newItems] });
+      } else if (mod === "subagents") {
+        const existing = member.config.subAgents.filter(s => selectedNames.includes(s.name));
+        const newNames = selectedNames.filter(n => !member.config.subAgents.some(s => s.name === n));
+        const newItems: SubAgent[] = newNames.map(name => ({ name, desc: "" }));
+        await updateMemberConfig(member.id, { subAgents: [...existing, ...newItems] });
+      }
+      toast.success("已更新");
+    } catch (e) {
+      toast.error("更新失败，请重试");
     }
   };
 
@@ -530,24 +552,39 @@ export default function AgentDetail() {
         </div>
       )}
 
-      {/* Add Dialog */}
+      {/* Add Rule Dialog (rules only) */}
       <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
-            <DialogTitle>
-              添加{addDialogTarget === "tools" ? "工具" : addDialogTarget === "mcp" ? "MCP" : addDialogTarget === "skills" ? "技能" : addDialogTarget === "rules" ? "规则" : "Sub-agent"}
-            </DialogTitle>
+            <DialogTitle>添加规则</DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
-            <Input value={addName} onChange={e => setAddName(e.target.value)} placeholder="名称" />
-            <Input value={addDesc} onChange={e => setAddDesc(e.target.value)} placeholder="描述" />
+            <Input value={addName} onChange={e => setAddName(e.target.value)} placeholder="规则名称" />
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setAddDialogOpen(false)}>取消</Button>
-            <Button onClick={handleAdd} disabled={!addName.trim()}>添加</Button>
+            <Button onClick={handleAddRule} disabled={!addName.trim()}>添加</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Library Resource Picker (MCP/Skills/Sub-agents) */}
+      <ResourcePicker
+        open={pickerOpen}
+        onOpenChange={setPickerOpen}
+        title={pickerTarget === "mcp" ? "从 Library 选取 MCP" : pickerTarget === "skills" ? "从 Library 选取技能" : "从 Library 选取 Sub-agent"}
+        available={
+          pickerTarget === "mcp" ? libraryMcps.map(r => ({ name: r.name, desc: r.desc }))
+          : pickerTarget === "skills" ? librarySkills.map(r => ({ name: r.name, desc: r.desc }))
+          : libraryAgents.map(r => ({ name: r.name, desc: r.desc }))
+        }
+        assigned={
+          pickerTarget === "mcp" ? member.config.mcps.map(m => m.name)
+          : pickerTarget === "skills" ? member.config.skills.map(s => s.name)
+          : member.config.subAgents.map(s => s.name)
+        }
+        onConfirm={(selected) => handleAssign(pickerTarget, selected)}
+      />
 
       <PublishDialog open={showPublish} onOpenChange={setShowPublish} memberId={member.id} />
     </div>
@@ -616,8 +653,8 @@ function ModuleOverview({
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-semibold text-foreground">{title} ({items.length})</h3>
         <Button variant="outline" size="sm" onClick={onAdd} className="gap-1.5">
-          <Plus className="w-3 h-3" />
-          添加
+          <Library className="w-3 h-3" />
+          从 Library 选取
         </Button>
       </div>
       <div className="space-y-2">
@@ -632,7 +669,7 @@ function ModuleOverview({
               <p className="text-xs text-muted-foreground">{item.desc}</p>
             </div>
             <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
-              <button onClick={() => onDelete(item.name)} className="p-1 rounded hover:bg-destructive/10 opacity-0 group-hover:opacity-100 transition-all" title="删除">
+              <button onClick={() => onDelete(item.name)} className="p-1 rounded hover:bg-destructive/10 opacity-0 group-hover:opacity-100 transition-all" title="移除">
                 <Trash2 className="w-3 h-3 text-muted-foreground hover:text-destructive" />
               </button>
               <Switch checked={item.enabled} onCheckedChange={checked => onToggle(item.name, checked)} />
@@ -640,7 +677,7 @@ function ModuleOverview({
           </div>
         ))}
         {items.length === 0 && (
-          <div className="text-center py-8 text-xs text-muted-foreground">暂无内容，点击上方按钮添加</div>
+          <div className="text-center py-8 text-xs text-muted-foreground">暂无内容，点击上方按钮从 Library 选取</div>
         )}
       </div>
     </div>
@@ -711,8 +748,8 @@ function SubAgentOverview({
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-semibold text-foreground">Sub-agents ({items.length})</h3>
         <Button variant="outline" size="sm" onClick={onAdd} className="gap-1.5">
-          <Plus className="w-3 h-3" />
-          添加
+          <Library className="w-3 h-3" />
+          从 Library 选取
         </Button>
       </div>
       <div className="space-y-2">
@@ -739,7 +776,7 @@ function SubAgentOverview({
           </div>
         ))}
         {items.length === 0 && (
-          <div className="text-center py-8 text-xs text-muted-foreground">暂无 Sub-agent，点击上方按钮添加</div>
+          <div className="text-center py-8 text-xs text-muted-foreground">暂无 Sub-agent，点击上方按钮从 Library 选取</div>
         )}
       </div>
     </div>
@@ -919,8 +956,8 @@ function McpOverview({
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-semibold text-foreground">MCP ({items.length})</h3>
         <Button variant="outline" size="sm" onClick={onAdd} className="gap-1.5">
-          <Plus className="w-3 h-3" />
-          添加
+          <Library className="w-3 h-3" />
+          从 Library 选取
         </Button>
       </div>
       <div className="space-y-2">
@@ -943,7 +980,7 @@ function McpOverview({
           </div>
         ))}
         {items.length === 0 && (
-          <div className="text-center py-8 text-xs text-muted-foreground">暂无 MCP，点击上方按钮添加</div>
+          <div className="text-center py-8 text-xs text-muted-foreground">暂无 MCP，点击上方按钮从 Library 选取</div>
         )}
       </div>
     </div>
@@ -1060,6 +1097,119 @@ function ToolsCatalog({
         </div>
       ))}
     </div>
+  );
+}
+
+// ==================== Resource Picker (Library → Member assignment) ====================
+
+function ResourcePicker({
+  open, onOpenChange, title, available, assigned, onConfirm,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  title: string;
+  available: { name: string; desc: string }[];
+  assigned: string[];
+  onConfirm: (selected: string[]) => void;
+}) {
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [search, setSearch] = useState("");
+
+  useEffect(() => {
+    if (open) {
+      setSelected(new Set(assigned));
+      setSearch("");
+    }
+  }, [open, assigned]);
+
+  const toggle = (name: string) => {
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  };
+
+  const filtered = search
+    ? available.filter(i => i.name.toLowerCase().includes(search.toLowerCase()))
+    : available;
+
+  const newCount = [...selected].filter(n => !assigned.includes(n)).length;
+  const removedCount = assigned.filter(n => !selected.has(n)).length;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+        </DialogHeader>
+        {available.length > 5 && (
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+            <Input
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="搜索..."
+              className="pl-8 h-8 text-sm"
+            />
+          </div>
+        )}
+        <div className="space-y-1 max-h-64 overflow-y-auto">
+          {filtered.map(item => {
+            const checked = selected.has(item.name);
+            return (
+              <label
+                key={item.name}
+                className={`flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-colors ${
+                  checked ? "bg-primary/5 border border-primary/20" : "hover:bg-muted border border-transparent"
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={() => toggle(item.name)}
+                  className="rounded border-border"
+                />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-foreground">{item.name}</p>
+                  {item.desc && (
+                    <p className="text-xs text-muted-foreground truncate">{item.desc}</p>
+                  )}
+                </div>
+                {assigned.includes(item.name) && (
+                  <span className="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
+                    已分配
+                  </span>
+                )}
+              </label>
+            );
+          })}
+          {available.length === 0 && (
+            <div className="text-center py-6 space-y-2">
+              <p className="text-xs text-muted-foreground">Library 中暂无资源</p>
+              <p className="text-xs text-muted-foreground">请先到 Library 页面创建</p>
+            </div>
+          )}
+          {available.length > 0 && filtered.length === 0 && (
+            <div className="text-center py-4 text-xs text-muted-foreground">无匹配结果</div>
+          )}
+        </div>
+        <DialogFooter className="flex items-center justify-between sm:justify-between">
+          <div className="text-xs text-muted-foreground">
+            {newCount > 0 && <span className="text-primary">+{newCount} </span>}
+            {removedCount > 0 && <span className="text-destructive">-{removedCount} </span>}
+            {newCount === 0 && removedCount === 0 && "无变更"}
+          </div>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>取消</Button>
+            <Button size="sm" onClick={() => { onConfirm([...selected]); onOpenChange(false); }}>
+              确认
+            </Button>
+          </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

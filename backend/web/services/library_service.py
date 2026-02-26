@@ -163,6 +163,66 @@ def delete_resource(resource_type: str, resource_id: str) -> bool:
     return False
 
 
+def list_library_names(resource_type: str) -> list[dict[str, str]]:
+    """Lightweight name+desc list for Picker UI."""
+    results: list[dict[str, str]] = []
+    if resource_type == "skill":
+        skills_dir = LIBRARY_DIR / "skills"
+        if skills_dir.exists():
+            for d in sorted(skills_dir.iterdir()):
+                if d.is_dir():
+                    meta = _read_json(d / "meta.json", {})
+                    results.append({"name": meta.get("name", d.name), "desc": meta.get("desc", "")})
+    elif resource_type == "agent":
+        agents_dir = LIBRARY_DIR / "agents"
+        if agents_dir.exists():
+            for f in sorted(agents_dir.glob("*.md")):
+                meta = _read_json(f.with_suffix(".json"), {})
+                results.append({"name": meta.get("name", f.stem), "desc": meta.get("desc", "")})
+    elif resource_type == "mcp":
+        mcp_data = _read_json(LIBRARY_DIR / ".mcp.json", {"mcpServers": {}})
+        for name, cfg in mcp_data.get("mcpServers", {}).items():
+            results.append({"name": name, "desc": cfg.get("desc", "")})
+    return results
+
+
+def get_mcp_server_config(name: str) -> dict[str, Any] | None:
+    """Get a single MCP server config from Library .mcp.json."""
+    mcp_data = _read_json(LIBRARY_DIR / ".mcp.json", {"mcpServers": {}})
+    return mcp_data.get("mcpServers", {}).get(name)
+
+
+def get_library_skill_desc(name: str) -> str:
+    """Get skill description from Library by name."""
+    skills_dir = LIBRARY_DIR / "skills"
+    if not skills_dir.exists():
+        return ""
+    for d in skills_dir.iterdir():
+        if d.is_dir():
+            meta = _read_json(d / "meta.json", {})
+            if meta.get("name") == name:
+                return meta.get("desc", "")
+    return ""
+
+
+def get_library_agent_desc(name: str) -> str:
+    """Get agent description from Library by name."""
+    agents_dir = LIBRARY_DIR / "agents"
+    if not agents_dir.exists():
+        return ""
+    # Try exact match on filename stem
+    json_path = agents_dir / f"{name}.json"
+    if json_path.exists():
+        meta = _read_json(json_path, {})
+        return meta.get("desc", "")
+    # Try matching by name field
+    for f in agents_dir.glob("*.json"):
+        meta = _read_json(f, {})
+        if meta.get("name") == name:
+            return meta.get("desc", "")
+    return ""
+
+
 def get_resource_used_by(resource_type: str, resource_name: str) -> int:
     """Count how many members use a given resource by name."""
     from backend.web.services.member_service import list_members

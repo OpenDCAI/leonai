@@ -141,6 +141,12 @@ async def delete_resource(resource_type: str, resource_id: str) -> dict[str, Any
     return {"success": True}
 
 
+@router.get("/library/{resource_type}/names")
+async def list_library_names(resource_type: str) -> dict[str, Any]:
+    items = await asyncio.to_thread(library_service.list_library_names, resource_type)
+    return {"items": items}
+
+
 @router.get("/library/{resource_type}/{resource_name}/used-by")
 async def get_used_by(resource_type: str, resource_name: str) -> dict[str, Any]:
     count = await asyncio.to_thread(library_service.get_resource_used_by, resource_type, resource_name)
