@@ -67,6 +67,31 @@ async def test_get_settings_fails_loud_on_malformed_user_json(tmp_path, monkeypa
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("broken_file", "expected_name"),
+    [("preferences", "preferences.json"), ("models", "models.json")],
+)
+async def test_get_settings_fails_loud_on_structurally_invalid_user_json(
+    tmp_path, monkeypatch, broken_file, expected_name
+):
+    settings_path = tmp_path / "preferences.json"
+    models_path = tmp_path / "models.json"
+    monkeypatch.setattr(settings_router, "SETTINGS_FILE", settings_path)
+    monkeypatch.setattr(settings_router, "MODELS_FILE", models_path)
+    monkeypatch.setattr(settings_router, "load_merged_models", _stub_merged_models)
+
+    target = settings_path if broken_file == "preferences" else models_path
+    target.write_text("[]", encoding="utf-8")
+
+    with pytest.raises(HTTPException) as exc_info:
+        await settings_router.get_settings()
+
+    assert exc_info.value.status_code == 500
+    assert expected_name in str(exc_info.value.detail)
+    assert "Invalid" in str(exc_info.value.detail)
+
+
+@pytest.mark.asyncio
 async def test_get_settings_keeps_defaults_when_user_files_are_missing(tmp_path, monkeypatch):
     monkeypatch.setattr(settings_router, "SETTINGS_FILE", tmp_path / "preferences.json")
     monkeypatch.setattr(settings_router, "MODELS_FILE", tmp_path / "models.json")
@@ -96,6 +121,22 @@ async def test_list_sandbox_configs_fails_loud_on_malformed_json(tmp_path, monke
     assert exc_info.value.status_code == 500
     assert "docker.json" in str(exc_info.value.detail)
     assert "Corrupt JSON" in str(exc_info.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_list_sandbox_configs_fails_loud_on_non_object_json(tmp_path, monkeypatch):
+    sandboxes_dir = tmp_path / "sandboxes"
+    sandboxes_dir.mkdir()
+    bad_file = sandboxes_dir / "docker.json"
+    bad_file.write_text("[]", encoding="utf-8")
+    monkeypatch.setattr(settings_router, "SANDBOXES_DIR", sandboxes_dir)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await settings_router.list_sandbox_configs()
+
+    assert exc_info.value.status_code == 500
+    assert "docker.json" in str(exc_info.value.detail)
+    assert "Invalid sandbox config structure" in str(exc_info.value.detail)
 
 
 @pytest.mark.asyncio

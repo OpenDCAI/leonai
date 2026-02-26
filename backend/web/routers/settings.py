@@ -65,7 +65,10 @@ def load_settings(*, fail_loud: bool = False) -> WorkspaceSettings:
     data = _read_json_file(SETTINGS_FILE, missing_default={}, fail_loud=fail_loud)
     try:
         return WorkspaceSettings(**data)
-    except Exception:
+    except Exception as e:
+        # @@@settings_shape_fail_loud - fail-loud reads must surface structural/schema-invalid JSON instead of silently defaulting
+        if fail_loud:
+            raise HTTPException(status_code=500, detail=f"Invalid settings structure in {SETTINGS_FILE}: {str(e)}") from e
         return WorkspaceSettings()
 
 
@@ -84,6 +87,8 @@ def load_models(*, fail_loud: bool = False) -> dict[str, Any]:
     """Load raw models.json from disk (user-level only)."""
     data = _read_json_file(MODELS_FILE, missing_default={}, fail_loud=fail_loud)
     if not isinstance(data, dict):
+        if fail_loud:
+            raise HTTPException(status_code=500, detail=f"Invalid models structure in {MODELS_FILE}: root must be a JSON object")
         return {}
     return data
 
@@ -655,7 +660,10 @@ async def list_sandbox_configs() -> dict[str, Any]:
     sandboxes: dict[str, Any] = {}
     if SANDBOXES_DIR.exists():
         for f in SANDBOXES_DIR.glob("*.json"):
-            sandboxes[f.stem] = _read_json_file(f, missing_default={}, fail_loud=True)
+            config = _read_json_file(f, missing_default={}, fail_loud=True)
+            if not isinstance(config, dict):
+                raise HTTPException(status_code=500, detail=f"Invalid sandbox config structure in {f}: root must be a JSON object")
+            sandboxes[f.stem] = config
     return {"sandboxes": sandboxes}
 
 
