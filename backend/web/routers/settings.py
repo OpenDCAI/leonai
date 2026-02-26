@@ -41,12 +41,29 @@ class DirectoryItem(BaseModel):
     is_dir: bool
 
 
-def load_settings() -> WorkspaceSettings:
-    if not SETTINGS_FILE.exists():
-        return WorkspaceSettings()
+def _read_json_file(path: Path, *, missing_default: Any, fail_loud: bool = False) -> Any:
+    if not path.exists():
+        return missing_default
     try:
-        with open(SETTINGS_FILE, encoding="utf-8") as f:
-            data = json.load(f)
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except json.JSONDecodeError as e:
+        # @@@fail_loud_json - only read endpoints opt in so malformed user JSON is surfaced instead of silently defaulting
+        if fail_loud:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Corrupt JSON in {path}: {e.msg} (line {e.lineno}, column {e.colno})",
+            ) from e
+        return missing_default
+    except OSError as e:
+        if fail_loud:
+            raise HTTPException(status_code=500, detail=f"Failed to read {path}: {str(e)}") from e
+        return missing_default
+
+
+def load_settings(*, fail_loud: bool = False) -> WorkspaceSettings:
+    data = _read_json_file(SETTINGS_FILE, missing_default={}, fail_loud=fail_loud)
+    try:
         return WorkspaceSettings(**data)
     except Exception:
         return WorkspaceSettings()
@@ -63,15 +80,12 @@ def save_settings(settings: WorkspaceSettings) -> None:
 # ============================================================================
 
 
-def load_models() -> dict[str, Any]:
+def load_models(*, fail_loud: bool = False) -> dict[str, Any]:
     """Load raw models.json from disk (user-level only)."""
-    if not MODELS_FILE.exists():
+    data = _read_json_file(MODELS_FILE, missing_default={}, fail_loud=fail_loud)
+    if not isinstance(data, dict):
         return {}
-    try:
-        with open(MODELS_FILE, encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return {}
+    return data
 
 
 def save_models(data: dict[str, Any]) -> None:
@@ -112,13 +126,13 @@ class UserSettings(BaseModel):
 @router.get("")
 async def get_settings() -> UserSettings:
     """Get combined settings (workspace + default_model from preferences.json, models from models.json)."""
-    ws = load_settings()
+    ws = load_settings(fail_loud=True)
     models = load_merged_models()
 
     # Build compat view
     mapping = {k: v.model for k, v in models.mapping.items()}
     providers = {k: ProviderConfig(api_key=v.api_key, base_url=v.base_url) for k, v in models.providers.items()}
-    raw = load_models()
+    raw = load_models(fail_loud=True)
     custom_config = raw.get("pool", {}).get("custom_config", {})
 
     return UserSettings(
@@ -641,11 +655,7 @@ async def list_sandbox_configs() -> dict[str, Any]:
     sandboxes: dict[str, Any] = {}
     if SANDBOXES_DIR.exists():
         for f in SANDBOXES_DIR.glob("*.json"):
-            try:
-                with open(f, encoding="utf-8") as fh:
-                    sandboxes[f.stem] = json.load(fh)
-            except Exception:
-                sandboxes[f.stem] = {}
+            sandboxes[f.stem] = _read_json_file(f, missing_default={}, fail_loud=True)
     return {"sandboxes": sandboxes}
 
 

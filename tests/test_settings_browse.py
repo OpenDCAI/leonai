@@ -5,6 +5,7 @@ import pytest
 from fastapi import HTTPException
 
 from backend.web.routers import sandbox as sandbox_router
+from backend.web.routers import settings as settings_router
 from backend.web.routers.settings import browse_filesystem
 from backend.web.utils.helpers import resolve_local_workspace_path
 from backend.web.routers import workspace as workspace_router
@@ -34,6 +35,78 @@ async def test_browse_filesystem_keeps_400_for_file_path(tmp_path):
     assert exc_info.value.detail == "Path is not a directory"
 
 
+def _stub_merged_models() -> SimpleNamespace:
+    return SimpleNamespace(
+        mapping={},
+        providers={},
+        pool=SimpleNamespace(enabled=[], custom=[]),
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("broken_file", "expected_name"),
+    [("preferences", "preferences.json"), ("models", "models.json")],
+)
+async def test_get_settings_fails_loud_on_malformed_user_json(tmp_path, monkeypatch, broken_file, expected_name):
+    settings_path = tmp_path / "preferences.json"
+    models_path = tmp_path / "models.json"
+    monkeypatch.setattr(settings_router, "SETTINGS_FILE", settings_path)
+    monkeypatch.setattr(settings_router, "MODELS_FILE", models_path)
+    monkeypatch.setattr(settings_router, "load_merged_models", _stub_merged_models)
+
+    target = settings_path if broken_file == "preferences" else models_path
+    target.write_text("{invalid json", encoding="utf-8")
+
+    with pytest.raises(HTTPException) as exc_info:
+        await settings_router.get_settings()
+
+    assert exc_info.value.status_code == 500
+    assert expected_name in str(exc_info.value.detail)
+    assert "Corrupt JSON" in str(exc_info.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_get_settings_keeps_defaults_when_user_files_are_missing(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings_router, "SETTINGS_FILE", tmp_path / "preferences.json")
+    monkeypatch.setattr(settings_router, "MODELS_FILE", tmp_path / "models.json")
+    monkeypatch.setattr(settings_router, "load_merged_models", _stub_merged_models)
+
+    result = await settings_router.get_settings()
+
+    assert result.default_workspace is None
+    assert result.recent_workspaces == []
+    assert result.default_model == "leon:large"
+    assert result.custom_config == {}
+    assert result.enabled_models == []
+    assert result.custom_models == []
+
+
+@pytest.mark.asyncio
+async def test_list_sandbox_configs_fails_loud_on_malformed_json(tmp_path, monkeypatch):
+    sandboxes_dir = tmp_path / "sandboxes"
+    sandboxes_dir.mkdir()
+    bad_file = sandboxes_dir / "docker.json"
+    bad_file.write_text("{bad", encoding="utf-8")
+    monkeypatch.setattr(settings_router, "SANDBOXES_DIR", sandboxes_dir)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await settings_router.list_sandbox_configs()
+
+    assert exc_info.value.status_code == 500
+    assert "docker.json" in str(exc_info.value.detail)
+    assert "Corrupt JSON" in str(exc_info.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_list_sandbox_configs_missing_dir_returns_empty(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings_router, "SANDBOXES_DIR", tmp_path / "missing-sandboxes")
+
+    result = await settings_router.list_sandbox_configs()
+
+    assert result == {"sandboxes": {}}
+
+
 def test_resolve_local_workspace_path_accepts_relative_workspace_root(tmp_path, monkeypatch) -> None:
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir()
@@ -42,6 +115,8 @@ def test_resolve_local_workspace_path_accepts_relative_workspace_root(tmp_path, 
     resolved = resolve_local_workspace_path("src/main.py", local_workspace_root=Path("workspace"))
 
     assert resolved == (workspace_root / "src/main.py").resolve()
+
+
 @pytest.mark.asyncio
 async def test_pick_folder_cancel_keeps_400(monkeypatch):
     monkeypatch.setattr(sandbox_router.sys, "platform", "darwin")
