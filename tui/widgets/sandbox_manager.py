@@ -104,7 +104,7 @@ class SandboxManagerApp(App):
                     providers["docker"] = DockerProvider(
                         image=config.docker.image,
                         mount_path=config.docker.mount_path,
-                        default_cwd=config.docker.cwd or config.docker.mount_path,
+                        default_cwd=config.docker.cwd,
                         bind_mounts=[mount.model_dump() for mount in config.docker.bind_mounts],
                     )
                 elif config.provider == "e2b":
