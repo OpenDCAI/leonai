@@ -9,7 +9,25 @@ import json
 import os
 from pathlib import Path
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+
+class MountSpec(BaseModel):
+    source: str
+    target: str
+    read_only: bool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def _from_legacy_bind_mount_keys(cls, value):
+        if not isinstance(value, dict):
+            return value
+        payload = dict(value)
+        if "source" not in payload and "host_path" in payload:
+            payload["source"] = payload["host_path"]
+        if "target" not in payload and "mount_path" in payload:
+            payload["target"] = payload["mount_path"]
+        return payload
 
 
 class AgentBayConfig(BaseModel):
@@ -22,6 +40,7 @@ class AgentBayConfig(BaseModel):
 class DockerConfig(BaseModel):
     image: str = "python:3.12-slim"
     mount_path: str = "/workspace"
+    bind_mounts: list[MountSpec] = Field(default_factory=list)
 
 
 class E2BConfig(BaseModel):
@@ -32,16 +51,11 @@ class E2BConfig(BaseModel):
 
 
 class DaytonaConfig(BaseModel):
-    class BindMount(BaseModel):
-        host_path: str
-        mount_path: str
-        read_only: bool = False
-
     api_key: str | None = None
     api_url: str = "https://app.daytona.io/api"
     target: str = "local"
     cwd: str = "/home/daytona"
-    bind_mounts: list[BindMount] = Field(default_factory=list)
+    bind_mounts: list[MountSpec] = Field(default_factory=list)
 
 
 class SandboxConfig(BaseModel):

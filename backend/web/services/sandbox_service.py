@@ -60,6 +60,7 @@ def init_providers_and_managers() -> tuple[dict, dict]:
                 providers[name] = DockerProvider(
                     image=config.docker.image,
                     mount_path=config.docker.mount_path,
+                    bind_mounts=[mount.model_dump() for mount in config.docker.bind_mounts],
                     provider_name=name,
                 )
             elif config.provider == "e2b":

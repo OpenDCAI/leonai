@@ -172,18 +172,23 @@ class DaytonaProvider(SandboxProvider):
     def _api_auth_headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
 
+    def _normalize_mount(self, mount: dict[str, Any]) -> tuple[str, str, bool]:
+        # @@@mount-key-compat - Keep runtime compatible with both legacy host_path/mount_path and new source/target config keys.
+        source = mount.get("source") or mount.get("host_path")
+        target = mount.get("target") or mount.get("mount_path")
+        if not source or not target:
+            raise RuntimeError(f"Invalid bind mount spec (expected source+target): {mount!r}")
+        return str(source), str(target), bool(mount.get("read_only", False))
+
     def _create_via_http(self, bind_mounts: list[dict[str, Any]]) -> str:
+        normalized_mounts: list[dict[str, Any]] = []
+        for mount in bind_mounts:
+            source, target, read_only = self._normalize_mount(mount)
+            normalized_mounts.append({"hostPath": source, "mountPath": target, "readOnly": read_only})
         payload = {
             "name": f"leon-{uuid.uuid4().hex[:12]}",
             "autoStopInterval": 0,
-            "bindMounts": [
-                {
-                    "hostPath": str(mount["host_path"]),
-                    "mountPath": str(mount["mount_path"]),
-                    "readOnly": bool(mount.get("read_only", False)),
-                }
-                for mount in bind_mounts
-            ],
+            "bindMounts": normalized_mounts,
         }
         with httpx.Client(timeout=30.0) as client:
             response = client.post(f"{self.api_url.rstrip('/')}/sandbox", headers=self._api_auth_headers(), json=payload)

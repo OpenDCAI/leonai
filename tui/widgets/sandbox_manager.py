@@ -104,6 +104,7 @@ class SandboxManagerApp(App):
                     providers["docker"] = DockerProvider(
                         image=config.docker.image,
                         mount_path=config.docker.mount_path,
+                        bind_mounts=[mount.model_dump() for mount in config.docker.bind_mounts],
                     )
                 elif config.provider == "e2b":
                     from sandbox.providers.e2b import E2BProvider
@@ -126,6 +127,7 @@ class SandboxManagerApp(App):
                             api_url=config.daytona.api_url,
                             target=config.daytona.target,
                             default_cwd=config.daytona.cwd,
+                            bind_mounts=[mount.model_dump() for mount in config.daytona.bind_mounts],
                         )
             except Exception as e:
                 print(f"[SandboxManager] Failed to load {name}: {e}")

@@ -9,6 +9,7 @@ from __future__ import annotations
 import shlex
 import subprocess
 import uuid
+from typing import Any
 
 from sandbox.provider import Metrics, ProviderCapability, ProviderExecResult, SandboxProvider, SessionInfo
 
@@ -38,6 +39,7 @@ class DockerProvider(SandboxProvider):
         self,
         image: str,
         mount_path: str = "/workspace",
+        bind_mounts: list[dict[str, Any]] | None = None,
         command_timeout_sec: float = 20.0,
         provider_name: str | None = None,
     ):
@@ -45,6 +47,7 @@ class DockerProvider(SandboxProvider):
             self.name = provider_name
         self.image = image
         self.mount_path = mount_path
+        self.bind_mounts = bind_mounts or []
         self.command_timeout_sec = command_timeout_sec
         self._sessions: dict[str, str] = {}  # session_id -> container_id
 
@@ -61,6 +64,13 @@ class DockerProvider(SandboxProvider):
             "--label",
             f"leon.session_id={session_id}",
         ]
+
+        for mount in self.bind_mounts:
+            source, target, read_only = self._normalize_mount(mount)
+            volume_arg = f"{source}:{target}"
+            if read_only:
+                volume_arg = f"{volume_arg}:ro"
+            cmd.extend(["-v", volume_arg])
 
         if context_id:
             volume = context_id
@@ -237,6 +247,14 @@ class DockerProvider(SandboxProvider):
             network_rx_kbps=net_rx,
             network_tx_kbps=net_tx,
         )
+
+    def _normalize_mount(self, mount: dict[str, Any]) -> tuple[str, str, bool]:
+        # @@@mount-key-compat - Docker accepts the same mount spec as Daytona (source/target) while still reading legacy host_path/mount_path.
+        source = mount.get("source") or mount.get("host_path")
+        target = mount.get("target") or mount.get("mount_path")
+        if not source or not target:
+            raise RuntimeError(f"Invalid bind mount spec (expected source+target): {mount!r}")
+        return str(source), str(target), bool(mount.get("read_only", False))
 
     def _get_container_id(self, session_id: str, allow_missing: bool = False) -> str | None:
         container_id = self._sessions.get(session_id)
