@@ -40,6 +40,7 @@ class AgentBayConfig(BaseModel):
 class DockerConfig(BaseModel):
     image: str = "python:3.12-slim"
     mount_path: str = "/workspace"
+    cwd: str | None = None
     bind_mounts: list[MountSpec] = Field(default_factory=list)
 
 

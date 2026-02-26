@@ -39,6 +39,7 @@ class DockerProvider(SandboxProvider):
         self,
         image: str,
         mount_path: str = "/workspace",
+        default_cwd: str = "/workspace",
         bind_mounts: list[dict[str, Any]] | None = None,
         command_timeout_sec: float = 20.0,
         provider_name: str | None = None,
@@ -47,6 +48,7 @@ class DockerProvider(SandboxProvider):
             self.name = provider_name
         self.image = image
         self.mount_path = mount_path
+        self.default_cwd = default_cwd
         self.bind_mounts = bind_mounts or []
         self.command_timeout_sec = command_timeout_sec
         self._sessions: dict[str, str] = {}  # session_id -> container_id
@@ -76,7 +78,7 @@ class DockerProvider(SandboxProvider):
             volume = context_id
             cmd.extend(["-v", f"{volume}:{self.mount_path}"])
 
-        cmd.extend(["-w", self.mount_path, self.image, "sleep", "infinity"])
+        cmd.extend(["-w", self.default_cwd, self.image, "sleep", "infinity"])
 
         result = self._run(cmd, timeout=self.command_timeout_sec)
         container_id = result.stdout.strip()
@@ -129,7 +131,7 @@ class DockerProvider(SandboxProvider):
         cwd: str | None = None,
     ) -> ProviderExecResult:
         container_id = self._get_container_id(session_id)
-        workdir = cwd or self.mount_path
+        workdir = cwd or self.default_cwd
         shell_cmd = f"cd {shlex.quote(workdir)} && {command}"
         result = self._run(
             ["docker", "exec", container_id, "/bin/sh", "-lc", shell_cmd],
