@@ -14,6 +14,7 @@ from core.memory.checkpoint_repo import SQLiteCheckpointRepo
 from core.storage.supabase_checkpoint_repo import SupabaseCheckpointRepo
 from core.storage.supabase_file_operation_repo import SupabaseFileOperationRepo
 from core.storage.supabase_run_event_repo import SupabaseRunEventRepo
+from core.storage.supabase_summary_repo import SupabaseSummaryRepo
 from core.storage.supabase_thread_config_repo import SupabaseThreadConfigRepo
 from sandbox.manager import SandboxManager
 from sandbox.provider import Metrics, ProviderCapability, ProviderExecResult, SandboxProvider, SessionInfo
@@ -209,15 +210,17 @@ def test_storage_container_supabase_repos_are_concrete_and_remaining_bindings_fa
     assert isinstance(run_event_repo, SupabaseRunEventRepo)
     file_operation_repo = container.file_operation_repo()
     assert isinstance(file_operation_repo, SupabaseFileOperationRepo)
+    summary_repo = container.summary_repo()
+    assert isinstance(summary_repo, SupabaseSummaryRepo)
 
     with pytest.raises(
         RuntimeError,
         match=(
             "Supabase storage strategy has missing bindings: "
-            "summary_repo, eval_repo"
+            "eval_repo"
         ),
     ):
-        container.summary_repo()
+        container.eval_repo()
 
 
 def test_storage_container_supabase_checkpoint_requires_client() -> None:
@@ -254,6 +257,15 @@ def test_storage_container_supabase_file_operation_requires_client() -> None:
         match="Supabase strategy file_operation_repo requires supabase_client",
     ):
         container.file_operation_repo()
+
+
+def test_storage_container_supabase_summary_requires_client() -> None:
+    container = StorageContainer(strategy="supabase")
+    with pytest.raises(
+        RuntimeError,
+        match="Supabase strategy summary_repo requires supabase_client",
+    ):
+        container.summary_repo()
 
 
 def test_storage_container_rejects_unknown_strategy() -> None:

@@ -18,7 +18,6 @@ class StorageContainer:
 
     _SUPPORTED_STRATEGIES = {"sqlite", "supabase"}
     _SUPABASE_BINDING_NAMES = (
-        "summary_repo",
         "eval_repo",
     )
 
@@ -68,7 +67,7 @@ class StorageContainer:
 
     def summary_repo(self):
         if self._strategy == "supabase":
-            return self._build_supabase_binding_repo("summary_repo")
+            return self._build_supabase_summary_repo()
         import sqlite3
         from core.memory.summary_repo import SQLiteSummaryRepo
         return SQLiteSummaryRepo(
@@ -121,6 +120,16 @@ class StorageContainer:
                 "Pass supabase_client=... into StorageContainer."
             )
         return SupabaseFileOperationRepo(client=self._supabase_client)
+
+    def _build_supabase_summary_repo(self):
+        from core.storage.supabase_summary_repo import SupabaseSummaryRepo
+
+        if self._supabase_client is None:
+            raise RuntimeError(
+                "Supabase strategy summary_repo requires supabase_client. "
+                "Pass supabase_client=... into StorageContainer."
+            )
+        return SupabaseSummaryRepo(client=self._supabase_client)
 
     def _build_supabase_binding_repo(self, binding_name: str):
         missing_bindings = [
