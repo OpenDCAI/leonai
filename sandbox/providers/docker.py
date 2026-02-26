@@ -12,7 +12,14 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from sandbox.provider import Metrics, ProviderCapability, ProviderExecResult, SandboxProvider, SessionInfo
+from sandbox.provider import (
+    Metrics,
+    MountCapability,
+    ProviderCapability,
+    ProviderExecResult,
+    SandboxProvider,
+    SessionInfo,
+)
 
 
 class DockerProvider(SandboxProvider):
@@ -34,6 +41,11 @@ class DockerProvider(SandboxProvider):
             can_destroy=True,
             supports_webhook=False,
             runtime_kind="docker_pty",
+            mount=MountCapability(
+                supports_mount=True,
+                supports_copy=True,
+                supports_read_only=True,
+            ),
         )
 
     def __init__(

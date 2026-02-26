@@ -17,7 +17,14 @@ from typing import Any
 
 import httpx
 
-from sandbox.provider import Metrics, ProviderCapability, ProviderExecResult, SandboxProvider, SessionInfo
+from sandbox.provider import (
+    Metrics,
+    MountCapability,
+    ProviderCapability,
+    ProviderExecResult,
+    SandboxProvider,
+    SessionInfo,
+)
 
 
 class DaytonaProvider(SandboxProvider):
@@ -32,6 +39,11 @@ class DaytonaProvider(SandboxProvider):
             can_destroy=True,
             supports_webhook=True,
             runtime_kind="daytona_pty",
+            mount=MountCapability(
+                supports_mount=True,
+                supports_copy=True,
+                supports_read_only=True,
+            ),
         )
 
     def __init__(

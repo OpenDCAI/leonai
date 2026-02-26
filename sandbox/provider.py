@@ -6,6 +6,15 @@ from typing import Any
 
 
 @dataclass(frozen=True)
+class MountCapability:
+    """Mount behavior capability shared across providers."""
+
+    supports_mount: bool = False
+    supports_copy: bool = False
+    supports_read_only: bool = False
+
+
+@dataclass(frozen=True)
 class ProviderCapability:
     """Declared lifecycle capability of a provider implementation."""
 
@@ -17,6 +26,7 @@ class ProviderCapability:
     eager_instance_binding: bool = False
     inspect_visible: bool = True
     runtime_kind: str = "remote"
+    mount: MountCapability = field(default_factory=MountCapability)
 
 
 @dataclass

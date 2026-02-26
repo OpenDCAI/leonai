@@ -79,8 +79,24 @@ export interface ThreadSummary {
 
 export interface SandboxType {
   name: string;
+  provider?: string;
   available: boolean;
   reason?: string;
+  capability?: {
+    can_pause: boolean;
+    can_resume: boolean;
+    can_destroy: boolean;
+    supports_webhook: boolean;
+    supports_status_probe: boolean;
+    eager_instance_binding: boolean;
+    inspect_visible: boolean;
+    runtime_kind: string;
+    mount: {
+      supports_mount: boolean;
+      supports_copy: boolean;
+      supports_read_only: boolean;
+    };
+  };
 }
 
 export interface SandboxSession {
