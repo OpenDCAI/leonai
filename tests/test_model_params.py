@@ -44,3 +44,10 @@ def test_openai_provider_matching_is_case_insensitive() -> None:
     out = normalize_model_kwargs("gpt-5.2", kwargs)
     assert "max_tokens" not in out
     assert out["max_completion_tokens"] == 256
+
+
+def test_openai_provider_matching_trims_whitespace() -> None:
+    kwargs = {"model_provider": "  openai  ", "max_tokens": 256}
+    out = normalize_model_kwargs("gpt-5.2", kwargs)
+    assert "max_tokens" not in out
+    assert out["max_completion_tokens"] == 256
