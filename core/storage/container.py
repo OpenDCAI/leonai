@@ -40,32 +40,32 @@ class StorageContainer:
     def checkpoint_repo(self):
         if self._strategy == "supabase":
             return self._build_supabase_checkpoint_repo()
-        from core.memory.checkpoint_repo import SQLiteCheckpointRepo
+        from core.storage.providers.sqlite.checkpoint_repo import SQLiteCheckpointRepo
         return SQLiteCheckpointRepo(db_path=self._main_db)
 
     def thread_config_repo(self):
         if self._strategy == "supabase":
             return self._build_supabase_thread_config_repo()
-        from core.memory.thread_config_repo import SQLiteThreadConfigRepo
+        from core.storage.providers.sqlite.thread_config_repo import SQLiteThreadConfigRepo
         return SQLiteThreadConfigRepo(db_path=self._main_db)
 
     def run_event_repo(self):
         if self._strategy == "supabase":
             return self._build_supabase_run_event_repo()
-        from core.memory.run_event_repo import SQLiteRunEventRepo
+        from core.storage.providers.sqlite.run_event_repo import SQLiteRunEventRepo
         return SQLiteRunEventRepo(db_path=self._main_db)
 
     def file_operation_repo(self):
         if self._strategy == "supabase":
             return self._build_supabase_file_operation_repo()
-        from core.memory.file_operation_repo import SQLiteFileOperationRepo
+        from core.storage.providers.sqlite.file_operation_repo import SQLiteFileOperationRepo
         return SQLiteFileOperationRepo(db_path=self._main_db)
 
     def summary_repo(self):
         if self._strategy == "supabase":
             return self._build_supabase_summary_repo()
         import sqlite3
-        from core.memory.summary_repo import SQLiteSummaryRepo
+        from core.storage.providers.sqlite.summary_repo import SQLiteSummaryRepo
         return SQLiteSummaryRepo(
             db_path=self._main_db,
             connect_fn=lambda p: sqlite3.connect(str(p)),
@@ -74,7 +74,7 @@ class StorageContainer:
     def eval_repo(self):
         if self._strategy == "supabase":
             return self._build_supabase_eval_repo()
-        from eval.repo import SQLiteEvalRepo
+        from core.storage.providers.sqlite.eval_repo import SQLiteEvalRepo
         return SQLiteEvalRepo(db_path=self._eval_db)
 
     def _build_supabase_checkpoint_repo(self):
