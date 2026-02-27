@@ -2,8 +2,7 @@ import { useState, useEffect, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
   ArrowLeft, Bot, FileText, Wrench, Plug, Zap, Users, BookOpen,
-  Play, Tag, History, Save, Plus, Trash2, Search,
-  ChevronRight, ChevronDown, Library,
+  Play, Tag, History, Save, Plus, Trash2, Search, X, Check,
 } from "lucide-react";
 import TestPanel from "@/components/TestPanel";
 import PublishDialog from "@/components/PublishDialog";
@@ -14,7 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useAppStore } from "@/store/app-store";
-import type { CrudItem, SubAgent, RuleItem, McpItem } from "@/store/types";
+import type { CrudItem, SubAgent, RuleItem, McpItem, ResourceItem } from "@/store/types";
 
 // ==================== Types ====================
 
@@ -24,25 +23,17 @@ interface ModuleDef {
   id: ModuleId;
   label: string;
   icon: typeof FileText;
-  hasChildren: boolean;
-  canAdd?: boolean;
+  count?: (cfg: any) => number;
 }
 
-const moduleConfig: ModuleDef[] = [
-  { id: "prompt", label: "System Prompt", icon: FileText, hasChildren: false },
-  { id: "tools", label: "Tools", icon: Wrench, hasChildren: true, canAdd: false },
-  { id: "mcp", label: "MCP", icon: Plug, hasChildren: true, canAdd: true },
-  { id: "skills", label: "Skills", icon: Zap, hasChildren: true, canAdd: true },
-  { id: "subagents", label: "Sub-agents", icon: Users, hasChildren: true, canAdd: true },
-  { id: "rules", label: "Rules", icon: BookOpen, hasChildren: true, canAdd: true },
+const modules: ModuleDef[] = [
+  { id: "prompt", label: "System Prompt", icon: FileText },
+  { id: "tools", label: "Tools", icon: Wrench, count: c => c.tools.length },
+  { id: "mcp", label: "MCP", icon: Plug, count: c => c.mcps.length },
+  { id: "skills", label: "Skills", icon: Zap, count: c => c.skills.length },
+  { id: "subagents", label: "Agents", icon: Users, count: c => c.subAgents.length },
+  { id: "rules", label: "Rules", icon: BookOpen, count: c => c.rules.length },
 ];
-
-// ==================== Selection state ====================
-
-type Selection =
-  | { module: "prompt" }
-  | { module: "tools" | "mcp" | "skills" | "rules"; itemId?: string }
-  | { module: "subagents"; itemId?: string };
 
 // ==================== Main Component ====================
 
@@ -52,35 +43,17 @@ export default function AgentDetail() {
   const isMobile = useIsMobile();
   const [showTest, setShowTest] = useState(false);
   const [showPublish, setShowPublish] = useState(false);
+  const [activeModule, setActiveModule] = useState<ModuleId>("prompt");
 
-  // Store
   const member = useAppStore(s => s.getMemberById(id || ""));
   const updateMemberConfig = useAppStore(s => s.updateMemberConfig);
   const loadAll = useAppStore(s => s.loadAll);
   const librarySkills = useAppStore(s => s.librarySkills);
   const libraryMcps = useAppStore(s => s.libraryMcps);
   const libraryAgents = useAppStore(s => s.libraryAgents);
-
   useEffect(() => { loadAll(); }, [loadAll]);
 
-  // Selection
-  const [selection, setSelection] = useState<Selection>({ module: "prompt" });
-
-  // Collapsed state for tree sections
-  const [collapsed, setCollapsed] = useState<Record<ModuleId, boolean>>({
-    prompt: false, tools: false, mcp: false, skills: false, subagents: false, rules: false,
-  });
-
-  // Search in tree
-  const [treeSearch, setTreeSearch] = useState("");
-
-  // Dialog state for adding rules (only rules use inline creation)
-  const [addDialogOpen, setAddDialogOpen] = useState(false);
-  const [addName, setAddName] = useState("");
-
-  // Picker state for Library resources (MCP/Skills/Sub-agents)
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const [pickerTarget, setPickerTarget] = useState<ModuleId>("skills");
+  const [pickerType, setPickerType] = useState<"skill" | "mcp" | "agent" | null>(null);
 
   const statusLabels: Record<string, string> = { active: "在岗", draft: "草稿", inactive: "离线" };
 
@@ -92,89 +65,6 @@ export default function AgentDetail() {
     );
   }
 
-  const getItemsForModule = (mod: ModuleId): { name: string; [k: string]: any }[] => {
-    if (mod === "tools") return member.config.tools;
-    if (mod === "mcp") return member.config.mcps;
-    if (mod === "skills") return member.config.skills;
-    if (mod === "subagents") return member.config.subAgents.map(sa => ({ ...sa, enabled: true }));
-    if (mod === "rules") return member.config.rules;
-    return [];
-  };
-
-  const toggleCollapse = (mod: ModuleId) => {
-    setCollapsed(prev => ({ ...prev, [mod]: !prev[mod] }));
-  };
-
-  const openAddDialog = (target: ModuleId) => {
-    if (target === "rules") {
-      setAddName("");
-      setAddDialogOpen(true);
-    } else {
-      // MCP/Skills/Sub-agents use Library Picker
-      setPickerTarget(target);
-      setPickerOpen(true);
-    }
-  };
-
-  const handleAddRule = async () => {
-    if (!addName.trim() || !member) return;
-    try {
-      await updateMemberConfig(member.id, { rules: [...member.config.rules, { name: addName.trim(), content: "" }] });
-      toast.success(`${addName.trim()} 已添加`);
-      setAddDialogOpen(false);
-    } catch (e) {
-      toast.error("添加失败，请重试");
-    }
-  };
-
-  const handleAssign = async (mod: ModuleId, selectedNames: string[]) => {
-    if (!member) return;
-    try {
-      if (mod === "mcp") {
-        const existing = member.config.mcps.filter(m => selectedNames.includes(m.name));
-        const newNames = selectedNames.filter(n => !member.config.mcps.some(m => m.name === n));
-        const newItems: McpItem[] = newNames.map(name => ({ name, command: "", args: [], env: {}, disabled: false }));
-        await updateMemberConfig(member.id, { mcps: [...existing, ...newItems] });
-      } else if (mod === "skills") {
-        const existing = member.config.skills.filter(s => selectedNames.includes(s.name));
-        const newNames = selectedNames.filter(n => !member.config.skills.some(s => s.name === n));
-        const newItems: CrudItem[] = newNames.map(name => ({ name, desc: "", enabled: true }));
-        await updateMemberConfig(member.id, { skills: [...existing, ...newItems] });
-      } else if (mod === "subagents") {
-        const existing = member.config.subAgents.filter(s => selectedNames.includes(s.name));
-        const newNames = selectedNames.filter(n => !member.config.subAgents.some(s => s.name === n));
-        const newItems: SubAgent[] = newNames.map(name => ({ name, desc: "" }));
-        await updateMemberConfig(member.id, { subAgents: [...existing, ...newItems] });
-      }
-      toast.success("已更新");
-    } catch (e) {
-      toast.error("更新失败，请重试");
-    }
-  };
-
-  const handleDeleteItem = async (mod: ModuleId, itemName: string) => {
-    if (!member) return;
-    try {
-      if (mod === "tools") {
-        await updateMemberConfig(member.id, { tools: member.config.tools.filter(i => i.name !== itemName) });
-      } else if (mod === "mcp") {
-        await updateMemberConfig(member.id, { mcps: member.config.mcps.filter(i => i.name !== itemName) });
-      } else if (mod === "skills") {
-        await updateMemberConfig(member.id, { skills: member.config.skills.filter(i => i.name !== itemName) });
-      } else if (mod === "subagents") {
-        await updateMemberConfig(member.id, { subAgents: member.config.subAgents.filter(i => i.name !== itemName) });
-      } else if (mod === "rules") {
-        await updateMemberConfig(member.id, { rules: member.config.rules.filter(i => i.name !== itemName) });
-      }
-      if ("itemId" in selection && selection.itemId === itemName) {
-        setSelection({ module: mod } as Selection);
-      }
-      toast.success("已删除");
-    } catch (e) {
-      toast.error("删除失败，请重试");
-    }
-  };
-
   const handleToggle = async (mod: ModuleId, itemName: string, enabled: boolean) => {
     if (!member) return;
     try {
@@ -185,912 +75,248 @@ export default function AgentDetail() {
       } else if (mod === "skills") {
         await updateMemberConfig(member.id, { skills: member.config.skills.map(i => i.name === itemName ? { ...i, enabled } : i) });
       }
-    } catch (e) {
-      toast.error("更新失败，请重试");
-    }
+    } catch { toast.error("更新失败"); }
   };
 
-  // Filter tree items by search
-  const filterItems = (items: { name: string }[]) => {
-    if (!treeSearch) return items;
-    return items.filter(i => i.name.toLowerCase().includes(treeSearch.toLowerCase()));
+  const handleAssign = async (type: "skill" | "mcp" | "agent", names: string[]) => {
+    if (!member) return;
+    try {
+      if (type === "skill") {
+        const existing = new Set(member.config.skills.map(s => s.name));
+        const newSkills = names.filter(n => !existing.has(n)).map(n => {
+          const lib = librarySkills.find(s => s.name === n);
+          return { name: n, desc: lib?.desc || "", enabled: true };
+        });
+        if (newSkills.length) await updateMemberConfig(member.id, { skills: [...member.config.skills, ...newSkills] });
+      } else if (type === "mcp") {
+        const existing = new Set(member.config.mcps.map(m => m.name));
+        const newMcps = names.filter(n => !existing.has(n)).map(n => {
+          const lib = libraryMcps.find(m => m.name === n);
+          return { name: n, command: lib?.desc || "", args: [], env: {}, disabled: false };
+        });
+        if (newMcps.length) await updateMemberConfig(member.id, { mcps: [...member.config.mcps, ...newMcps] });
+      } else {
+        const existing = new Set(member.config.subAgents.map(a => a.name));
+        const newAgents = names.filter(n => !existing.has(n)).map(n => {
+          const lib = libraryAgents.find(a => a.name === n);
+          return { name: n, desc: lib?.desc || "" };
+        });
+        if (newAgents.length) await updateMemberConfig(member.id, { subAgents: [...member.config.subAgents, ...newAgents] });
+      }
+      toast.success("已添加");
+    } catch { toast.error("添加失败"); }
   };
 
-  // ==================== Tree Sidebar ====================
+  const handleRemove = async (mod: ModuleId, itemName: string) => {
+    if (!member) return;
+    try {
+      if (mod === "mcp") await updateMemberConfig(member.id, { mcps: member.config.mcps.filter(i => i.name !== itemName) });
+      else if (mod === "skills") await updateMemberConfig(member.id, { skills: member.config.skills.filter(i => i.name !== itemName) });
+      else if (mod === "subagents") await updateMemberConfig(member.id, { subAgents: member.config.subAgents.filter(i => i.name !== itemName) });
+      else if (mod === "rules") await updateMemberConfig(member.id, { rules: member.config.rules.filter(i => i.name !== itemName) });
+      toast.success("已移除");
+    } catch { toast.error("移除失败"); }
+  };
 
-  const renderTreeSidebar = () => (
-    <div className="w-[200px] shrink-0 border-r border-border bg-card flex flex-col overflow-hidden">
-      {/* Search */}
-      <div className="p-2 border-b border-border">
-        <div className="relative">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground" />
-          <input
-            value={treeSearch}
-            onChange={e => setTreeSearch(e.target.value)}
-            placeholder="搜索模块..."
-            className="w-full pl-7 pr-2 py-1.5 rounded-md bg-muted/50 border-none text-xs text-foreground placeholder:text-muted-foreground outline-none focus:bg-muted transition-colors"
-          />
-        </div>
-      </div>
-
-      {/* Tree */}
-      <div className="flex-1 overflow-y-auto p-1.5 space-y-0.5">
-        {moduleConfig.map(mod => {
-          const items = mod.hasChildren ? filterItems(getItemsForModule(mod.id)) : [];
-          const allItems = mod.hasChildren ? getItemsForModule(mod.id) : [];
-          const isExpanded = !collapsed[mod.id];
-          const isModuleSelected = selection.module === mod.id && !("itemId" in selection && selection.itemId);
-
-          // Hide entire module if search active and no matching children (for modules with children)
-          if (treeSearch && mod.hasChildren && items.length === 0) return null;
-
-          return (
-            <div key={mod.id}>
-              {/* Module header */}
-              <div
-                className={`flex items-center gap-1 px-2 py-2 rounded-lg text-xs cursor-pointer select-none transition-all group ${
-                  isModuleSelected
-                    ? "bg-primary/5 text-foreground border border-primary/15 font-medium"
-                    : "text-muted-foreground hover:bg-muted hover:text-foreground border border-transparent"
-                }`}
-              >
-                {/* Expand/collapse toggle */}
-                {mod.hasChildren ? (
-                  <button
-                    onClick={(e) => { e.stopPropagation(); toggleCollapse(mod.id); }}
-                    className="p-0.5 shrink-0"
-                  >
-                    {isExpanded
-                      ? <ChevronDown className="w-3 h-3" />
-                      : <ChevronRight className="w-3 h-3" />
-                    }
-                  </button>
-                ) : (
-                  <span className="w-4" /> /* spacer for alignment */
-                )}
-
-                <div
-                  className="flex items-center gap-1.5 flex-1 min-w-0"
-                  onClick={() => setSelection({ module: mod.id } as Selection)}
-                >
-                  <mod.icon className={`w-3.5 h-3.5 shrink-0 ${isModuleSelected ? "text-primary" : ""}`} />
-                  <span className="truncate">{mod.label}</span>
-                </div>
-
-                {mod.hasChildren && (
-                  <div className="flex items-center gap-1 shrink-0">
-                    <span className="text-[10px] font-mono text-muted-foreground">{allItems.length}</span>
-                    {mod.canAdd !== false && (
-                      <button
-                        onClick={(e) => { e.stopPropagation(); openAddDialog(mod.id); }}
-                        className="p-0.5 rounded hover:bg-primary/10 opacity-0 group-hover:opacity-100 transition-all"
-                        title="添加"
-                      >
-                        <Plus className="w-3 h-3 text-primary" />
-                      </button>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              {/* Children */}
-              {mod.hasChildren && isExpanded && (
-                <div className="ml-4 pl-2 border-l border-border/50 space-y-0.5 mt-0.5">
-                  {items.map(item => {
-                    const isItemSelected = selection.module === mod.id && "itemId" in selection && selection.itemId === item.name;
-                    return (
-                      <div
-                        key={item.name}
-                        onClick={() => setSelection({ module: mod.id, itemId: item.name } as Selection)}
-                        className={`flex items-center justify-between px-2 py-1.5 rounded-md text-xs cursor-pointer group/item transition-all ${
-                          isItemSelected
-                            ? "bg-primary/5 text-foreground font-medium"
-                            : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                        }`}
-                      >
-                        <span className="truncate flex-1">{item.name}</span>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); handleDeleteItem(mod.id, item.name); }}
-                          className="p-0.5 rounded hover:bg-destructive/10 opacity-0 group-hover/item:opacity-100 transition-all shrink-0"
-                          title="删除"
-                        >
-                          <Trash2 className="w-2.5 h-2.5 text-muted-foreground hover:text-destructive" />
-                        </button>
-                      </div>
-                    );
-                  })}
-                  {items.length === 0 && !treeSearch && (
-                    <div className="px-2 py-1 text-[10px] text-muted-foreground">暂无</div>
-                  )}
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-
-  // ==================== Center Column Content ====================
-
-  const renderCenterContent = () => {
-    const mod = selection.module;
-    const selectedItemId = "itemId" in selection ? selection.itemId : undefined;
-
-    // Text editor (Prompt only)
-    if (mod === "prompt") {
-      return (
-        <TextEditor
-          key={mod}
-          label="System Prompt"
-          initialValue={member.config.prompt || ""}
-          onSave={async (val) => {
-            await updateMemberConfig(member.id, { prompt: val });
-            toast.success("System Prompt 已保存");
-          }}
-        />
-      );
-    }
-
-    // Rules — file-folder UI
-    if (mod === "rules") {
-      const rules = member.config.rules;
-      if (selectedItemId) {
-        const rule = rules.find(r => r.name === selectedItemId);
-        if (!rule) return <div className="text-sm text-muted-foreground p-6">未找到该规则</div>;
+  const renderContent = () => {
+    switch (activeModule) {
+      case "prompt":
         return (
-          <RuleEditor
-            rule={rule}
-            onSave={async (content) => {
-              await updateMemberConfig(member.id, { rules: rules.map(r => r.name === selectedItemId ? { ...r, content } : r) });
+          <PromptEditor
+            value={member.config.prompt || ""}
+            onSave={async (val) => {
+              await updateMemberConfig(member.id, { prompt: val });
+              toast.success("System Prompt 已保存");
+            }}
+          />
+        );
+      case "tools":
+        return <ToolsGrid items={member.config.tools} onToggle={(name, en) => handleToggle("tools", name, en)} />;
+      case "rules":
+        return (
+          <RulesPanel
+            rules={member.config.rules}
+            onSave={async (name, content) => {
+              await updateMemberConfig(member.id, { rules: member.config.rules.map(r => r.name === name ? { ...r, content } : r) });
               toast.success("规则已保存");
             }}
-            onDelete={() => handleDeleteItem("rules", selectedItemId)}
-          />
-        );
-      }
-      return (
-        <RulesOverview
-          rules={rules}
-          onAdd={() => openAddDialog("rules")}
-          onSelect={(name) => setSelection({ module: "rules", itemId: name })}
-          onDelete={(name) => handleDeleteItem("rules", name)}
-        />
-      );
-    }
-
-    // MCP — list with disabled toggle
-    if (mod === "mcp") {
-      const mcps = member.config.mcps;
-      if (selectedItemId) {
-        const mcp = mcps.find(m => m.name === selectedItemId);
-        if (!mcp) return <div className="text-sm text-muted-foreground p-6">未找到该 MCP</div>;
-        return (
-          <McpEditor
-            item={mcp}
-            onToggle={async (enabled) => handleToggle("mcp", selectedItemId, enabled)}
-            onDelete={() => handleDeleteItem("mcp", selectedItemId)}
-          />
-        );
-      }
-      return (
-        <McpOverview
-          items={mcps}
-          onAdd={() => openAddDialog("mcp")}
-          onSelect={(name) => setSelection({ module: "mcp", itemId: name })}
-          onDelete={(name) => handleDeleteItem("mcp", name)}
-          onToggle={(name, enabled) => handleToggle("mcp", name, enabled)}
-        />
-      );
-    }
-
-    // Tools — full catalog with toggles (no add/delete)
-    if (mod === "tools") {
-      const items = member.config.tools as CrudItem[];
-      return (
-        <ToolsCatalog
-          items={items}
-          onToggle={(name, enabled) => handleToggle("tools", name, enabled)}
-        />
-      );
-    }
-
-    // Skills — CRUD list
-    if (mod === "skills") {
-      const items = member.config.skills as CrudItem[];
-
-      if (selectedItemId) {
-        const item = items.find(i => i.name === selectedItemId);
-        if (!item) return <div className="text-sm text-muted-foreground p-6">未找到该项</div>;
-        return (
-          <CrudItemEditor
-            item={item}
-            onSave={async (name, desc) => {
-              await updateMemberConfig(member.id, { skills: items.map(i => i.name === selectedItemId ? { ...i, name, desc } : i) });
-              toast.success("已更新");
+            onAdd={async (name) => {
+              await updateMemberConfig(member.id, { rules: [...member.config.rules, { name, content: "" }] });
+              toast.success(`${name} 已添加`);
             }}
-            onDelete={() => handleDeleteItem("skills", selectedItemId)}
-            onToggle={(enabled) => handleToggle("skills", selectedItemId, enabled)}
+            onDelete={(name) => handleRemove("rules", name)}
           />
         );
-      }
-
-      return (
-        <ModuleOverview
-          title="技能"
-          items={items}
-          onAdd={() => openAddDialog("skills")}
-          onSelect={(name) => setSelection({ module: "skills", itemId: name })}
-          onDelete={(name) => handleDeleteItem("skills", name)}
-          onToggle={(name, enabled) => handleToggle("skills", name, enabled)}
-        />
-      );
-    }
-
-    // Sub-agents
-    if (mod === "subagents") {
-      const saItems = member.config.subAgents;
-      if (selectedItemId) {
-        const sa = saItems.find(i => i.name === selectedItemId);
-        if (!sa) return <div className="text-sm text-muted-foreground p-6">未找到该项</div>;
+      case "skills":
         return (
-          <SubAgentEditor
-            item={sa}
-            onSave={async (name, desc) => {
-              await updateMemberConfig(member.id, { subAgents: saItems.map(i => i.name === selectedItemId ? { ...i, name, desc } : i) });
-              toast.success("已更新");
-            }}
-            onDelete={() => handleDeleteItem("subagents", selectedItemId)}
+          <ResourceCards
+            type="skill"
+            items={member.config.skills.map(s => ({ name: s.name, desc: s.desc, enabled: s.enabled }))}
+            onToggle={(name, en) => handleToggle("skills", name, en)}
+            onRemove={(name) => handleRemove("skills", name)}
+            onAdd={() => setPickerType("skill")}
           />
         );
-      }
-
-      return (
-        <SubAgentOverview
-          items={saItems}
-          onAdd={() => openAddDialog("subagents")}
-          onSelect={(name) => setSelection({ module: "subagents", itemId: name })}
-          onDelete={(name) => handleDeleteItem("subagents", name)}
-        />
-      );
+      case "mcp":
+        return (
+          <ResourceCards
+            type="mcp"
+            items={member.config.mcps.map(m => ({ name: m.name, desc: m.command || "未配置", enabled: !m.disabled }))}
+            onToggle={(name, en) => handleToggle("mcp", name, en)}
+            onRemove={(name) => handleRemove("mcp", name)}
+            onAdd={() => setPickerType("mcp")}
+          />
+        );
+      case "subagents":
+        return (
+          <ResourceCards
+            type="agent"
+            items={member.config.subAgents.map(a => ({ name: a.name, desc: a.desc }))}
+            onRemove={(name) => handleRemove("subagents", name)}
+            onAdd={() => setPickerType("agent")}
+          />
+        );
+      default: return null;
     }
-
-    return null;
   };
-
-  // ==================== Mobile module selector ====================
-
-  const renderMobileSelector = () => (
-    <div className="flex overflow-x-auto border-b border-border bg-card shrink-0 px-2 py-1.5 gap-1">
-      {moduleConfig.map(mod => {
-        const isActive = selection.module === mod.id;
-        const count = mod.hasChildren ? getItemsForModule(mod.id).length : null;
-        return (
-          <button
-            key={mod.id}
-            onClick={() => setSelection({ module: mod.id } as Selection)}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs whitespace-nowrap shrink-0 transition-colors ${
-              isActive ? "bg-primary/10 text-primary font-medium" : "text-muted-foreground hover:text-foreground hover:bg-muted"
-            }`}
-          >
-            <mod.icon className="w-3.5 h-3.5" />
-            {mod.label}
-            {count !== null && <span className="font-mono text-[10px]">{count}</span>}
-          </button>
-        );
-      })}
-    </div>
-  );
-
-  // ==================== Render ====================
-
   return (
     <div className="h-full flex flex-col">
       {/* Header */}
-      <div className="h-14 border-b border-border flex items-center justify-between px-4 md:px-6 shrink-0 bg-card">
-        <div className="flex items-center gap-3 min-w-0">
-          <button onClick={() => navigate("/members")} className="p-1.5 rounded-md hover:bg-muted transition-colors shrink-0">
-            <ArrowLeft className="w-4 h-4 text-muted-foreground" />
-          </button>
-          <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
-            <Bot className="w-4 h-4 text-primary" />
-          </div>
-          <h2 className="text-sm font-semibold text-foreground truncate">{member.name}</h2>
-          <div className="hidden md:flex items-center gap-1.5 ml-1">
-            <div className={`w-1.5 h-1.5 rounded-full ${member.status === "active" ? "bg-success" : member.status === "draft" ? "bg-warning" : "bg-muted-foreground"}`} />
-            <span className="text-[11px] text-muted-foreground">{statusLabels[member.status] || member.status}</span>
-          </div>
-          <span className="hidden md:inline text-xs font-mono text-muted-foreground bg-muted px-1.5 py-0.5 rounded ml-2">v{member.version}</span>
-        </div>
-        <div className="flex items-center gap-1 md:gap-2">
-          <button onClick={() => navigate("/members/" + id + "?history=true")} className="hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
-            <History className="w-3.5 h-3.5" />
-            历史
-          </button>
-          <button
-            onClick={() => setShowTest(!showTest)}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-              showTest ? "bg-success/10 text-success" : "bg-muted text-foreground hover:bg-muted/80"
-            }`}
-          >
-            <Play className="w-3.5 h-3.5" />
-            <span className="hidden md:inline">测试</span>
-          </button>
-          <button onClick={() => setShowPublish(true)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:opacity-90 transition-opacity">
-            <Tag className="w-3 h-3" />
-            <span className="hidden md:inline">发布</span>
-          </button>
-        </div>
-      </div>
-
-      {/* Three-column layout */}
-      <div className="flex-1 flex overflow-hidden">
-        {isMobile ? (
-          <div className="flex flex-col flex-1 overflow-hidden">
-            {renderMobileSelector()}
-            <div className="flex-1 overflow-y-auto p-4">
-              {renderCenterContent()}
-            </div>
-          </div>
-        ) : (
-          <>
-            {renderTreeSidebar()}
-            <div className="flex-1 overflow-y-auto bg-background">
-              <div className="max-w-2xl mx-auto py-6 px-6">
-                {renderCenterContent()}
-              </div>
-            </div>
-            {showTest && <TestPanel memberName={member.name} onClose={() => setShowTest(false)} />}
-          </>
-        )}
-      </div>
-
-      {/* Mobile test panel */}
-      {isMobile && showTest && (
-        <div className="fixed inset-0 z-50 bg-background flex flex-col">
-          <TestPanel memberName={member.name} onClose={() => setShowTest(false)} />
-        </div>
-      )}
-
-      {/* Add Rule Dialog (rules only) */}
-      <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle>添加规则</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3">
-            <Input value={addName} onChange={e => setAddName(e.target.value)} placeholder="规则名称" />
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setAddDialogOpen(false)}>取消</Button>
-            <Button onClick={handleAddRule} disabled={!addName.trim()}>添加</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Library Resource Picker (MCP/Skills/Sub-agents) */}
-      <ResourcePicker
-        open={pickerOpen}
-        onOpenChange={setPickerOpen}
-        title={pickerTarget === "mcp" ? "从 Library 选取 MCP" : pickerTarget === "skills" ? "从 Library 选取技能" : "从 Library 选取 Sub-agent"}
-        available={
-          pickerTarget === "mcp" ? libraryMcps.map(r => ({ name: r.name, desc: r.desc }))
-          : pickerTarget === "skills" ? librarySkills.map(r => ({ name: r.name, desc: r.desc }))
-          : libraryAgents.map(r => ({ name: r.name, desc: r.desc }))
-        }
-        assigned={
-          pickerTarget === "mcp" ? member.config.mcps.map(m => m.name)
-          : pickerTarget === "skills" ? member.config.skills.map(s => s.name)
-          : member.config.subAgents.map(s => s.name)
-        }
-        onConfirm={(selected) => handleAssign(pickerTarget, selected)}
-      />
-
-      <PublishDialog open={showPublish} onOpenChange={setShowPublish} memberId={member.id} />
-    </div>
-  );
-}
-
-// ==================== Text Editor ====================
-
-function TextEditor({ label, initialValue, onSave }: { label: string; initialValue: string; onSave: (val: string) => Promise<void> }) {
-  const [value, setValue] = useState(initialValue);
-  const [savedValue, setSavedValue] = useState(initialValue);
-  const [saving, setSaving] = useState(false);
-  const isDirty = value !== savedValue;
-
-  // Sync with external changes
-  useEffect(() => { setValue(initialValue); setSavedValue(initialValue); }, [initialValue]);
-
-  const handleSave = async () => {
-    try {
-      setSaving(true);
-      await onSave(value);
-      setSavedValue(value);
-    } catch (e) {
-      toast.error("保存失败，请重试");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <div className="space-y-3">
-      <h3 className="text-sm font-semibold text-foreground">{label}</h3>
-      <textarea
-        value={value}
-        onChange={e => setValue(e.target.value)}
-        rows={12}
-        className="w-full bg-background border border-border rounded-lg px-4 py-3 text-sm text-foreground font-mono leading-relaxed outline-none focus:border-primary/40 resize-none transition-colors"
-      />
-      {isDirty && (
-        <div className="flex items-center justify-between">
-          <span className="text-xs text-warning">有未保存的更改</span>
-          <Button size="sm" onClick={handleSave} disabled={saving} className="gap-1.5">
-            <Save className="w-3 h-3" />
-            保存
-          </Button>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ==================== Module Overview (list view for tools/mcp/skills) ====================
-
-function ModuleOverview({
-  title, items, onAdd, onSelect, onDelete, onToggle,
-}: {
-  title: string;
-  items: CrudItem[];
-  onAdd: () => void;
-  onSelect: (name: string) => void;
-  onDelete: (name: string) => void;
-  onToggle: (name: string, enabled: boolean) => void;
-}) {
-  return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-foreground">{title} ({items.length})</h3>
-        <Button variant="outline" size="sm" onClick={onAdd} className="gap-1.5">
-          <Library className="w-3 h-3" />
-          从 Library 选取
+      <div className="flex items-center gap-3 px-4 py-3 border-b shrink-0">
+        <Button variant="ghost" size="icon" onClick={() => navigate("/members")}>
+          <ArrowLeft className="h-4 w-4" />
+        </Button>
+        <Bot className="h-5 w-5 text-primary" />
+        <span className="font-medium">{member.name}</span>
+        <span className="text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground">
+          {statusLabels[member.status] || member.status}
+        </span>
+        <span className="text-xs text-muted-foreground">v{member.version}</span>
+        <div className="flex-1" />
+        <Button size="sm" variant="outline" onClick={() => setShowTest(true)}>
+          <Play className="h-3.5 w-3.5 mr-1" /> 测试
+        </Button>
+        <Button size="sm" onClick={() => setShowPublish(true)}>
+          <Tag className="h-3.5 w-3.5 mr-1" /> 发布
         </Button>
       </div>
-      <div className="space-y-2">
-        {items.map(item => (
-          <div
-            key={item.name}
-            className="flex items-center justify-between p-3 rounded-lg bg-card border border-border group cursor-pointer hover:border-primary/20 transition-colors"
-            onClick={() => onSelect(item.name)}
-          >
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-foreground">{item.name}</p>
-              <p className="text-xs text-muted-foreground">{item.desc}</p>
-            </div>
-            <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
-              <button onClick={() => onDelete(item.name)} className="p-1 rounded hover:bg-destructive/10 opacity-0 group-hover:opacity-100 transition-all" title="移除">
-                <Trash2 className="w-3 h-3 text-muted-foreground hover:text-destructive" />
-              </button>
-              <Switch checked={item.enabled} onCheckedChange={checked => onToggle(item.name, checked)} />
-            </div>
-          </div>
-        ))}
-        {items.length === 0 && (
-          <div className="text-center py-8 text-xs text-muted-foreground">暂无内容，点击上方按钮从 Library 选取</div>
-        )}
-      </div>
-    </div>
-  );
-}
 
-// ==================== Skill Ref Viewer (read-only, Library reference) ====================
-
-function CrudItemEditor({
-  item, onDelete, onToggle,
-}: {
-  item: CrudItem;
-  onSave: (name: string, desc: string) => void;
-  onDelete: () => void;
-  onToggle: (enabled: boolean) => void;
-}) {
-  const navigate = useNavigate();
-
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
-          <Zap className="w-4 h-4 text-primary" />
-          {item.name}
-        </h3>
-        <div className="flex items-center gap-2">
-          <Switch checked={item.enabled} onCheckedChange={onToggle} />
-          <Button variant="ghost" size="sm" onClick={onDelete} className="text-destructive hover:text-destructive hover:bg-destructive/10 gap-1">
-            <Trash2 className="w-3 h-3" />
-            移除
-          </Button>
-        </div>
-      </div>
-      <div className="space-y-3">
-        <div>
-          <label className="text-xs text-muted-foreground mb-1 block">名称</label>
-          <div className="px-3 py-2 rounded-md bg-muted text-sm text-foreground">{item.name}</div>
-        </div>
-        <div>
-          <label className="text-xs text-muted-foreground mb-1 block">描述</label>
-          <div className="px-3 py-2 rounded-md bg-muted text-sm text-foreground">{item.desc || "—"}</div>
-        </div>
-      </div>
-      <button
-        onClick={() => navigate("/library")}
-        className="text-xs text-primary hover:underline"
-      >
-        去 Library 编辑 →
-      </button>
-    </div>
-  );
-}
-
-// ==================== Sub-agent Overview ====================
-
-function SubAgentOverview({
-  items, onAdd, onSelect, onDelete,
-}: {
-  items: SubAgent[];
-  onAdd: () => void;
-  onSelect: (name: string) => void;
-  onDelete: (name: string) => void;
-}) {
-  return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-foreground">Sub-agents ({items.length})</h3>
-        <Button variant="outline" size="sm" onClick={onAdd} className="gap-1.5">
-          <Library className="w-3 h-3" />
-          从 Library 选取
-        </Button>
-      </div>
-      <div className="space-y-2">
-        {items.map(sa => (
-          <div
-            key={sa.name}
-            className="flex items-center gap-3 p-3 rounded-lg bg-card border border-border group cursor-pointer hover:border-primary/20 transition-colors"
-            onClick={() => onSelect(sa.name)}
-          >
-            <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
-              <Bot className="w-4 h-4 text-primary" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-foreground">{sa.name}</p>
-              <p className="text-xs text-muted-foreground">{sa.desc}</p>
-            </div>
-            <button
-              onClick={e => { e.stopPropagation(); onDelete(sa.name); }}
-              className="p-1 rounded hover:bg-destructive/10 opacity-0 group-hover:opacity-100 transition-all"
-              title="删除"
-            >
-              <Trash2 className="w-3 h-3 text-muted-foreground hover:text-destructive" />
-            </button>
-          </div>
-        ))}
-        {items.length === 0 && (
-          <div className="text-center py-8 text-xs text-muted-foreground">暂无 Sub-agent，点击上方按钮从 Library 选取</div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ==================== Sub-agent Ref Viewer (read-only, Library reference) ====================
-
-function SubAgentEditor({
-  item, onDelete,
-}: {
-  item: SubAgent;
-  onSave: (name: string, desc: string) => void;
-  onDelete: () => void;
-}) {
-  const navigate = useNavigate();
-
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
-          <Bot className="w-4 h-4 text-primary" />
-          {item.name}
-        </h3>
-        <Button variant="ghost" size="sm" onClick={onDelete} className="text-destructive hover:text-destructive hover:bg-destructive/10 gap-1">
-          <Trash2 className="w-3 h-3" />
-          移除
-        </Button>
-      </div>
-      <div className="space-y-3">
-        <div>
-          <label className="text-xs text-muted-foreground mb-1 block">名称</label>
-          <div className="px-3 py-2 rounded-md bg-muted text-sm text-foreground">{item.name}</div>
-        </div>
-        <div>
-          <label className="text-xs text-muted-foreground mb-1 block">描述</label>
-          <div className="px-3 py-2 rounded-md bg-muted text-sm text-foreground">{item.desc || "—"}</div>
-        </div>
-      </div>
-      <button
-        onClick={() => navigate("/library")}
-        className="text-xs text-primary hover:underline"
-      >
-        去 Library 编辑 →
-      </button>
-    </div>
-  );
-}
-
-// ==================== Rules Overview ====================
-
-function RulesOverview({
-  rules, onAdd, onSelect, onDelete,
-}: {
-  rules: RuleItem[];
-  onAdd: () => void;
-  onSelect: (name: string) => void;
-  onDelete: (name: string) => void;
-}) {
-  return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-foreground">Rules ({rules.length})</h3>
-        <Button variant="outline" size="sm" onClick={onAdd} className="gap-1.5">
-          <Plus className="w-3 h-3" />
-          添加
-        </Button>
-      </div>
-      <div className="space-y-2">
-        {rules.map(rule => (
-          <div
-            key={rule.name}
-            className="flex items-center justify-between p-3 rounded-lg bg-card border border-border group cursor-pointer hover:border-primary/20 transition-colors"
-            onClick={() => onSelect(rule.name)}
-          >
-            <div className="flex items-center gap-2 flex-1 min-w-0">
-              <BookOpen className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-              <div className="min-w-0">
-                <p className="text-sm font-medium text-foreground">{rule.name}.md</p>
-                <p className="text-xs text-muted-foreground truncate">{rule.content.slice(0, 80) || "空规则"}</p>
-              </div>
-            </div>
-            <button
-              onClick={e => { e.stopPropagation(); onDelete(rule.name); }}
-              className="p-1 rounded hover:bg-destructive/10 opacity-0 group-hover:opacity-100 transition-all shrink-0"
-              title="删除"
-            >
-              <Trash2 className="w-3 h-3 text-muted-foreground hover:text-destructive" />
-            </button>
-          </div>
-        ))}
-        {rules.length === 0 && (
-          <div className="text-center py-8 text-xs text-muted-foreground">暂无规则，点击上方按钮添加</div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ==================== Rule Editor ====================
-
-function RuleEditor({
-  rule, onSave, onDelete,
-}: {
-  rule: RuleItem;
-  onSave: (content: string) => Promise<void>;
-  onDelete: () => void;
-}) {
-  const [content, setContent] = useState(rule.content);
-  const [savedContent, setSavedContent] = useState(rule.content);
-  const [saving, setSaving] = useState(false);
-  const isDirty = content !== savedContent;
-
-  useEffect(() => { setContent(rule.content); setSavedContent(rule.content); }, [rule.content]);
-
-  const handleSave = async () => {
-    try {
-      setSaving(true);
-      await onSave(content);
-      setSavedContent(content);
-    } catch (e) {
-      toast.error("保存失败，请重试");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
-          <BookOpen className="w-4 h-4 text-primary" />
-          {rule.name}.md
-        </h3>
-        <Button variant="ghost" size="sm" onClick={onDelete} className="text-destructive hover:text-destructive hover:bg-destructive/10 gap-1">
-          <Trash2 className="w-3 h-3" />
-          删除
-        </Button>
-      </div>
-      <textarea
-        value={content}
-        onChange={e => setContent(e.target.value)}
-        rows={16}
-        className="w-full bg-background border border-border rounded-lg px-4 py-3 text-sm text-foreground font-mono leading-relaxed outline-none focus:border-primary/40 resize-none transition-colors"
-      />
-      {isDirty && (
-        <div className="flex items-center justify-between">
-          <span className="text-xs text-warning">有未保存的更改</span>
-          <Button size="sm" onClick={handleSave} disabled={saving} className="gap-1.5">
-            <Save className="w-3 h-3" />
-            保存
-          </Button>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ==================== MCP Overview ====================
-
-function McpOverview({
-  items, onAdd, onSelect, onDelete, onToggle,
-}: {
-  items: McpItem[];
-  onAdd: () => void;
-  onSelect: (name: string) => void;
-  onDelete: (name: string) => void;
-  onToggle: (name: string, enabled: boolean) => void;
-}) {
-  return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-foreground">MCP ({items.length})</h3>
-        <Button variant="outline" size="sm" onClick={onAdd} className="gap-1.5">
-          <Library className="w-3 h-3" />
-          从 Library 选取
-        </Button>
-      </div>
-      <div className="space-y-2">
-        {items.map(item => (
-          <div
-            key={item.name}
-            className="flex items-center justify-between p-3 rounded-lg bg-card border border-border group cursor-pointer hover:border-primary/20 transition-colors"
-            onClick={() => onSelect(item.name)}
-          >
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-foreground">{item.name}</p>
-              <p className="text-xs text-muted-foreground font-mono">{item.command || "未配置"}</p>
-            </div>
-            <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
-              <button onClick={() => onDelete(item.name)} className="p-1 rounded hover:bg-destructive/10 opacity-0 group-hover:opacity-100 transition-all" title="删除">
-                <Trash2 className="w-3 h-3 text-muted-foreground hover:text-destructive" />
-              </button>
-              <Switch checked={!item.disabled} onCheckedChange={checked => onToggle(item.name, checked)} />
-            </div>
-          </div>
-        ))}
-        {items.length === 0 && (
-          <div className="text-center py-8 text-xs text-muted-foreground">暂无 MCP，点击上方按钮从 Library 选取</div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ==================== MCP Editor ====================
-
-function McpEditor({
-  item, onToggle, onDelete,
-}: {
-  item: McpItem;
-  onToggle: (enabled: boolean) => void;
-  onDelete: () => void;
-}) {
-  const navigate = useNavigate();
-
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
-          <Plug className="w-4 h-4 text-primary" />
-          {item.name}
-        </h3>
-        <div className="flex items-center gap-2">
-          <Switch checked={!item.disabled} onCheckedChange={onToggle} />
-          <Button variant="ghost" size="sm" onClick={onDelete} className="text-destructive hover:text-destructive hover:bg-destructive/10 gap-1">
-            <Trash2 className="w-3 h-3" />
-            移除
-          </Button>
-        </div>
-      </div>
-      <div className="space-y-3">
-        <div>
-          <label className="text-xs text-muted-foreground mb-1 block">Command</label>
-          <div className="px-3 py-2 rounded-md bg-muted text-sm font-mono text-foreground">{item.command || "—"}</div>
-        </div>
-        {item.args.length > 0 && (
-          <div>
-            <label className="text-xs text-muted-foreground mb-1 block">Args</label>
-            <div className="px-3 py-2 rounded-md bg-muted text-sm font-mono text-foreground">{item.args.join(" ")}</div>
-          </div>
-        )}
-        {Object.keys(item.env).length > 0 && (
-          <div>
-            <label className="text-xs text-muted-foreground mb-1 block">Env</label>
-            <div className="px-3 py-2 rounded-md bg-muted text-xs font-mono text-foreground space-y-1">
-              {Object.entries(item.env).map(([k, v]) => (
-                <div key={k}>{k}={v.length > 20 ? v.slice(0, 20) + "..." : v}</div>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
-      <button
-        onClick={() => navigate("/library")}
-        className="text-xs text-primary hover:underline"
-      >
-        去 Library 编辑 →
-      </button>
-    </div>
-  );
-}
-
-// ==================== Tools Catalog (full system tools with toggles) ====================
-
-const GROUP_LABELS: Record<string, string> = {
-  filesystem: "文件系统",
-  search: "搜索",
-  command: "命令执行",
-  web: "网络",
-  task: "任务委派",
-  todo: "待办管理",
-  skills: "技能",
-};
-
-function ToolsCatalog({
-  items, onToggle,
-}: {
-  items: CrudItem[];
-  onToggle: (name: string, enabled: boolean) => void;
-}) {
-  const groups = useMemo(() => {
-    const map = new Map<string, CrudItem[]>();
-    for (const item of items) {
-      const g = item.group || "other";
-      if (!map.has(g)) map.set(g, []);
-      map.get(g)!.push(item);
-    }
-    return map;
-  }, [items]);
-
-  const enabledCount = items.filter(i => i.enabled).length;
-
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-foreground">
-          工具 ({enabledCount}/{items.length})
-        </h3>
-      </div>
-      {[...groups.entries()].map(([group, groupItems]) => (
-        <div key={group} className="space-y-1.5">
-          <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-            {GROUP_LABELS[group] || group}
-          </h4>
-          <div className="space-y-1">
-            {groupItems.map(item => (
-              <div
-                key={item.name}
-                className="flex items-center justify-between px-3 py-2 rounded-lg bg-card border border-border transition-colors"
+      {/* Body: sidebar + content */}
+      <div className="flex-1 flex min-h-0">
+        {/* Flat sidebar */}
+        <nav className="w-48 shrink-0 border-r bg-muted/30 py-2">
+          {modules.map(m => {
+            const Icon = m.icon;
+            const count = m.count ? m.count(member.config) : undefined;
+            const active = activeModule === m.id;
+            return (
+              <button
+                key={m.id}
+                onClick={() => setActiveModule(m.id)}
+                className={`w-full flex items-center gap-2 px-4 py-2 text-sm transition-colors ${
+                  active ? "bg-primary/10 text-primary font-medium" : "text-muted-foreground hover:bg-muted"
+                }`}
               >
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-mono text-foreground">{item.name}</p>
-                  <p className="text-xs text-muted-foreground">{item.desc}</p>
+                <Icon className="h-4 w-4 shrink-0" />
+                <span className="truncate">{m.label}</span>
+                {count !== undefined && (
+                  <span className="ml-auto text-xs opacity-60">{count}</span>
+                )}
+              </button>
+            );
+          })}
+        </nav>
+
+        {/* Content */}
+        <div className="flex-1 min-w-0 overflow-auto">
+          {renderContent()}
+        </div>
+      </div>
+
+      {showTest && <TestPanel agentId={member.id} onClose={() => setShowTest(false)} />}
+      {showPublish && <PublishDialog agentId={member.id} onClose={() => setShowPublish(false)} />}
+      {pickerType && (
+        <ResourcePicker
+          type={pickerType}
+          library={pickerType === "skill" ? librarySkills : pickerType === "mcp" ? libraryMcps : libraryAgents}
+          assigned={pickerType === "skill" ? member.config.skills.map(s => s.name) : pickerType === "mcp" ? member.config.mcps.map(m => m.name) : member.config.subAgents.map(a => a.name)}
+          onConfirm={(names) => { handleAssign(pickerType, names); setPickerType(null); }}
+          onClose={() => setPickerType(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ==================== PromptEditor ====================
+
+function PromptEditor({ value, onSave }: { value: string; onSave: (v: string) => Promise<void> }) {
+  const [text, setText] = useState(value);
+  const [saving, setSaving] = useState(false);
+  const dirty = text !== value;
+
+  useEffect(() => { setText(value); }, [value]);
+
+  const save = async () => {
+    setSaving(true);
+    try { await onSave(text); } finally { setSaving(false); }
+  };
+
+  return (
+    <div className="h-full flex flex-col p-4 gap-3">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-medium">System Prompt</h3>
+        <Button size="sm" disabled={!dirty || saving} onClick={save}>
+          <Save className="h-3.5 w-3.5 mr-1" /> {saving ? "保存中..." : "保存"}
+        </Button>
+      </div>
+      <textarea
+        className="flex-1 w-full rounded-md border bg-background px-3 py-2 text-sm font-mono resize-none focus:outline-none focus:ring-2 focus:ring-ring"
+        value={text}
+        onChange={e => setText(e.target.value)}
+        placeholder="输入 System Prompt..."
+      />
+    </div>
+  );
+}
+
+// ==================== ToolsGrid ====================
+
+function ToolsGrid({ items, onToggle }: { items: CrudItem[]; onToggle: (name: string, enabled: boolean) => void }) {
+  const [filter, setFilter] = useState("");
+  const groups = useMemo(() => {
+    const map: Record<string, CrudItem[]> = {};
+    for (const t of items) {
+      if (filter && !t.name.toLowerCase().includes(filter.toLowerCase())) continue;
+      const g = t.group || "other";
+      (map[g] ??= []).push(t);
+    }
+    return Object.entries(map).sort(([a], [b]) => a.localeCompare(b));
+  }, [items, filter]);
+
+  return (
+    <div className="p-4 space-y-4">
+      <div className="flex items-center gap-2">
+        <h3 className="text-sm font-medium">Tools</h3>
+        <span className="text-xs text-muted-foreground">{items.length} 个工具</span>
+        <div className="flex-1" />
+        <div className="relative w-48">
+          <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+          <Input className="pl-8 h-8 text-xs" placeholder="搜索工具..." value={filter} onChange={e => setFilter(e.target.value)} />
+        </div>
+      </div>
+      {groups.map(([group, tools]) => (
+        <div key={group}>
+          <p className="text-xs font-medium text-muted-foreground uppercase mb-2">{group}</p>
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2">
+            {tools.map(t => (
+              <div key={t.name} className="flex items-center gap-2 rounded-md border px-3 py-2 text-xs">
+                <Wrench className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                <div className="min-w-0 flex-1">
+                  <p className="font-medium truncate">{t.name}</p>
+                  {t.desc && <p className="text-muted-foreground truncate">{t.desc}</p>}
                 </div>
-                <Switch checked={item.enabled} onCheckedChange={checked => onToggle(item.name, checked)} />
+                <Switch checked={t.enabled} onCheckedChange={v => onToggle(t.name, v)} />
               </div>
             ))}
           </div>
@@ -1100,116 +326,239 @@ function ToolsCatalog({
   );
 }
 
-// ==================== Resource Picker (Library → Member assignment) ====================
+// ==================== RulesPanel ====================
 
-function ResourcePicker({
-  open, onOpenChange, title, available, assigned, onConfirm,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  title: string;
-  available: { name: string; desc: string }[];
-  assigned: string[];
-  onConfirm: (selected: string[]) => void;
+function RulesPanel({ rules, onSave, onAdd, onDelete }: {
+  rules: RuleItem[];
+  onSave: (name: string, content: string) => Promise<void>;
+  onAdd: (name: string) => Promise<void>;
+  onDelete: (name: string) => void;
 }) {
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [search, setSearch] = useState("");
+  const [selected, setSelected] = useState<string | null>(rules[0]?.name ?? null);
+  const [text, setText] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
+  const [addName, setAddName] = useState("");
 
-  useEffect(() => {
-    if (open) {
-      setSelected(new Set(assigned));
-      setSearch("");
-    }
-  }, [open, assigned]);
+  const current = rules.find(r => r.name === selected);
+  useEffect(() => { setText(current?.content ?? ""); }, [current]);
+
+  const dirty = current ? text !== current.content : false;
+
+  const save = async () => {
+    if (!selected) return;
+    setSaving(true);
+    try { await onSave(selected, text); } finally { setSaving(false); }
+  };
+
+  const doAdd = async () => {
+    const n = addName.trim();
+    if (!n) return;
+    await onAdd(n.endsWith(".md") ? n : `${n}.md`);
+    setAddName("");
+    setAddOpen(false);
+    setSelected(n.endsWith(".md") ? n : `${n}.md`);
+  };
+
+  return (
+    <div className="h-full flex">
+      {/* File list */}
+      <div className="w-48 shrink-0 border-r flex flex-col">
+        <div className="flex items-center justify-between px-3 py-2 border-b">
+          <span className="text-xs font-medium text-muted-foreground">规则文件</span>
+          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setAddOpen(true)}>
+            <Plus className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+        <div className="flex-1 overflow-auto py-1">
+          {rules.map(r => (
+            <button
+              key={r.name}
+              onClick={() => setSelected(r.name)}
+              className={`w-full flex items-center gap-2 px-3 py-1.5 text-xs ${
+                selected === r.name ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted"
+              }`}
+            >
+              <BookOpen className="h-3 w-3 shrink-0" />
+              <span className="truncate">{r.name}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+      {/* Editor */}
+      <div className="flex-1 flex flex-col p-4 gap-2 min-w-0">
+        {current ? (
+          <>
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium truncate">{current.name}</span>
+              <div className="flex-1" />
+              <Button variant="ghost" size="sm" className="text-destructive h-7" onClick={() => { onDelete(current.name); setSelected(rules.find(r => r.name !== current.name)?.name ?? null); }}>
+                <Trash2 className="h-3.5 w-3.5 mr-1" /> 删除
+              </Button>
+              <Button size="sm" className="h-7" disabled={!dirty || saving} onClick={save}>
+                <Save className="h-3.5 w-3.5 mr-1" /> {saving ? "..." : "保存"}
+              </Button>
+            </div>
+            <textarea
+              className="flex-1 w-full rounded-md border bg-background px-3 py-2 text-sm font-mono resize-none focus:outline-none focus:ring-2 focus:ring-ring"
+              value={text}
+              onChange={e => setText(e.target.value)}
+            />
+          </>
+        ) : (
+          <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">
+            {rules.length ? "选择一个规则文件" : "暂无规则，点击 + 添加"}
+          </div>
+        )}
+      </div>
+      {/* Add dialog */}
+      <Dialog open={addOpen} onOpenChange={setAddOpen}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader><DialogTitle>添加规则文件</DialogTitle></DialogHeader>
+          <Input placeholder="文件名，如 coding.md" value={addName} onChange={e => setAddName(e.target.value)} onKeyDown={e => e.key === "Enter" && doAdd()} />
+          <DialogFooter><Button size="sm" onClick={doAdd} disabled={!addName.trim()}>添加</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+// ==================== ResourceCards ====================
+
+interface ResourceCardItem {
+  name: string;
+  desc?: string;
+  enabled?: boolean;
+}
+
+function ResourceCards({ type, items, onToggle, onRemove, onAdd }: {
+  type: "skill" | "mcp" | "agent";
+  items: ResourceCardItem[];
+  onToggle?: (name: string, enabled: boolean) => void;
+  onRemove?: (name: string) => void;
+  onAdd?: () => void;
+}) {
+  const labels = { skill: "Skills", mcp: "MCP Servers", agent: "Agents" };
+  const icons = { skill: Zap, mcp: Plug, agent: Users };
+  const Icon = icons[type];
+
+  return (
+    <div className="p-4 space-y-3">
+      <div className="flex items-center gap-2">
+        <h3 className="text-sm font-medium">{labels[type]}</h3>
+        <span className="text-xs text-muted-foreground">{items.length} 项</span>
+        {onAdd && (
+          <Button variant="ghost" size="icon" className="h-6 w-6 ml-auto" onClick={onAdd}>
+            <Plus className="h-3.5 w-3.5" />
+          </Button>
+        )}
+      </div>
+      {items.length === 0 ? (
+        <div className="text-sm text-muted-foreground py-8 text-center">
+          {onAdd ? (
+            <button onClick={onAdd} className="hover:text-primary transition-colors">
+              点击 + 从 Library 添加{labels[type]}
+            </button>
+          ) : (
+            <>暂无{labels[type]}</>
+          )}
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2">
+          {items.map(item => (
+            <div key={item.name} className="flex items-start gap-2 rounded-md border px-3 py-2.5">
+              <Icon className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium truncate">{item.name}</p>
+                {item.desc && <p className="text-xs text-muted-foreground truncate">{item.desc}</p>}
+              </div>
+              <div className="flex items-center gap-1 shrink-0">
+                {onToggle && item.enabled !== undefined && (
+                  <Switch checked={item.enabled} onCheckedChange={v => onToggle(item.name, v)} />
+                )}
+                {onRemove && (
+                  <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-destructive" onClick={() => onRemove(item.name)}>
+                    <X className="h-3.5 w-3.5" />
+                  </Button>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ==================== ResourcePicker ====================
+
+function ResourcePicker({ type, library, assigned, onConfirm, onClose }: {
+  type: "skill" | "mcp" | "agent";
+  library: ResourceItem[];
+  assigned: string[];
+  onConfirm: (names: string[]) => void;
+  onClose: () => void;
+}) {
+  const labels = { skill: "Skill", mcp: "MCP", agent: "Agent" };
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [filter, setFilter] = useState("");
+  const assignedSet = useMemo(() => new Set(assigned), [assigned]);
+
+  const available = useMemo(() =>
+    library.filter(item => !assignedSet.has(item.name) && (!filter || item.name.toLowerCase().includes(filter.toLowerCase()))),
+    [library, assignedSet, filter]
+  );
 
   const toggle = (name: string) => {
     setSelected(prev => {
       const next = new Set(prev);
-      if (next.has(name)) next.delete(name);
-      else next.add(name);
+      if (next.has(name)) next.delete(name); else next.add(name);
       return next;
     });
   };
 
-  const filtered = search
-    ? available.filter(i => i.name.toLowerCase().includes(search.toLowerCase()))
-    : available;
-
-  const newCount = [...selected].filter(n => !assigned.includes(n)).length;
-  const removedCount = assigned.filter(n => !selected.has(n)).length;
-
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
+    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>{title}</DialogTitle>
+          <DialogTitle>从 Library 添加 {labels[type]}</DialogTitle>
         </DialogHeader>
-        {available.length > 5 && (
-          <div className="relative">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-            <Input
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              placeholder="搜索..."
-              className="pl-8 h-8 text-sm"
-            />
-          </div>
-        )}
-        <div className="space-y-1 max-h-64 overflow-y-auto">
-          {filtered.map(item => {
-            const checked = selected.has(item.name);
-            return (
-              <label
-                key={item.name}
-                className={`flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-colors ${
-                  checked ? "bg-primary/5 border border-primary/20" : "hover:bg-muted border border-transparent"
-                }`}
-              >
-                <input
-                  type="checkbox"
-                  checked={checked}
-                  onChange={() => toggle(item.name)}
-                  className="rounded border-border"
-                />
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-foreground">{item.name}</p>
-                  {item.desc && (
-                    <p className="text-xs text-muted-foreground truncate">{item.desc}</p>
-                  )}
-                </div>
-                {assigned.includes(item.name) && (
-                  <span className="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
-                    已分配
-                  </span>
-                )}
-              </label>
-            );
-          })}
-          {available.length === 0 && (
-            <div className="text-center py-6 space-y-2">
-              <p className="text-xs text-muted-foreground">Library 中暂无资源</p>
-              <p className="text-xs text-muted-foreground">请先到 Library 页面创建</p>
-            </div>
-          )}
-          {available.length > 0 && filtered.length === 0 && (
-            <div className="text-center py-4 text-xs text-muted-foreground">无匹配结果</div>
-          )}
+        <div className="relative">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+          <Input className="pl-8 h-8 text-xs" placeholder="搜索..." value={filter} onChange={e => setFilter(e.target.value)} />
         </div>
-        <DialogFooter className="flex items-center justify-between sm:justify-between">
-          <div className="text-xs text-muted-foreground">
-            {newCount > 0 && <span className="text-primary">+{newCount} </span>}
-            {removedCount > 0 && <span className="text-destructive">-{removedCount} </span>}
-            {newCount === 0 && removedCount === 0 && "无变更"}
-          </div>
-          <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>取消</Button>
-            <Button size="sm" onClick={() => { onConfirm([...selected]); onOpenChange(false); }}>
-              确认
-            </Button>
-          </div>
+        <div className="max-h-64 overflow-auto space-y-1">
+          {available.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-6">
+              {library.length === 0 ? "Library 中暂无资源，请先去 Library 创建" : "没有可添加的资源"}
+            </p>
+          ) : available.map(item => (
+            <button
+              key={item.id}
+              onClick={() => toggle(item.name)}
+              className={`w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm text-left transition-colors ${
+                selected.has(item.name) ? "bg-primary/10 text-primary" : "hover:bg-muted"
+              }`}
+            >
+              <div className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 ${
+                selected.has(item.name) ? "bg-primary border-primary" : "border-muted-foreground/30"
+              }`}>
+                {selected.has(item.name) && <Check className="h-3 w-3 text-primary-foreground" />}
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="font-medium truncate">{item.name}</p>
+                {item.desc && <p className="text-xs text-muted-foreground truncate">{item.desc}</p>}
+              </div>
+            </button>
+          ))}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" size="sm" onClick={onClose}>取消</Button>
+          <Button size="sm" disabled={selected.size === 0} onClick={() => onConfirm([...selected])}>
+            添加 {selected.size > 0 && `(${selected.size})`}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
   );
 }
-

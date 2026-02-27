@@ -41,7 +41,6 @@ def list_library(resource_type: str) -> list[dict[str, Any]]:
                     results.append({
                         "id": d.name, "type": "skill",
                         "name": meta.get("name", d.name), "desc": meta.get("desc", ""),
-                        "category": meta.get("category", "未分类"),
                         "created_at": meta.get("created_at", 0), "updated_at": meta.get("updated_at", 0),
                     })
     elif resource_type == "agent":
@@ -52,7 +51,6 @@ def list_library(resource_type: str) -> list[dict[str, Any]]:
                 results.append({
                     "id": f.stem, "type": "agent",
                     "name": meta.get("name", f.stem), "desc": meta.get("desc", ""),
-                    "category": meta.get("category", "未分类"),
                     "created_at": meta.get("created_at", 0), "updated_at": meta.get("updated_at", 0),
                 })
     elif resource_type == "mcp":
@@ -60,7 +58,7 @@ def list_library(resource_type: str) -> list[dict[str, Any]]:
         for name, cfg in mcp_data.get("mcpServers", {}).items():
             results.append({
                 "id": name, "type": "mcp", "name": name,
-                "desc": cfg.get("desc", ""), "category": cfg.get("category", "未分类"),
+                "desc": cfg.get("desc", ""),
                 "created_at": cfg.get("created_at", 0), "updated_at": cfg.get("updated_at", 0),
             })
     return results
@@ -77,7 +75,7 @@ def create_resource(resource_type: str, name: str, desc: str = "", category: str
             "created_at": now, "updated_at": now,
         })
         (skill_dir / "SKILL.md").write_text(f"# {name}\n\n{desc}\n", encoding="utf-8")
-        return {"id": rid, "type": "skill", "name": name, "desc": desc, "category": cat, "created_at": now, "updated_at": now}
+        return {"id": rid, "type": "skill", "name": name, "desc": desc, "created_at": now, "updated_at": now}
     elif resource_type == "agent":
         rid = name.lower().replace(" ", "-")
         agents_dir = LIBRARY_DIR / "agents"
@@ -87,7 +85,7 @@ def create_resource(resource_type: str, name: str, desc: str = "", category: str
             "created_at": now, "updated_at": now,
         })
         (agents_dir / f"{rid}.md").write_text(f"---\nname: {rid}\ndescription: {desc}\n---\n\n# {name}\n", encoding="utf-8")
-        return {"id": rid, "type": "agent", "name": name, "desc": desc, "category": cat, "created_at": now, "updated_at": now}
+        return {"id": rid, "type": "agent", "name": name, "desc": desc, "created_at": now, "updated_at": now}
     elif resource_type == "mcp":
         mcp_path = LIBRARY_DIR / ".mcp.json"
         mcp_data = _read_json(mcp_path, {"mcpServers": {}})
@@ -96,12 +94,12 @@ def create_resource(resource_type: str, name: str, desc: str = "", category: str
             "created_at": now, "updated_at": now,
         }
         _write_json(mcp_path, mcp_data)
-        return {"id": name, "type": "mcp", "name": name, "desc": desc, "category": cat, "created_at": now, "updated_at": now}
+        return {"id": name, "type": "mcp", "name": name, "desc": desc, "created_at": now, "updated_at": now}
     raise ValueError(f"Unknown resource type: {resource_type}")
 
 
 def update_resource(resource_type: str, resource_id: str, **fields: Any) -> dict[str, Any] | None:
-    allowed = {"name", "desc", "category"}
+    allowed = {"name", "desc"}
     updates = {k: v for k, v in fields.items() if k in allowed and v is not None}
     now = int(time.time() * 1000)
     if resource_type == "skill":
@@ -112,7 +110,7 @@ def update_resource(resource_type: str, resource_id: str, **fields: Any) -> dict
         meta.update(updates)
         meta["updated_at"] = now
         _write_json(meta_path, meta)
-        return {"id": resource_id, "type": "skill", **meta}
+        return {"id": resource_id, "type": "skill", "name": meta.get("name", resource_id), "desc": meta.get("desc", ""), "created_at": meta.get("created_at", 0), "updated_at": now}
     elif resource_type == "agent":
         meta_path = LIBRARY_DIR / "agents" / f"{resource_id}.json"
         if not meta_path.exists():
@@ -121,7 +119,7 @@ def update_resource(resource_type: str, resource_id: str, **fields: Any) -> dict
         meta.update(updates)
         meta["updated_at"] = now
         _write_json(meta_path, meta)
-        return {"id": resource_id, "type": "agent", **meta}
+        return {"id": resource_id, "type": "agent", "name": meta.get("name", resource_id), "desc": meta.get("desc", ""), "created_at": meta.get("created_at", 0), "updated_at": now}
     elif resource_type == "mcp":
         mcp_path = LIBRARY_DIR / ".mcp.json"
         mcp_data = _read_json(mcp_path, {"mcpServers": {}})
@@ -131,7 +129,7 @@ def update_resource(resource_type: str, resource_id: str, **fields: Any) -> dict
         mcp_data["mcpServers"][resource_id]["updated_at"] = now
         _write_json(mcp_path, mcp_data)
         entry = mcp_data["mcpServers"][resource_id]
-        return {"id": resource_id, "type": "mcp", "name": entry.get("name", resource_id), **entry}
+        return {"id": resource_id, "type": "mcp", "name": entry.get("name", resource_id), "desc": entry.get("desc", ""), "created_at": entry.get("created_at", 0), "updated_at": now}
     return None
 
 def delete_resource(resource_type: str, resource_id: str) -> bool:
@@ -223,16 +221,85 @@ def get_library_agent_desc(name: str) -> str:
     return ""
 
 
-def get_resource_used_by(resource_type: str, resource_name: str) -> int:
-    """Count how many members use a given resource by name."""
+def get_resource_used_by(resource_type: str, resource_name: str) -> list[str]:
+    """Return member names that use a given resource."""
     from backend.web.services.member_service import list_members
 
     config_key = {"skill": "skills", "mcp": "mcps", "agent": "subAgents"}.get(resource_type, "")
     if not config_key:
-        return 0
-    count = 0
+        return []
+    names: list[str] = []
     for member in list_members():
         items = member.get("config", {}).get(config_key, [])
         if any(i.get("name") == resource_name for i in items):
-            count += 1
-    return count
+            names.append(member.get("name", member.get("id", "unknown")))
+    return names
+
+
+def get_resource_content(resource_type: str, resource_id: str) -> str | None:
+    """Read the .md content file for a skill or agent resource."""
+    if resource_type == "skill":
+        path = LIBRARY_DIR / "skills" / resource_id / "SKILL.md"
+        if path.exists():
+            return path.read_text(encoding="utf-8")
+        return ""
+    elif resource_type == "agent":
+        path = LIBRARY_DIR / "agents" / f"{resource_id}.md"
+        if path.exists():
+            return path.read_text(encoding="utf-8")
+        return ""
+    elif resource_type == "mcp":
+        mcp_data = _read_json(LIBRARY_DIR / ".mcp.json", {"mcpServers": {}})
+        cfg = mcp_data.get("mcpServers", {}).get(resource_id)
+        if cfg is None:
+            return None
+        # Only return MCP config fields, not metadata
+        meta_keys = {"desc", "category", "created_at", "updated_at", "name"}
+        config_only = {k: v for k, v in cfg.items() if k not in meta_keys}
+        if not config_only:
+            # Return a template if no config exists yet
+            config_only = {"command": "", "args": [], "env": {}}
+        return json.dumps(config_only, ensure_ascii=False, indent=2)
+    return None
+
+
+def update_resource_content(resource_type: str, resource_id: str, content: str) -> bool:
+    """Write the .md content file for a skill or agent resource."""
+    now = int(time.time() * 1000)
+    if resource_type == "skill":
+        skill_dir = LIBRARY_DIR / "skills" / resource_id
+        if not skill_dir.is_dir():
+            return False
+        (skill_dir / "SKILL.md").write_text(content, encoding="utf-8")
+        meta_path = skill_dir / "meta.json"
+        meta = _read_json(meta_path, {})
+        meta["updated_at"] = now
+        _write_json(meta_path, meta)
+        return True
+    elif resource_type == "agent":
+        md_path = LIBRARY_DIR / "agents" / f"{resource_id}.md"
+        json_path = LIBRARY_DIR / "agents" / f"{resource_id}.json"
+        if not json_path.exists():
+            return False
+        md_path.write_text(content, encoding="utf-8")
+        meta = _read_json(json_path, {})
+        meta["updated_at"] = now
+        _write_json(json_path, meta)
+        return True
+    elif resource_type == "mcp":
+        mcp_path = LIBRARY_DIR / ".mcp.json"
+        mcp_data = _read_json(mcp_path, {"mcpServers": {}})
+        if resource_id not in mcp_data.get("mcpServers", {}):
+            return False
+        try:
+            parsed = json.loads(content)
+        except json.JSONDecodeError:
+            return False
+        # Preserve metadata before overwriting with parsed config
+        existing = mcp_data["mcpServers"][resource_id]
+        meta_keys = {"desc", "category", "created_at", "name"}
+        preserved = {k: existing[k] for k in meta_keys if k in existing}
+        mcp_data["mcpServers"][resource_id] = {**parsed, **preserved, "updated_at": now}
+        _write_json(mcp_path, mcp_data)
+        return True
+    return False

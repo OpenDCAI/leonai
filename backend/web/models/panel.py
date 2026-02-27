@@ -60,13 +60,15 @@ class BulkTaskStatusRequest(BaseModel):
 class CreateResourceRequest(BaseModel):
     name: str
     desc: str = ""
-    category: str = ""
 
 
 class UpdateResourceRequest(BaseModel):
     name: str | None = None
     desc: str | None = None
-    category: str | None = None
+
+
+class UpdateResourceContentRequest(BaseModel):
+    content: str
 
 
 # ── Profile ──

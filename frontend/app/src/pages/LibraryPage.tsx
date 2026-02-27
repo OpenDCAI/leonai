@@ -1,15 +1,9 @@
 import { useState, useEffect } from "react";
 import { Search, Plus, Zap, Plug, Bot, Edit, Trash2, AlertTriangle, RefreshCw } from "lucide-react";
-import { useNavigate } from "react-router-dom";
-import SkillDetail from "@/components/SkillDetail";
-import MCPDetail from "@/components/MCPDetail";
-import AgentTemplateDetail from "@/components/AgentTemplateDetail";
+import LibraryEditor from "@/components/LibraryEditor";
 import { toast } from "sonner";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { useAppStore } from "@/store/app-store";
 import type { ResourceItem } from "@/store/types";
 
@@ -18,9 +12,9 @@ type ResourceType = "skills" | "mcp" | "agents";
 const typeMap: Record<ResourceType, string> = { skills: "skill", mcp: "mcp", agents: "agent" };
 
 const tabs: { id: ResourceType; label: string; icon: typeof Zap }[] = [
-  { id: "skills", label: "技能", icon: Zap },
-  { id: "mcp", label: "MCP 服务", icon: Plug },
-  { id: "agents", label: "Agent 模板", icon: Bot },
+  { id: "skills", label: "Skill", icon: Zap },
+  { id: "mcp", label: "MCP", icon: Plug },
+  { id: "agents", label: "Agent", icon: Bot },
 ];
 
 export default function LibraryPage() {
@@ -31,8 +25,6 @@ export default function LibraryPage() {
   const loadAll = useAppStore((s) => s.loadAll);
   const error = useAppStore((s) => s.error);
   const retry = useAppStore((s) => s.retry);
-  const storeAddResource = useAppStore((s) => s.addResource);
-  const storeUpdateResource = useAppStore((s) => s.updateResource);
   const storeDeleteResource = useAppStore((s) => s.deleteResource);
   const getResourceUsedBy = useAppStore((s) => s.getResourceUsedBy);
 
@@ -40,16 +32,10 @@ export default function LibraryPage() {
 
   const [tab, setTab] = useState<ResourceType>("skills");
   const [search, setSearch] = useState("");
-  const [selectedSkill, setSelectedSkill] = useState<ResourceItem | null>(null);
-  const [selectedMCP, setSelectedMCP] = useState<ResourceItem | null>(null);
-  const [selectedAgent, setSelectedAgent] = useState<ResourceItem | null>(null);
+  const [selected, setSelected] = useState<ResourceItem | null>(null);
+  const [creating, setCreating] = useState(false);
 
-  // Dialog state
-  const [formOpen, setFormOpen] = useState(false);
-  const [editingItem, setEditingItem] = useState<ResourceItem | null>(null);
-  const [formName, setFormName] = useState("");
-  const [formDesc, setFormDesc] = useState("");
-  const [formCategory, setFormCategory] = useState("");
+  // Delete dialog state
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deletingItem, setDeletingItem] = useState<ResourceItem | null>(null);
 
@@ -60,41 +46,18 @@ export default function LibraryPage() {
   const Icon = tab === "skills" ? Zap : tab === "mcp" ? Plug : Bot;
 
   const handleCardClick = (item: ResourceItem) => {
-    if (tab === "skills") { setSelectedSkill(item); setSelectedMCP(null); setSelectedAgent(null); }
-    else if (tab === "mcp") { setSelectedMCP(item); setSelectedSkill(null); setSelectedAgent(null); }
-    else { setSelectedAgent(item); setSelectedSkill(null); setSelectedMCP(null); }
+    setCreating(false);
+    setSelected(item);
   };
 
   const openCreate = () => {
-    setEditingItem(null);
-    setFormName("");
-    setFormDesc("");
-    setFormCategory("");
-    setFormOpen(true);
+    setSelected(null);
+    setCreating(true);
   };
 
-  const openEdit = (item: ResourceItem) => {
-    setEditingItem(item);
-    setFormName(item.name);
-    setFormDesc(item.desc);
-    setFormCategory(item.category);
-    setFormOpen(true);
-  };
-
-  const handleSaveForm = async () => {
-    if (!formName.trim()) return;
-    try {
-      if (editingItem) {
-        await storeUpdateResource(typeMap[tab], editingItem.id, { name: formName.trim(), desc: formDesc.trim(), category: formCategory.trim() });
-        toast.success(`${formName.trim()} 已更新`);
-      } else {
-        await storeAddResource(typeMap[tab], formName.trim(), formDesc.trim(), formCategory.trim() || "未分类");
-        toast.success(`${formName.trim()} 已创建`);
-      }
-      setFormOpen(false);
-    } catch (e: unknown) {
-      toast.error("操作失败: " + (e instanceof Error ? e.message : String(e)));
-    }
+  const handleCreated = (item: ResourceItem) => {
+    setCreating(false);
+    setSelected(item);
   };
 
   const openDelete = (item: ResourceItem) => {
@@ -106,9 +69,7 @@ export default function LibraryPage() {
     if (!deletingItem) return;
     try {
       await storeDeleteResource(typeMap[tab], deletingItem.id);
-      if (selectedSkill?.id === deletingItem.id) setSelectedSkill(null);
-      if (selectedMCP?.id === deletingItem.id) setSelectedMCP(null);
-      if (selectedAgent?.id === deletingItem.id) setSelectedAgent(null);
+      if (selected?.id === deletingItem.id) setSelected(null);
       toast.success(`${deletingItem.name} 已删除`);
       setDeleteDialogOpen(false);
     } catch (e: unknown) {
@@ -116,7 +77,7 @@ export default function LibraryPage() {
     }
   };
 
-  const showDetail = selectedSkill || selectedMCP || selectedAgent;
+  const showDetail = selected !== null || creating;
 
   return (
     <div className="flex h-full">
@@ -124,14 +85,14 @@ export default function LibraryPage() {
       {!isMobile && (
         <div className="w-[200px] shrink-0 border-r border-border bg-card flex flex-col">
           <div className="h-14 flex items-center justify-between px-4 border-b border-border">
-            <h2 className="text-sm font-semibold text-foreground">能力库</h2>
+            <h2 className="text-sm font-semibold text-foreground">Library</h2>
           </div>
           <div className="flex-1 p-2 space-y-0.5">
             {tabs.map((t) => {
               const count = (t.id === "skills" ? librarySkills : t.id === "mcp" ? libraryMcps : libraryAgents).length;
               const isActive = tab === t.id;
               return (
-                <button key={t.id} onClick={() => { setTab(t.id); setSearch(""); setSelectedSkill(null); setSelectedMCP(null); }} className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm transition-all ${
+                <button key={t.id} onClick={() => { setTab(t.id); setSearch(""); setSelected(null); setCreating(false); }} className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm transition-all ${
                   isActive ? "bg-primary/5 text-foreground border border-primary/15" : "text-muted-foreground hover:bg-muted hover:text-foreground border border-transparent"
                 }`}>
                   <div className="flex items-center gap-2.5"><t.icon className={`w-4 h-4 ${isActive ? "text-primary" : ""}`} /><span>{t.label}</span></div>
@@ -154,7 +115,7 @@ export default function LibraryPage() {
                 {tabs.map((t) => {
                   const isActive = tab === t.id;
                   return (
-                    <button key={t.id} onClick={() => { setTab(t.id); setSearch(""); setSelectedSkill(null); setSelectedMCP(null); setSelectedAgent(null); }} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs whitespace-nowrap shrink-0 transition-colors ${
+                    <button key={t.id} onClick={() => { setTab(t.id); setSearch(""); setSelected(null); setCreating(false); }} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs whitespace-nowrap shrink-0 transition-colors ${
                       isActive ? "bg-primary/10 text-primary font-medium" : "text-muted-foreground hover:text-foreground hover:bg-muted"
                     }`}>
                       <t.icon className="w-3.5 h-3.5" />{t.label}
@@ -166,7 +127,7 @@ export default function LibraryPage() {
             {!isMobile && (
               <>
                 <h3 className="text-sm font-semibold text-foreground">
-                  {tab === "skills" ? "技能" : tab === "mcp" ? "MCP 服务" : "Agent 模板"}
+                  {tab === "skills" ? "Skill" : tab === "mcp" ? "MCP" : "Agent"}
                 </h3>
                 <span className="text-xs text-muted-foreground font-mono">{items.length}</span>
               </>
@@ -203,7 +164,7 @@ export default function LibraryPage() {
           <div className={`grid ${isMobile ? "grid-cols-1" : "grid-cols-2"} gap-3`}>
             {filtered.map((item) => (
               <div key={item.id} onClick={() => handleCardClick(item)} className={`surface-interactive p-4 cursor-pointer group relative ${
-                (selectedSkill?.id === item.id || selectedMCP?.id === item.id || selectedAgent?.id === item.id) ? "border-primary/40 glow-sm" : ""
+                selected?.id === item.id ? "border-primary/40 glow-sm" : ""
               }`}>
                 <div className="flex items-start gap-3">
                   <div className="w-9 h-9 rounded-lg bg-primary/8 flex items-center justify-center shrink-0">
@@ -212,15 +173,14 @@ export default function LibraryPage() {
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center justify-between">
                       <h4 className="text-sm font-medium text-foreground group-hover:text-primary transition-colors">{item.name}</h4>
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">{item.category}</span>
                     </div>
                     <p className="text-xs text-muted-foreground mt-1">{item.desc}</p>
-                    <p className="text-[11px] text-muted-foreground mt-2">被 <span className="text-foreground font-medium">{getResourceUsedBy(typeMap[tab], item.name)}</span> 位成员使用</p>
+                    <p className="text-[11px] text-muted-foreground mt-2">{(() => { const n = getResourceUsedBy(typeMap[tab], item.name).length; return n ? `被 ${n} 位成员使用` : "未被使用"; })()}</p>
                   </div>
                 </div>
                 {/* Edit/Delete hover actions */}
                 <div className="absolute top-2 right-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <button onClick={(e) => { e.stopPropagation(); openEdit(item); }} className="p-1 rounded hover:bg-muted transition-colors" title="编辑">
+                  <button onClick={(e) => { e.stopPropagation(); handleCardClick(item); }} className="p-1 rounded hover:bg-muted transition-colors" title="编辑">
                     <Edit className="w-3 h-3 text-muted-foreground" />
                   </button>
                   <button onClick={(e) => { e.stopPropagation(); openDelete(item); }} className="p-1 rounded hover:bg-destructive/10 transition-colors" title="删除">
@@ -238,44 +198,15 @@ export default function LibraryPage() {
         </div>
       </div>
 
-      {/* Detail panels */}
-      {!isMobile && selectedSkill && <SkillDetail skill={selectedSkill} onClose={() => setSelectedSkill(null)} />}
-      {!isMobile && selectedMCP && <MCPDetail mcp={selectedMCP} onClose={() => setSelectedMCP(null)} />}
-      {!isMobile && selectedAgent && <AgentTemplateDetail agent={selectedAgent} onClose={() => setSelectedAgent(null)} />}
-
-      {isMobile && selectedSkill && (
+      {/* Editor panel */}
+      {!isMobile && showDetail && (
+        <LibraryEditor item={selected} type={typeMap[tab] as "skill" | "mcp" | "agent"} onClose={() => { setSelected(null); setCreating(false); }} onCreated={handleCreated} />
+      )}
+      {isMobile && showDetail && (
         <div className="fixed inset-0 z-50 bg-background overflow-y-auto">
-          <SkillDetail skill={selectedSkill} onClose={() => setSelectedSkill(null)} />
+          <LibraryEditor item={selected} type={typeMap[tab] as "skill" | "mcp" | "agent"} onClose={() => { setSelected(null); setCreating(false); }} onCreated={handleCreated} />
         </div>
       )}
-      {isMobile && selectedMCP && (
-        <div className="fixed inset-0 z-50 bg-background overflow-y-auto">
-          <MCPDetail mcp={selectedMCP} onClose={() => setSelectedMCP(null)} />
-        </div>
-      )}
-      {isMobile && selectedAgent && (
-        <div className="fixed inset-0 z-50 bg-background overflow-y-auto">
-          <AgentTemplateDetail agent={selectedAgent} onClose={() => setSelectedAgent(null)} />
-        </div>
-      )}
-
-      {/* Create/Edit Dialog */}
-      <Dialog open={formOpen} onOpenChange={setFormOpen}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle>{editingItem ? "编辑" : "新建"}{tab === "skills" ? "技能" : tab === "mcp" ? " MCP 服务" : " Agent 模板"}</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3">
-            <Input value={formName} onChange={(e) => setFormName(e.target.value)} placeholder="名称" />
-            <Input value={formDesc} onChange={(e) => setFormDesc(e.target.value)} placeholder="描述" />
-            <Input value={formCategory} onChange={(e) => setFormCategory(e.target.value)} placeholder="分类" />
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setFormOpen(false)}>取消</Button>
-            <Button onClick={handleSaveForm} disabled={!formName.trim()}>{editingItem ? "更新" : "创建"}</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       {/* Delete confirmation */}
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>

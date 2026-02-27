@@ -40,9 +40,11 @@ interface AppState {
   // ── Library ──
   fetchLibrary: (type: string) => Promise<void>;
   fetchLibraryNames: (type: string) => Promise<{ name: string; desc: string }[]>;
-  addResource: (type: string, name: string, desc?: string, category?: string) => Promise<ResourceItem>;
+  addResource: (type: string, name: string, desc?: string) => Promise<ResourceItem>;
   updateResource: (type: string, id: string, fields: Partial<ResourceItem>) => Promise<void>;
   deleteResource: (type: string, id: string) => Promise<void>;
+  fetchResourceContent: (type: string, id: string) => Promise<string>;
+  updateResourceContent: (type: string, id: string, content: string) => Promise<void>;
 
   // ── Profile ──
   fetchProfile: () => Promise<void>;
@@ -50,7 +52,7 @@ interface AppState {
 
   // ── Helpers ──
   getMemberNames: () => { id: string; name: string }[];
-  getResourceUsedBy: (type: string, name: string) => number;
+  getResourceUsedBy: (type: string, name: string) => string[];
 }
 
 async function api<T = unknown>(path: string, opts?: RequestInit): Promise<T> {
@@ -198,10 +200,10 @@ export const useAppStore = create<AppState>()((set, get) => ({
     return data.items;
   },
 
-  addResource: async (type, name, desc = "", category = "") => {
+  addResource: async (type, name, desc = "") => {
     const item = await api<ResourceItem>(`/library/${type}`, {
       method: "POST",
-      body: JSON.stringify({ name, desc, category }),
+      body: JSON.stringify({ name, desc }),
     });
     if (type === "skill") set((s) => ({ librarySkills: [...s.librarySkills, item] }));
     else if (type === "mcp") set((s) => ({ libraryMcps: [...s.libraryMcps, item] }));
@@ -228,6 +230,18 @@ export const useAppStore = create<AppState>()((set, get) => ({
     else set((s) => ({ libraryAgents: filter(s.libraryAgents) }));
   },
 
+  fetchResourceContent: async (type, id) => {
+    const data = await api<{ content: string }>(`/library/${type}/${id}/content`);
+    return data.content;
+  },
+
+  updateResourceContent: async (type, id, content) => {
+    await api(`/library/${type}/${id}/content`, {
+      method: "PUT",
+      body: JSON.stringify({ content }),
+    });
+  },
+
   // ── Profile ──
   fetchProfile: async () => {
     const data = await api<UserProfile & { id?: number }>("/profile");
@@ -249,6 +263,6 @@ export const useAppStore = create<AppState>()((set, get) => ({
     const key = type === "skill" ? "skills" : type === "mcp" ? "mcps" : "subAgents";
     return get().memberList.filter((s) =>
       (s.config?.[key as keyof typeof s.config] as { name: string }[] | undefined)?.some((i) => i.name === name)
-    ).length;
+    ).map((s) => s.name);
   },
 }));

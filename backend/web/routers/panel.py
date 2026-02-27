@@ -14,6 +14,7 @@ from backend.web.models.panel import (
     PublishMemberRequest,
     UpdateMemberRequest,
     UpdateProfileRequest,
+    UpdateResourceContentRequest,
     UpdateResourceRequest,
     UpdateTaskRequest,
 )
@@ -149,8 +150,24 @@ async def list_library_names(resource_type: str) -> dict[str, Any]:
 
 @router.get("/library/{resource_type}/{resource_name}/used-by")
 async def get_used_by(resource_type: str, resource_name: str) -> dict[str, Any]:
-    count = await asyncio.to_thread(library_service.get_resource_used_by, resource_type, resource_name)
-    return {"count": count}
+    members = await asyncio.to_thread(library_service.get_resource_used_by, resource_type, resource_name)
+    return {"count": len(members), "members": members}
+
+
+@router.get("/library/{resource_type}/{resource_id}/content")
+async def get_resource_content(resource_type: str, resource_id: str) -> dict[str, Any]:
+    content = await asyncio.to_thread(library_service.get_resource_content, resource_type, resource_id)
+    if content is None:
+        raise HTTPException(404, "Resource not found")
+    return {"content": content}
+
+
+@router.put("/library/{resource_type}/{resource_id}/content")
+async def update_resource_content(resource_type: str, resource_id: str, req: UpdateResourceContentRequest) -> dict[str, Any]:
+    ok = await asyncio.to_thread(library_service.update_resource_content, resource_type, resource_id, req.content)
+    if not ok:
+        raise HTTPException(404, "Resource not found or invalid content")
+    return {"success": True}
 
 
 # ── Profile ──

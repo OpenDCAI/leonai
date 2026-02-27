@@ -67,7 +67,6 @@ export interface ResourceItem {
   id: string;
   name: string;
   desc: string;
-  category: string;
   type: string;
   created_at: number;
   updated_at: number;

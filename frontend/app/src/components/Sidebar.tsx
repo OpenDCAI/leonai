@@ -1,4 +1,5 @@
 import { MoreHorizontal, Plus, Search, Trash2 } from "lucide-react";
+import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import type { ThreadSummary } from "../api";
 import { useAppStore } from "../store/app-store";
@@ -11,6 +12,7 @@ interface SidebarProps {
   width?: number;
   onDeleteThread: (threadId: string) => void;
   onSearchClick: () => void;
+  onNewChat: () => void;
 }
 
 function ThreadSkeleton() {
@@ -33,20 +35,22 @@ export default function Sidebar({
   width = 272,
   onDeleteThread,
   onSearchClick,
+  onNewChat,
 }: SidebarProps) {
   const { threadId } = useParams<{ threadId?: string }>();
   const activeThreadId = threadId || null;
   const memberList = useAppStore(s => s.memberList);
   const memberNameMap = new Map(memberList.map(m => [m.id, m.name]));
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   if (collapsed) {
     return (
       <div className="w-14 h-full flex flex-col items-center py-4 bg-card border-r border-border animate-slide-in">
-        <Link
-          to="/members"
+        <button
+          onClick={onNewChat}
           className="w-9 h-9 rounded-lg flex items-center justify-center mb-2 text-muted-foreground hover:bg-muted hover:text-foreground"
         >
           <Plus className="w-4.5 h-4.5" />
-        </Link>
+        </button>
         <button
           className="w-9 h-9 rounded-lg flex items-center justify-center mb-2 text-muted-foreground hover:bg-muted hover:text-foreground"
           onClick={onSearchClick}
@@ -66,13 +70,13 @@ export default function Sidebar({
 
       {/* Actions */}
       <div className="px-3 pb-3 space-y-2">
-        <Link
-          to="/members"
+        <button
+          onClick={onNewChat}
           className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm border border-border text-muted-foreground hover:bg-muted hover:text-foreground"
         >
           <Plus className="w-4 h-4" />
           <span>发起会话</span>
-        </Link>
+        </button>
         <button
           className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-muted-foreground/60 hover:bg-muted hover:text-foreground"
           onClick={onSearchClick}
@@ -99,7 +103,7 @@ export default function Sidebar({
               {threads.map((thread) => {
                 const isActive = activeThreadId === thread.thread_id;
                 return (
-                  <div key={thread.thread_id} className="group relative">
+                  <div key={thread.thread_id} className="group/item relative">
                     <Link
                       to={`/chat/${thread.thread_id}`}
                       className={`block w-full text-left px-3 py-2.5 rounded-lg transition-colors ${
@@ -120,28 +124,43 @@ export default function Sidebar({
                         {thread.preview || thread.thread_id.slice(0, 14)}
                       </div>
                     </Link>
-                    <div className="absolute right-2 top-2.5 hidden group-hover:flex items-center gap-0.5">
-                      <button
-                        className="w-6 h-6 rounded flex items-center justify-center text-muted-foreground/60 hover:bg-muted hover:text-foreground"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                        }}
-                        title="详情"
-                      >
-                        <MoreHorizontal className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        className="w-6 h-6 rounded flex items-center justify-center text-muted-foreground/60 hover:bg-destructive/10 hover:text-destructive"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          onDeleteThread(thread.thread_id);
-                        }}
-                        title="删除"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                    <div className={`absolute right-2 top-2.5 ${confirmDelete === thread.thread_id ? "flex" : "hidden group-hover/item:flex"} items-center gap-0.5`}>
+                      {confirmDelete === thread.thread_id ? (
+                        <>
+                          <button
+                            className="w-6 h-6 rounded flex items-center justify-center text-destructive bg-destructive/10 hover:bg-destructive/20"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setConfirmDelete(null);
+                              onDeleteThread(thread.thread_id);
+                            }}
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            className="w-6 h-6 rounded flex items-center justify-center text-muted-foreground/60 hover:bg-muted hover:text-foreground text-xs"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setConfirmDelete(null);
+                            }}
+                          >
+                            ✕
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          className="w-6 h-6 rounded flex items-center justify-center text-muted-foreground/60 hover:bg-muted hover:text-foreground"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setConfirmDelete(thread.thread_id);
+                          }}
+                        >
+                          <MoreHorizontal className="w-3.5 h-3.5" />
+                        </button>
+                      )}
                     </div>
                   </div>
                 );
