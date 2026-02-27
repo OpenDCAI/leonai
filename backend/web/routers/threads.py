@@ -49,6 +49,7 @@ async def create_thread(
     sandbox_type = payload.sandbox if payload else "local"
     thread_id = str(uuid.uuid4())
     cwd = payload.cwd if payload else None
+    agent_name = payload.agent if payload else None
     app.state.thread_sandbox[thread_id] = sandbox_type
     if cwd:
         app.state.thread_cwd[thread_id] = cwd
@@ -62,9 +63,11 @@ async def create_thread(
         updates["model"] = model
     if obs_provider:
         updates["observation_provider"] = obs_provider
+    if agent_name:
+        updates["agent"] = agent_name
     if updates:
         save_thread_config(thread_id, **updates)
-    return {"thread_id": thread_id, "sandbox": sandbox_type}
+    return {"thread_id": thread_id, "sandbox": sandbox_type, "agent": agent_name}
 
 
 @router.get("")

@@ -75,6 +75,7 @@ export interface ThreadSummary {
   preview?: string;
   updated_at?: string;
   running?: boolean;
+  agent?: string | null;
 }
 
 export interface SandboxType {

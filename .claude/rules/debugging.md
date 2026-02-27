@@ -68,3 +68,88 @@ while True:
 - 异步 generator 的异常处理需要在 `await` 点捕获
 - 不能依赖外层的 `except Exception`，因为 generator 会在异常时直接停止
 - 前端必须能看到后端的错误信息，否则用户无法判断问题
+
+## Token 监控调试方法
+
+### 调试思路
+
+当 token 数据异常（不同模型差异大、数值为 0、与 Langfuse 不一致）时：
+
+1. **写一次性诊断脚本**，直接 `astream` 发一条消息，dump 原始 `usage_metadata` 和 `response_metadata`
+2. **对比多个 provider**，确认差异来自 API 还是 Leon 的处理逻辑
+3. **用 Langfuse 交叉验证**，对比 Leon monitor 和 Langfuse GENERATION 观测的 token 数
+
+### Token 数据链路
+
+```
+LLM API response
+  → LangChain adapter (ChatAnthropic/ChatOpenAI)
+  → AIMessage.usage_metadata     ← TokenMonitor + ContextMonitor 读取
+  → AIMessage.response_metadata  ← TokenMonitor 回退路径
+  → Langfuse GENERATION span     ← 独立记录（通过 LangfuseHandler callback）
+```
+
+关键检查点：
+- `usage_metadata` 是否存在（代理/兼容层可能丢失）
+- `input_tokens` 是否 > 0（streaming 模式需要 `stream_usage=True`）
+- `input_token_details` 中的 cache 字段（仅 Anthropic 有）
+
+### 诊断脚本模板
+
+```python
+"""一次性脚本，用完即删。核心：dump AIMessage 的原始 usage 数据"""
+import asyncio, json, uuid
+from agent import LeonAgent
+
+async def main(model: str | None = None):
+    agent = LeonAgent(model_name=model)
+    thread_id = f"debug-{uuid.uuid4().hex[:8]}"
+    config = {"configurable": {"thread_id": thread_id}}
+
+    async for chunk in agent.agent.astream(
+        {"messages": [{"role": "user", "content": "Hello"}]},
+        config=config, stream_mode="updates",
+    ):
+        for key, val in chunk.items():
+            if isinstance(val, dict) and "messages" in val:
+                for msg in val["messages"]:
+                    usage = getattr(msg, "usage_metadata", None)
+                    resp = getattr(msg, "response_metadata", None)
+                    print(f"[{key}] usage_metadata: {dict(usage) if usage else None}")
+                    if resp:
+                        print(f"  response_metadata: {
+                            {k: v for k, v in resp.items() if 'usage' in k.lower() or 'token' in k.lower()}
+                        }")
+
+    if hasattr(agent, "runtime"):
+        print(json.dumps(agent.runtime.get_status_dict(), indent=2))
+    agent.close()
+
+if __name__ == "__main__":
+    import sys
+    asyncio.run(main(sys.argv[1] if len(sys.argv) > 1 else None))
+```
+
+### Langfuse 查询
+
+```bash
+# 查最近 trace
+uv run python examples/langfuse_query.py traces 5
+
+# 查某个 thread 的完整 session（含每次 LLM 调用的 token 明细）
+uv run python examples/langfuse_query.py session <thread_id>
+```
+
+Langfuse 中只有 `GENERATION` 类型的 observation 有 token 数据，`TOOL` 类型没有。
+
+### 已知的 provider 差异（非 bug）
+
+| 项目 | Anthropic | OpenAI |
+|------|-----------|--------|
+| `input_tokens` 含义 | 总量（含 cache_read + cache_write） | 总量（含 cached_tokens） |
+| cache 字段 | `cache_read` / `cache_creation` in `input_token_details` | `cache_read` in `input_token_details` |
+| reasoning 字段 | 无 | `reasoning` in `output_token_details`（o1/o3） |
+| 同内容 token 数 | 较高（~2.3x） | 较低（基准） |
+| streaming usage | 需要 `usage_patches.py` 修复 `message_start` | 需要 `stream_usage=True` |
+
+同一条 "Hello" 消息（含 system prompt + tool definitions），Anthropic ~5700 tokens，OpenAI ~2500 tokens。差异来自 tokenizer 和 tool schema 格式，不是 bug。

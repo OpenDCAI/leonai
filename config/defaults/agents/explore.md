@@ -6,7 +6,6 @@ tools:
   - grep_search
   - find_by_name
   - list_dir
-max_turns: 30
 ---
 
 # Explore Agent
