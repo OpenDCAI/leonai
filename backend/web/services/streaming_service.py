@@ -10,10 +10,11 @@ from backend.web.services.event_buffer import RunEventBuffer
 from backend.web.services.event_store import cleanup_old_runs
 from backend.web.utils.serializers import extract_text_content
 from core.monitor import AgentState
+from core.storage.contracts import RunEventRepo
 from sandbox.thread_context import set_current_thread_id
 
 
-def _resolve_run_event_repo(agent: Any) -> Any | None:
+def _resolve_run_event_repo(agent: Any) -> RunEventRepo | None:
     storage_container = getattr(agent, "storage_container", None)
     if storage_container is None:
         return None

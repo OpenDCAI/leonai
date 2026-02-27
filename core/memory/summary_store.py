@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from sandbox.db import DEFAULT_DB_PATH
+from core.storage.contracts import SummaryRepo, SummaryRow
 
 from .summary_repo import SQLiteSummaryRepo
 
@@ -60,8 +61,9 @@ class SummaryStore:
     Follows the same pattern as TerminalStore for consistency.
     """
 
-    def __init__(self, db_path: Path = DEFAULT_DB_PATH, summary_repo: Any | None = None):
+    def __init__(self, db_path: Path = DEFAULT_DB_PATH, summary_repo: SummaryRepo | None = None):
         self.db_path = db_path
+        self._repo: SummaryRepo
         if summary_repo is not None:
             self._repo = summary_repo
         else:
@@ -143,7 +145,7 @@ class SummaryStore:
         """
         for attempt in range(max_retries):
             try:
-                row = self._repo.get_latest_summary_row(thread_id)
+                row: SummaryRow | None = self._repo.get_latest_summary_row(thread_id)
 
                 if not row:
                     return None

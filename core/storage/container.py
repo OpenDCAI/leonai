@@ -7,6 +7,15 @@ from pathlib import Path
 from typing import Any, Literal
 import sqlite3
 
+from .contracts import (
+    CheckpointRepo,
+    EvalRepo,
+    FileOperationRepo,
+    RunEventRepo,
+    SummaryRepo,
+    ThreadConfigRepo,
+)
+
 StorageStrategy = Literal["sqlite", "supabase"]
 RepoProviderMap = Mapping[str, str]
 
@@ -49,31 +58,31 @@ class StorageContainer:
             legacy_supabase_bindings=supabase_bindings,
         )
 
-    def checkpoint_repo(self):
+    def checkpoint_repo(self) -> CheckpointRepo:
         if self._provider_for("checkpoint_repo") == "supabase":
             return self._build_supabase_checkpoint_repo()
         from core.storage.providers.sqlite.checkpoint_repo import SQLiteCheckpointRepo
         return SQLiteCheckpointRepo(db_path=self._main_db)
 
-    def thread_config_repo(self):
+    def thread_config_repo(self) -> ThreadConfigRepo:
         if self._provider_for("thread_config_repo") == "supabase":
             return self._build_supabase_thread_config_repo()
         from core.storage.providers.sqlite.thread_config_repo import SQLiteThreadConfigRepo
         return SQLiteThreadConfigRepo(db_path=self._main_db)
 
-    def run_event_repo(self):
+    def run_event_repo(self) -> RunEventRepo:
         if self._provider_for("run_event_repo") == "supabase":
             return self._build_supabase_run_event_repo()
         from core.storage.providers.sqlite.run_event_repo import SQLiteRunEventRepo
         return SQLiteRunEventRepo(db_path=self._main_db)
 
-    def file_operation_repo(self):
+    def file_operation_repo(self) -> FileOperationRepo:
         if self._provider_for("file_operation_repo") == "supabase":
             return self._build_supabase_file_operation_repo()
         from core.storage.providers.sqlite.file_operation_repo import SQLiteFileOperationRepo
         return SQLiteFileOperationRepo(db_path=self._main_db)
 
-    def summary_repo(self):
+    def summary_repo(self) -> SummaryRepo:
         if self._provider_for("summary_repo") == "supabase":
             return self._build_supabase_summary_repo()
         from core.storage.providers.sqlite.summary_repo import SQLiteSummaryRepo
@@ -82,7 +91,7 @@ class StorageContainer:
             connect_fn=lambda p: sqlite3.connect(str(p)),
         )
 
-    def eval_repo(self):
+    def eval_repo(self) -> EvalRepo:
         if self._provider_for("eval_repo") == "supabase":
             return self._build_supabase_eval_repo()
         from core.storage.providers.sqlite.eval_repo import SQLiteEvalRepo
@@ -131,7 +140,7 @@ class StorageContainer:
             resolved[repo_name] = normalized
         return resolved
 
-    def _build_supabase_checkpoint_repo(self):
+    def _build_supabase_checkpoint_repo(self) -> CheckpointRepo:
         from core.storage.providers.supabase.checkpoint_repo import SupabaseCheckpointRepo
 
         if self._supabase_client is None:
@@ -141,7 +150,7 @@ class StorageContainer:
             )
         return SupabaseCheckpointRepo(client=self._supabase_client)
 
-    def _build_supabase_thread_config_repo(self):
+    def _build_supabase_thread_config_repo(self) -> ThreadConfigRepo:
         from core.storage.providers.supabase.thread_config_repo import SupabaseThreadConfigRepo
 
         if self._supabase_client is None:
@@ -151,7 +160,7 @@ class StorageContainer:
             )
         return SupabaseThreadConfigRepo(client=self._supabase_client)
 
-    def _build_supabase_run_event_repo(self):
+    def _build_supabase_run_event_repo(self) -> RunEventRepo:
         from core.storage.providers.supabase.run_event_repo import SupabaseRunEventRepo
 
         if self._supabase_client is None:
@@ -161,7 +170,7 @@ class StorageContainer:
             )
         return SupabaseRunEventRepo(client=self._supabase_client)
 
-    def _build_supabase_file_operation_repo(self):
+    def _build_supabase_file_operation_repo(self) -> FileOperationRepo:
         from core.storage.providers.supabase.file_operation_repo import SupabaseFileOperationRepo
 
         if self._supabase_client is None:
@@ -171,7 +180,7 @@ class StorageContainer:
             )
         return SupabaseFileOperationRepo(client=self._supabase_client)
 
-    def _build_supabase_summary_repo(self):
+    def _build_supabase_summary_repo(self) -> SummaryRepo:
         from core.storage.providers.supabase.summary_repo import SupabaseSummaryRepo
 
         if self._supabase_client is None:
@@ -181,7 +190,7 @@ class StorageContainer:
             )
         return SupabaseSummaryRepo(client=self._supabase_client)
 
-    def _build_supabase_eval_repo(self):
+    def _build_supabase_eval_repo(self) -> EvalRepo:
         from core.storage.providers.supabase.eval_repo import SupabaseEvalRepo
 
         if self._supabase_client is None:

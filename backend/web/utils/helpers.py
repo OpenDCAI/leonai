@@ -8,6 +8,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from backend.web.core.config import DB_PATH
+from core.storage.contracts import ThreadConfigRepo
 from core.storage.runtime import build_storage_container
 from sandbox.db import DEFAULT_DB_PATH as SANDBOX_DB_PATH
 
@@ -65,7 +66,7 @@ def extract_webhook_instance_id(payload: dict[str, Any]) -> str | None:
     return None
 
 
-def _build_thread_config_repo():
+def _build_thread_config_repo() -> ThreadConfigRepo:
     container = build_storage_container(main_db_path=DB_PATH)
     repo_factory = getattr(container, "thread_config_repo", None)
     if not callable(repo_factory):

@@ -20,6 +20,7 @@ from langchain.agents.middleware.types import (
 )
 from langchain_core.messages import SystemMessage
 
+from core.storage.contracts import SummaryRepo
 from .compactor import ContextCompactor
 from .pruner import SessionPruner
 from .summary_store import SummaryStore
@@ -42,7 +43,7 @@ class MemoryMiddleware(AgentMiddleware):
         pruning_config: Any = None,
         compaction_config: Any = None,
         db_path: Path | None = None,
-        summary_repo: Any | None = None,
+        summary_repo: SummaryRepo | None = None,
         checkpointer: Any = None,
         compaction_threshold: float = 0.7,
         verbose: bool = False,

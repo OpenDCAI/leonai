@@ -53,6 +53,7 @@ from core.prompt_caching import PromptCachingMiddleware
 from core.queue import SteeringMiddleware
 from core.search import SearchMiddleware
 from core.skills import SkillsMiddleware
+from core.storage.contracts import SummaryRepo
 from core.task import TaskMiddleware
 from core.todo import TodoMiddleware
 from core.web import WebMiddleware
@@ -763,7 +764,7 @@ class LeonAgent:
         compaction_config = self.config.memory.compaction
 
         db_path = self.db_path
-        summary_repo = None
+        summary_repo: SummaryRepo | None = None
         if self.storage_container is not None:
             summary_repo_factory = getattr(self.storage_container, "summary_repo", None)
             if not callable(summary_repo_factory):
