@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from core.memory.checkpoint_repo import SQLiteCheckpointRepo
+from core.storage.providers.sqlite.checkpoint_repo import SQLiteCheckpointRepo
 from core.storage.providers.supabase.checkpoint_repo import SupabaseCheckpointRepo
 
 

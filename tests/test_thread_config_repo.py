@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from backend.web.utils import helpers
-from core.memory.thread_config_repo import SQLiteThreadConfigRepo
+from core.storage.providers.sqlite.thread_config_repo import SQLiteThreadConfigRepo
 from core.storage.providers.supabase.thread_config_repo import SupabaseThreadConfigRepo
 
 

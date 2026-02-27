@@ -1,4 +1,4 @@
-from core.memory.file_operation_repo import SQLiteFileOperationRepo
+from core.storage.providers.sqlite.file_operation_repo import SQLiteFileOperationRepo
 import pytest
 
 from core.storage.providers.supabase.file_operation_repo import SupabaseFileOperationRepo

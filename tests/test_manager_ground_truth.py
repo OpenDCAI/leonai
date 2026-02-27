@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from core.storage import StorageContainer
-from core.memory.checkpoint_repo import SQLiteCheckpointRepo
+from core.storage.providers.sqlite.checkpoint_repo import SQLiteCheckpointRepo
 from core.storage.providers.sqlite.eval_repo import SQLiteEvalRepo
 from core.storage.providers.sqlite.thread_config_repo import SQLiteThreadConfigRepo
 from core.storage.providers.supabase.checkpoint_repo import SupabaseCheckpointRepo

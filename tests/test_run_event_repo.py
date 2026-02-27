@@ -2,7 +2,7 @@ import sqlite3
 
 import pytest
 
-from core.memory.run_event_repo import SQLiteRunEventRepo
+from core.storage.providers.sqlite.run_event_repo import SQLiteRunEventRepo
 from core.storage.providers.supabase.run_event_repo import SupabaseRunEventRepo
 
 
