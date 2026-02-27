@@ -1,5 +1,6 @@
 """General helper utilities."""
 
+import os
 import re
 import sqlite3
 from pathlib import Path
@@ -9,6 +10,107 @@ from fastapi import HTTPException
 
 from backend.web.core.config import DB_PATH
 from sandbox.db import DEFAULT_DB_PATH as SANDBOX_DB_PATH
+
+
+def _memory_write_backend() -> str:
+    # @@@dualwrite-gate - PG dual-write must be explicitly enabled to avoid changing default runtime behavior.
+    backend = os.getenv("LEON_MEMORY_WRITE_BACKEND", "sqlite").strip().lower()
+    if backend not in {"sqlite", "dual"}:
+        raise RuntimeError(f"invalid LEON_MEMORY_WRITE_BACKEND={backend}; expected sqlite or dual")
+    return backend
+
+
+def _pg_write_enabled() -> bool:
+    return _memory_write_backend() == "dual"
+
+
+def _require_pg_runtime() -> tuple[Any, str]:
+    dsn = os.getenv("LEON_PG_DSN", "").strip()
+    if not dsn:
+        raise RuntimeError("LEON_PG_DSN is required when LEON_MEMORY_WRITE_BACKEND=dual")
+    try:
+        import psycopg  # type: ignore[import-not-found]
+    except Exception as error:  # pragma: no cover - runtime env check
+        raise RuntimeError("psycopg is required when LEON_MEMORY_WRITE_BACKEND=dual") from error
+    return psycopg, dsn
+
+
+def _derive_thread_kind(thread_id: str) -> str:
+    return "subagent" if thread_id.startswith("subagent_") else "main"
+
+
+def _pg_upsert_thread_registry(
+    thread_id: str,
+    sandbox_type: str,
+    cwd: str | None,
+    model: str | None = None,
+    queue_mode: str = "steer",
+    observation_provider: str | None = None,
+    agent_id: str = "legacy-default",
+) -> None:
+    psycopg, dsn = _require_pg_runtime()
+    thread_kind = _derive_thread_kind(thread_id)
+    try:
+        with psycopg.connect(dsn, autocommit=True) as conn:
+            conn.execute(
+                """
+                INSERT INTO thread_registry
+                    (thread_id, agent_id, thread_kind, sandbox_type, cwd, model, queue_mode, observation_provider)
+                VALUES
+                    (%s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (thread_id) DO UPDATE SET
+                    agent_id = EXCLUDED.agent_id,
+                    thread_kind = EXCLUDED.thread_kind,
+                    sandbox_type = EXCLUDED.sandbox_type,
+                    cwd = EXCLUDED.cwd,
+                    model = EXCLUDED.model,
+                    queue_mode = EXCLUDED.queue_mode,
+                    observation_provider = EXCLUDED.observation_provider,
+                    updated_at = now()
+                """,
+                (thread_id, agent_id, thread_kind, sandbox_type, cwd, model, queue_mode, observation_provider),
+            )
+        print(f"dualwrite_thread_registry_ok action=upsert thread_id={thread_id}", flush=True)
+    except Exception as error:
+        print(f"dualwrite_thread_registry_fail action=upsert thread_id={thread_id} error={error}", flush=True)
+        raise RuntimeError(f"dualwrite thread_registry upsert failed for {thread_id}: {error}") from error
+
+
+def _pg_update_thread_registry(thread_id: str, updates: dict[str, Any]) -> None:
+    if not updates:
+        return
+    psycopg, dsn = _require_pg_runtime()
+    allowed = {"sandbox_type", "cwd", "model", "queue_mode", "observation_provider"}
+    safe_updates = {k: v for k, v in updates.items() if k in allowed}
+    if not safe_updates:
+        return
+    set_clause = ", ".join(f"{key} = %s" for key in safe_updates)
+    values = [*safe_updates.values(), thread_id]
+    try:
+        with psycopg.connect(dsn, autocommit=True) as conn:
+            cursor = conn.execute(
+                f"UPDATE thread_registry SET {set_clause}, updated_at = now() WHERE thread_id = %s",
+                values,
+            )
+            if cursor.rowcount == 0:
+                raise RuntimeError("target thread_registry row not found")
+        print(f"dualwrite_thread_registry_ok action=update thread_id={thread_id}", flush=True)
+    except Exception as error:
+        print(f"dualwrite_thread_registry_fail action=update thread_id={thread_id} error={error}", flush=True)
+        raise RuntimeError(f"dualwrite thread_registry update failed for {thread_id}: {error}") from error
+
+
+def _pg_delete_thread_related(thread_id: str) -> None:
+    psycopg, dsn = _require_pg_runtime()
+    try:
+        with psycopg.connect(dsn, autocommit=True) as conn:
+            conn.execute("DELETE FROM history_events WHERE thread_id = %s", (thread_id,))
+            conn.execute("DELETE FROM task_registry WHERE thread_id = %s", (thread_id,))
+            conn.execute("DELETE FROM thread_registry WHERE thread_id = %s", (thread_id,))
+        print(f"dualwrite_thread_registry_ok action=delete thread_id={thread_id}", flush=True)
+    except Exception as error:
+        print(f"dualwrite_thread_registry_fail action=delete thread_id={thread_id} error={error}", flush=True)
+        raise RuntimeError(f"dualwrite thread delete failed for {thread_id}: {error}") from error
 
 
 def is_virtual_thread_id(thread_id: str | None) -> bool:
@@ -74,7 +176,7 @@ def _ensure_thread_config_table(conn: sqlite3.Connection) -> None:
         "CREATE TABLE IF NOT EXISTS thread_config"
         "(thread_id TEXT PRIMARY KEY, sandbox_type TEXT NOT NULL, cwd TEXT, model TEXT, queue_mode TEXT DEFAULT 'steer')"
     )
-    for col, default in [("model", None), ("queue_mode", "'steer'"), ("observation_provider", None), ("agent", None)]:
+    for col, default in [("model", None), ("queue_mode", "'steer'"), ("observation_provider", None)]:
         try:
             default_clause = f" DEFAULT {default}" if default else ""
             conn.execute(f"ALTER TABLE thread_config ADD COLUMN {col} TEXT{default_clause}")
@@ -87,7 +189,7 @@ def save_thread_config(thread_id: str, **fields: Any) -> None:
 
     Usage: save_thread_config(thread_id, model="gpt-4", queue_mode="followup")
     """
-    allowed = {"sandbox_type", "cwd", "model", "queue_mode", "observation_provider", "agent"}
+    allowed = {"sandbox_type", "cwd", "model", "queue_mode", "observation_provider"}
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
         return
@@ -99,6 +201,9 @@ def save_thread_config(thread_id: str, **fields: Any) -> None:
             (*updates.values(), thread_id),
         )
         conn.commit()
+    if _pg_write_enabled():
+        # @@@dualwrite-order - SQLite commit first, then PG mirror write for staged rollout.
+        _pg_update_thread_registry(thread_id, updates)
 
 
 def load_thread_config(thread_id: str):
@@ -110,7 +215,7 @@ def load_thread_config(thread_id: str):
             conn.row_factory = sqlite3.Row
             _ensure_thread_config_table(conn)
             row = conn.execute(
-                "SELECT sandbox_type, cwd, model, queue_mode, observation_provider, agent FROM thread_config WHERE thread_id = ?",
+                "SELECT sandbox_type, cwd, model, queue_mode, observation_provider FROM thread_config WHERE thread_id = ?",
                 (thread_id,),
             ).fetchone()
             if not row:
@@ -123,7 +228,6 @@ def load_thread_config(thread_id: str):
                 model=row["model"],
                 queue_mode=row["queue_mode"] or "steer",
                 observation_provider=row["observation_provider"],
-                agent=row["agent"],
             )
     except sqlite3.OperationalError:
         return None
@@ -138,6 +242,8 @@ def init_thread_config(thread_id: str, sandbox_type: str, cwd: str | None) -> No
             (thread_id, sandbox_type, cwd),
         )
         conn.commit()
+    if _pg_write_enabled():
+        _pg_upsert_thread_registry(thread_id=thread_id, sandbox_type=sandbox_type, cwd=cwd)
 
 
 def get_active_observation_provider() -> str | None:
@@ -180,8 +286,7 @@ def resolve_local_workspace_path(
             tc = load_thread_config(thread_id)
             if tc:
                 thread_cwd = tc.cwd
-    # @@@workspace-base-normalize - relative LOCAL_WORKSPACE_ROOT must be normalized, or target.relative_to(base) always fails.
-    base = Path(thread_cwd).resolve() if thread_cwd else local_workspace_root.resolve()
+    base = Path(thread_cwd).resolve() if thread_cwd else local_workspace_root
 
     if not raw_path:
         return base
@@ -220,3 +325,5 @@ def delete_thread_in_db(thread_id: str) -> None:
                 if "thread_id" in cols:
                     conn.execute("DELETE FROM " + table_ident + " WHERE thread_id = ?", (thread_id,))
             conn.commit()
+    if _pg_write_enabled():
+        _pg_delete_thread_related(thread_id)
