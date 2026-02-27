@@ -762,7 +762,7 @@ class LeonAgent:
         pruning_config = self.config.memory.pruning
         compaction_config = self.config.memory.compaction
 
-        db_path = Path.home() / ".leon" / "leon.db"
+        db_path = self.db_path
         summary_repo = None
         if self.storage_container is not None:
             summary_repo_factory = getattr(self.storage_container, "summary_repo", None)
@@ -960,7 +960,7 @@ class LeonAgent:
 
     async def _init_checkpointer(self):
         """Initialize async checkpointer for conversation persistence"""
-        db_path = Path.home() / ".leon" / "leon.db"
+        db_path = self.db_path
         db_path.parent.mkdir(parents=True, exist_ok=True)
         conn = await aiosqlite.connect(str(db_path))
         # @@@ WAL mode allows concurrent reads/writes from sandbox manager
