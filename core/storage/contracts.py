@@ -73,9 +73,8 @@ class FileOperationRepo(Protocol):
     def delete_thread_operations(self, thread_id: str) -> int: ...
 
 
-class SummaryRow(Protocol):
-    # @@@row-structural-contract - sqlite3.Row and dict differ nominally; using __getitem__ keeps parsing logic provider-agnostic.
-    def __getitem__(self, key: str) -> Any: ...
+# @@@summary-row-contract - standardize summary row payload as dict to keep provider parity explicit for static type checks.
+type SummaryRow = dict[str, Any]
 
 
 class SummaryRepo(Protocol):
@@ -104,4 +103,3 @@ class EvalRepo(Protocol):
     def get_trajectory_json(self, run_id: str) -> str | None: ...
     def list_runs(self, thread_id: str | None = None, limit: int = 50) -> list[dict]: ...
     def get_metrics(self, run_id: str, tier: str | None = None) -> list[dict]: ...
-

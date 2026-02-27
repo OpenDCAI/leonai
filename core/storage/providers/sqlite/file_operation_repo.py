@@ -69,6 +69,10 @@ class SQLiteFileOperationRepo:
             conn.commit()
         return op_id
 
+    def close(self) -> None:
+        """Compatibility no-op for protocol parity."""
+        return None
+
     def get_operations_for_thread(self, thread_id: str, status: str = "applied") -> list[FileOperationRow]:
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row

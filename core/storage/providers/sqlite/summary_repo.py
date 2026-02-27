@@ -40,6 +40,10 @@ class SQLiteSummaryRepo:
             )
             conn.commit()
 
+    def close(self) -> None:
+        """Compatibility no-op for protocol parity."""
+        return None
+
     def save_summary(
         self,
         summary_id: str,
@@ -84,10 +88,10 @@ class SQLiteSummaryRepo:
             )
             conn.commit()
 
-    def get_latest_summary_row(self, thread_id: str) -> sqlite3.Row | None:
+    def get_latest_summary_row(self, thread_id: str) -> dict[str, object] | None:
         with self._connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
-            return conn.execute(
+            row = conn.execute(
                 """
                 SELECT summary_id, thread_id, summary_text,
                        compact_up_to_index, compacted_at,
@@ -100,6 +104,9 @@ class SQLiteSummaryRepo:
                 """,
                 (thread_id,),
             ).fetchone()
+            if row is None:
+                return None
+            return dict(row)
 
     def list_summaries(self, thread_id: str) -> list[dict[str, object]]:
         with self._connect(self.db_path) as conn:
