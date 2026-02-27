@@ -42,6 +42,7 @@ class MemoryMiddleware(AgentMiddleware):
         pruning_config: Any = None,
         compaction_config: Any = None,
         db_path: Path | None = None,
+        summary_repo: Any | None = None,
         checkpointer: Any = None,
         compaction_threshold: float = 0.7,
         verbose: bool = False,
@@ -70,7 +71,8 @@ class MemoryMiddleware(AgentMiddleware):
             self.compactor = ContextCompactor()
 
         # Persistent storage
-        self.summary_store = SummaryStore(db_path) if db_path else None
+        summary_db_path = db_path or Path.home() / ".leon" / "leon.db"
+        self.summary_store = SummaryStore(summary_db_path, summary_repo=summary_repo) if (db_path or summary_repo) else None
         self.checkpointer = checkpointer
 
         # Injected references (set by agent.py after construction)

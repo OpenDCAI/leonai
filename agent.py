@@ -763,11 +763,21 @@ class LeonAgent:
         compaction_config = self.config.memory.compaction
 
         db_path = Path.home() / ".leon" / "leon.db"
+        summary_repo = None
+        if self.storage_container is not None:
+            summary_repo_factory = getattr(self.storage_container, "summary_repo", None)
+            if not callable(summary_repo_factory):
+                raise RuntimeError(
+                    "Agent storage_container must expose callable summary_repo() for memory summary persistence."
+                )
+            # @@@memory-storage-consumer - memory summary persistence must consume injected storage container, not fixed sqlite path.
+            summary_repo = summary_repo_factory()
         self._memory_middleware = MemoryMiddleware(
             context_limit=context_limit,
             pruning_config=pruning_config,
             compaction_config=compaction_config,
             db_path=db_path,
+            summary_repo=summary_repo,
             checkpointer=self.checkpointer,
             compaction_threshold=0.7,
             verbose=self.verbose,

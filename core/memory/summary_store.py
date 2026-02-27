@@ -60,10 +60,13 @@ class SummaryStore:
     Follows the same pattern as TerminalStore for consistency.
     """
 
-    def __init__(self, db_path: Path = DEFAULT_DB_PATH):
+    def __init__(self, db_path: Path = DEFAULT_DB_PATH, summary_repo: Any | None = None):
         self.db_path = db_path
-        # @@@connect_injection - keep _connect as an indirection point so existing retry/rollback tests can patch it.
-        self._repo = SQLiteSummaryRepo(db_path, connect_fn=lambda p: _connect(p))
+        if summary_repo is not None:
+            self._repo = summary_repo
+        else:
+            # @@@connect_injection - keep _connect as an indirection point so existing retry/rollback tests can patch it.
+            self._repo = SQLiteSummaryRepo(db_path, connect_fn=lambda p: _connect(p))
         self._ensure_tables()
 
     def _ensure_tables(self) -> None:
@@ -116,7 +119,7 @@ class SummaryStore:
                 logger.info(f"[SummaryStore] Saved summary {summary_id} for thread {thread_id}")
                 return summary_id
 
-            except sqlite3.Error as e:
+            except Exception as e:
                 if attempt < max_retries - 1:
                     logger.warning(f"[SummaryStore] Save failed (attempt {attempt + 1}/{max_retries}): {e}")
                     time.sleep(0.1 * (attempt + 1))  # Exponential backoff
@@ -162,7 +165,7 @@ class SummaryStore:
                     logger.error(f"[SummaryStore] Data corruption detected: {e}")
                     return None  # Signal data corruption
 
-            except sqlite3.Error as e:
+            except Exception as e:
                 if attempt < max_retries - 1:
                     logger.warning(f"[SummaryStore] Read failed (attempt {attempt + 1}/{max_retries}): {e}")
                     time.sleep(0.1 * (attempt + 1))  # Exponential backoff
