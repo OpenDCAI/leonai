@@ -1,4 +1,4 @@
-"""Persistent event log backed by SQLite — enables SSE reconnection after restart."""
+"""Persistent run-event service via storage repository boundary."""
 
 import asyncio
 import json
@@ -7,8 +7,11 @@ from pathlib import Path
 from typing import Any
 
 import aiosqlite
+from core.storage.runtime import build_storage_container
 
 _DB_PATH = Path.home() / ".leon" / "leon.db"
+_default_run_event_repo: Any | None = None
+_default_run_event_repo_path: Path | None = None
 
 # Single async connection, lazily created, serialises all writes via the event loop.
 # NOTE: assumes single uvicorn worker. Multi-worker (--workers > 1) needs a connection pool.
@@ -32,8 +35,17 @@ async def _get_conn() -> aiosqlite.Connection:
 
 def init_event_store() -> None:
     """Create the run_events table if it doesn't exist (sync, called once at import)."""
+    global _default_run_event_repo, _default_run_event_repo_path
+    if _default_run_event_repo is not None:
+        close_fn = getattr(_default_run_event_repo, "close", None)
+        if callable(close_fn):
+            close_fn()
+    _default_run_event_repo = None
+    _default_run_event_repo_path = None
     _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(_DB_PATH))
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
     conn.executescript(
         """
         CREATE TABLE IF NOT EXISTS run_events (
@@ -52,6 +64,31 @@ def init_event_store() -> None:
     conn.close()
 
 
+def _resolve_run_event_repo(run_event_repo: Any | None) -> Any:
+    if run_event_repo is not None:
+        return run_event_repo
+
+    global _default_run_event_repo, _default_run_event_repo_path
+    if _default_run_event_repo is not None and _default_run_event_repo_path == _DB_PATH:
+        return _default_run_event_repo
+
+    if _default_run_event_repo is not None:
+        close_fn = getattr(_default_run_event_repo, "close", None)
+        if callable(close_fn):
+            close_fn()
+        _default_run_event_repo = None
+        _default_run_event_repo_path = None
+
+    container = build_storage_container(main_db_path=_DB_PATH)
+    repo_factory = getattr(container, "run_event_repo", None)
+    if not callable(repo_factory):
+        raise RuntimeError("StorageContainer must expose callable run_event_repo().")
+    # @@@event-store-single-path - keep one persistence boundary; when caller omits repo, resolve default repo from storage container.
+    _default_run_event_repo = repo_factory()
+    _default_run_event_repo_path = _DB_PATH
+    return _default_run_event_repo
+
+
 async def append_event(
     thread_id: str,
     run_id: str,
@@ -60,26 +97,18 @@ async def append_event(
     run_event_repo: Any | None = None,
 ) -> int:
     """Persist one SSE event and return its sequence number."""
-    if run_event_repo is not None:
-        payload = _event_payload_to_dict(event)
-        return int(
-            await asyncio.to_thread(
-                run_event_repo.append_event,
-                thread_id,
-                run_id,
-                event.get("event", ""),
-                payload,
-                message_id,
-            )
+    repo = _resolve_run_event_repo(run_event_repo)
+    payload = _event_payload_to_dict(event)
+    return int(
+        await asyncio.to_thread(
+            repo.append_event,
+            thread_id,
+            run_id,
+            event.get("event", ""),
+            payload,
+            message_id,
         )
-
-    conn = await _get_conn()
-    cur = await conn.execute(
-        "INSERT INTO run_events (thread_id, run_id, event_type, data, message_id) VALUES (?, ?, ?, ?, ?)",
-        (thread_id, run_id, event.get("event", ""), event.get("data", ""), message_id),
     )
-    await conn.commit()
-    return cur.lastrowid  # type: ignore[return-value]
 
 
 async def read_events_after(
@@ -89,57 +118,35 @@ async def read_events_after(
     run_event_repo: Any | None = None,
 ) -> list[dict[str, Any]]:
     """Return events with seq > after_seq for the given run."""
-    if run_event_repo is not None:
-        rows = await asyncio.to_thread(
-            run_event_repo.list_events,
-            thread_id,
-            run_id,
-            after=after_seq,
-            limit=10000,
-        )
-        return [
-            {
-                "seq": row.get("seq"),
-                "event": row.get("event_type", ""),
-                "data": json.dumps(row.get("data", {}), ensure_ascii=False),
-                "message_id": row.get("message_id"),
-            }
-            for row in rows
-        ]
-
-    conn = await _get_conn()
-    cur = await conn.execute(
-        "SELECT seq, event_type, data, message_id FROM run_events "
-        "WHERE thread_id = ? AND run_id = ? AND seq > ? ORDER BY seq",
-        (thread_id, run_id, after_seq),
+    repo = _resolve_run_event_repo(run_event_repo)
+    rows = await asyncio.to_thread(
+        repo.list_events,
+        thread_id,
+        run_id,
+        after=after_seq,
+        limit=10000,
     )
-    rows = await cur.fetchall()
-    return [{"seq": r[0], "event": r[1], "data": r[2], "message_id": r[3]} for r in rows]
+    return [
+        {
+            "seq": row.get("seq"),
+            "event": row.get("event_type", ""),
+            "data": json.dumps(row.get("data", {}), ensure_ascii=False),
+            "message_id": row.get("message_id"),
+        }
+        for row in rows
+    ]
 
 
 async def get_last_seq(thread_id: str, run_event_repo: Any | None = None) -> int:
     """Return the highest seq for a thread, or 0."""
-    if run_event_repo is not None:
-        return int(await asyncio.to_thread(run_event_repo.latest_seq, thread_id))
-
-    conn = await _get_conn()
-    cur = await conn.execute("SELECT MAX(seq) FROM run_events WHERE thread_id = ?", (thread_id,))
-    row = await cur.fetchone()
-    return row[0] or 0
+    repo = _resolve_run_event_repo(run_event_repo)
+    return int(await asyncio.to_thread(repo.latest_seq, thread_id))
 
 
 async def get_latest_run_id(thread_id: str, run_event_repo: Any | None = None) -> str | None:
     """Return the run_id of the most recent run for a thread, or None."""
-    if run_event_repo is not None:
-        return await asyncio.to_thread(run_event_repo.latest_run_id, thread_id)
-
-    conn = await _get_conn()
-    cur = await conn.execute(
-        "SELECT run_id FROM run_events WHERE thread_id = ? ORDER BY seq DESC LIMIT 1",
-        (thread_id,),
-    )
-    row = await cur.fetchone()
-    return row[0] if row else None
+    repo = _resolve_run_event_repo(run_event_repo)
+    return await asyncio.to_thread(repo.latest_run_id, thread_id)
 
 
 async def cleanup_old_runs(
@@ -148,41 +155,18 @@ async def cleanup_old_runs(
     run_event_repo: Any | None = None,
 ) -> int:
     """Delete all but the N most recent runs for a thread. Returns deleted count."""
-    if run_event_repo is not None:
-        run_ids = await asyncio.to_thread(run_event_repo.list_run_ids, thread_id)
-        if len(run_ids) <= keep_latest:
-            return 0
-        old_ids = run_ids[keep_latest:]
-        return int(await asyncio.to_thread(run_event_repo.delete_runs, thread_id, old_ids))
-
-    conn = await _get_conn()
-    cur = await conn.execute(
-        "SELECT DISTINCT run_id FROM run_events WHERE thread_id = ? ORDER BY seq DESC",
-        (thread_id,),
-    )
-    rows = await cur.fetchall()
-    run_ids = [r[0] for r in rows]
+    repo = _resolve_run_event_repo(run_event_repo)
+    run_ids = await asyncio.to_thread(repo.list_run_ids, thread_id)
     if len(run_ids) <= keep_latest:
         return 0
     old_ids = run_ids[keep_latest:]
-    placeholders = ",".join("?" for _ in old_ids)
-    cur = await conn.execute(
-        f"DELETE FROM run_events WHERE thread_id = ? AND run_id IN ({placeholders})",
-        [thread_id, *old_ids],
-    )
-    await conn.commit()
-    return cur.rowcount
+    return int(await asyncio.to_thread(repo.delete_runs, thread_id, old_ids))
 
 
 async def cleanup_thread(thread_id: str, run_event_repo: Any | None = None) -> int:
     """Delete all events for a thread. Returns deleted count."""
-    if run_event_repo is not None:
-        return int(await asyncio.to_thread(run_event_repo.delete_thread_events, thread_id))
-
-    conn = await _get_conn()
-    cur = await conn.execute("DELETE FROM run_events WHERE thread_id = ?", (thread_id,))
-    await conn.commit()
-    return cur.rowcount
+    repo = _resolve_run_event_repo(run_event_repo)
+    return int(await asyncio.to_thread(repo.delete_thread_events, thread_id))
 
 
 def _event_payload_to_dict(event: dict[str, Any]) -> dict[str, Any]:
