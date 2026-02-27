@@ -1,6 +1,6 @@
 import pytest
 
-from core.storage.supabase_summary_repo import SupabaseSummaryRepo
+from core.storage.providers.supabase.summary_repo import SupabaseSummaryRepo
 
 
 class _FakeSupabaseResponse:

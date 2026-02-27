@@ -11,12 +11,12 @@ import pytest
 
 from core.storage import StorageContainer
 from core.memory.checkpoint_repo import SQLiteCheckpointRepo
-from core.storage.supabase_checkpoint_repo import SupabaseCheckpointRepo
-from core.storage.supabase_eval_repo import SupabaseEvalRepo
-from core.storage.supabase_file_operation_repo import SupabaseFileOperationRepo
-from core.storage.supabase_run_event_repo import SupabaseRunEventRepo
-from core.storage.supabase_summary_repo import SupabaseSummaryRepo
-from core.storage.supabase_thread_config_repo import SupabaseThreadConfigRepo
+from core.storage.providers.supabase.checkpoint_repo import SupabaseCheckpointRepo
+from core.storage.providers.supabase.eval_repo import SupabaseEvalRepo
+from core.storage.providers.supabase.file_operation_repo import SupabaseFileOperationRepo
+from core.storage.providers.supabase.run_event_repo import SupabaseRunEventRepo
+from core.storage.providers.supabase.summary_repo import SupabaseSummaryRepo
+from core.storage.providers.supabase.thread_config_repo import SupabaseThreadConfigRepo
 from sandbox.manager import SandboxManager
 from sandbox.provider import Metrics, ProviderCapability, ProviderExecResult, SandboxProvider, SessionInfo
 

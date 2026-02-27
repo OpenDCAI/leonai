@@ -1,7 +1,7 @@
 from core.memory.file_operation_repo import SQLiteFileOperationRepo
 import pytest
 
-from core.storage.supabase_file_operation_repo import SupabaseFileOperationRepo
+from core.storage.providers.supabase.file_operation_repo import SupabaseFileOperationRepo
 
 
 def test_record_and_query_file_operations(tmp_path):

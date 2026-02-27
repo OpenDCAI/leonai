@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from core.memory.checkpoint_repo import SQLiteCheckpointRepo
-from core.storage.supabase_checkpoint_repo import SupabaseCheckpointRepo
+from core.storage.providers.supabase.checkpoint_repo import SupabaseCheckpointRepo
 
 
 def _setup_tables(db_path: Path) -> None:

@@ -78,7 +78,7 @@ class StorageContainer:
         return SQLiteEvalRepo(db_path=self._eval_db)
 
     def _build_supabase_checkpoint_repo(self):
-        from core.storage.supabase_checkpoint_repo import SupabaseCheckpointRepo
+        from core.storage.providers.supabase.checkpoint_repo import SupabaseCheckpointRepo
 
         if self._supabase_client is None:
             raise RuntimeError(
@@ -88,7 +88,7 @@ class StorageContainer:
         return SupabaseCheckpointRepo(client=self._supabase_client)
 
     def _build_supabase_thread_config_repo(self):
-        from core.storage.supabase_thread_config_repo import SupabaseThreadConfigRepo
+        from core.storage.providers.supabase.thread_config_repo import SupabaseThreadConfigRepo
 
         if self._supabase_client is None:
             raise RuntimeError(
@@ -98,7 +98,7 @@ class StorageContainer:
         return SupabaseThreadConfigRepo(client=self._supabase_client)
 
     def _build_supabase_run_event_repo(self):
-        from core.storage.supabase_run_event_repo import SupabaseRunEventRepo
+        from core.storage.providers.supabase.run_event_repo import SupabaseRunEventRepo
 
         if self._supabase_client is None:
             raise RuntimeError(
@@ -108,7 +108,7 @@ class StorageContainer:
         return SupabaseRunEventRepo(client=self._supabase_client)
 
     def _build_supabase_file_operation_repo(self):
-        from core.storage.supabase_file_operation_repo import SupabaseFileOperationRepo
+        from core.storage.providers.supabase.file_operation_repo import SupabaseFileOperationRepo
 
         if self._supabase_client is None:
             raise RuntimeError(
@@ -118,7 +118,7 @@ class StorageContainer:
         return SupabaseFileOperationRepo(client=self._supabase_client)
 
     def _build_supabase_summary_repo(self):
-        from core.storage.supabase_summary_repo import SupabaseSummaryRepo
+        from core.storage.providers.supabase.summary_repo import SupabaseSummaryRepo
 
         if self._supabase_client is None:
             raise RuntimeError(
@@ -128,7 +128,7 @@ class StorageContainer:
         return SupabaseSummaryRepo(client=self._supabase_client)
 
     def _build_supabase_eval_repo(self):
-        from core.storage.supabase_eval_repo import SupabaseEvalRepo
+        from core.storage.providers.supabase.eval_repo import SupabaseEvalRepo
 
         if self._supabase_client is None:
             raise RuntimeError(
