@@ -23,7 +23,7 @@ export default function NewChatPage() {
 
   const startWith = (location.state as any)?.startWith as string | undefined;
   const memberName = (location.state as any)?.memberName as string | undefined;
-  const agentForThread = startWith === "__leon__" ? undefined : startWith;
+  const agentForThread = startWith === "__leon__" ? undefined : memberName;
 
   async function handleSend(message: string, sandbox: string, model: string, workspace?: string) {
     // For local sandbox, check if workspace is set
@@ -56,7 +56,7 @@ export default function NewChatPage() {
 
   return (
     <div className="flex-1 flex items-center justify-center relative">
-      <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px]">
+      <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-[600px] px-4">
         {/* Welcome Section */}
         <div className="text-center mb-8">
           <h1 className="text-2xl font-medium text-foreground mb-2">

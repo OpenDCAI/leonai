@@ -127,7 +127,7 @@ export default function CenteredInputBox({
   // This component must return complete JSX with proper closing tags.
   // ====================================================
   return (
-    <div className="w-[600px]">
+    <div className="w-full max-w-[600px]">
       <div className="bg-card rounded-[24px] border border-border shadow-lg p-6">
         <textarea
           value={message}
@@ -146,7 +146,7 @@ export default function CenteredInputBox({
         />
         <p className="text-[11px] text-[#a3a3a3] mb-4">Enter 发送，Shift + Enter 换行</p>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <Select value={sandbox} onValueChange={setSandbox}>
             <SelectTrigger className="w-[140px] h-9 text-sm">
               <SelectValue />
