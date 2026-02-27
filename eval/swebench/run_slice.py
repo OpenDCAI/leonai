@@ -261,7 +261,7 @@ async def run_instance(
     keep_worktree: bool,
     thread_id: str,
     prompt_profile: str,
-    model_name: str,
+    model_name: str | None,
 ) -> dict[str, Any]:
     instance_id = row["instance_id"]
     repo = row["repo"]
@@ -282,7 +282,8 @@ async def run_instance(
     agent: LeonAgent | None = None
     try:
         prompt = build_prompt(row, prompt_profile=prompt_profile)
-        agent = LeonAgent(workspace_root=workspace, model_name=model_name)
+        # @@@model-empty-override - empty CLI value must not override active model config.
+        agent = LeonAgent(workspace_root=workspace, model_name=(model_name or None))
         if getattr(agent, "_needs_async_init", False):
             await agent.ainit()
         set_current_thread_id(thread_id)
@@ -334,7 +335,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--keep-worktree", action="store_true")
     p.add_argument("--run-id", default="")
     p.add_argument("--arm", default="A")
-    p.add_argument("--model-name", default="")
+    p.add_argument("--model-name", default=None)
     p.add_argument("--prompt-profile", choices=["baseline", "heuristic"], default="baseline")
     p.add_argument("--thread-prefix", default="swebench")
     p.add_argument("--source-trace-db", default=str(Path.home() / ".leon" / "leon.db"))
