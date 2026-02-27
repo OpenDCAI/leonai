@@ -11,6 +11,8 @@ import pytest
 
 from core.storage import StorageContainer
 from core.memory.checkpoint_repo import SQLiteCheckpointRepo
+from core.storage.providers.sqlite.eval_repo import SQLiteEvalRepo
+from core.storage.providers.sqlite.thread_config_repo import SQLiteThreadConfigRepo
 from core.storage.providers.supabase.checkpoint_repo import SupabaseCheckpointRepo
 from core.storage.providers.supabase.eval_repo import SupabaseEvalRepo
 from core.storage.providers.supabase.file_operation_repo import SupabaseFileOperationRepo
@@ -217,6 +219,28 @@ def test_storage_container_supabase_repos_are_concrete() -> None:
     assert isinstance(eval_repo, SupabaseEvalRepo)
 
 
+def test_storage_container_repo_level_provider_override_from_sqlite_default() -> None:
+    fake_client = _FakeSupabaseClient()
+    container = StorageContainer(
+        strategy="sqlite",
+        repo_providers={"checkpoint_repo": "supabase"},
+        supabase_client=fake_client,
+    )
+    assert isinstance(container.checkpoint_repo(), SupabaseCheckpointRepo)
+    assert isinstance(container.thread_config_repo(), SQLiteThreadConfigRepo)
+
+
+def test_storage_container_repo_level_provider_override_from_supabase_default() -> None:
+    fake_client = _FakeSupabaseClient()
+    container = StorageContainer(
+        strategy="supabase",
+        repo_providers={"eval_repo": "sqlite"},
+        supabase_client=fake_client,
+    )
+    assert isinstance(container.eval_repo(), SQLiteEvalRepo)
+    assert isinstance(container.checkpoint_repo(), SupabaseCheckpointRepo)
+
+
 def test_storage_container_supabase_checkpoint_requires_client() -> None:
     container = StorageContainer(strategy="supabase")
     with pytest.raises(
@@ -277,3 +301,19 @@ def test_storage_container_rejects_unknown_strategy() -> None:
         match="Unsupported storage strategy: redis. Supported strategies: sqlite, supabase",
     ):
         StorageContainer(strategy="redis")  # type: ignore[arg-type]
+
+
+def test_storage_container_rejects_unknown_repo_provider_binding() -> None:
+    with pytest.raises(
+        ValueError,
+        match="Unknown repo provider bindings: foo_repo",
+    ):
+        StorageContainer(repo_providers={"foo_repo": "sqlite"})
+
+
+def test_storage_container_rejects_invalid_repo_provider_value() -> None:
+    with pytest.raises(
+        ValueError,
+        match="Unsupported provider for checkpoint_repo",
+    ):
+        StorageContainer(repo_providers={"checkpoint_repo": "mysql"})

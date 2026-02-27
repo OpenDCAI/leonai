@@ -13,6 +13,7 @@ from backend.web.services import agent_pool
 from backend.web.services.event_buffer import RunEventBuffer
 from backend.web.services.streaming_service import _run_agent_to_buffer
 from core.memory.checkpoint_repo import SQLiteCheckpointRepo
+from core.storage.providers.sqlite.eval_repo import SQLiteEvalRepo
 from core.storage.providers.supabase.checkpoint_repo import SupabaseCheckpointRepo
 
 
@@ -97,6 +98,87 @@ def test_create_agent_sync_defaults_to_sqlite_storage_container(
 
     container = captured["storage_container"]
     assert isinstance(container.checkpoint_repo(), SQLiteCheckpointRepo)
+
+
+def test_create_agent_sync_repo_override_supabase_with_sqlite_default(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("LEON_STORAGE_STRATEGY", "sqlite")
+    monkeypatch.setenv("LEON_STORAGE_REPO_PROVIDERS", '{"checkpoint_repo":"supabase"}')
+    monkeypatch.setenv(
+        "LEON_SUPABASE_CLIENT_FACTORY",
+        "tests.test_storage_runtime_wiring:_build_fake_supabase_client",
+    )
+    monkeypatch.setenv("LEON_DB_PATH", str(tmp_path / "leon.db"))
+
+    captured = _capture_create_leon_agent(monkeypatch)
+    agent_pool.create_agent_sync("local", workspace_root=tmp_path, model_name="leon:test")
+    container = captured["storage_container"]
+    assert isinstance(container.checkpoint_repo(), SupabaseCheckpointRepo)
+
+
+def test_create_agent_sync_repo_override_sqlite_with_supabase_default(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("LEON_STORAGE_STRATEGY", "supabase")
+    monkeypatch.setenv("LEON_STORAGE_REPO_PROVIDERS", '{"eval_repo":"sqlite"}')
+    monkeypatch.setenv(
+        "LEON_SUPABASE_CLIENT_FACTORY",
+        "tests.test_storage_runtime_wiring:_build_fake_supabase_client",
+    )
+    monkeypatch.setenv("LEON_DB_PATH", str(tmp_path / "leon.db"))
+    monkeypatch.setenv("LEON_EVAL_DB_PATH", str(tmp_path / "eval.db"))
+
+    captured = _capture_create_leon_agent(monkeypatch)
+    agent_pool.create_agent_sync("local", workspace_root=tmp_path, model_name="leon:test")
+    container = captured["storage_container"]
+    assert isinstance(container.eval_repo(), SQLiteEvalRepo)
+
+
+def test_create_agent_sync_all_sqlite_override_with_supabase_default_does_not_require_factory(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("LEON_STORAGE_STRATEGY", "supabase")
+    monkeypatch.setenv(
+        "LEON_STORAGE_REPO_PROVIDERS",
+        (
+            '{"checkpoint_repo":"sqlite","thread_config_repo":"sqlite","run_event_repo":"sqlite",'
+            '"file_operation_repo":"sqlite","summary_repo":"sqlite","eval_repo":"sqlite"}'
+        ),
+    )
+    monkeypatch.delenv("LEON_SUPABASE_CLIENT_FACTORY", raising=False)
+    monkeypatch.setenv("LEON_DB_PATH", str(tmp_path / "leon.db"))
+    monkeypatch.setenv("LEON_EVAL_DB_PATH", str(tmp_path / "eval.db"))
+
+    captured = _capture_create_leon_agent(monkeypatch)
+    agent_pool.create_agent_sync("local", workspace_root=tmp_path, model_name="leon:test")
+    container = captured["storage_container"]
+    assert isinstance(container.checkpoint_repo(), SQLiteCheckpointRepo)
+
+
+def test_create_agent_sync_repo_override_supabase_without_runtime_config_fails_loud(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("LEON_STORAGE_STRATEGY", "sqlite")
+    monkeypatch.setenv("LEON_STORAGE_REPO_PROVIDERS", '{"checkpoint_repo":"supabase"}')
+    monkeypatch.delenv("LEON_SUPABASE_CLIENT_FACTORY", raising=False)
+
+    with pytest.raises(RuntimeError, match="LEON_SUPABASE_CLIENT_FACTORY"):
+        agent_pool.create_agent_sync("local", workspace_root=tmp_path, model_name="leon:test")
+
+
+def test_create_agent_sync_invalid_repo_override_json_fails_loud(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("LEON_STORAGE_REPO_PROVIDERS", "not-json")
+
+    with pytest.raises(RuntimeError, match="Invalid LEON_STORAGE_REPO_PROVIDERS"):
+        agent_pool.create_agent_sync("local", workspace_root=tmp_path, model_name="leon:test")
 
 
 class _FakeRunEventRepo:
