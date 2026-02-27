@@ -4,7 +4,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 
-from core.memory.file_operation_repo import FileOperationRow, SQLiteFileOperationRepo
+from core.storage.providers.sqlite.file_operation_repo import FileOperationRow, SQLiteFileOperationRepo
 
 # Context variables for tracking current thread and checkpoint
 current_thread_id: ContextVar[str] = ContextVar("current_thread_id", default="")
