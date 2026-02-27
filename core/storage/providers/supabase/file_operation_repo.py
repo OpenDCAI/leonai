@@ -7,7 +7,7 @@ import time
 import uuid
 from typing import Any
 
-from core.memory.file_operation_repo import FileOperationRow
+from core.storage.providers.sqlite.file_operation_repo import FileOperationRow
 
 
 class SupabaseFileOperationRepo:
