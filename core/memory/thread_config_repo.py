@@ -46,6 +46,18 @@ class SQLiteThreadConfigRepo:
         )
         self._conn.commit()
 
+    def update_fields(self, thread_id: str, **fields: str | None) -> None:
+        allowed = {"sandbox_type", "cwd", "model", "queue_mode", "observation_provider"}
+        updates = {k: v for k, v in fields.items() if k in allowed}
+        if not updates:
+            return
+        set_clause = ", ".join(f"{k} = ?" for k in updates)
+        self._conn.execute(
+            f"UPDATE thread_config SET {set_clause} WHERE thread_id = ?",
+            (*updates.values(), thread_id),
+        )
+        self._conn.commit()
+
     def lookup_model(self, thread_id: str) -> str | None:
         row = self._conn.execute(
             "SELECT model FROM thread_config WHERE thread_id = ?",
@@ -54,6 +66,25 @@ class SQLiteThreadConfigRepo:
         if not row:
             return None
         return row[0] if row[0] else None
+
+    def lookup_config(self, thread_id: str) -> dict[str, str | None] | None:
+        row = self._conn.execute(
+            """
+            SELECT sandbox_type, cwd, model, queue_mode, observation_provider
+            FROM thread_config
+            WHERE thread_id = ?
+            """,
+            (thread_id,),
+        ).fetchone()
+        if not row:
+            return None
+        return {
+            "sandbox_type": row[0],
+            "cwd": row[1],
+            "model": row[2],
+            "queue_mode": row[3],
+            "observation_provider": row[4],
+        }
 
     def lookup_metadata(self, thread_id: str) -> tuple[str, str | None] | None:
         row = self._conn.execute(
@@ -76,7 +107,9 @@ class SQLiteThreadConfigRepo:
                 thread_id TEXT PRIMARY KEY,
                 sandbox_type TEXT NOT NULL DEFAULT 'local',
                 cwd TEXT,
-                model TEXT
+                model TEXT,
+                queue_mode TEXT DEFAULT 'steer',
+                observation_provider TEXT
             )
             """
         )
@@ -88,5 +121,9 @@ class SQLiteThreadConfigRepo:
             self._conn.execute("ALTER TABLE thread_config ADD COLUMN cwd TEXT")
         if "sandbox_type" not in existing_cols:
             self._conn.execute("ALTER TABLE thread_config ADD COLUMN sandbox_type TEXT")
+        if "queue_mode" not in existing_cols:
+            self._conn.execute("ALTER TABLE thread_config ADD COLUMN queue_mode TEXT DEFAULT 'steer'")
+        if "observation_provider" not in existing_cols:
+            self._conn.execute("ALTER TABLE thread_config ADD COLUMN observation_provider TEXT")
 
         self._conn.commit()

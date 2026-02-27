@@ -59,12 +59,44 @@ class SupabaseThreadConfigRepo:
 
         self._table().update({"model": model}).eq("thread_id", thread_id).execute()
 
+    def update_fields(self, thread_id: str, **fields: str | None) -> None:
+        allowed = {"sandbox_type", "cwd", "model", "queue_mode", "observation_provider"}
+        updates = {k: v for k, v in fields.items() if k in allowed}
+        if not updates:
+            return
+        self._table().update(updates).eq("thread_id", thread_id).execute()
+
     def lookup_model(self, thread_id: str) -> str | None:
         rows = self._select_rows(thread_id, "model")
         if not rows:
             return None
         model = rows[0].get("model")
         return str(model) if model else None
+
+    def lookup_config(self, thread_id: str) -> dict[str, str | None] | None:
+        rows = self._select_rows(
+            thread_id,
+            "sandbox_type,cwd,model,queue_mode,observation_provider",
+        )
+        if not rows:
+            return None
+        sandbox_type = rows[0].get("sandbox_type")
+        if sandbox_type is None:
+            raise RuntimeError(
+                "Supabase thread config repo expected non-null sandbox_type. "
+                "Check table schema and existing rows."
+            )
+        return {
+            "sandbox_type": str(sandbox_type),
+            "cwd": str(rows[0].get("cwd")) if rows[0].get("cwd") is not None else None,
+            "model": str(rows[0].get("model")) if rows[0].get("model") is not None else None,
+            "queue_mode": str(rows[0].get("queue_mode")) if rows[0].get("queue_mode") is not None else None,
+            "observation_provider": (
+                str(rows[0].get("observation_provider"))
+                if rows[0].get("observation_provider") is not None
+                else None
+            ),
+        }
 
     def lookup_metadata(self, thread_id: str) -> tuple[str, str | None] | None:
         rows = self._select_rows(thread_id, "sandbox_type,cwd")

@@ -41,6 +41,11 @@ def test_save_and_lookup_thread_config(tmp_path):
         repo.save_model("t-2", "anthropic/claude-sonnet-4.6")
         assert repo.lookup_metadata("t-2") == ("docker", "/workspace")
         assert repo.lookup_model("t-2") == "anthropic/claude-sonnet-4.6"
+        repo.update_fields("t-2", queue_mode="followup", observation_provider="langfuse")
+        cfg = repo.lookup_config("t-2")
+        assert cfg is not None
+        assert cfg["queue_mode"] == "followup"
+        assert cfg["observation_provider"] == "langfuse"
     finally:
         repo.close()
 
@@ -56,6 +61,11 @@ def test_helpers_compatibility_api(tmp_path, monkeypatch):
     assert config is not None
     assert (config.sandbox_type, config.cwd) == ("local", "/tmp/p")
     assert helpers.lookup_thread_model("t-3") == "m-3"
+    helpers.save_thread_config("t-3", queue_mode="followup", observation_provider="langsmith")
+    config2 = helpers.load_thread_config("t-3")
+    assert config2 is not None
+    assert config2.queue_mode == "followup"
+    assert config2.observation_provider == "langsmith"
 
 
 class _FakeSupabaseResponse:
@@ -135,6 +145,11 @@ def test_supabase_thread_config_repo_save_and_lookup():
     repo.save_model("t-2", "openai/gpt-5")
     assert repo.lookup_metadata("t-2") == ("local", None)
     assert repo.lookup_model("t-2") == "openai/gpt-5"
+    repo.update_fields("t-1", queue_mode="followup", observation_provider="langfuse")
+    cfg = repo.lookup_config("t-1")
+    assert cfg is not None
+    assert cfg["queue_mode"] == "followup"
+    assert cfg["observation_provider"] == "langfuse"
 
 
 def test_supabase_thread_config_repo_requires_compatible_client():
