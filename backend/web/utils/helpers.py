@@ -79,7 +79,7 @@ def save_thread_config(thread_id: str, **fields: Any) -> None:
 
     Usage: save_thread_config(thread_id, model="gpt-4", queue_mode="followup")
     """
-    allowed = {"sandbox_type", "cwd", "model", "queue_mode", "observation_provider"}
+    allowed = {"sandbox_type", "cwd", "model", "queue_mode", "observation_provider", "agent"}
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
         return
@@ -113,6 +113,7 @@ def load_thread_config(thread_id: str):
             model=row["model"],
             queue_mode=row["queue_mode"] or "steer",
             observation_provider=row["observation_provider"],
+            agent=row.get("agent"),
         )
     finally:
         close_fn = getattr(repo, "close", None)
@@ -191,7 +192,8 @@ def resolve_local_workspace_path(
             tc = load_thread_config(thread_id)
             if tc:
                 thread_cwd = tc.cwd
-    base = Path(thread_cwd).resolve() if thread_cwd else local_workspace_root
+    # @@@workspace-base-normalize - relative LOCAL_WORKSPACE_ROOT must be normalized, or target.relative_to(base) always fails.
+    base = Path(thread_cwd).resolve() if thread_cwd else local_workspace_root.resolve()
 
     if not raw_path:
         return base

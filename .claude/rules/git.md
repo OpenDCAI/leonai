@@ -9,6 +9,12 @@
 ❌ 避免：大而全的提交、混合多个功能、跳过测试
 ✅ 推荐：相关文件一起提交、每个 commit 可独立运行、message 清晰（动词开头、<50 字符）
 
+## PR 规范
+
+- title/body 必须用英文
+- 基于 commit 历史认真总结，不糊弄
+- push 前清理 untracked 文件（截图、临时文件），避免 warning
+
 ## 推送规则
 
 - ✅ Commit 可以随意提交（Claude 可自主 commit）

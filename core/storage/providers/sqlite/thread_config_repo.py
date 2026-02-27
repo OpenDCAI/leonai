@@ -47,7 +47,7 @@ class SQLiteThreadConfigRepo:
         self._conn.commit()
 
     def update_fields(self, thread_id: str, **fields: str | None) -> None:
-        allowed = {"sandbox_type", "cwd", "model", "queue_mode", "observation_provider"}
+        allowed = {"sandbox_type", "cwd", "model", "queue_mode", "observation_provider", "agent"}
         updates = {k: v for k, v in fields.items() if k in allowed}
         if not updates:
             return
@@ -70,7 +70,7 @@ class SQLiteThreadConfigRepo:
     def lookup_config(self, thread_id: str) -> dict[str, str | None] | None:
         row = self._conn.execute(
             """
-            SELECT sandbox_type, cwd, model, queue_mode, observation_provider
+            SELECT sandbox_type, cwd, model, queue_mode, observation_provider, agent
             FROM thread_config
             WHERE thread_id = ?
             """,
@@ -84,6 +84,7 @@ class SQLiteThreadConfigRepo:
             "model": row[2],
             "queue_mode": row[3],
             "observation_provider": row[4],
+            "agent": row[5],
         }
 
     def lookup_metadata(self, thread_id: str) -> tuple[str, str | None] | None:
@@ -109,7 +110,8 @@ class SQLiteThreadConfigRepo:
                 cwd TEXT,
                 model TEXT,
                 queue_mode TEXT DEFAULT 'steer',
-                observation_provider TEXT
+                observation_provider TEXT,
+                agent TEXT
             )
             """
         )
@@ -125,5 +127,7 @@ class SQLiteThreadConfigRepo:
             self._conn.execute("ALTER TABLE thread_config ADD COLUMN queue_mode TEXT DEFAULT 'steer'")
         if "observation_provider" not in existing_cols:
             self._conn.execute("ALTER TABLE thread_config ADD COLUMN observation_provider TEXT")
+        if "agent" not in existing_cols:
+            self._conn.execute("ALTER TABLE thread_config ADD COLUMN agent TEXT")
 
         self._conn.commit()

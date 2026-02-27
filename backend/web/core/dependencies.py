@@ -36,6 +36,9 @@ async def get_thread_agent(
     try:
         set_current_thread_id(thread_id)
         agent = await get_or_create_agent(app, sandbox_type, thread_id=thread_id)
+    # @@@http_passthrough - keep intentional HTTP status from agent bootstrap
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(503, f"Sandbox agent init failed for {sandbox_type}: {e}") from e
     if not hasattr(agent, "_sandbox"):

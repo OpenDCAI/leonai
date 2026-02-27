@@ -29,7 +29,8 @@ export function useThreadData(threadId: string | undefined, skipInitialLoad = fa
     try {
       const thread = await getThread(id);
       setEntries(mapBackendEntries(thread.messages));
-      setActiveSandbox(thread.sandbox);
+      const sandbox = thread.sandbox;
+      setActiveSandbox(sandbox && typeof sandbox === "object" ? (sandbox as SandboxInfo) : null);
     } finally {
       setLoading(false);
     }

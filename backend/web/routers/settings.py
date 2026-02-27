@@ -263,7 +263,8 @@ async def get_available_models() -> dict[str, Any]:
             pricing_data = json.load(f)
 
         pricing_ids = set(pricing_data["models"].keys())
-        models_list = [{"id": mid, "name": mid} for mid in pricing_ids]
+        bundled_providers = pricing_data.get("providers", {})
+        models_list = [{"id": mid, "name": mid, "provider": bundled_providers.get(mid)} for mid in pricing_ids]
 
         # Merge custom + orphaned enabled models
         mc = load_merged_models()
@@ -271,7 +272,7 @@ async def get_available_models() -> dict[str, Any]:
         custom_providers = data.get("pool", {}).get("custom_providers", {})
         extra_ids = set(mc.pool.custom) | (set(mc.pool.enabled) - pricing_ids)
         for mid in sorted(extra_ids):
-            models_list.append({"id": mid, "name": mid, "custom": True, "provider": custom_providers.get(mid)})
+            models_list.append({"id": mid, "name": mid, "custom": True, "provider": custom_providers.get(mid) or bundled_providers.get(mid)})
 
         # Virtual models from system defaults
         virtual_models = [vm.model_dump() for vm in mc.virtual_models]

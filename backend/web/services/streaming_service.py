@@ -246,8 +246,8 @@ async def _run_agent_to_buffer(
                         )
                         config.setdefault("callbacks", []).append(obs_handler)
                         config.setdefault("metadata", {})["session_id"] = thread_id
-        except ImportError:
-            pass
+        except ImportError as imp_err:
+            print(f"[streaming_service] Observation provider '{obs_provider}' requires missing package: {imp_err}. Install with: uv pip install 'leonai[{obs_provider}]'")
         except Exception as obs_err:
             print(f"[streaming_service] Observation handler error: {obs_err}")
 

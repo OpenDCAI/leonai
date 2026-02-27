@@ -48,6 +48,9 @@ async def list_workspace_path(
     try:
         set_current_thread_id(thread_id)
         agent = await get_or_create_agent(app, sandbox_type, thread_id=thread_id)
+    # @@@http_passthrough - preserve policy/validation errors from agent creation
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(503, f"Sandbox agent init failed for {sandbox_type}: {e}") from e
 
@@ -73,6 +76,9 @@ async def list_workspace_path(
 
     try:
         payload = await asyncio.to_thread(_list_remote)
+    # @@@http_passthrough - preserve explicit status from remote capability path
+    except HTTPException:
+        raise
     except RuntimeError as e:
         raise HTTPException(400, str(e)) from e
     return {"thread_id": thread_id, **payload}
@@ -107,6 +113,9 @@ async def read_workspace_file(
     try:
         set_current_thread_id(thread_id)
         agent = await get_or_create_agent(app, sandbox_type, thread_id=thread_id)
+    # @@@http_passthrough - preserve policy/validation errors from agent creation
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(503, f"Sandbox agent init failed for {sandbox_type}: {e}") from e
 
@@ -123,6 +132,9 @@ async def read_workspace_file(
 
     try:
         payload = await asyncio.to_thread(_read_remote)
+    # @@@http_passthrough - preserve explicit status from remote capability path
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(400, str(e)) from e
     return {"thread_id": thread_id, **payload}

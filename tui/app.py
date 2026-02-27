@@ -429,10 +429,11 @@ class LeonApp(App):
                     )
                     config.setdefault("callbacks", []).append(obs_handler)
                     config.setdefault("metadata", {})["session_id"] = self.thread_id
-        except ImportError:
-            pass
-        except Exception:
-            pass
+        except ImportError as imp_err:
+            provider = obs_config.active if obs_config else "unknown"
+            self.notify(f"Observation '{provider}' requires missing package: {imp_err}", severity="warning")
+        except Exception as obs_err:
+            self.notify(f"Observation handler error: {obs_err}", severity="warning")
 
         try:
             async for chunk in self.agent.agent.astream(

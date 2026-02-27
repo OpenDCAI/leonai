@@ -127,8 +127,8 @@ export default function CenteredInputBox({
   // This component must return complete JSX with proper closing tags.
   // ====================================================
   return (
-    <div className="w-[600px]">
-      <div className="bg-[#fafafa] rounded-[24px] border border-[#e5e5e5] shadow-lg p-6">
+    <div className="w-full max-w-[600px]">
+      <div className="bg-card rounded-[24px] border border-border shadow-lg p-6">
         <textarea
           value={message}
           onChange={(e) => setMessage(e.target.value)}
@@ -139,14 +139,14 @@ export default function CenteredInputBox({
             }
           }}
           placeholder="告诉 Leon 你需要什么帮助..."
-          className="w-full bg-transparent text-base resize-none outline-none border-none text-[#171717] placeholder:text-[#a3a3a3] mb-2"
+          className="w-full bg-transparent text-base resize-none outline-none border-none text-foreground placeholder:text-muted-foreground mb-4"
           rows={6}
           disabled={sending}
           style={{ boxShadow: "none" }}
         />
         <p className="text-[11px] text-[#a3a3a3] mb-4">Enter 发送，Shift + Enter 换行</p>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <Select value={sandbox} onValueChange={setSandbox}>
             <SelectTrigger className="w-[140px] h-9 text-sm">
               <SelectValue />
@@ -286,7 +286,7 @@ export default function CenteredInputBox({
           <Button
             onClick={() => void handleSend()}
             disabled={!message.trim() || sending}
-            className="h-9 px-4 bg-[#171717] text-white hover:bg-[#404040] rounded-lg"
+            className="h-9 px-4 bg-foreground text-white hover:bg-foreground/80 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed"
           >
             <Send className="w-4 h-4 mr-2" />
             发送

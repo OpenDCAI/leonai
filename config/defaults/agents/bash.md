@@ -4,7 +4,6 @@ description: 执行终端命令。用于：git 操作、运行测试、安装依
 tools:
   - run_command
   - command_status
-max_turns: 20
 ---
 
 # Bash Agent

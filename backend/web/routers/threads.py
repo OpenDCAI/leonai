@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 import uuid
 from typing import Annotated, Any
 
@@ -32,6 +33,8 @@ from backend.web.services.thread_state_service import (
 )
 from backend.web.utils.helpers import delete_thread_in_db
 from backend.web.utils.serializers import serialize_message
+
+logger = logging.getLogger(__name__)
 from core.monitor import AgentState
 from core.queue import QueueMode, get_queue_manager
 from sandbox.thread_context import set_current_thread_id
@@ -49,6 +52,7 @@ async def create_thread(
     sandbox_type = payload.sandbox if payload else "local"
     thread_id = str(uuid.uuid4())
     cwd = payload.cwd if payload else None
+    agent_name = payload.agent if payload else None
     app.state.thread_sandbox[thread_id] = sandbox_type
     if cwd:
         app.state.thread_cwd[thread_id] = cwd
@@ -62,9 +66,11 @@ async def create_thread(
         updates["model"] = model
     if obs_provider:
         updates["observation_provider"] = obs_provider
+    if agent_name:
+        updates["agent"] = agent_name
     if updates:
         save_thread_config(thread_id, **updates)
-    return {"thread_id": thread_id, "sandbox": sandbox_type}
+    return {"thread_id": thread_id, "sandbox": sandbox_type, "agent": agent_name}
 
 
 @router.get("")
@@ -120,7 +126,7 @@ async def delete_thread(
         try:
             await asyncio.to_thread(destroy_thread_resources_sync, thread_id, sandbox_type, app.state.agent_pool)
         except Exception as exc:
-            raise HTTPException(status_code=409, detail=f"Failed to destroy sandbox resources: {exc}") from exc
+            logger.warning("Failed to destroy sandbox resources for thread %s: %s", thread_id, exc)
         await asyncio.to_thread(delete_thread_in_db, thread_id)
 
     # Clean up thread-specific state

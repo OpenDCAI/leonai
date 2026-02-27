@@ -14,7 +14,7 @@ interface ModelPoolSectionProps {
   customConfig: Record<string, { based_on?: string | null; context_limit?: number | null }>;
   providers: Record<string, { api_key: string | null; base_url: string | null }>;
   onToggle: (modelId: string, enabled: boolean) => void;
-  onAddCustomModel: (modelId: string, provider?: string, basedOn?: string, contextLimit?: number) => Promise<void>;
+  onAddCustomModel: (modelId: string, provider: string, basedOn?: string, contextLimit?: number) => Promise<void>;
   onRemoveCustomModel: (modelId: string) => Promise<void>;
 }
 
@@ -83,12 +83,12 @@ export default function ModelPoolSection({ models, enabledModels, customConfig, 
   };
 
   const handleAdd = async () => {
-    if (!searchQuery.trim()) return;
+    if (!searchQuery.trim() || !selectedProvider) return;
     setAdding(true);
     try {
       await onAddCustomModel(
         searchQuery.trim(),
-        selectedProvider || undefined,
+        selectedProvider,
         addAlias || undefined,
         addContextLimit ? parseInt(addContextLimit) : undefined,
       );
@@ -145,12 +145,12 @@ export default function ModelPoolSection({ models, enabledModels, customConfig, 
               onChange={(e) => setSelectedProvider(e.target.value)}
               className="flex-1 px-3 py-1.5 text-sm border border-[#e2e8f0] rounded-lg bg-white focus:outline-none focus:border-[#0ea5e9]"
             >
-              <option value="">Provider (auto)</option>
+              <option value="" disabled>Select provider</option>
               {providerNames.map((p) => <option key={p} value={p}>{p}</option>)}
             </select>
             <button
               onClick={handleAdd}
-              disabled={adding}
+              disabled={adding || !selectedProvider}
               className="px-4 py-1.5 text-sm bg-[#0ea5e9] text-white rounded-lg hover:bg-[#0ea5e9]/90 disabled:opacity-50 transition-colors"
             >
               {adding ? "Adding..." : "Add"}
@@ -174,7 +174,7 @@ export default function ModelPoolSection({ models, enabledModels, customConfig, 
               />
               <input
                 type="number"
-                placeholder="Context limit (auto)"
+                placeholder="Context limit"
                 value={addContextLimit}
                 onChange={(e) => setAddContextLimit(e.target.value)}
                 className="px-3 py-1.5 text-sm border border-[#e2e8f0] rounded-lg bg-white focus:outline-none focus:border-[#0ea5e9]"
@@ -229,13 +229,31 @@ export default function ModelPoolSection({ models, enabledModels, customConfig, 
                       </button>
                     </>
                   )}
-                  <button
-                    onClick={() => handleTest(model.id)}
-                    disabled={status === "testing"}
-                    className="text-[11px] px-2 py-0.5 rounded border border-[#e2e8f0] text-[#64748b] hover:border-[#94a3b8] disabled:opacity-50 transition-colors"
-                  >
-                    {status === "testing" ? "..." : status === "ok" ? "✓" : status === "fail" ? "✗" : "Test"}
-                  </button>
+                  {(status === "ok" || status === "fail") ? (
+                    <div className="flex items-center gap-1">
+                      <span className={`text-[11px] px-1.5 py-0.5 rounded ${status === "ok" ? "text-[#10b981]" : "text-[#ef4444]"}`}>
+                        {status === "ok" ? "✓" : "✗"}
+                      </span>
+                      <button
+                        onClick={() => {
+                          setTestStatus((s) => ({ ...s, [model.id]: "idle" }));
+                          setTestError((s) => ({ ...s, [model.id]: "" }));
+                        }}
+                        className="text-[11px] px-1 py-0.5 rounded text-[#94a3b8] hover:text-[#64748b] transition-colors"
+                        title="Dismiss"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => handleTest(model.id)}
+                      disabled={status === "testing"}
+                      className="text-[11px] px-2 py-0.5 rounded border border-[#e2e8f0] text-[#64748b] hover:border-[#94a3b8] disabled:opacity-50 transition-colors"
+                    >
+                      {status === "testing" ? "Testing…" : "Test"}
+                    </button>
+                  )}
                 </div>
               </div>
               {status === "fail" && testError[model.id] && (
@@ -251,7 +269,7 @@ export default function ModelPoolSection({ models, enabledModels, customConfig, 
                     </div>
                     <div>
                       <label className="text-[11px] text-[#94a3b8] block mb-1">Context Limit</label>
-                      <input type="number" placeholder="auto-detect" value={editContextLimit} onChange={(e) => setEditContextLimit(e.target.value)}
+                      <input type="number" placeholder="Context limit" value={editContextLimit} onChange={(e) => setEditContextLimit(e.target.value)}
                         className="w-full px-2 py-1 text-sm border border-[#e2e8f0] rounded bg-white focus:outline-none focus:border-[#0ea5e9]" />
                     </div>
                   </div>

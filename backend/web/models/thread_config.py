@@ -11,3 +11,4 @@ class ThreadConfig(BaseModel):
     model: str | None = None
     queue_mode: str = "steer"
     observation_provider: str | None = None  # "langfuse" | "langsmith" | None
+    agent: str | None = None  # Member name for this thread
