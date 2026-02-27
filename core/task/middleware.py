@@ -75,7 +75,7 @@ class TaskMiddleware(AgentMiddleware):
 
         # Load agents from all sources
         self.loader = AgentLoader(self.workspace_root)
-        self.agents = self.loader.load_all()
+        self.agents = self.loader.load_all_agents()
 
         # Initialize runner
         self.runner = SubagentRunner(

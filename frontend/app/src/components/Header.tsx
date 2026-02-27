@@ -1,5 +1,7 @@
-import { Monitor, PanelLeft, Pause, Play } from "lucide-react";
+import { ChevronLeft, Monitor, PanelLeft, Pause, Play } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import type { SandboxInfo } from "../api";
+import { useIsMobile } from "../hooks/use-mobile";
 import ModelSelector from "./ModelSelector";
 import QueueModeToggle from "./QueueModeToggle";
 
@@ -40,6 +42,8 @@ export default function Header({
   onModelChange,
   onToggleQueue,
 }: HeaderProps) {
+  const isMobile = useIsMobile();
+  const navigate = useNavigate();
   const hasRemote = sandboxInfo && sandboxInfo.type !== "local";
   const sandboxLabelText = sandboxLabel(sandboxInfo?.type ?? "local");
   const hasKnownStatus = sandboxInfo?.status === "running" || sandboxInfo?.status === "paused";
@@ -52,43 +56,58 @@ export default function Header({
 
   return (
     <header className="h-12 flex items-center justify-between px-4 flex-shrink-0 bg-white border-b border-[#e5e5e5]">
-      <div className="flex items-center gap-3">
-        <button
-          onClick={onToggleSidebar}
-          className="w-8 h-8 rounded-lg flex items-center justify-center text-[#737373] hover:bg-[#f5f5f5] hover:text-[#171717]"
-        >
-          <PanelLeft className="w-4 h-4" />
-        </button>
+      <div className="flex items-center gap-3 min-w-0">
+        {isMobile ? (
+          <button
+            onClick={() => navigate("/chat")}
+            className="w-8 h-8 rounded-lg flex items-center justify-center text-[#737373] hover:bg-[#f5f5f5] hover:text-[#171717]"
+          >
+            <ChevronLeft className="w-5 h-5" />
+          </button>
+        ) : (
+          <button
+            onClick={onToggleSidebar}
+            className="w-8 h-8 rounded-lg flex items-center justify-center text-[#737373] hover:bg-[#f5f5f5] hover:text-[#171717]"
+          >
+            <PanelLeft className="w-4 h-4" />
+          </button>
+        )}
 
-        {/* Context indicator */}
-        <div className="flex items-center rounded-lg border border-[#e5e5e5] overflow-hidden">
-          <div className="flex items-center gap-2 px-3 py-1.5 bg-[#fafafa]">
-            <Monitor className="w-3.5 h-3.5 text-[#a3a3a3]" />
-            <span className="text-sm text-[#171717] truncate max-w-[160px]">
-              {threadPreview || (activeThreadId ? "新对话" : "无对话")}
-            </span>
+        {/* Context indicator — hide sandbox details on mobile */}
+        {isMobile ? (
+          <span className="text-sm font-medium text-[#171717] truncate">
+            {threadPreview || "新对话"}
+          </span>
+        ) : (
+          <div className="flex items-center rounded-lg border border-[#e5e5e5] overflow-hidden">
+            <div className="flex items-center gap-2 px-3 py-1.5 bg-[#fafafa]">
+              <Monitor className="w-3.5 h-3.5 text-[#a3a3a3]" />
+              <span className="text-sm text-[#171717] truncate max-w-[160px]">
+                {threadPreview || (activeThreadId ? "新对话" : "无对话")}
+              </span>
+            </div>
+            {hasKnownStatus && (
+              <>
+                <div className="w-px h-6 bg-[#e5e5e5]" />
+                <div className="flex items-center gap-2 px-3 py-1.5 bg-[#fafafa]">
+                  <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: statusDotColor }} />
+                  <span className="text-sm text-[#525252]">{sandboxLabelText}</span>
+                  {hasRemote && statusText && (
+                    <span
+                      className="text-[10px] px-1.5 py-0.5 rounded font-medium"
+                      style={{
+                        background: sandboxInfo?.status === "running" ? "rgba(34,197,94,0.1)" : "rgba(234,179,8,0.1)",
+                        color: sandboxInfo?.status === "running" ? "#16a34a" : "#ca8a04",
+                      }}
+                    >
+                      {statusText}
+                    </span>
+                  )}
+                </div>
+              </>
+            )}
           </div>
-          {hasKnownStatus && (
-            <>
-              <div className="w-px h-6 bg-[#e5e5e5]" />
-              <div className="flex items-center gap-2 px-3 py-1.5 bg-[#fafafa]">
-                <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: statusDotColor }} />
-                <span className="text-sm text-[#525252]">{sandboxLabelText}</span>
-                {hasRemote && statusText && (
-                  <span
-                    className="text-[10px] px-1.5 py-0.5 rounded font-medium"
-                    style={{
-                      background: sandboxInfo?.status === "running" ? "rgba(34,197,94,0.1)" : "rgba(234,179,8,0.1)",
-                      color: sandboxInfo?.status === "running" ? "#16a34a" : "#ca8a04",
-                    }}
-                  >
-                    {statusText}
-                  </span>
-                )}
-              </div>
-            </>
-          )}
-        </div>
+        )}
       </div>
 
       <div className="flex items-center gap-1.5">

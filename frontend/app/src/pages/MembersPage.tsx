@@ -1,10 +1,11 @@
 import { useState, useEffect } from "react";
-import { Search, Bot, Plus, Zap, Users, Wrench, Plug, SearchX, ArrowUpDown, AlertTriangle, RefreshCw, MessageSquare } from "lucide-react";
+import { Search, Bot, Plus, Zap, Users, Wrench, Plug, SearchX, ArrowUpDown, AlertTriangle, RefreshCw, MessageSquare, Copy, Trash2 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import CreateMemberDialog from "@/components/CreateMemberDialog";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useAppStore } from "@/store/app-store";
+import { toast } from "sonner";
 
 const statusConfig = {
   active: { label: "在线", dot: "bg-success", shape: "rounded-full" },
@@ -34,6 +35,9 @@ export default function MembersPage() {
   const loadAll = useAppStore(s => s.loadAll);
   const error = useAppStore(s => s.error);
   const retry = useAppStore(s => s.retry);
+  const deleteMember = useAppStore(s => s.deleteMember);
+  const addMember = useAppStore(s => s.addMember);
+  const updateMemberConfig = useAppStore(s => s.updateMemberConfig);
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
@@ -136,6 +140,29 @@ export default function MembersPage() {
                 e.stopPropagation();
                 navigate("/chat", { state: { startWith: member.id, memberName: member.name } });
               };
+              const handleCopy = async (e: React.MouseEvent) => {
+                e.stopPropagation();
+                try {
+                  const newMember = await addMember(`${member.name} (副本)`, member.description);
+                  await updateMemberConfig(newMember.id, {
+                    prompt: member.config.prompt,
+                    tools: member.config.tools,
+                    mcps: member.config.mcps,
+                    skills: member.config.skills,
+                    subAgents: member.config.subAgents,
+                    rules: member.config.rules,
+                  });
+                  toast.success("已复制");
+                } catch { toast.error("复制失败"); }
+              };
+              const handleDelete = async (e: React.MouseEvent) => {
+                e.stopPropagation();
+                if (isBuiltin) return;
+                try {
+                  await deleteMember(member.id);
+                  toast.success("已删除");
+                } catch { toast.error("删除失败"); }
+              };
               return (
                 <div key={member.id} onClick={handleCardClick} className="surface-interactive p-4 cursor-pointer group" role="button" aria-label={isBuiltin ? `与 ${member.name} 对话` : `查看成员 ${member.name}`} tabIndex={0} onKeyDown={(e) => e.key === "Enter" && handleCardClick()}>
                   <div className="flex items-start justify-between mb-3">
@@ -150,19 +177,39 @@ export default function MembersPage() {
                   <p className="text-xs text-muted-foreground mb-3 line-clamp-2">{member.description}</p>
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
-                      <Tooltip><TooltipTrigger asChild><span className="flex items-center gap-1 cursor-default"><Zap className="w-3 h-3" /> {member.config.skills.length}</span></TooltipTrigger><TooltipContent side="bottom"><p>技能数</p></TooltipContent></Tooltip>
-                      <Tooltip><TooltipTrigger asChild><span className="flex items-center gap-1 cursor-default"><Wrench className="w-3 h-3" /> {member.config.tools.length}</span></TooltipTrigger><TooltipContent side="bottom"><p>工具数</p></TooltipContent></Tooltip>
-                      <Tooltip><TooltipTrigger asChild><span className="flex items-center gap-1 cursor-default"><Plug className="w-3 h-3" /> {member.config.mcps.length}</span></TooltipTrigger><TooltipContent side="bottom"><p>MCP 服务</p></TooltipContent></Tooltip>
-                      <Tooltip><TooltipTrigger asChild><span className="flex items-center gap-1 cursor-default"><Users className="w-3 h-3" /> {member.config.subAgents.length}</span></TooltipTrigger><TooltipContent side="bottom"><p>Sub-agents</p></TooltipContent></Tooltip>
+                      <Tooltip><TooltipTrigger asChild><span className="flex items-center gap-1 cursor-default"><Zap className="w-3 h-3" /> {member.config.skills.length}</span></TooltipTrigger><TooltipContent side="bottom"><p>Skills</p></TooltipContent></Tooltip>
+                      <Tooltip><TooltipTrigger asChild><span className="flex items-center gap-1 cursor-default"><Wrench className="w-3 h-3" /> {member.config.tools.length}</span></TooltipTrigger><TooltipContent side="bottom"><p>Tools</p></TooltipContent></Tooltip>
+                      <Tooltip><TooltipTrigger asChild><span className="flex items-center gap-1 cursor-default"><Plug className="w-3 h-3" /> {member.config.mcps.length}</span></TooltipTrigger><TooltipContent side="bottom"><p>MCP</p></TooltipContent></Tooltip>
+                      <Tooltip><TooltipTrigger asChild><span className="flex items-center gap-1 cursor-default"><Users className="w-3 h-3" /> {member.config.subAgents.length}</span></TooltipTrigger><TooltipContent side="bottom"><p>Agents</p></TooltipContent></Tooltip>
                     </div>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <button onClick={handleStartChat} className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:bg-primary/10 hover:text-primary transition-colors opacity-0 group-hover:opacity-100">
-                          <MessageSquare className="w-3.5 h-3.5" />
-                        </button>
-                      </TooltipTrigger>
-                      <TooltipContent side="bottom"><p>发起会话</p></TooltipContent>
-                    </Tooltip>
+                    <div className="flex items-center gap-0.5">
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <button onClick={handleStartChat} className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:bg-primary/10 hover:text-primary transition-colors opacity-0 group-hover:opacity-100">
+                            <MessageSquare className="w-3.5 h-3.5" />
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent side="bottom"><p>发起会话</p></TooltipContent>
+                      </Tooltip>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <button onClick={handleCopy} className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:bg-primary/10 hover:text-primary transition-colors opacity-0 group-hover:opacity-100">
+                            <Copy className="w-3.5 h-3.5" />
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent side="bottom"><p>复制</p></TooltipContent>
+                      </Tooltip>
+                      {!isBuiltin && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <button onClick={handleDelete} className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors opacity-0 group-hover:opacity-100">
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipContent side="bottom"><p>删除</p></TooltipContent>
+                        </Tooltip>
+                      )}
+                    </div>
                   </div>
                 </div>
               );

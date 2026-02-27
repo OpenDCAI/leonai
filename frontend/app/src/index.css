@@ -21,9 +21,9 @@
     --accent-foreground: 0 0% 9%;
     --destructive: 0 84% 60%;
     --destructive-foreground: 0 0% 100%;
-    --border: 0 0% 90%;
-    --input: 0 0% 90%;
-    --ring: 0 0% 9%;
+    --border: 0 0% 91%;
+    --input: 0 0% 91%;
+    --ring: 0 0% 91%;
     --radius: 0.5rem;
     --success: 142 71% 45%;
     --success-foreground: 0 0% 100%;
@@ -64,9 +64,18 @@
 }
 
 *:focus-visible {
-  outline: 2px solid hsl(var(--primary) / 0.4);
+  outline: 2px solid hsl(var(--ring) / 0.35);
   outline-offset: 2px;
   border-radius: 4px;
+}
+
+/* Form elements have their own focus ring via shadcn — skip global outline */
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+button:focus-visible,
+[data-slot]:focus-visible {
+  outline: none;
 }
 
 /* Scrollbar — auto-hide, show on hover */

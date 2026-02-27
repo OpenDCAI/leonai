@@ -1,5 +1,6 @@
-import { Box, Cpu, Activity, AlertCircle, RefreshCw } from "lucide-react";
+import { Box, Cpu, Activity, AlertCircle, RefreshCw, ChevronLeft, ChevronRight } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import { useIsMobile } from "../hooks/use-mobile";
 import ModelMappingSection from "../components/ModelMappingSection";
 import ModelPoolSection from "../components/ModelPoolSection";
 import ObservationSection from "../components/ObservationSection";
@@ -39,7 +40,8 @@ const TABS: { id: Tab; label: string; icon: typeof Cpu; desc: string }[] = [
 ];
 
 export default function SettingsPage() {
-  const [tab, setTab] = useState<Tab>("model");
+  const isMobile = useIsMobile();
+  const [tab, setTab] = useState<Tab | null>(isMobile ? null : "model");
   const [availableModels, setAvailableModels] = useState<AvailableModelsData | null>(null);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [sandboxes, setSandboxes] = useState<Record<string, Record<string, unknown>>>({});
@@ -126,146 +128,187 @@ export default function SettingsPage() {
     );
   }
 
+  const activeTab = tab ?? "model";
+
+  const renderContent = () => (
+    <div className="max-w-2xl mx-auto py-6 px-6 space-y-6">
+      {activeTab === "model" && (
+        <>
+          <div className="space-y-2">
+            <h3 className="text-sm font-semibold text-foreground">默认模型</h3>
+            <p className="text-xs text-muted-foreground">新对话的默认虚拟模型</p>
+            <div className="flex gap-2 flex-wrap">
+              {(["leon:mini", "leon:medium", "leon:large", "leon:max"] as const).map((id) => {
+                const label = id.split(":")[1].charAt(0).toUpperCase() + id.split(":")[1].slice(1);
+                const active = settings.default_model === id;
+                return (
+                  <button
+                    key={id}
+                    onClick={async () => {
+                      setSettings({ ...settings, default_model: id });
+                      await fetch("/api/settings/default-model", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ model: id }),
+                      });
+                    }}
+                    className={`px-4 py-2 text-sm rounded-lg border transition-colors ${
+                      active
+                        ? "bg-primary/10 border-primary/40 text-primary font-medium"
+                        : "border-border text-muted-foreground hover:border-primary/20 hover:text-foreground"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <ModelMappingSection
+            virtualModels={availableModels.virtual_models}
+            availableModels={availableModels.models}
+            modelMapping={settings.model_mapping}
+            enabledModels={settings.enabled_models}
+            onUpdate={(mapping) => setSettings({ ...settings, model_mapping: mapping })}
+          />
+          <ModelPoolSection
+            models={availableModels.models}
+            enabledModels={settings.enabled_models}
+            customConfig={settings.custom_config || {}}
+            providers={settings.providers}
+            onToggle={(modelId, enabled) => {
+              const newEnabled = enabled
+                ? [...settings.enabled_models, modelId]
+                : settings.enabled_models.filter((id) => id !== modelId);
+              setSettings({ ...settings, enabled_models: newEnabled });
+            }}
+            onAddCustomModel={handleAddCustomModel}
+            onRemoveCustomModel={async (modelId) => {
+              const res = await fetch(`/api/settings/models/custom?model_id=${encodeURIComponent(modelId)}`, {
+                method: "DELETE",
+              });
+              const data = await res.json();
+              if (data.success) {
+                const [modelsRes, settingsRes] = await Promise.all([
+                  fetch("/api/settings/available-models"),
+                  fetch("/api/settings"),
+                ]);
+                setAvailableModels(await modelsRes.json());
+                setSettings(await settingsRes.json());
+              }
+            }}
+          />
+          <ProvidersSection
+            providers={settings.providers}
+            onUpdate={(provider, config) => {
+              setSettings({
+                ...settings,
+                providers: { ...settings.providers, [provider]: config },
+              });
+            }}
+          />
+        </>
+      )}
+
+      {activeTab === "sandbox" && (
+        <>
+          <WorkspaceSection
+            defaultWorkspace={settings.default_workspace}
+            onUpdate={(ws) => setSettings({ ...settings, default_workspace: ws })}
+          />
+          <SandboxSection
+            sandboxes={sandboxes}
+            onUpdate={(name, config) => {
+              setSandboxes({ ...sandboxes, [name]: config });
+            }}
+          />
+        </>
+      )}
+
+      {activeTab === "observation" && (
+        <ObservationSection
+          config={observationConfig}
+          onUpdate={(cfg) => setObservationConfig(cfg)}
+        />
+      )}
+    </div>
+  );
+
+  const renderTabList = () => (
+    <div className="space-y-1">
+      {TABS.map((t) => {
+        const Icon = t.icon;
+        const active = tab === t.id;
+        return (
+          <button
+            key={t.id}
+            onClick={() => setTab(t.id)}
+            className={`w-full text-left px-3 py-2.5 rounded-lg transition-colors group ${
+              active
+                ? "bg-primary/5 border border-primary/15"
+                : "hover:bg-muted border border-transparent"
+            }`}
+          >
+            <div className="flex items-center gap-2.5">
+              <Icon className={`w-4 h-4 ${active ? "text-primary" : "text-muted-foreground group-hover:text-foreground"}`} />
+              <span className={`text-sm font-medium ${active ? "text-foreground" : "text-muted-foreground group-hover:text-foreground"}`}>
+                {t.label}
+              </span>
+              {isMobile && <ChevronRight className="w-4 h-4 text-muted-foreground ml-auto" />}
+            </div>
+            <p className={`text-xs mt-0.5 ml-[26px] ${active ? "text-muted-foreground" : "text-muted-foreground/60"}`}>
+              {t.desc}
+            </p>
+          </button>
+        );
+      })}
+    </div>
+  );
+
+  if (isMobile) {
+    if (tab === null) {
+      return (
+        <div className="h-full flex flex-col bg-background">
+          <div className="px-4 pt-4 pb-2">
+            <h1 className="text-lg font-semibold">设置</h1>
+          </div>
+          <div className="flex-1 overflow-y-auto px-3 py-2">
+            {renderTabList()}
+          </div>
+        </div>
+      );
+    }
+    const currentTab = TABS.find(t => t.id === tab);
+    return (
+      <div className="h-full flex flex-col bg-background">
+        <div className="px-4 pt-4 pb-2 flex items-center gap-3">
+          <button
+            onClick={() => setTab(null)}
+            className="w-8 h-8 rounded-lg flex items-center justify-center text-muted-foreground hover:bg-muted"
+          >
+            <ChevronLeft className="w-5 h-5" />
+          </button>
+          <h1 className="text-lg font-semibold">{currentTab?.label}</h1>
+        </div>
+        <div className="flex-1 overflow-y-auto">
+          {renderContent()}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="h-full flex">
-      {/* Left tab nav */}
       <div className="w-[200px] shrink-0 border-r border-border bg-card flex flex-col">
         <div className="px-4 py-5 border-b border-border">
           <span className="text-sm font-semibold text-foreground">设置</span>
         </div>
-
-        <div className="flex-1 px-3 py-4 space-y-1">
-          {TABS.map((t) => {
-            const Icon = t.icon;
-            const active = tab === t.id;
-            return (
-              <button
-                key={t.id}
-                onClick={() => setTab(t.id)}
-                className={`w-full text-left px-3 py-2.5 rounded-lg transition-colors group ${
-                  active
-                    ? "bg-primary/5 border border-primary/15"
-                    : "hover:bg-muted border border-transparent"
-                }`}
-              >
-                <div className="flex items-center gap-2.5">
-                  <Icon className={`w-4 h-4 ${active ? "text-primary" : "text-muted-foreground group-hover:text-foreground"}`} />
-                  <span className={`text-sm font-medium ${active ? "text-foreground" : "text-muted-foreground group-hover:text-foreground"}`}>
-                    {t.label}
-                  </span>
-                </div>
-                <p className={`text-xs mt-0.5 ml-[26px] ${active ? "text-muted-foreground" : "text-muted-foreground/60"}`}>
-                  {t.desc}
-                </p>
-              </button>
-            );
-          })}
+        <div className="flex-1 px-3 py-4">
+          {renderTabList()}
         </div>
       </div>
-
-      {/* Right content */}
       <div className="flex-1 overflow-y-auto bg-background">
-        <div className="max-w-2xl mx-auto py-6 px-6 space-y-6">
-          {tab === "model" && (
-            <>
-              <div className="space-y-2">
-                <h3 className="text-sm font-semibold text-foreground">默认模型</h3>
-                <p className="text-xs text-muted-foreground">新对话的默认虚拟模型</p>
-                <div className="flex gap-2">
-                  {(["leon:mini", "leon:medium", "leon:large", "leon:max"] as const).map((id) => {
-                    const label = id.split(":")[1].charAt(0).toUpperCase() + id.split(":")[1].slice(1);
-                    const active = settings.default_model === id;
-                    return (
-                      <button
-                        key={id}
-                        onClick={async () => {
-                          setSettings({ ...settings, default_model: id });
-                          await fetch("/api/settings/default-model", {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ model: id }),
-                          });
-                        }}
-                        className={`px-4 py-2 text-sm rounded-lg border transition-colors ${
-                          active
-                            ? "bg-primary/10 border-primary/40 text-primary font-medium"
-                            : "border-border text-muted-foreground hover:border-primary/20 hover:text-foreground"
-                        }`}
-                      >
-                        {label}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-              <ModelMappingSection
-                virtualModels={availableModels.virtual_models}
-                availableModels={availableModels.models}
-                modelMapping={settings.model_mapping}
-                enabledModels={settings.enabled_models}
-                onUpdate={(mapping) => setSettings({ ...settings, model_mapping: mapping })}
-              />
-              <ModelPoolSection
-                models={availableModels.models}
-                enabledModels={settings.enabled_models}
-                customConfig={settings.custom_config || {}}
-                providers={settings.providers}
-                onToggle={(modelId, enabled) => {
-                  const newEnabled = enabled
-                    ? [...settings.enabled_models, modelId]
-                    : settings.enabled_models.filter((id) => id !== modelId);
-                  setSettings({ ...settings, enabled_models: newEnabled });
-                }}
-                onAddCustomModel={handleAddCustomModel}
-                onRemoveCustomModel={async (modelId) => {
-                  const res = await fetch(`/api/settings/models/custom?model_id=${encodeURIComponent(modelId)}`, {
-                    method: "DELETE",
-                  });
-                  const data = await res.json();
-                  if (data.success) {
-                    const [modelsRes, settingsRes] = await Promise.all([
-                      fetch("/api/settings/available-models"),
-                      fetch("/api/settings"),
-                    ]);
-                    setAvailableModels(await modelsRes.json());
-                    setSettings(await settingsRes.json());
-                  }
-                }}
-              />
-              <ProvidersSection
-                providers={settings.providers}
-                onUpdate={(provider, config) => {
-                  setSettings({
-                    ...settings,
-                    providers: { ...settings.providers, [provider]: config },
-                  });
-                }}
-              />
-            </>
-          )}
-
-          {tab === "sandbox" && (
-            <>
-              <WorkspaceSection
-                defaultWorkspace={settings.default_workspace}
-                onUpdate={(ws) => setSettings({ ...settings, default_workspace: ws })}
-              />
-              <SandboxSection
-                sandboxes={sandboxes}
-                onUpdate={(name, config) => {
-                  setSandboxes({ ...sandboxes, [name]: config });
-                }}
-              />
-            </>
-          )}
-
-          {tab === "observation" && (
-            <ObservationSection
-              config={observationConfig}
-              onUpdate={(cfg) => setObservationConfig(cfg)}
-            />
-          )}
-        </div>
+        {renderContent()}
       </div>
     </div>
   );

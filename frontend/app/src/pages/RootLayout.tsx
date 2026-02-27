@@ -3,6 +3,7 @@ import { MessageSquare, Users, ListTodo, Library, Settings, Plus, ChevronLeft, C
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import CreateMemberDialog from "@/components/CreateMemberDialog";
+import NewChatDialog from "@/components/NewChatDialog";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useAppStore } from "@/store/app-store";
 import { toast } from "sonner";
@@ -14,12 +15,18 @@ const navItems = [
   { to: "/library", icon: Library, label: "能力库" },
 ];
 
+const mobileNavItems = [
+  ...navItems,
+  { to: "/settings", icon: Settings, label: "设置" },
+];
+
 export default function RootLayout() {
   const location = useLocation();
   const navigate = useNavigate();
   const isMobile = useIsMobile();
   const [showCreate, setShowCreate] = useState(false);
   const [createMemberOpen, setCreateMemberOpen] = useState(false);
+  const [newChatOpen, setNewChatOpen] = useState(false);
 
   const userProfile = useAppStore((s) => s.userProfile);
   const loadAll = useAppStore((s) => s.loadAll);
@@ -54,7 +61,7 @@ export default function RootLayout() {
     setShowCreate(false);
     switch (action) {
       case "staff": setCreateMemberOpen(true); break;
-      case "chat": navigate("/members"); break;
+      case "chat": setNewChatOpen(true); break;
       case "task":
         try {
           await storeAddTask();
@@ -151,7 +158,7 @@ export default function RootLayout() {
 
         {/* Bottom tab bar */}
         <nav className="shrink-0 border-t border-border bg-card flex items-stretch" style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
-          {navItems.map((item) => {
+          {mobileNavItems.map((item) => {
             const isActive = location.pathname.startsWith(item.to);
             return (
               <NavLink
@@ -170,6 +177,7 @@ export default function RootLayout() {
         </nav>
 
         <CreateMemberDialog open={createMemberOpen} onOpenChange={setCreateMemberOpen} />
+        <NewChatDialog open={newChatOpen} onOpenChange={setNewChatOpen} />
       </div>
     );
   }
@@ -250,6 +258,7 @@ export default function RootLayout() {
 
       <main className="flex-1 overflow-hidden"><Outlet /></main>
       <CreateMemberDialog open={createMemberOpen} onOpenChange={setCreateMemberOpen} />
+      <NewChatDialog open={newChatOpen} onOpenChange={setNewChatOpen} />
     </div>
   );
 }
