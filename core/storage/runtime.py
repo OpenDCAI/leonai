@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 import os
 from collections.abc import Mapping
 from pathlib import Path
@@ -11,6 +12,14 @@ from typing import Any, Callable, Literal
 from core.storage.container import StorageContainer
 
 StorageStrategy = Literal["sqlite", "supabase"]
+_REPO_NAMES = (
+    "checkpoint_repo",
+    "thread_config_repo",
+    "run_event_repo",
+    "file_operation_repo",
+    "summary_repo",
+    "eval_repo",
+)
 
 
 def build_storage_container(
@@ -18,6 +27,7 @@ def build_storage_container(
     main_db_path: str | Path | None = None,
     eval_db_path: str | Path | None = None,
     strategy: str | None = None,
+    repo_providers: Mapping[str, str] | None = None,
     supabase_client: Any | None = None,
     supabase_client_factory: str | None = None,
     env: Mapping[str, str] | None = None,
@@ -26,12 +36,15 @@ def build_storage_container(
     env_map = env if env is not None else os.environ
     raw_strategy = strategy if strategy is not None else env_map.get("LEON_STORAGE_STRATEGY")
     resolved_strategy = _resolve_strategy(raw_strategy)
+    resolved_repo_providers = _resolve_repo_providers(repo_providers, env_map)
+    supabase_needed = _uses_supabase_provider(resolved_strategy, resolved_repo_providers)
 
-    if resolved_strategy == "sqlite":
+    if not supabase_needed:
         return StorageContainer(
             main_db_path=main_db_path,
             eval_db_path=eval_db_path,
-            strategy="sqlite",
+            strategy=resolved_strategy,
+            repo_providers=resolved_repo_providers,
         )
 
     client = supabase_client
@@ -54,7 +67,8 @@ def build_storage_container(
     return StorageContainer(
         main_db_path=main_db_path,
         eval_db_path=eval_db_path,
-        strategy="supabase",
+        strategy=resolved_strategy,
+        repo_providers=resolved_repo_providers,
         supabase_client=client,
     )
 
@@ -69,6 +83,48 @@ def _resolve_strategy(raw: str | None) -> StorageStrategy:
         f"Invalid LEON_STORAGE_STRATEGY value: {raw!r}. "
         "Supported values: sqlite, supabase."
     )
+
+
+def _resolve_repo_providers(
+    repo_providers: Mapping[str, str] | None,
+    env: Mapping[str, str],
+) -> Mapping[str, str] | None:
+    if repo_providers is not None:
+        return repo_providers
+
+    raw = env.get("LEON_STORAGE_REPO_PROVIDERS")
+    if not raw:
+        return None
+    try:
+        parsed = json.loads(raw)
+    except Exception as exc:
+        raise RuntimeError(
+            f"Invalid LEON_STORAGE_REPO_PROVIDERS value: {raw!r}. Expected JSON object."
+        ) from exc
+    if not isinstance(parsed, dict):
+        raise RuntimeError(
+            f"Invalid LEON_STORAGE_REPO_PROVIDERS value: {raw!r}. Expected JSON object."
+        )
+    for key, value in parsed.items():
+        if not isinstance(key, str) or not isinstance(value, str):
+            raise RuntimeError(
+                "Invalid LEON_STORAGE_REPO_PROVIDERS entries. "
+                "Expected string-to-string map of repo_name -> provider."
+            )
+    return parsed
+
+
+def _uses_supabase_provider(
+    strategy: StorageStrategy,
+    repo_providers: Mapping[str, str] | None,
+) -> bool:
+    if repo_providers is None:
+        return strategy == "supabase"
+    for repo_name in _REPO_NAMES:
+        provider = repo_providers.get(repo_name, strategy).strip().lower()
+        if provider == "supabase":
+            return True
+    return False
 
 
 def _load_factory(factory_ref: str) -> Callable[[], Any]:
