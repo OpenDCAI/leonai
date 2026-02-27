@@ -242,6 +242,52 @@ export interface WorkspaceFileResult {
   size: number;
 }
 
+export type WorkspaceChannelKind = "upload" | "download";
+
+export interface WorkspaceChannelsResult {
+  thread_id: string;
+  root_path: string;
+  upload_path: string;
+  download_path: string;
+}
+
+export interface WorkspaceChannelFileEntry {
+  relative_path: string;
+  size_bytes: number;
+  updated_at: string;
+}
+
+export interface WorkspaceChannelFilesResult {
+  thread_id: string;
+  channel: WorkspaceChannelKind;
+  entries: WorkspaceChannelFileEntry[];
+}
+
+export interface WorkspaceUploadResult {
+  thread_id: string;
+  channel: WorkspaceChannelKind;
+  relative_path: string;
+  absolute_path: string;
+  size_bytes: number;
+  sha256: string;
+}
+
+export interface WorkspaceTransferEntry {
+  id: number;
+  thread_id: string;
+  direction: "upload" | "download";
+  channel: WorkspaceChannelKind;
+  relative_path: string;
+  size_bytes: number;
+  status: string;
+  created_at: string;
+}
+
+export interface WorkspaceTransfersResult {
+  thread_id: string;
+  entries: WorkspaceTransferEntry[];
+}
+
 export interface TaskAgentRequest {
   subagent_type: string;
   prompt: string;

@@ -7,8 +7,13 @@ import type {
   TerminalStatus,
   LeaseStatus,
   ThreadSummary,
+  WorkspaceChannelFilesResult,
+  WorkspaceChannelKind,
+  WorkspaceChannelsResult,
   WorkspaceFileResult,
   WorkspaceListResult,
+  WorkspaceTransferEntry,
+  WorkspaceUploadResult,
 } from "./types";
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
@@ -172,6 +177,63 @@ export async function listWorkspace(threadId: string, path?: string): Promise<Wo
 
 export async function readWorkspaceFile(threadId: string, path: string): Promise<WorkspaceFileResult> {
   return request(`/api/threads/${encodeURIComponent(threadId)}/workspace/read?path=${encodeURIComponent(path)}`);
+}
+
+function workspaceBase(threadId: string): string {
+  return `/api/threads/${encodeURIComponent(threadId)}/workspace`;
+}
+
+export async function getWorkspaceChannels(threadId: string): Promise<WorkspaceChannelsResult> {
+  return request(`${workspaceBase(threadId)}/channels`);
+}
+
+export async function listWorkspaceChannelFiles(
+  threadId: string,
+  channel: WorkspaceChannelKind = "download",
+): Promise<WorkspaceChannelFilesResult> {
+  const q = `?channel=${encodeURIComponent(channel)}`;
+  return request(`${workspaceBase(threadId)}/channel-files${q}`);
+}
+
+export async function listWorkspaceTransfers(
+  threadId: string,
+  limit = 100,
+): Promise<{ thread_id: string; entries: WorkspaceTransferEntry[] }> {
+  const q = `?limit=${encodeURIComponent(String(limit))}`;
+  return request(`${workspaceBase(threadId)}/transfers${q}`);
+}
+
+export async function uploadWorkspaceFile(
+  threadId: string,
+  opts: { file: File; channel?: WorkspaceChannelKind; path?: string },
+): Promise<WorkspaceUploadResult> {
+  const query = new URLSearchParams();
+  query.set("channel", opts.channel ?? "download");
+  if (opts.path) query.set("path", opts.path);
+  const form = new FormData();
+  form.set("file", opts.file, opts.file.name);
+
+  const response = await fetch(`${workspaceBase(threadId)}/upload?${query.toString()}`, {
+    method: "POST",
+    body: form,
+  });
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`API ${response.status}: ${body || response.statusText}`);
+  }
+  return (await response.json()) as WorkspaceUploadResult;
+}
+
+export function getWorkspaceDownloadUrl(
+  threadId: string,
+  path: string,
+  channel: WorkspaceChannelKind = "download",
+): string {
+  const query = new URLSearchParams({
+    path,
+    channel,
+  });
+  return `${workspaceBase(threadId)}/download?${query.toString()}`;
 }
 
 // --- Settings API ---
