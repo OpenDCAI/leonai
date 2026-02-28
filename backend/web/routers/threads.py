@@ -41,6 +41,16 @@ from sandbox.thread_context import set_current_thread_id
 router = APIRouter(prefix="/api/threads", tags=["threads"])
 
 
+def _get_agent_for_thread(app: Any, thread_id: str) -> Any | None:
+    """Get agent instance for a thread from the agent pool."""
+    pool = getattr(app.state, "agent_pool", None)
+    if pool is None:
+        return None
+    sandbox_type = resolve_thread_sandbox(app, thread_id)
+    pool_key = f"{thread_id}:{sandbox_type}"
+    return pool.get(pool_key)
+
+
 @router.post("")
 async def create_thread(
     payload: CreateThreadRequest | None = None,
@@ -390,6 +400,55 @@ async def cancel_run(
         return {"ok": False, "message": "No active run found"}
     task.cancel()
     return {"ok": True, "message": "Run cancellation requested"}
+
+
+@router.post("/{thread_id}/commands/{command_id}/cancel")
+async def cancel_command(
+    thread_id: str,
+    command_id: str,
+    request: Request,
+) -> dict[str, Any]:
+    """Cancel a specific async command by terminating its process."""
+    agent = _get_agent_for_thread(request.app, thread_id)
+    if not agent:
+        raise HTTPException(404, "Agent not found")
+
+    # Find CommandMiddleware via TaskMiddleware's parent_middleware list
+    parent_mw = getattr(getattr(agent, "_task_middleware", None), "parent_middleware", [])
+    from core.command import CommandMiddleware
+
+    for mw in parent_mw:
+        if not isinstance(mw, CommandMiddleware):
+            continue
+        status = await mw._executor.get_status(command_id)
+        if status and not status.done and status.process:
+            status.process.terminate()
+            return {"cancelled": True, "command_id": command_id}
+
+    raise HTTPException(404, "Command not found or already completed")
+
+
+@router.post("/{thread_id}/tasks/{task_id}/cancel")
+async def cancel_background_task(
+    thread_id: str,
+    task_id: str,
+    request: Request,
+) -> dict[str, Any]:
+    """Cancel a specific background sub-agent task."""
+    agent = _get_agent_for_thread(request.app, thread_id)
+    if not agent:
+        raise HTTPException(404, "Agent not found")
+
+    runner = getattr(getattr(agent, "_task_middleware", None), "runner", None)
+    if runner is None:
+        raise HTTPException(404, "Task not found or already completed")
+
+    active_tasks = getattr(runner, "_active_tasks", {})
+    if task_id in active_tasks:
+        active_tasks[task_id].cancel()
+        return {"cancelled": True, "task_id": task_id}
+
+    raise HTTPException(404, "Task not found or already completed")
 
 
 @router.post("/{thread_id}/task-agent/runs")
