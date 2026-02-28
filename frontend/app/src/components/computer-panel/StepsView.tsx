@@ -1,5 +1,5 @@
-import { CheckCircle2, Loader2, Square, XCircle } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { CheckCircle2, ChevronDown, ChevronRight, Loader2, Square, XCircle } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import type { Activity, ToolStep } from "../../api";
 import { DEFAULT_BADGE, TOOL_BADGE_STYLES } from "../chat-area/constants";
 import { getToolRenderer } from "../tool-renderers";
@@ -83,8 +83,14 @@ function StepCard({
   isFocused: boolean;
   onFocus: () => void;
 }) {
+  const [expanded, setExpanded] = useState(false);
   const badge = TOOL_BADGE_STYLES[step.name] ?? { ...DEFAULT_BADGE, label: step.name };
   const Renderer = getToolRenderer(step);
+
+  // Auto-expand when focused from chat area jump
+  useEffect(() => {
+    if (isFocused) setExpanded(true);
+  }, [isFocused]);
 
   return (
     <div
@@ -92,10 +98,12 @@ function StepCard({
       className={`rounded-lg border transition-colors ${
         isFocused ? "border-blue-300 bg-blue-50/30" : "border-[#f0f0f0] hover:border-[#e0e0e0]"
       }`}
-      onClick={onFocus}
     >
-      {/* Header */}
-      <div className="flex items-center gap-1.5 px-3 py-2">
+      {/* Header — click to toggle */}
+      <div
+        className="flex items-center gap-1.5 px-3 py-2 cursor-pointer"
+        onClick={() => { setExpanded((v) => !v); onFocus(); }}
+      >
         <StatusIcon status={step.status} />
         <span
           className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium flex-shrink-0 ${badge.bg} ${badge.text}`}
@@ -105,24 +113,29 @@ function StepCard({
         <div className="flex-1 min-w-0 text-xs text-[#737373] truncate font-mono">
           {getStepSummary(step)}
         </div>
+        {expanded
+          ? <ChevronDown className="w-3.5 h-3.5 text-[#a3a3a3] flex-shrink-0" />
+          : <ChevronRight className="w-3.5 h-3.5 text-[#d4d4d4] flex-shrink-0" />}
       </div>
 
-      {/* Expanded detail */}
-      <div className="px-3 pb-2">
-        <div className="text-xs">
-          <Renderer step={step} expanded={true} />
-        </div>
-        {step.result && (
-          <pre className="mt-2 whitespace-pre-wrap break-words font-mono text-[11px] text-[#525252] bg-[#fafafa] rounded p-2 max-h-[300px] overflow-y-auto border border-[#f0f0f0]">
-            {step.result}
-          </pre>
-        )}
-        {step.status === "cancelled" && (
-          <div className="mt-1 text-[11px] text-[#a3a3a3] italic">
-            {step.result || "已取消"}
+      {/* Detail — only when expanded */}
+      {expanded && (
+        <div className="px-3 pb-2">
+          <div className="text-xs">
+            <Renderer step={step} expanded={true} />
           </div>
-        )}
-      </div>
+          {step.result && (
+            <pre className="mt-2 whitespace-pre-wrap break-words font-mono text-[11px] text-[#525252] bg-[#fafafa] rounded p-2 max-h-[300px] overflow-y-auto border border-[#f0f0f0]">
+              {step.result}
+            </pre>
+          )}
+          {step.status === "cancelled" && (
+            <div className="mt-1 text-[11px] text-[#a3a3a3] italic">
+              {step.result || "已取消"}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
