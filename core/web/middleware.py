@@ -13,6 +13,7 @@ Features:
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -166,7 +167,11 @@ class WebMiddleware(AgentMiddleware):
         return await self._ai_extract(content, Prompt, Url)
 
     async def _ai_extract(self, content: str, prompt: str, url: str) -> str:
-        """Use a small model to extract information from web content."""
+        """Use a small model to extract information from web content.
+
+        Timeout: 30s. On failure, returns a raw content preview so the
+        calling agent still has something to work with.
+        """
         try:
             model = self._extraction_model
             if model is None:
@@ -182,10 +187,12 @@ class WebMiddleware(AgentMiddleware):
                 f"Provide a concise, relevant answer based on the web page content."
             )
 
-            response = await model.ainvoke(extraction_prompt)
+            response = await asyncio.wait_for(model.ainvoke(extraction_prompt), timeout=30)
             return response.content
+        except asyncio.TimeoutError:
+            preview = content[:5000] if len(content) > 5000 else content
+            return f"AI extraction timed out (30s). Raw content preview:\n\n{preview}"
         except Exception as e:
-            # Fallback: return truncated content with a note
             preview = content[:5000] if len(content) > 5000 else content
             return f"AI extraction failed ({e}). Raw content preview:\n\n{preview}"
 

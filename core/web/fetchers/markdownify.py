@@ -24,6 +24,12 @@ except ImportError:
     HAS_BS4 = False
 
 
+_BROWSER_UA = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+)
+
+
 class MarkdownifyFetcher(BaseFetcher):
     """
     Fetcher using markdownify for HTML to Markdown conversion.
@@ -35,21 +41,35 @@ class MarkdownifyFetcher(BaseFetcher):
         self,
         limits: FetchLimits | None = None,
         timeout: int = 10,
-        user_agent: str = "Mozilla/5.0 (compatible; LeonBot/1.0)",
+        user_agent: str = _BROWSER_UA,
     ):
         super().__init__(limits, timeout)
         self.user_agent = user_agent
         self.has_markdownify = HAS_MARKDOWNIFY
         self.has_bs4 = HAS_BS4
 
+    async def _do_fetch(self, url: str, verify: bool = True) -> httpx.Response:
+        """Fetch URL with explicit timeout and redirect following."""
+        timeout = httpx.Timeout(self.timeout, connect=5.0)
+        async with httpx.AsyncClient(
+            timeout=timeout,
+            follow_redirects=True,
+            verify=verify,
+        ) as client:
+            response = await client.get(url, headers={"User-Agent": self.user_agent})
+            response.raise_for_status()
+            return response
+
     async def fetch(self, url: str) -> FetchResult:
         """Fetch URL content and convert to Markdown."""
         result = FetchResult(url=url)
 
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.get(url, headers={"User-Agent": self.user_agent})
-                response.raise_for_status()
+            try:
+                response = await self._do_fetch(url, verify=True)
+            except httpx.ConnectError:
+                # SSL cert verification may fail; retry without verify
+                response = await self._do_fetch(url, verify=False)
 
             content_type = response.headers.get("Content-Type", "")
 
@@ -72,7 +92,7 @@ class MarkdownifyFetcher(BaseFetcher):
             result.content = content
 
         except httpx.TimeoutException:
-            result.error = f"Timeout fetching URL: {url}"
+            result.error = f"Timeout fetching URL ({self.timeout}s): {url}"
         except httpx.HTTPStatusError as e:
             result.error = f"HTTP error {e.response.status_code}: {url}"
         except httpx.RequestError as e:
