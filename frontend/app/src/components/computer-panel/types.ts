@@ -1,4 +1,4 @@
-import type { ChatEntry, LeaseStatus, SessionStatus, TerminalStatus } from "../../api";
+import type { Activity, ChatEntry, LeaseStatus, SessionStatus, TerminalStatus } from "../../api";
 
 export type TabType = "terminal" | "files" | "agents" | "steps";
 
@@ -15,6 +15,9 @@ export interface ComputerPanelProps {
   onFocusAgent?: (stepId: string | null) => void;
   focusedStepId?: string | null;
   onFocusStep?: (stepId: string | null) => void;
+  activities?: Activity[];
+  onCancelCommand?: (commandId: string) => void;
+  onCancelTask?: (taskId: string) => void;
 }
 
 export interface TreeNode {

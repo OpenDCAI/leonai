@@ -7,6 +7,7 @@ import Header from "../components/Header";
 import InputBox from "../components/InputBox";
 import TaskProgress from "../components/TaskProgress";
 import TokenStats from "../components/TokenStats";
+import { useActivities } from "../hooks/use-activities";
 import { useAppActions } from "../hooks/use-app-actions";
 import { useResizableX } from "../hooks/use-resizable-x";
 import { useSandboxManager } from "../hooks/use-sandbox-manager";
@@ -69,6 +70,8 @@ function ChatPageInner({ threadId }: { threadId: string }) {
 
   const { entries, activeSandbox, loading, setEntries, setActiveSandbox, refreshThread } = useThreadData(threadId, runStarted, initialEntries);
 
+  const { activities, handleActivityEvent, cancelCommand, cancelTask } = useActivities();
+
   const { runtimeStatus, isRunning, handleSendMessage, handleStopStreaming } =
     useStreamHandler({
       threadId,
@@ -76,6 +79,7 @@ function ChatPageInner({ threadId }: { threadId: string }) {
       onUpdate: (updater) => setEntries(updater),
       loading,
       runStarted: state?.runStarted,
+      onActivityEvent: handleActivityEvent,
     });
 
   const isStreaming = isRunning;
@@ -161,6 +165,9 @@ function ChatPageInner({ threadId }: { threadId: string }) {
               onFocusAgent={setFocusedAgentStepId}
               focusedStepId={focusedStepId}
               onFocusStep={setFocusedStepId}
+              activities={activities}
+              onCancelCommand={(id) => cancelCommand(threadId, id)}
+              onCancelTask={(id) => cancelTask(threadId, id)}
             />
           </>
         )}

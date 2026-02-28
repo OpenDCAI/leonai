@@ -14,6 +14,7 @@ interface ReconnectDeps {
   abortRef: React.RefObject<AbortController | null>;
   setRuntimeStatus: (v: StreamStatus | null) => void;
   setIsRunning: (v: boolean) => void;
+  onActivityEventRef?: React.RefObject<((event: { type: string; data?: unknown }) => void) | undefined>;
 }
 
 /** Find existing assistant turn or create one with the given fallback id. */
@@ -37,7 +38,7 @@ function applyReconnectTurn(
 }
 
 export function useStreamReconnect(deps: ReconnectDeps) {
-  const { threadId, loading, runStarted, refreshThreads, onUpdateRef, abortRef, setRuntimeStatus, setIsRunning } = deps;
+  const { threadId, loading, runStarted, refreshThreads, onUpdateRef, abortRef, setRuntimeStatus, setIsRunning, onActivityEventRef } = deps;
   const runStartedRef = useRef(runStarted);
   runStartedRef.current = runStarted;
 
@@ -74,7 +75,7 @@ export function useStreamReconnect(deps: ReconnectDeps) {
         abortRef.current = ac;
 
         await streamEvents(threadId, (event) => {
-          processStreamEvent(event, resolved.turnId, onUpdateRef.current, setRuntimeStatus);
+          processStreamEvent(event, resolved.turnId, onUpdateRef.current, setRuntimeStatus, onActivityEventRef?.current);
         }, ac.signal, runtime?.last_seq ?? 0);
       } catch (error) {
         if (error instanceof Error && error.name === "AbortError") return;

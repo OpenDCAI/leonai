@@ -20,6 +20,8 @@ interface StreamHandlerDeps {
   loading: boolean;
   /** When true, a run was just started — reconnect skips runtime check. */
   runStarted?: boolean;
+  /** Callback for activity events (command_progress, background_task_*). */
+  onActivityEvent?: (event: { type: string; data?: unknown }) => void;
 }
 
 export interface StreamHandlerState {
@@ -40,6 +42,8 @@ export function useStreamHandler(deps: StreamHandlerDeps): StreamHandlerState & 
   const abortRef = useRef<AbortController | null>(null);
   const onUpdateRef = useRef(onUpdate);
   onUpdateRef.current = onUpdate;
+  const onActivityEventRef = useRef(deps.onActivityEvent);
+  onActivityEventRef.current = deps.onActivityEvent;
 
   // Abort in-flight stream on unmount (key-based remount resets all state)
   useEffect(() => {
@@ -80,7 +84,7 @@ export function useStreamHandler(deps: StreamHandlerDeps): StreamHandlerState & 
         await postRun(threadId, message, ac.signal);
         await streamEvents(threadId, (event) => {
           const { messageId } = processStreamEvent(
-            event, boundTurnId, onUpdateRef.current, setRuntimeStatus,
+            event, boundTurnId, onUpdateRef.current, setRuntimeStatus, onActivityEventRef.current,
           );
           if (!hasBound && messageId) {
             hasBound = true;
@@ -125,7 +129,7 @@ export function useStreamHandler(deps: StreamHandlerDeps): StreamHandlerState & 
     setTimeout(() => abortRef.current?.abort(), 500);
   }, [threadId]);
 
-  useStreamReconnect({ threadId, loading, runStarted, refreshThreads, onUpdateRef, abortRef, setRuntimeStatus, setIsRunning });
+  useStreamReconnect({ threadId, loading, runStarted, refreshThreads, onUpdateRef, abortRef, setRuntimeStatus, setIsRunning, onActivityEventRef });
 
   return { runtimeStatus, isRunning, handleSendMessage, handleStopStreaming };
 }
