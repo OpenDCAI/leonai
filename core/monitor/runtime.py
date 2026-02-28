@@ -1,5 +1,6 @@
 """Agent 运行时状态聚合"""
 
+from collections.abc import Callable
 from typing import Any
 
 from .context_monitor import ContextMonitor
@@ -20,6 +21,7 @@ class AgentRuntime:
         self.context = context_monitor
         self.state = state_monitor
         self._subagent_event_buffer: dict[str, list[dict[str, Any]]] = {}  # tool_call_id -> events
+        self._event_callback: Callable[[dict], None] | None = None
 
     # ========== 状态代理 ==========
 
@@ -135,13 +137,39 @@ class AgentRuntime:
 
         return " | ".join(parts)
 
+    # ========== Event callback ==========
+
+    def set_event_callback(self, callback: Callable[[dict], None] | None) -> None:
+        """Set real-time event callback. Used by streaming_service."""
+        self._event_callback = callback
+
+    def emit_activity_event(self, event: dict[str, Any]) -> None:
+        """Emit activity event (command progress, background task, etc)."""
+        if self._event_callback:
+            self._event_callback(event)
+
     # ========== Sub-agent event buffering ==========
 
     def emit_subagent_event(self, parent_tool_call_id: str, event: dict[str, Any]) -> None:
-        """Buffer sub-agent event for streaming."""
-        if parent_tool_call_id not in self._subagent_event_buffer:
-            self._subagent_event_buffer[parent_tool_call_id] = []
-        self._subagent_event_buffer[parent_tool_call_id].append(event)
+        """Push sub-agent event via real-time callback, or buffer for batch retrieval."""
+        if self._event_callback:
+            import json
+
+            event_type = event.get("event", "")
+            try:
+                data = json.loads(event.get("data", "{}"))
+            except (json.JSONDecodeError, TypeError):
+                data = {}
+            data["parent_tool_call_id"] = parent_tool_call_id
+            self._event_callback({
+                "event": f"subagent_{event_type}",
+                "data": json.dumps(data, ensure_ascii=False),
+            })
+        else:
+            # Batch fallback (backward compat for TUI / non-SSE callers)
+            if parent_tool_call_id not in self._subagent_event_buffer:
+                self._subagent_event_buffer[parent_tool_call_id] = []
+            self._subagent_event_buffer[parent_tool_call_id].append(event)
 
     def get_pending_subagent_events(self) -> list[tuple[str, list[dict[str, Any]]]]:
         """Get and clear pending sub-agent events."""
