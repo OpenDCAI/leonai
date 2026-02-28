@@ -169,6 +169,12 @@ button:focus-visible,
   animation: pulse 2s ease-in-out infinite;
 }
 
+/* L0 Detail Box — top fade mask */
+.detail-box-mask {
+  mask-image: linear-gradient(to bottom, transparent 0%, black 30%, black 100%);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 30%, black 100%);
+}
+
 /* Markdown content */
 /* Utility classes */
 @layer components {
