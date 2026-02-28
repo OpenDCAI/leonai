@@ -6,9 +6,13 @@ Provides run_command and command_status tools.
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from langchain.agents.middleware import AgentMiddleware, AgentState
 from langchain.agents.middleware.types import ModelRequest, ModelResponse
@@ -69,6 +73,7 @@ class CommandMiddleware(AgentMiddleware[CommandState]):
             verbose: Whether to output detailed logs
         """
         AgentMiddleware.__init__(self)
+        self._agent: Any = None
 
         # @@@ Don't resolve workspace_root for sandbox — macOS firmlinks break it
         if executor is not None and executor.is_remote:
@@ -193,6 +198,10 @@ class CommandMiddleware(AgentMiddleware[CommandState]):
         )
         return result.to_tool_result()
 
+    def set_agent(self, agent: Any) -> None:
+        """Set parent agent for runtime access."""
+        self._agent = agent
+
     async def _execute_async(self, command_line: str, work_dir: str | None, timeout: int | None) -> str:
         """Execute async command."""
         async_cmd = await self._executor.execute_async(
@@ -210,11 +219,48 @@ class CommandMiddleware(AgentMiddleware[CommandState]):
             if result:
                 return result.to_tool_result()
 
+        # Start background monitoring for progress events
+        runtime = getattr(self._agent, "runtime", None) if self._agent else None
+        if runtime:
+            asyncio.create_task(
+                self._monitor_async_command(async_cmd.command_id, command_line, runtime)
+            )
+
         return (
             f"Command started in background.\n"
             f"CommandId: {async_cmd.command_id}\n"
             f"Use command_status tool to check progress."
         )
+
+    async def _monitor_async_command(
+        self, command_id: str, command_line: str, runtime: Any
+    ) -> None:
+        """Poll async command and emit progress events every 2s."""
+        while True:
+            await asyncio.sleep(2.0)
+            try:
+                status = await self._executor.get_status(command_id)
+            except Exception:
+                logger.debug("Failed to get status for command %s", command_id)
+                break
+            if status is None:
+                break
+
+            output = self._merge_running_output(status)
+
+            runtime.emit_activity_event({
+                "event": "command_progress",
+                "data": json.dumps({
+                    "command_id": command_id,
+                    "command_line": command_line,
+                    "done": status.done,
+                    "exit_code": status.exit_code,
+                    "output_preview": output[-500:] if output else "",
+                }, ensure_ascii=False),
+            })
+
+            if status.done:
+                break
 
     def _clean_running_output(self, output: str, command_line: str) -> str:
         return normalize_pty_result(output, command_line)

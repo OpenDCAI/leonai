@@ -227,6 +227,10 @@ class LeonAgent:
         # Set agent reference in TaskMiddleware for runtime access
         self._task_middleware.set_agent(self)
 
+        # Set agent reference in CommandMiddleware for async progress events
+        if hasattr(self, "_command_middleware"):
+            self._command_middleware.set_agent(self)
+
         # Inject runtime/model into MemoryMiddleware
         if hasattr(self, "_memory_middleware"):
             self._memory_middleware.set_runtime(self.runtime)
@@ -922,16 +926,15 @@ class LeonAgent:
         }
         default_timeout = self.config.tools.command.tools.run_command.default_timeout
 
-        middleware.append(
-            CommandMiddleware(
-                workspace_root=self.workspace_root,
-                default_timeout=default_timeout,
-                hooks=command_hooks,
-                enabled_tools=command_tools,
-                executor=cmd_executor,
-                verbose=self.verbose,
-            )
+        self._command_middleware = CommandMiddleware(
+            workspace_root=self.workspace_root,
+            default_timeout=default_timeout,
+            hooks=command_hooks,
+            enabled_tools=command_tools,
+            executor=cmd_executor,
+            verbose=self.verbose,
         )
+        middleware.append(self._command_middleware)
 
     def _add_skills_middleware(self, middleware: list) -> None:
         """Add skills middleware to stack."""
