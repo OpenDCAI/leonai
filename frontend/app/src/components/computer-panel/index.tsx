@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ComputerPanelProps, TabType } from "./types";
-import { extractAgentSteps, extractAllToolSteps, extractCommandSteps } from "./utils";
+import { extractAgentSteps, extractCommandSteps, extractMessageFlow } from "./utils";
 import { useSandboxStatus } from "./use-sandbox-status";
 import { useFileExplorer } from "./use-file-explorer";
 import { useResizable } from "./use-resizable";
@@ -37,7 +37,7 @@ export default function ComputerPanel({
   const isRemote = sandboxType !== null && sandboxType !== "local";
   const commandSteps = useMemo(() => extractCommandSteps(chatEntries), [chatEntries]);
   const agentSteps = useMemo(() => extractAgentSteps(chatEntries), [chatEntries]);
-  const allSteps = useMemo(() => extractAllToolSteps(chatEntries), [chatEntries]);
+  const flowItems = useMemo(() => extractMessageFlow(chatEntries), [chatEntries]);
   const { width: treeWidth, onMouseDown: onDragStart } = useResizable(288, 160, 500);
 
   const { lease, statusError: _statusError, refreshStatus } = useSandboxStatus({ threadId, isRemote });
@@ -109,7 +109,7 @@ export default function ComputerPanel({
 
         {activeTab === "steps" && (
           <StepsView
-            steps={allSteps}
+            flowItems={flowItems}
             activities={activities}
             focusedStepId={focusedStepId}
             onFocusStep={(id) => onFocusStep?.(id)}
