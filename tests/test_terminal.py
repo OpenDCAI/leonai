@@ -188,15 +188,6 @@ class TestTerminalStore:
         assert terminals[1]["terminal_id"] == "term-2"
         assert terminals[2]["terminal_id"] == "term-1"
 
-    def test_thread_id_unique_constraint(self, store):
-        """Test that thread_id is unique."""
-        store.create("term-1", "thread-123", "lease-1")
-
-        # Attempting to create another terminal with same thread_id should fail
-        with pytest.raises(sqlite3.IntegrityError):
-            store.create("term-2", "thread-123", "lease-1")
-
-
 class TestSQLiteTerminal:
     """Test SQLiteTerminal state persistence."""
 

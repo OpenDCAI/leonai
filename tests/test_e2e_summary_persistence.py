@@ -8,9 +8,15 @@ Note: These tests work around asyncio event loop limitations by creating
 fresh agents for each test phase.
 """
 
+import os
 from pathlib import Path
 
 import pytest
+
+pytestmark = pytest.mark.skipif(
+    not os.getenv("LEON_E2E_AGENT"),
+    reason="LEON_E2E_AGENT not set (requires working LLM API key for real agent calls)",
+)
 
 from agent import create_leon_agent
 from sandbox.thread_context import set_current_thread_id

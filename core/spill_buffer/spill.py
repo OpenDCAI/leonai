@@ -41,7 +41,11 @@ def spill_if_needed(
 
     write_note = ""
     try:
-        fs_backend.write_file(spill_path, content)
+        result = fs_backend.write_file(spill_path, content)
+        if hasattr(result, "success") and not result.success:
+            error_msg = getattr(result, "error", "unknown error")
+            write_note = f"\n\n(Warning: failed to save full output to disk: {error_msg})"
+            spill_path = "<write failed>"
     except Exception as exc:
         write_note = f"\n\n(Warning: failed to save full output to disk: {exc})"
         spill_path = "<write failed>"

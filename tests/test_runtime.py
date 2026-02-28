@@ -508,6 +508,7 @@ async def test_running_command_survives_runtime_reload_without_false_failure(ter
 
 @pytest.mark.asyncio
 async def test_daytona_runtime_hydrates_once_per_pty_session(terminal_store, lease_store):
+    pytest.importorskip("daytona_sdk")
     terminal = terminal_store.create("term-3", "thread-3", "lease-3", "/tmp")
     lease = lease_store.create("lease-3", "daytona")
     instance = SandboxInstance(
@@ -626,6 +627,7 @@ def test_normalize_pty_result_strips_prompt_echo_and_tail_prompt():
 
 @pytest.mark.asyncio
 async def test_daytona_runtime_sanitizes_corrupted_terminal_state_before_create(terminal_store, lease_store):
+    pytest.importorskip("daytona_sdk")
     terminal = terminal_store.create("term-4", "thread-4", "lease-4", "/tmp")
     # Simulate legacy-corrupted snapshot.
     terminal.update_state(

@@ -201,7 +201,7 @@ class TestCommandStatusFormatting:
         executor = _StatusOnlyExecutor(_StatusFixture(status=status))
         middleware = CommandMiddleware(workspace_root=tmp_path, executor=executor, verbose=False)
 
-        out = await middleware._get_command_status("cmd_noise", wait_seconds=0, max_chars=10000)
+        out = await middleware._get_command_status("cmd_noise", wait_seconds=0)
         assert "Status: running" in out
         assert "tick-1" in out
         assert "ffor i in 1 2 3" not in out
@@ -219,7 +219,7 @@ class TestCommandStatusFormatting:
         executor = _StatusOnlyExecutor(_StatusFixture(status=status))
         middleware = CommandMiddleware(workspace_root=tmp_path, executor=executor, verbose=False)
 
-        out = await middleware._get_command_status("cmd_stderr", wait_seconds=0, max_chars=10000)
+        out = await middleware._get_command_status("cmd_stderr", wait_seconds=0)
         assert "Status: running" in out
         output_block = out.split("Output so far:\n", 1)[1]
         assert "out" in output_block

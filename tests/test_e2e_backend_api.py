@@ -12,6 +12,11 @@ import os
 import httpx
 import pytest
 
+pytestmark = pytest.mark.skipif(
+    not os.getenv("LEON_E2E_BACKEND"),
+    reason="LEON_E2E_BACKEND not set (requires running backend at localhost:8001)",
+)
+
 
 @pytest.fixture
 def api_base_url():
