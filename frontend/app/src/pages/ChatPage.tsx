@@ -91,9 +91,9 @@ function ChatPageInner({ threadId }: { threadId: string }) {
 
   const ui = useAppActions({ activeThreadId: threadId, setEntries });
   const {
-    computerOpen, computerTab, focusedAgentStepId,
-    setComputerOpen, setComputerTab, setFocusedAgentStepId,
-    handleFocusAgent, handleSendQueueMessage,
+    computerOpen, computerTab, focusedAgentStepId, focusedStepId,
+    setComputerOpen, setComputerTab, setFocusedAgentStepId, setFocusedStepId,
+    handleFocusAgent, handleFocusStep, handleSendQueueMessage,
   } = ui;
 
   const computerResize = useResizableX(600, 360, 1200, true);
@@ -124,6 +124,7 @@ function ChatPageInner({ threadId }: { threadId: string }) {
             runtimeStatus={runtimeStatus}
             loading={loading}
             onFocusAgent={handleFocusAgent}
+            onFocusStep={handleFocusStep}
           />
           <TaskProgress
             isStreaming={isStreaming}
@@ -158,6 +159,8 @@ function ChatPageInner({ threadId }: { threadId: string }) {
               onTabChange={setComputerTab}
               focusedAgentStepId={focusedAgentStepId}
               onFocusAgent={setFocusedAgentStepId}
+              focusedStepId={focusedStepId}
+              onFocusStep={setFocusedStepId}
             />
           </>
         )}
