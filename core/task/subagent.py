@@ -49,6 +49,11 @@ class SubagentRunner:
         self.model_kwargs = model_kwargs or {}
         self._active_tasks: dict[str, asyncio.Task] = {}
         self._task_results: dict[str, TaskResult] = {}
+        self._parent_runtime: Any = None
+
+    def set_parent_runtime(self, runtime: Any) -> None:
+        """Set parent runtime for background task event emission."""
+        self._parent_runtime = runtime
 
     def _build_subagent_middleware(self, config: AgentConfig, all_middleware: list[Any]) -> list[Any]:
         """Build middleware stack for subagent based on allowed tools."""
@@ -409,7 +414,24 @@ class SubagentRunner:
         max_turns: int,
         task_id: str,
     ) -> TaskResult:
-        """Execute agent and return result."""
+        """Execute agent and return result.
+
+        When a parent runtime is available, uses astream() to emit real-time
+        background_task_* events. Otherwise falls back to ainvoke().
+        """
+        runtime = self._parent_runtime
+        if runtime:
+            return await self._execute_agent_streaming(agent, prompt, thread_id, task_id, runtime)
+        return await self._execute_agent_invoke(agent, prompt, thread_id, task_id)
+
+    async def _execute_agent_invoke(
+        self,
+        agent: Any,
+        prompt: str,
+        thread_id: str,
+        task_id: str,
+    ) -> TaskResult:
+        """Fallback execution via ainvoke (no event emission)."""
         turns_used = 0
         try:
             result = await agent.ainvoke(
@@ -417,7 +439,6 @@ class SubagentRunner:
                 config={"configurable": {"thread_id": thread_id}},
             )
 
-            # Extract final response
             messages = result.get("messages", [])
             if messages:
                 last_message = messages[-1]
@@ -443,6 +464,74 @@ class SubagentRunner:
                 error=str(e),
                 turns_used=turns_used,
             )
+
+        self._task_results[task_id] = task_result
+        return task_result
+
+    async def _execute_agent_streaming(
+        self,
+        agent: Any,
+        prompt: str,
+        thread_id: str,
+        task_id: str,
+        runtime: Any,
+    ) -> TaskResult:
+        """Streaming execution that emits background_task_* events via runtime."""
+        runtime.emit_activity_event({
+            "event": "background_task_start",
+            "data": json.dumps({"task_id": task_id, "thread_id": thread_id}),
+        })
+
+        text_parts: list[str] = []
+        max_text_chars = 200_000
+
+        try:
+            async for chunk in agent.astream(
+                {"messages": [{"role": "user", "content": prompt}]},
+                config={"configurable": {"thread_id": thread_id}},
+                stream_mode=["messages", "updates"],
+            ):
+                if not chunk or not isinstance(chunk, tuple) or len(chunk) != 2:
+                    continue
+
+                mode, data = chunk
+
+                if mode == "messages":
+                    msg_chunk, _metadata = data
+                    if msg_chunk.__class__.__name__ == "AIMessageChunk":
+                        content = self._extract_text_content(getattr(msg_chunk, "content", ""))
+                        if content:
+                            if sum(len(p) for p in text_parts) < max_text_chars:
+                                remaining = max_text_chars - sum(len(p) for p in text_parts)
+                                text_parts.append(content[:remaining])
+                            runtime.emit_activity_event({
+                                "event": "background_task_text",
+                                "data": json.dumps({"task_id": task_id, "content": content}),
+                            })
+
+            final_text = "".join(text_parts).strip() or None
+            task_result = TaskResult(
+                task_id=task_id,
+                thread_id=thread_id,
+                status="completed",
+                result=final_text,
+            )
+            runtime.emit_activity_event({
+                "event": "background_task_done",
+                "data": json.dumps({"task_id": task_id, "status": "completed"}),
+            })
+
+        except Exception as e:
+            task_result = TaskResult(
+                task_id=task_id,
+                thread_id=thread_id,
+                status="error",
+                error=str(e),
+            )
+            runtime.emit_activity_event({
+                "event": "background_task_error",
+                "data": json.dumps({"task_id": task_id, "error": str(e)}),
+            })
 
         self._task_results[task_id] = task_result
         return task_result

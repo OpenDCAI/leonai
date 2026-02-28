@@ -408,6 +408,8 @@ The agent will work independently and return results when complete.""",
     def set_agent(self, agent: Any) -> None:
         """Set parent agent reference for runtime access."""
         self.agent = agent
+        if hasattr(agent, "runtime"):
+            self.runner.set_parent_runtime(agent.runtime)
 
     async def run_task_streaming(self, params: TaskParams):
         """Run a task with streaming output. Returns async generator for SSE."""
