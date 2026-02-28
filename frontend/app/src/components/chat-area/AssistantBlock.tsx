@@ -6,6 +6,33 @@ import { ThinkingIndicator } from "./ThinkingIndicator";
 import { ToolDetailBox } from "./ToolDetailBox";
 import { formatTime } from "./utils";
 
+/** Tools whose results are self-contained content that the AI often echoes verbatim. */
+const CONTENT_HEAVY_TOOLS = new Set([
+  "WebFetch", "web_search", "WebSearch", "read_url_content",
+  "load_skill",
+  "Task",
+]);
+
+/** Check if text substantially duplicates a content-heavy tool's result. */
+function isToolResultEcho(text: string, toolSegs: ToolSegment[]): boolean {
+  const trimmed = text.trim();
+  if (trimmed.length < 100) return false;
+
+  for (const seg of toolSegs) {
+    if (!CONTENT_HEAVY_TOOLS.has(seg.step.name)) continue;
+    const result = seg.step.result?.trim();
+    if (!result || result.length < 100) continue;
+
+    const resultSample = result.slice(0, 200);
+    if (trimmed.includes(resultSample)) return true;
+
+    const textSample = trimmed.slice(0, 200);
+    if (result.includes(textSample)) return true;
+  }
+
+  return false;
+}
+
 interface AssistantBlockProps {
   entry: AssistantTurn;
   isStreamingThis?: boolean;
@@ -22,6 +49,10 @@ export const AssistantBlock = memo(function AssistantBlock({ entry, isStreamingT
   const toolSegs = entry.segments.filter((s) => s.type === "tool") as ToolSegment[];
   const textSegs = entry.segments.filter((s) => s.type === "text" && s.content.trim());
   const finalText = textSegs.length > 0 ? textSegs[textSegs.length - 1] : null;
+
+  // Suppress finalText when it echoes a content-heavy tool's result (completed turns only)
+  const resultEcho = !isStreamingThis && finalText != null && isToolResultEcho(finalText.content, toolSegs);
+  const visibleText = resultEcho ? null : finalText;
 
   const hasVisible = toolSegs.length > 0 || textSegs.length > 0;
 
@@ -52,12 +83,12 @@ export const AssistantBlock = memo(function AssistantBlock({ entry, isStreamingT
           />
         )}
 
-        {finalText && (isStreamingThis
-          ? <div className="text-[13px] leading-[1.55] text-[#404040] whitespace-pre-wrap">{finalText.content}</div>
-          : <MarkdownContent content={finalText.content} />
+        {visibleText && (isStreamingThis
+          ? <div className="text-[13px] leading-[1.55] text-[#404040] whitespace-pre-wrap">{visibleText.content}</div>
+          : <MarkdownContent content={visibleText.content} />
         )}
 
-        {!isStreamingThis && fullText.trim() && (
+        {!isStreamingThis && visibleText && fullText.trim() && (
           <div className="flex justify-start mt-0.5">
             <CopyButton text={fullText} />
           </div>
