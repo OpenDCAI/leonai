@@ -341,7 +341,11 @@ IMPORTANT:
 
         # Update status
         if status:
-            task.status = TaskStatus(status)
+            try:
+                task.status = TaskStatus(status)
+            except ValueError:
+                valid = ", ".join(s.value for s in TaskStatus)
+                return {"error": f"Invalid status '{status}'. Valid: {valid}"}
 
         # Update other fields
         if "Subject" in args:

@@ -190,12 +190,15 @@ class CommandMiddleware(AgentMiddleware[CommandState]):
     async def _execute_blocking(self, command_line: str, work_dir: str | None, timeout: int | None) -> str:
         """Execute blocking command. SpillBuffer middleware handles oversized output."""
         timeout_secs = float(timeout) if timeout else self.default_timeout
-        result = await self._executor.execute(
-            command=command_line,
-            cwd=work_dir,
-            timeout=timeout_secs,
-            env=self.env,
-        )
+        try:
+            result = await self._executor.execute(
+                command=command_line,
+                cwd=work_dir,
+                timeout=timeout_secs,
+                env=self.env,
+            )
+        except Exception as e:
+            return f"Error executing command: {e}"
         return result.to_tool_result()
 
     def set_agent(self, agent: Any) -> None:
@@ -204,20 +207,26 @@ class CommandMiddleware(AgentMiddleware[CommandState]):
 
     async def _execute_async(self, command_line: str, work_dir: str | None, timeout: int | None) -> str:
         """Execute async command."""
-        async_cmd = await self._executor.execute_async(
-            command=command_line,
-            cwd=work_dir,
-            env=self.env,
-        )
+        try:
+            async_cmd = await self._executor.execute_async(
+                command=command_line,
+                cwd=work_dir,
+                env=self.env,
+            )
+        except Exception as e:
+            return f"Error starting async command: {e}"
 
         if timeout and timeout > 0:
             await asyncio.sleep(min(timeout / 1000.0, 1.0))
 
-        status = await self._executor.get_status(async_cmd.command_id)
-        if status and status.done:
-            result = await self._executor.wait_for(async_cmd.command_id)
-            if result:
-                return result.to_tool_result()
+        try:
+            status = await self._executor.get_status(async_cmd.command_id)
+            if status and status.done:
+                result = await self._executor.wait_for(async_cmd.command_id)
+                if result:
+                    return result.to_tool_result()
+        except Exception:
+            pass  # Non-fatal: command may still be running
 
         # Start background monitoring for progress events
         runtime = getattr(self._agent, "runtime", None) if self._agent else None
@@ -279,6 +288,16 @@ class CommandMiddleware(AgentMiddleware[CommandState]):
         wait_seconds: int,
     ) -> str:
         """Get status of async command."""
+        try:
+            return await self._get_command_status_inner(command_id, wait_seconds)
+        except (RuntimeError, OSError) as e:
+            return f"Error: {e}"
+
+    async def _get_command_status_inner(
+        self,
+        command_id: str,
+        wait_seconds: int,
+    ) -> str:
         if wait_seconds > 0:
             result = await self._executor.wait_for(command_id, timeout=float(min(wait_seconds, 60)))
             if result:
