@@ -3,6 +3,7 @@ import {
   sendMessage,
   type ChatEntry,
 } from "../api";
+import type { TabType } from "../components/computer-panel/types";
 
 function makeId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -15,8 +16,9 @@ interface AppActionsDeps {
 
 export interface AppActionsState {
   computerOpen: boolean;
-  computerTab: "terminal" | "files" | "agents";
+  computerTab: TabType;
   focusedAgentStepId: string | null;
+  focusedStepId: string | null;
   sidebarCollapsed: boolean;
   searchOpen: boolean;
   sessionsOpen: boolean;
@@ -25,8 +27,9 @@ export interface AppActionsState {
 
 export interface AppActionsSetters {
   setComputerOpen: React.Dispatch<React.SetStateAction<boolean>>;
-  setComputerTab: (tab: "terminal" | "files" | "agents") => void;
+  setComputerTab: (tab: TabType) => void;
   setFocusedAgentStepId: (id: string | null) => void;
+  setFocusedStepId: (id: string | null) => void;
   setSidebarCollapsed: React.Dispatch<React.SetStateAction<boolean>>;
   setSearchOpen: (open: boolean) => void;
   setSessionsOpen: (open: boolean) => void;
@@ -35,6 +38,7 @@ export interface AppActionsSetters {
 
 export interface AppActionsHandlers {
   handleFocusAgent: (stepId: string) => void;
+  handleFocusStep: (stepId: string) => void;
   handleSendQueueMessage: (message: string) => Promise<void>;
 }
 
@@ -43,8 +47,9 @@ export function useAppActions(deps: AppActionsDeps): AppActionsState & AppAction
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [computerOpen, setComputerOpen] = useState(false);
-  const [computerTab, setComputerTab] = useState<"terminal" | "files" | "agents">("terminal");
+  const [computerTab, setComputerTab] = useState<TabType>("terminal");
   const [focusedAgentStepId, setFocusedAgentStepId] = useState<string | null>(null);
+  const [focusedStepId, setFocusedStepId] = useState<string | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [sessionsOpen, setSessionsOpen] = useState(false);
   const [newThreadOpen, setNewThreadOpen] = useState(false);
@@ -52,6 +57,12 @@ export function useAppActions(deps: AppActionsDeps): AppActionsState & AppAction
   const handleFocusAgent = useCallback((stepId: string) => {
     setFocusedAgentStepId(stepId);
     setComputerTab("agents");
+    setComputerOpen(true);
+  }, []);
+
+  const handleFocusStep = useCallback((stepId: string) => {
+    setFocusedStepId(stepId);
+    setComputerTab("steps");
     setComputerOpen(true);
   }, []);
 
@@ -67,10 +78,10 @@ export function useAppActions(deps: AppActionsDeps): AppActionsState & AppAction
   );
 
   return {
-    computerOpen, computerTab, focusedAgentStepId,
+    computerOpen, computerTab, focusedAgentStepId, focusedStepId,
     sidebarCollapsed, searchOpen, sessionsOpen, newThreadOpen,
-    setComputerOpen, setComputerTab, setFocusedAgentStepId,
+    setComputerOpen, setComputerTab, setFocusedAgentStepId, setFocusedStepId,
     setSidebarCollapsed, setSearchOpen, setSessionsOpen, setNewThreadOpen,
-    handleFocusAgent, handleSendQueueMessage,
+    handleFocusAgent, handleFocusStep, handleSendQueueMessage,
   };
 }
