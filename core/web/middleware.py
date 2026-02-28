@@ -187,7 +187,10 @@ class WebMiddleware(AgentMiddleware):
                 f"Provide a concise, relevant answer based on the web page content."
             )
 
-            response = await asyncio.wait_for(model.ainvoke(extraction_prompt), timeout=30)
+            response = await asyncio.wait_for(
+                model.ainvoke(extraction_prompt, config={"callbacks": []}),
+                timeout=30,
+            )
             return response.content
         except asyncio.TimeoutError:
             preview = content[:5000] if len(content) > 5000 else content
