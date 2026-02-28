@@ -3,7 +3,7 @@ import type { AssistantTurn, StreamStatus } from "../../api";
 import MarkdownContent from "../MarkdownContent";
 import { CopyButton } from "./CopyButton";
 import { ThinkingIndicator } from "./ThinkingIndicator";
-import { ToolStepBlock } from "./ToolStepBlock";
+import { ToolStepLine } from "./ToolStepLine";
 import { formatTime } from "./utils";
 
 interface AssistantBlockProps {
@@ -11,9 +11,10 @@ interface AssistantBlockProps {
   isStreamingThis?: boolean;
   runtimeStatus?: StreamStatus | null;
   onFocusAgent?: (stepId: string) => void;
+  onFocusStep?: (stepId: string) => void;
 }
 
-export const AssistantBlock = memo(function AssistantBlock({ entry, isStreamingThis, runtimeStatus, onFocusAgent }: AssistantBlockProps) {
+export const AssistantBlock = memo(function AssistantBlock({ entry, isStreamingThis, runtimeStatus, onFocusAgent, onFocusStep }: AssistantBlockProps) {
   const fullText = entry.segments
     .filter((s) => s.type === "text")
     .map((s) => s.content)
@@ -55,7 +56,7 @@ export const AssistantBlock = memo(function AssistantBlock({ entry, isStreamingT
             return <MarkdownContent key={`seg-${i}`} content={seg.content} />;
           }
           if (seg.type === "tool") {
-            return <ToolStepBlock key={seg.step.id} seg={seg} onFocusAgent={onFocusAgent} />;
+            return <ToolStepLine key={seg.step.id} seg={seg} onFocusAgent={onFocusAgent} onFocusStep={onFocusStep} />;
           }
           return null;
         })}
