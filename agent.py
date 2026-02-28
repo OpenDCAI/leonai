@@ -53,13 +53,13 @@ from core.prompt_caching import PromptCachingMiddleware
 from core.queue import SteeringMiddleware
 from core.search import SearchMiddleware
 from core.skills import SkillsMiddleware
-from core.storage.contracts import SummaryRepo
+from storage.contracts import SummaryRepo
 from core.task import TaskMiddleware
 from core.todo import TodoMiddleware
 from core.web import WebMiddleware
 
 # Import file operation recorder for time travel
-from tui.operations import get_recorder
+from tui.operations import FileOperationRecorder, get_recorder
 
 # @@@langchain-anthropic-streaming-usage-regression
 apply_usage_patches()
@@ -815,6 +815,13 @@ class LeonAgent:
         }
         max_file_size = self.config.tools.filesystem.tools.read_file.max_file_size
 
+        # @@@file-op-storage-routing - use injected storage_container repo when available so file ops route to Supabase in web mode.
+        if self.storage_container is not None:
+            _file_op_repo = self.storage_container.file_operation_repo()
+            _recorder = FileOperationRecorder(repo=_file_op_repo)
+        else:
+            _recorder = get_recorder()
+
         middleware.append(
             FileSystemMiddleware(
                 workspace_root=self.workspace_root,
@@ -822,7 +829,7 @@ class LeonAgent:
                 allowed_extensions=self.allowed_file_extensions,
                 hooks=file_hooks,
                 enabled_tools=fs_tools,
-                operation_recorder=get_recorder(),
+                operation_recorder=_recorder,
                 backend=fs_backend,
                 verbose=self.verbose,
             )

@@ -9,7 +9,7 @@ from textual.binding import Binding
 from textual.containers import Container, VerticalScroll
 from textual.widgets import Footer, Header, Static
 
-from tui.operations import current_checkpoint_id, current_thread_id
+from tui.operations import current_thread_id
 from tui.widgets.chat_input import ChatInput
 from tui.widgets.checkpoint_browser import CheckpointBrowser
 from tui.widgets.history_browser import HistoryBrowser
@@ -18,11 +18,11 @@ from tui.widgets.messages import AssistantMessage, SystemMessage, ToolCallMessag
 from tui.widgets.status import StatusBar
 from tui.widgets.thread_selector import ThreadSelector
 
-# Import sandbox thread_id setter
 try:
-    from sandbox.thread_context import set_current_thread_id as set_sandbox_thread_id
+    from sandbox.thread_context import set_current_thread_id as set_sandbox_thread_id, set_current_run_id as set_sandbox_run_id
 except ImportError:
     set_sandbox_thread_id = None
+    set_sandbox_run_id = None
 from core.monitor import AgentState
 from core.queue import QueueMode, get_queue_manager
 
@@ -390,7 +390,8 @@ class LeonApp(App):
             self.agent._sandbox.ensure_session(self.thread_id)
         # Generate a checkpoint ID for this interaction
         checkpoint_id = f"{self.thread_id}-{uuid.uuid4().hex[:8]}"
-        current_checkpoint_id.set(checkpoint_id)
+        if set_sandbox_run_id:
+            set_sandbox_run_id(checkpoint_id)
 
         # Observation provider (langfuse / langsmith)
         obs_handler = None

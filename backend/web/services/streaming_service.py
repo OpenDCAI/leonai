@@ -10,8 +10,8 @@ from backend.web.services.event_buffer import RunEventBuffer
 from backend.web.services.event_store import cleanup_old_runs
 from backend.web.utils.serializers import extract_text_content
 from core.monitor import AgentState
-from core.storage.contracts import RunEventRepo
-from sandbox.thread_context import set_current_thread_id
+from storage.contracts import RunEventRepo
+from sandbox.thread_context import set_current_thread_id, set_current_run_id
 
 
 def _resolve_run_event_repo(agent: Any) -> RunEventRepo | None:
@@ -178,6 +178,8 @@ async def _run_agent_to_buffer(
 
         config["configurable"]["queue_mode"] = get_queue_manager().get_mode(thread_id=thread_id).value
         set_current_thread_id(thread_id)
+        # @@@web-run-context - web runs have no TUI checkpoint; use run_id to group file ops per run.
+        set_current_run_id(run_id)
 
         # Trajectory tracing (eval system)
         tracer = None

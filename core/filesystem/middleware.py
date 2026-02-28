@@ -174,10 +174,11 @@ class FileSystemMiddleware(AgentMiddleware):
         if not self.operation_recorder:
             return
 
-        from tui.operations import current_checkpoint_id, current_thread_id
+        # @@@thread-context-source - both TUI and web streaming set these via sandbox.thread_context.
+        from sandbox.thread_context import get_current_thread_id, get_current_run_id
 
-        thread_id = current_thread_id.get()
-        checkpoint_id = current_checkpoint_id.get()
+        thread_id = get_current_thread_id()
+        checkpoint_id = get_current_run_id()
 
         if not thread_id or not checkpoint_id:
             return
@@ -193,7 +194,7 @@ class FileSystemMiddleware(AgentMiddleware):
                 changes=changes,
             )
         except Exception as e:
-            print(f"[FileSystemMiddleware] Failed to record operation: {e}")
+            raise RuntimeError(f"[FileSystemMiddleware] Failed to record operation: {e}") from e
 
     def _read_file_impl(self, file_path: str, offset: int = 0, limit: int | None = None) -> ReadResult:
         """Read file - local uses rich dispatcher, sandbox uses basic text read."""

@@ -4,8 +4,8 @@ from pathlib import Path
 import pytest
 
 from backend.web.utils import helpers
-from core.storage.providers.sqlite.thread_config_repo import SQLiteThreadConfigRepo
-from core.storage.providers.supabase.thread_config_repo import SupabaseThreadConfigRepo
+from storage.providers.sqlite.thread_config_repo import SQLiteThreadConfigRepo
+from storage.providers.supabase.thread_config_repo import SupabaseThreadConfigRepo
 
 
 def test_migrate_thread_metadata_table(tmp_path):

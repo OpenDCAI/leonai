@@ -20,7 +20,7 @@ from langchain.agents.middleware.types import (
 )
 from langchain_core.messages import SystemMessage
 
-from core.storage.contracts import SummaryRepo
+from storage.contracts import SummaryRepo
 from .compactor import ContextCompactor
 from .pruner import SessionPruner
 from .summary_store import SummaryStore

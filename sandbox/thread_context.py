@@ -6,6 +6,9 @@ from contextvars import ContextVar
 
 _current_thread_id: ContextVar[str] = ContextVar("sandbox_thread_id", default="")
 
+# @@@run-context - groups file ops per execution unit: checkpoint_id in TUI, run_id in web mode.
+_current_run_id: ContextVar[str] = ContextVar("sandbox_run_id", default="")
+
 
 def set_current_thread_id(thread_id: str) -> None:
     _current_thread_id.set(thread_id)
@@ -13,4 +16,13 @@ def set_current_thread_id(thread_id: str) -> None:
 
 def get_current_thread_id() -> str | None:
     value = _current_thread_id.get()
+    return value if value else None
+
+
+def set_current_run_id(run_id: str) -> None:
+    _current_run_id.set(run_id)
+
+
+def get_current_run_id() -> str | None:
+    value = _current_run_id.get()
     return value if value else None

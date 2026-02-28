@@ -4,11 +4,11 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 
-from core.storage.providers.sqlite.file_operation_repo import FileOperationRow, SQLiteFileOperationRepo
+from storage.contracts import FileOperationRepo
+from storage.providers.sqlite.file_operation_repo import FileOperationRow, SQLiteFileOperationRepo
 
-# Context variables for tracking current thread and checkpoint
+# Context variable for tracking current thread (TUI only; web uses sandbox.thread_context)
 current_thread_id: ContextVar[str] = ContextVar("current_thread_id", default="")
-current_checkpoint_id: ContextVar[str] = ContextVar("current_checkpoint_id", default="")
 
 
 @dataclass
@@ -30,15 +30,16 @@ class FileOperation:
 class FileOperationRecorder:
     """Records file operations for time travel rollback"""
 
-    def __init__(self, db_path: Path | str | None = None):
+    def __init__(self, db_path: Path | str | None = None, repo: FileOperationRepo | None = None):
+        # @@@repo-injection - accept pre-built repo (e.g. Supabase) from StorageContainer; fall back to SQLite for TUI.
+        if repo is not None:
+            self._repo = repo
+            self.db_path = None
+            return
         if db_path is None:
             db_path = Path.home() / ".leon" / "leon.db"
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._repo = SQLiteFileOperationRepo(self.db_path)
-
-    def _init_db(self) -> None:
-        """Initialize file operation schema via repository boundary."""
         self._repo = SQLiteFileOperationRepo(self.db_path)
 
     def record(
