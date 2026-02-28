@@ -500,6 +500,24 @@ class LeonAgent:
             **kwargs,
         )
 
+    def _create_extraction_model(self):
+        """Create a small model for Fetch AI extraction (leon:mini)."""
+        try:
+            model_name, overrides = self.models_config.resolve_model("leon:mini")
+            provider = self._resolve_provider_name(model_name, overrides)
+            kwargs: dict = {}
+            if provider:
+                kwargs["model_provider"] = provider
+            p = self.models_config.get_provider(provider) if provider else None
+            base_url = (p.base_url if p else None) or self.models_config.get_base_url()
+            if base_url:
+                kwargs["base_url"] = self._normalize_base_url(base_url, provider)
+            return init_chat_model(model_name, **kwargs)
+        except Exception as e:
+            if self.verbose:
+                print(f"[LeonAgent] Failed to create extraction model: {e}, falling back to gpt-4o-mini")
+            return None
+
     def _build_model_kwargs(self) -> dict:
         """Build model parameters for model initialization and sub-agents."""
         kwargs = {}
@@ -866,6 +884,9 @@ class LeonAgent:
         max_search_results = self.config.tools.web.tools.web_search.max_results
         timeout = self.config.tools.web.timeout
 
+        # Resolve leon:mini for Fetch AI extraction
+        extraction_model = self._create_extraction_model()
+
         middleware.append(
             WebMiddleware(
                 tavily_api_key=tavily_key,
@@ -875,6 +896,7 @@ class LeonAgent:
                 max_search_results=max_search_results,
                 timeout=timeout,
                 enabled_tools=web_tools,
+                extraction_model=extraction_model,
                 verbose=self.verbose,
             )
         )
