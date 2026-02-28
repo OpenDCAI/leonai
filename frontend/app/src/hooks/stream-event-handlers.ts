@@ -128,6 +128,7 @@ export function processStreamEvent(
   turnId: string,
   onUpdate: UpdateEntries,
   setRuntimeStatus: (v: StreamStatus | null) => void,
+  onActivityEvent?: (event: StreamEvent) => void,
 ): { messageId?: string } {
   const data = (event.data ?? {}) as EventPayload;
   const messageId = typeof data.message_id === "string" ? data.message_id : undefined;
@@ -142,6 +143,11 @@ export function processStreamEvent(
     handler(event, turnId, onUpdate);
   } else if (event.type.startsWith("subagent_")) {
     handleSubagentEvent(event, turnId, onUpdate);
+  } else if (
+    event.type.startsWith("command_") ||
+    event.type.startsWith("background_task_")
+  ) {
+    onActivityEvent?.(event);
   }
 
   return { messageId };
