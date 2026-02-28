@@ -175,6 +175,31 @@ button:focus-visible,
   -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 30%, black 100%);
 }
 
+/* L0 Detail Box — hide scrollbar but keep scrollable */
+.detail-box-scroll::-webkit-scrollbar {
+  display: none;
+}
+.detail-box-scroll {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* L0 Detail Box — border breathing glow when running */
+@keyframes borderGlow {
+  0%, 100% {
+    border-color: rgba(147, 197, 253, 0.4);
+    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0);
+  }
+  50% {
+    border-color: rgba(96, 165, 250, 0.7);
+    box-shadow: 0 0 10px -2px rgba(59, 130, 246, 0.15);
+  }
+}
+
+.detail-box-glow {
+  animation: borderGlow 2.5s ease-in-out infinite;
+}
+
 /* Markdown content */
 /* Utility classes */
 @layer components {

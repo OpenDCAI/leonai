@@ -39,16 +39,19 @@ export const ToolDetailBox = memo(function ToolDetailBox({
   }, [toolSegments.length]);
 
   const firstStepId = toolSegments[0]?.step.id;
+  const hasRunning = toolSegments.some((s) => s.step.status === "calling");
 
   return (
     <div
-      className="rounded-lg border border-[#e5e5e5] bg-[#fafafa] cursor-pointer hover:border-[#d4d4d4] transition-colors"
+      className={`rounded-lg border bg-[#fafafa] cursor-pointer transition-colors ${
+        hasRunning ? "detail-box-glow" : "border-[#e5e5e5] hover:border-[#d4d4d4]"
+      }`}
       onClick={() => firstStepId && onFocusStep?.(firstStepId)}
       title="点击查看详情"
     >
       <div
         ref={scrollRef}
-        className="max-h-[80px] overflow-hidden detail-box-mask px-2.5 py-1.5"
+        className="max-h-[80px] overflow-y-auto detail-box-scroll detail-box-mask px-2.5 py-1.5"
       >
         <div className="flex flex-col gap-0.5">
           {toolSegments.map((seg) => {
@@ -77,11 +80,6 @@ export const ToolDetailBox = memo(function ToolDetailBox({
           })}
         </div>
       </div>
-      {isStreaming && toolSegments.some((s) => s.step.status === "calling") && (
-        <div className="h-[2px] bg-blue-100 rounded-b-lg overflow-hidden">
-          <div className="h-full w-1/3 bg-blue-400 rounded-full animate-[shimmer_1.5s_ease-in-out_infinite]" />
-        </div>
-      )}
     </div>
   );
 });
