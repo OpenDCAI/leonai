@@ -151,7 +151,7 @@ class WebMiddleware(AgentMiddleware):
         if fetch_result is None:
             return f"Error: Failed to fetch URL: {Url}"
 
-        content = fetch_result.markdown or ""
+        content = fetch_result.content or ""
         if not content:
             return f"Error: No content retrieved from URL: {Url}"
 
