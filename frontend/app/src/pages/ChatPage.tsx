@@ -91,9 +91,9 @@ function ChatPageInner({ threadId }: { threadId: string }) {
 
   const ui = useAppActions({ activeThreadId: threadId, setEntries });
   const {
-    queueEnabled, computerOpen, computerTab, focusedAgentStepId,
+    computerOpen, computerTab, focusedAgentStepId,
     setComputerOpen, setComputerTab, setFocusedAgentStepId,
-    handleFocusAgent, handleSendQueueMessage, handleToggleQueue,
+    handleFocusAgent, handleSendQueueMessage,
   } = ui;
 
   const computerResize = useResizableX(600, 360, 1200, true);
@@ -104,12 +104,10 @@ function ChatPageInner({ threadId }: { threadId: string }) {
         activeThreadId={threadId}
         threadPreview={tm.threads.find((t) => t.thread_id === threadId)?.preview ?? null}
         sandboxInfo={activeSandbox}
-        queueEnabled={queueEnabled}
         currentModel={currentModel}
         onToggleSidebar={() => setSidebarCollapsed(v => !v)}
         onPauseSandbox={() => void handlePauseSandbox()}
         onResumeSandbox={() => void handleResumeSandbox()}
-        onToggleQueue={() => void handleToggleQueue()}
         onModelChange={setCurrentModel}
       />
 
@@ -138,7 +136,6 @@ function ChatPageInner({ threadId }: { threadId: string }) {
           <InputBox
             disabled={isStreaming}
             isStreaming={isStreaming}
-            queueEnabled={queueEnabled}
             placeholder="告诉 Leon 你需要什么帮助..."
             onSendMessage={(msg) => void handleSendMessage(msg)}
             onSendQueueMessage={handleSendQueueMessage}

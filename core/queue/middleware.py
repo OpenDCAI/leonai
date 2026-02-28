@@ -54,7 +54,7 @@ class SteeringMiddleware(AgentMiddleware):
     ) -> ToolMessage:
         """Common logic for checking steer after tool execution"""
         if self._pending_steer is None:
-            steer_content = get_queue_manager().get_steer(thread_id=self._get_thread_id())
+            steer_content = get_queue_manager().pop_steer(thread_id=self._get_thread_id())
             if steer_content:
                 self._pending_steer = steer_content
         return result

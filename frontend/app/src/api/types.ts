@@ -65,8 +65,6 @@ export interface SubagentTaskErrorData extends TaskErrorData {
   parent_tool_call_id: string;
 }
 
-export type QueueMode = "steer" | "followup" | "collect" | "steer_backlog" | "interrupt";
-
 export interface ThreadSummary {
   thread_id: string;
   sandbox?: string;

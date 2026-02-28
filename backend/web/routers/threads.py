@@ -12,9 +12,8 @@ from sse_starlette.sse import EventSourceResponse
 from backend.web.core.dependencies import get_app, get_thread_agent, get_thread_lock
 from backend.web.models.requests import (
     CreateThreadRequest,
-    QueueModeRequest,
     RunRequest,
-    SteerRequest,
+    SendMessageRequest,
     TaskAgentRequest,
 )
 from backend.web.services.agent_pool import get_or_create_agent, resolve_thread_sandbox
@@ -36,7 +35,7 @@ from backend.web.utils.serializers import serialize_message
 
 logger = logging.getLogger(__name__)
 from core.monitor import AgentState
-from core.queue import QueueMode, get_queue_manager
+from core.queue import get_queue_manager
 from sandbox.thread_context import set_current_thread_id
 
 router = APIRouter(prefix="/api/threads", tags=["threads"])
@@ -132,7 +131,7 @@ async def delete_thread(
     # Clean up thread-specific state
     app.state.thread_sandbox.pop(thread_id, None)
     app.state.thread_cwd.pop(thread_id, None)
-    get_queue_manager().clear_thread(thread_id)
+    get_queue_manager().clear_all(thread_id)
 
     # Remove per-thread Agent from pool
     app.state.agent_pool.pop(pool_key, None)
@@ -140,36 +139,53 @@ async def delete_thread(
     return {"ok": True, "thread_id": thread_id}
 
 
-@router.post("/{thread_id}/steer")
-async def steer_thread(thread_id: str, payload: SteerRequest) -> dict[str, Any]:
-    """Add a message to the queue for steering."""
+@router.post("/{thread_id}/messages")
+async def send_message(
+    thread_id: str,
+    payload: SendMessageRequest,
+    app: Annotated[Any, Depends(get_app)] = None,
+) -> dict[str, Any]:
+    """Send a message to agent. Server auto-routes based on agent state:
+    - Agent IDLE  → start new run
+    - Agent ACTIVE → inject as steer (soft interrupt)
+    """
     if not payload.message.strip():
         raise HTTPException(status_code=400, detail="message cannot be empty")
-    queue_manager = get_queue_manager()
-    queue_manager.enqueue(payload.message, thread_id=thread_id)
-    return {"ok": True, "thread_id": thread_id, "mode": queue_manager.get_mode(thread_id=thread_id).value}
+
+    sandbox_type = resolve_thread_sandbox(app, thread_id)
+    agent = await get_or_create_agent(app, sandbox_type, thread_id=thread_id)
+
+    if hasattr(agent, "runtime") and agent.runtime.current_state == AgentState.ACTIVE:
+        get_queue_manager().inject(payload.message, thread_id)
+        return {"status": "injected", "routing": "steer", "thread_id": thread_id}
+
+    # Agent is IDLE — start new run
+    set_current_thread_id(thread_id)
+    lock = await get_thread_lock(app, thread_id)
+    async with lock:
+        if hasattr(agent, "runtime") and not agent.runtime.transition(AgentState.ACTIVE):
+            # Race: became active between check and lock
+            get_queue_manager().inject(payload.message, thread_id)
+            return {"status": "injected", "routing": "steer", "thread_id": thread_id}
+
+    buf = start_agent_run(agent, thread_id, payload.message, app)
+    return {"status": "started", "routing": "direct", "run_id": buf.run_id, "thread_id": thread_id}
 
 
-@router.post("/{thread_id}/queue-mode")
-async def set_thread_queue_mode(thread_id: str, payload: QueueModeRequest) -> dict[str, Any]:
-    """Set queue mode for a thread."""
-    try:
-        mode = QueueMode(payload.mode)
-    except ValueError:
-        raise HTTPException(status_code=400, detail=f"Invalid queue mode: {payload.mode}")
-    queue_manager = get_queue_manager()
-    queue_manager.set_mode(mode, thread_id=thread_id)
-    from backend.web.utils.helpers import save_thread_config
-
-    save_thread_config(thread_id, queue_mode=mode.value)
-    return {"ok": True, "thread_id": thread_id, "mode": mode.value}
+@router.post("/{thread_id}/queue")
+async def queue_message(thread_id: str, payload: SendMessageRequest) -> dict[str, Any]:
+    """Enqueue a followup message. Will be consumed when agent reaches IDLE."""
+    if not payload.message.strip():
+        raise HTTPException(status_code=400, detail="message cannot be empty")
+    get_queue_manager().enqueue(payload.message, thread_id)
+    return {"status": "queued", "thread_id": thread_id}
 
 
-@router.get("/{thread_id}/queue-mode")
-async def get_thread_queue_mode(thread_id: str) -> dict[str, Any]:
-    """Get current queue mode for a thread."""
-    queue_manager = get_queue_manager()
-    return {"mode": queue_manager.get_mode(thread_id=thread_id).value}
+@router.get("/{thread_id}/queue")
+async def get_queue(thread_id: str) -> dict[str, Any]:
+    """List pending followup messages in the queue."""
+    messages = get_queue_manager().list_queue(thread_id)
+    return {"messages": messages, "thread_id": thread_id}
 
 
 @router.get("/{thread_id}/runtime")

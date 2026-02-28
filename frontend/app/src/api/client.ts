@@ -1,5 +1,4 @@
 import type {
-  QueueMode,
   SandboxSession,
   SandboxType,
   SessionStatus,
@@ -62,22 +61,22 @@ export async function getThreadRuntime(threadId: string): Promise<StreamStatus> 
   return request(`/api/threads/${encodeURIComponent(threadId)}/runtime`);
 }
 
-export async function steerThread(threadId: string, message: string): Promise<void> {
-  await request(`/api/threads/${encodeURIComponent(threadId)}/steer`, {
+export async function sendMessage(threadId: string, message: string): Promise<{ status: string; routing: string }> {
+  return request(`/api/threads/${encodeURIComponent(threadId)}/messages`, {
     method: "POST",
     body: JSON.stringify({ message }),
   });
 }
 
-export async function setQueueMode(threadId: string, mode: QueueMode): Promise<void> {
-  await request(`/api/threads/${encodeURIComponent(threadId)}/queue-mode`, {
+export async function queueMessage(threadId: string, message: string): Promise<void> {
+  await request(`/api/threads/${encodeURIComponent(threadId)}/queue`, {
     method: "POST",
-    body: JSON.stringify({ mode }),
+    body: JSON.stringify({ message }),
   });
 }
 
-export async function getQueueMode(threadId: string): Promise<{ mode: QueueMode }> {
-  return request(`/api/threads/${encodeURIComponent(threadId)}/queue-mode`);
+export async function getQueue(threadId: string): Promise<{ messages: Array<{ id: number; content: string; created_at: string }> }> {
+  return request(`/api/threads/${encodeURIComponent(threadId)}/queue`);
 }
 
 // --- Sandbox API ---

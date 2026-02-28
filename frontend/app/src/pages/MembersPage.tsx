@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Search, Bot, Plus, Zap, Users, Wrench, Plug, SearchX, ArrowUpDown, AlertTriangle, RefreshCw, MessageSquare, Copy, Trash2 } from "lucide-react";
+import { Search, Plus, Zap, Users, Wrench, Plug, SearchX, ArrowUpDown, AlertTriangle, RefreshCw, MessageSquare, Copy, Trash2 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import CreateMemberDialog from "@/components/CreateMemberDialog";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";

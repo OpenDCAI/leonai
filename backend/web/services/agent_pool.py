@@ -71,15 +71,6 @@ async def get_or_create_agent(app_obj: FastAPI, sandbox_type: str, thread_id: st
         prefs = load_preferences()
         model_name = prefs.default_model
 
-    # Restore per-thread queue_mode from SQLite
-    if thread_config and thread_config.queue_mode:
-        from core.queue import QueueMode, get_queue_manager
-
-        try:
-            get_queue_manager().set_mode(QueueMode(thread_config.queue_mode), thread_id=thread_id)
-        except ValueError:
-            pass
-
     # Resolve agent name: explicit param → thread config
     agent_name = agent
     if not agent_name and thread_config and thread_config.agent:

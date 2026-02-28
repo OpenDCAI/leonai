@@ -3,7 +3,6 @@ import { useNavigate } from "react-router-dom";
 import type { SandboxInfo } from "../api";
 import { useIsMobile } from "../hooks/use-mobile";
 import ModelSelector from "./ModelSelector";
-import QueueModeToggle from "./QueueModeToggle";
 
 const KNOWN_LABELS: Record<string, string> = {
   local: "本地", agentbay: "AgentBay", daytona: "Daytona", docker: "Docker", e2b: "E2B",
@@ -22,12 +21,10 @@ interface HeaderProps {
   threadPreview: string | null;
   sandboxInfo: SandboxInfo | null;
   currentModel?: string;
-  queueEnabled: boolean;
   onToggleSidebar: () => void;
   onPauseSandbox: () => void;
   onResumeSandbox: () => void;
   onModelChange?: (model: string) => void;
-  onToggleQueue: () => void;
 }
 
 export default function Header({
@@ -35,12 +32,10 @@ export default function Header({
   threadPreview,
   sandboxInfo,
   currentModel = "leon:medium",
-  queueEnabled,
   onToggleSidebar,
   onPauseSandbox,
   onResumeSandbox,
   onModelChange,
-  onToggleQueue,
 }: HeaderProps) {
   const isMobile = useIsMobile();
   const navigate = useNavigate();
@@ -111,12 +106,6 @@ export default function Header({
       </div>
 
       <div className="flex items-center gap-1.5">
-        <QueueModeToggle
-          threadId={activeThreadId}
-          queueEnabled={queueEnabled}
-          onToggle={onToggleQueue}
-        />
-
         <ModelSelector
           currentModel={currentModel}
           threadId={activeThreadId}

@@ -26,7 +26,7 @@ except ImportError:
     set_sandbox_run_id = None
     set_sandbox_thread_id = None
 from core.monitor import AgentState
-from core.queue import QueueMode, get_queue_manager
+from core.queue import get_queue_manager
 
 
 class WelcomeBanner(Static):
@@ -127,9 +127,6 @@ class LeonApp(App):
         # Agent interruption support
         self._agent_worker = None
         self._quit_pending = False
-        # Queue mode from agent config
-        self._queue_mode = self._parse_queue_mode(getattr(agent, "queue_mode", "steer"))
-        get_queue_manager().set_mode(self._queue_mode, thread_id=self.thread_id)
         if hasattr(agent, "runtime"):
             agent.runtime.state.on_state_changed(self._on_state_changed)
 
@@ -145,19 +142,6 @@ class LeonApp(App):
         if new_state == AgentState.IDLE:
             # IDLE 时自动处理 followup 队列
             self.call_after_refresh(self._state_driven_followup)
-
-    QUEUE_MODE_MAP = {
-        "steer": QueueMode.STEER,
-        "followup": QueueMode.FOLLOWUP,
-        "collect": QueueMode.COLLECT,
-        "steer_backlog": QueueMode.STEER_BACKLOG,
-        "steer-backlog": QueueMode.STEER_BACKLOG,
-        "interrupt": QueueMode.INTERRUPT,
-    }
-
-    def _parse_queue_mode(self, mode_str: str) -> QueueMode:
-        """Parse queue mode string to enum"""
-        return self.QUEUE_MODE_MAP.get(mode_str.lower(), QueueMode.STEER)
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -241,10 +225,6 @@ class LeonApp(App):
             self._handle_rollback_command(content)
             return True
 
-        if cmd.startswith("/mode "):
-            self._handle_mode_command(content)
-            return True
-
         if cmd == "/compact":
             self._trigger_compact()
             return True
@@ -261,37 +241,10 @@ class LeonApp(App):
         except ValueError:
             self.notify("⚠ 用法: /rollback <数字> 或 /回退 <数字>", severity="warning")
 
-    def _handle_mode_command(self, content: str) -> None:
-        """Handle /mode command to switch queue mode"""
-        mode_name = content[6:].strip().lower()
-        if mode_name in self.QUEUE_MODE_MAP:
-            self._queue_mode = self.QUEUE_MODE_MAP[mode_name]
-            get_queue_manager().set_mode(self._queue_mode, thread_id=self.thread_id)
-            self.notify(f"✓ 队列模式: {mode_name}")
-        else:
-            self.notify(
-                f"⚠ 未知模式: {mode_name}。可用: steer, followup, collect, steer-backlog, interrupt",
-                severity="warning",
-            )
-
     def _handle_active_agent_message(self, content: str) -> None:
-        """Handle message when agent is active (queue or interrupt)"""
-        queue_manager = get_queue_manager()
-
-        if self._queue_mode == QueueMode.INTERRUPT:
-            if self._agent_worker:
-                self._agent_worker.cancel()
-                self.notify("⚠ 已中断")
-        else:
-            queue_manager.enqueue(content, self._queue_mode, thread_id=self.thread_id)
-            mode_labels = {
-                QueueMode.STEER: "转向",
-                QueueMode.FOLLOWUP: "排队",
-                QueueMode.COLLECT: "收集",
-                QueueMode.STEER_BACKLOG: "转向+排队",
-            }
-            label = mode_labels.get(self._queue_mode, "排队")
-            self.notify(f"✓ 消息已{label}")
+        """Handle message when agent is active — inject as steer."""
+        get_queue_manager().inject(content, thread_id=self.thread_id)
+        self.notify("✓ 消息已注入（转向）")
 
     def _start_agent_run(self, content: str) -> None:
         """Start agent run, handling state transitions"""
@@ -562,19 +515,9 @@ class LeonApp(App):
 
     def _state_driven_followup(self) -> None:
         """状态驱动的 followup 处理（由 IDLE 状态回调触发）"""
-        queue_manager = get_queue_manager()
-
-        # flush collected messages
-        collected = queue_manager.flush_collect(thread_id=self.thread_id)
-        if collected:
-            queue_manager.enqueue(collected, QueueMode.FOLLOWUP, thread_id=self.thread_id)
-
-        # process followup queue
-        followup_content = queue_manager.get_followup(thread_id=self.thread_id)
-        if followup_content:
-            self.agent.runtime.transition(AgentState.ACTIVE)
-            self._quit_pending = False
-            self._agent_worker = self.run_worker(self._handle_submission(followup_content), exclusive=False)
+        msg = get_queue_manager().dequeue(thread_id=self.thread_id)
+        if msg:
+            self._start_agent_run(msg)
 
     def _trigger_compact(self) -> None:
         """Handle /compact command — manual context compaction"""
@@ -719,17 +662,13 @@ class LeonApp(App):
   • /history: 查看历史输入
   • /resume: 切换到其他对话
   • /rollback N 或 /回退 N: 回退到N步前的输入
-  • /mode <模式>: 切换队列模式
   • /compact: 手动压缩上下文（生成摘要，释放 token 空间）
   • /clear: 清空对话历史
   • /exit 或 /quit: 退出程序
 
-队列模式 (Agent 运行时输入消息的处理方式):
-  • steer: 注入当前运行，改变执行方向（默认）
-  • followup: 等当前运行结束后处理
-  • collect: 收集多条消息，合并后处理
-  • steer-backlog: 注入 + 保留为 followup
-  • interrupt: 中断当前运行
+消息路由 (Agent 运行时):
+  • 打字发送: 自动注入当前运行（steer，转向）
+  • ESC: 中断当前运行（cancel）
 """
         messages_container = self.query_one("#messages")
         chat_container = self.query_one("#chat-container", VerticalScroll)

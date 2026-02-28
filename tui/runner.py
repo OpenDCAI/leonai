@@ -259,7 +259,7 @@ class NonInteractiveRunner:
 
             mgr = get_queue_manager()
             sizes = mgr.queue_sizes(thread_id=self.thread_id)
-            print(f"\n[QUEUE] steer={sizes['steer']}, followup={sizes['followup']}, collect={sizes['collect']}")
+            print(f"\n[QUEUE] steer={sizes['steer']}, followup={sizes['followup']}")
         except Exception:
             pass
 
