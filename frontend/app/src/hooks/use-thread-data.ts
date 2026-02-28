@@ -31,6 +31,8 @@ export function useThreadData(threadId: string | undefined, skipInitialLoad = fa
       setEntries(mapBackendEntries(thread.messages));
       const sandbox = thread.sandbox;
       setActiveSandbox(sandbox && typeof sandbox === "object" ? (sandbox as SandboxInfo) : null);
+    } catch (err) {
+      console.error("[useThreadData] Failed to load thread:", err);
     } finally {
       setLoading(false);
     }

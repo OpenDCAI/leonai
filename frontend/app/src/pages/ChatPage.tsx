@@ -35,7 +35,11 @@ function ChatPageInner({ threadId }: { threadId: string }) {
   const [currentModel, setCurrentModel] = useState<string>("");
 
   const state = location.state as { selectedModel?: string; runStarted?: boolean; message?: string } | null;
-  const runStarted = !!state?.runStarted;
+
+  // On page refresh, browser preserves location.state but the run context is lost.
+  // Detect reload and force runStarted=false so useThreadData loads from backend.
+  const navEntry = performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined;
+  const runStarted = !!state?.runStarted && navEntry?.type !== "reload";
 
   // Pre-populate user message so ThinkingIndicator shows immediately (no skeleton)
   const [initialEntries] = useState(() =>
