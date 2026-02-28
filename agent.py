@@ -762,15 +762,20 @@ class LeonAgent:
         middleware.append(self._monitor_middleware)
 
         # 11. SpillBuffer (outermost — catches all oversized tool outputs)
+        # Must be first in list: LangChain chains tool-call wrappers with
+        # "first = outermost", so index-0 wraps every other middleware's
+        # result.  Middlewares like Search short-circuit (return without
+        # calling handler), so only the outermost wrapper sees their output.
         if self.config.tools.spill_buffer.enabled:
             spill_cfg = self.config.tools.spill_buffer
-            middleware.append(
+            middleware.insert(
+                0,
                 SpillBufferMiddleware(
                     fs_backend=fs_backend,
                     workspace_root=self.workspace_root,
                     thresholds=spill_cfg.thresholds,
                     default_threshold=spill_cfg.default_threshold,
-                )
+                ),
             )
 
         return middleware
