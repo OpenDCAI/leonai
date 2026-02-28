@@ -3,8 +3,8 @@ name: plan
 description: 规划实现方案。用于：设计新功能、重构策略、输出实现步骤
 tools:
   - read_file
-  - grep_search
-  - find_by_name
+  - Grep
+  - Glob
   - list_dir
 ---
 
