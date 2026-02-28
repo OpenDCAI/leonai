@@ -22,6 +22,9 @@ def create_agent_sync(sandbox_name: str, workspace_root: Path | None = None, mod
         main_db_path=os.getenv("LEON_DB_PATH"),
         eval_db_path=os.getenv("LEON_EVAL_DB_PATH"),
     )
+    # @@@web-file-ops-repo - inject storage-backed repo so file_operations route to correct provider.
+    from tui.operations import FileOperationRecorder, set_recorder
+    set_recorder(FileOperationRecorder(repo=storage_container.file_operation_repo()))
     return create_leon_agent(
         model_name=model_name,
         workspace_root=workspace_root or Path.cwd(),

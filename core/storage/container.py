@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import importlib
+import sqlite3
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Literal
-import sqlite3
 
 from .contracts import (
     CheckpointRepo,
@@ -18,6 +19,16 @@ from .contracts import (
 
 StorageStrategy = Literal["sqlite", "supabase"]
 RepoProviderMap = Mapping[str, str]
+
+# @@@repo-registry - maps repo name → (supabase module path, class name) for generic dispatch.
+_REPO_REGISTRY: dict[str, tuple[str, str]] = {
+    "checkpoint_repo":     ("core.storage.providers.supabase.checkpoint_repo",     "SupabaseCheckpointRepo"),
+    "thread_config_repo":  ("core.storage.providers.supabase.thread_config_repo",  "SupabaseThreadConfigRepo"),
+    "run_event_repo":      ("core.storage.providers.supabase.run_event_repo",       "SupabaseRunEventRepo"),
+    "file_operation_repo": ("core.storage.providers.supabase.file_operation_repo", "SupabaseFileOperationRepo"),
+    "summary_repo":        ("core.storage.providers.supabase.summary_repo",        "SupabaseSummaryRepo"),
+    "eval_repo":           ("core.storage.providers.supabase.eval_repo",           "SupabaseEvalRepo"),
+}
 
 
 class StorageContainer:
@@ -59,43 +70,22 @@ class StorageContainer:
         )
 
     def checkpoint_repo(self) -> CheckpointRepo:
-        if self._provider_for("checkpoint_repo") == "supabase":
-            return self._build_supabase_checkpoint_repo()
-        from core.storage.providers.sqlite.checkpoint_repo import SQLiteCheckpointRepo
-        return SQLiteCheckpointRepo(db_path=self._main_db)
+        return self._build_repo("checkpoint_repo", self._sqlite_checkpoint_repo)
 
     def thread_config_repo(self) -> ThreadConfigRepo:
-        if self._provider_for("thread_config_repo") == "supabase":
-            return self._build_supabase_thread_config_repo()
-        from core.storage.providers.sqlite.thread_config_repo import SQLiteThreadConfigRepo
-        return SQLiteThreadConfigRepo(db_path=self._main_db)
+        return self._build_repo("thread_config_repo", self._sqlite_thread_config_repo)
 
     def run_event_repo(self) -> RunEventRepo:
-        if self._provider_for("run_event_repo") == "supabase":
-            return self._build_supabase_run_event_repo()
-        from core.storage.providers.sqlite.run_event_repo import SQLiteRunEventRepo
-        return SQLiteRunEventRepo(db_path=self._main_db)
+        return self._build_repo("run_event_repo", self._sqlite_run_event_repo)
 
     def file_operation_repo(self) -> FileOperationRepo:
-        if self._provider_for("file_operation_repo") == "supabase":
-            return self._build_supabase_file_operation_repo()
-        from core.storage.providers.sqlite.file_operation_repo import SQLiteFileOperationRepo
-        return SQLiteFileOperationRepo(db_path=self._main_db)
+        return self._build_repo("file_operation_repo", self._sqlite_file_operation_repo)
 
     def summary_repo(self) -> SummaryRepo:
-        if self._provider_for("summary_repo") == "supabase":
-            return self._build_supabase_summary_repo()
-        from core.storage.providers.sqlite.summary_repo import SQLiteSummaryRepo
-        return SQLiteSummaryRepo(
-            db_path=self._main_db,
-            connect_fn=lambda p: sqlite3.connect(str(p)),
-        )
+        return self._build_repo("summary_repo", self._sqlite_summary_repo)
 
     def eval_repo(self) -> EvalRepo:
-        if self._provider_for("eval_repo") == "supabase":
-            return self._build_supabase_eval_repo()
-        from core.storage.providers.sqlite.eval_repo import SQLiteEvalRepo
-        return SQLiteEvalRepo(db_path=self._eval_db)
+        return self._build_repo("eval_repo", self._sqlite_eval_repo)
 
     def provider_for(self, repo_name: str) -> StorageStrategy:
         return self._provider_for(repo_name)
@@ -105,6 +95,19 @@ class StorageContainer:
             supported = ", ".join(self._REPO_NAMES)
             raise ValueError(f"Unknown repo name: {repo_name}. Supported repo names: {supported}")
         return self._repo_providers[repo_name]
+
+    def _build_repo(self, name: str, sqlite_factory):
+        """Generic repo builder: supabase via registry, sqlite via factory."""
+        if self._provider_for(name) == "supabase":
+            if self._supabase_client is None:
+                raise RuntimeError(
+                    f"Supabase strategy {name} requires supabase_client. "
+                    "Pass supabase_client=... into StorageContainer."
+                )
+            mod_path, cls_name = _REPO_REGISTRY[name]
+            mod = importlib.import_module(mod_path)
+            return getattr(mod, cls_name)(client=self._supabase_client)
+        return sqlite_factory()
 
     @classmethod
     def _resolve_repo_providers(
@@ -140,62 +143,29 @@ class StorageContainer:
             resolved[repo_name] = normalized
         return resolved
 
-    def _build_supabase_checkpoint_repo(self) -> CheckpointRepo:
-        from core.storage.providers.supabase.checkpoint_repo import SupabaseCheckpointRepo
+    def _sqlite_checkpoint_repo(self):
+        from core.storage.providers.sqlite.checkpoint_repo import SQLiteCheckpointRepo
+        return SQLiteCheckpointRepo(db_path=self._main_db)
 
-        if self._supabase_client is None:
-            raise RuntimeError(
-                "Supabase strategy checkpoint_repo requires supabase_client. "
-                "Pass supabase_client=... into StorageContainer."
-            )
-        return SupabaseCheckpointRepo(client=self._supabase_client)
+    def _sqlite_thread_config_repo(self):
+        from core.storage.providers.sqlite.thread_config_repo import SQLiteThreadConfigRepo
+        return SQLiteThreadConfigRepo(db_path=self._main_db)
 
-    def _build_supabase_thread_config_repo(self) -> ThreadConfigRepo:
-        from core.storage.providers.supabase.thread_config_repo import SupabaseThreadConfigRepo
+    def _sqlite_run_event_repo(self):
+        from core.storage.providers.sqlite.run_event_repo import SQLiteRunEventRepo
+        return SQLiteRunEventRepo(db_path=self._main_db)
 
-        if self._supabase_client is None:
-            raise RuntimeError(
-                "Supabase strategy thread_config_repo requires supabase_client. "
-                "Pass supabase_client=... into StorageContainer."
-            )
-        return SupabaseThreadConfigRepo(client=self._supabase_client)
+    def _sqlite_file_operation_repo(self):
+        from core.storage.providers.sqlite.file_operation_repo import SQLiteFileOperationRepo
+        return SQLiteFileOperationRepo(db_path=self._main_db)
 
-    def _build_supabase_run_event_repo(self) -> RunEventRepo:
-        from core.storage.providers.supabase.run_event_repo import SupabaseRunEventRepo
+    def _sqlite_summary_repo(self):
+        from core.storage.providers.sqlite.summary_repo import SQLiteSummaryRepo
+        return SQLiteSummaryRepo(
+            db_path=self._main_db,
+            connect_fn=lambda p: sqlite3.connect(str(p)),
+        )
 
-        if self._supabase_client is None:
-            raise RuntimeError(
-                "Supabase strategy run_event_repo requires supabase_client. "
-                "Pass supabase_client=... into StorageContainer."
-            )
-        return SupabaseRunEventRepo(client=self._supabase_client)
-
-    def _build_supabase_file_operation_repo(self) -> FileOperationRepo:
-        from core.storage.providers.supabase.file_operation_repo import SupabaseFileOperationRepo
-
-        if self._supabase_client is None:
-            raise RuntimeError(
-                "Supabase strategy file_operation_repo requires supabase_client. "
-                "Pass supabase_client=... into StorageContainer."
-            )
-        return SupabaseFileOperationRepo(client=self._supabase_client)
-
-    def _build_supabase_summary_repo(self) -> SummaryRepo:
-        from core.storage.providers.supabase.summary_repo import SupabaseSummaryRepo
-
-        if self._supabase_client is None:
-            raise RuntimeError(
-                "Supabase strategy summary_repo requires supabase_client. "
-                "Pass supabase_client=... into StorageContainer."
-            )
-        return SupabaseSummaryRepo(client=self._supabase_client)
-
-    def _build_supabase_eval_repo(self) -> EvalRepo:
-        from core.storage.providers.supabase.eval_repo import SupabaseEvalRepo
-
-        if self._supabase_client is None:
-            raise RuntimeError(
-                "Supabase strategy eval_repo requires supabase_client. "
-                "Pass supabase_client=... into StorageContainer."
-            )
-        return SupabaseEvalRepo(client=self._supabase_client)
+    def _sqlite_eval_repo(self):
+        from core.storage.providers.sqlite.eval_repo import SQLiteEvalRepo
+        return SQLiteEvalRepo(db_path=self._eval_db)
