@@ -4,6 +4,7 @@ import type { Activity, ToolStep } from "../../api";
 import { DEFAULT_BADGE, TOOL_BADGE_STYLES } from "../chat-area/constants";
 import { getStepSummary } from "../chat-area/utils";
 import { getToolRenderer } from "../tool-renderers";
+import type { FlowItem } from "./utils";
 
 const ACTIVITY_VISIBLE_AFTER_DONE_MS = 30_000;
 
@@ -15,7 +16,7 @@ function getResultPreview(step: ToolStep): string | null {
 }
 
 interface StepsViewProps {
-  steps: ToolStep[];
+  flowItems: FlowItem[];
   activities: Activity[];
   focusedStepId: string | null;
   onFocusStep: (id: string | null) => void;
@@ -24,7 +25,7 @@ interface StepsViewProps {
 }
 
 export function StepsView({
-  steps,
+  flowItems,
   activities,
   focusedStepId,
   onFocusStep,
@@ -46,10 +47,10 @@ export function StepsView({
     }
   }, [focusedStepId]);
 
-  if (steps.length === 0 && visibleActivities.length === 0) {
+  if (flowItems.length === 0 && visibleActivities.length === 0) {
     return (
       <div className="h-full flex items-center justify-center text-sm text-[#a3a3a3]">
-        暂无工具调用
+        暂无活动
       </div>
     );
   }
@@ -65,24 +66,28 @@ export function StepsView({
         />
       )}
 
-      {/* Step message flow — chronological order */}
-      <div className="px-3 py-2 space-y-2">
-        {steps.map((step) => (
-          <StepCard
-            key={step.id}
-            step={step}
-            isFocused={step.id === focusedStepId}
-            onFocus={() => onFocusStep(step.id)}
-          />
-        ))}
+      {/* Message flow — chronological, no cards */}
+      <div className="px-3 py-2 space-y-1.5">
+        {flowItems.map((item, i) =>
+          item.type === "tool" ? (
+            <ToolFlowLine
+              key={item.step.id}
+              step={item.step}
+              isFocused={item.step.id === focusedStepId}
+              onFocus={() => onFocusStep(item.step.id)}
+            />
+          ) : (
+            <TextFlowLine key={`text-${item.turnId}-${i}`} content={item.content} />
+          ),
+        )}
       </div>
     </div>
   );
 }
 
-/* -- Step card (message-style) -- */
+/* -- Tool flow line (borderless, replaces StepCard) -- */
 
-function StepCard({
+function ToolFlowLine({
   step,
   isFocused,
   onFocus,
@@ -96,7 +101,6 @@ function StepCard({
   const Renderer = getToolRenderer(step);
   const preview = getResultPreview(step);
 
-  // Auto-expand when focused from chat area jump
   useEffect(() => {
     if (isFocused) setExpanded(true);
   }, [isFocused]);
@@ -104,55 +108,69 @@ function StepCard({
   return (
     <div
       data-step-id={step.id}
-      className={`rounded-lg border transition-colors ${
-        isFocused ? "border-blue-300 bg-blue-50/30" : "border-[#f0f0f0] hover:border-[#e0e0e0]"
-      }`}
+      className={isFocused ? "border-l-2 border-blue-400 pl-2" : "pl-3"}
     >
-      {/* Header — click to toggle */}
+      {/* Row: status icon + badge + summary + chevron */}
       <div
-        className="flex items-center gap-1.5 px-3 py-2 cursor-pointer"
+        className="flex items-center gap-1.5 cursor-pointer py-0.5"
         onClick={() => { setExpanded((v) => !v); onFocus(); }}
       >
         <StatusIcon status={step.status} />
         <span
-          className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium flex-shrink-0 ${badge.bg} ${badge.text}`}
+          className={`inline-flex items-center px-1 py-0 rounded text-[10px] font-medium flex-shrink-0 ${badge.bg} ${badge.text}`}
         >
           {badge.label || step.name}
         </span>
-        <div className="flex-1 min-w-0 text-xs text-[#737373] truncate font-mono">
+        <span className="text-[11px] text-[#737373] font-mono truncate min-w-0 flex-1">
           {getStepSummary(step)}
-        </div>
+        </span>
         {expanded
-          ? <ChevronDown className="w-3.5 h-3.5 text-[#a3a3a3] flex-shrink-0" />
-          : <ChevronRight className="w-3.5 h-3.5 text-[#d4d4d4] flex-shrink-0" />}
+          ? <ChevronDown className="w-3 h-3 text-[#a3a3a3] flex-shrink-0" />
+          : <ChevronRight className="w-3 h-3 text-[#d4d4d4] flex-shrink-0" />}
       </div>
 
-      {/* L1 — collapsed result preview */}
+      {/* Collapsed: 1-line result preview */}
       {!expanded && preview && (
-        <div className="px-3 pb-1.5 -mt-0.5">
-          <div className="text-[11px] text-[#a3a3a3] font-mono truncate pl-5">
-            {preview}
-          </div>
+        <div className="text-[11px] text-[#a3a3a3] font-mono truncate pl-5 -mt-0.5">
+          → {preview}
         </div>
       )}
 
-      {/* L2 — expanded detail */}
+      {/* Expanded: renderer + full result */}
       {expanded && (
-        <div className="px-3 pb-2">
+        <div className="pl-5 mt-1">
           <div className="text-xs">
             <Renderer step={step} expanded={true} />
           </div>
           {step.result && (
-            <pre className="mt-2 whitespace-pre-wrap break-words font-mono text-[11px] text-[#525252] bg-[#fafafa] rounded p-2 max-h-[300px] overflow-y-auto border border-[#f0f0f0]">
+            <pre className="mt-1.5 whitespace-pre-wrap break-words font-mono text-[11px] text-[#525252] bg-[#fafafa] rounded p-2 max-h-[300px] overflow-y-auto">
               {step.result}
             </pre>
           )}
-          {step.status === "cancelled" && (
-            <div className="mt-1 text-[11px] text-[#a3a3a3] italic">
-              {step.result || "已取消"}
-            </div>
+          {step.status === "cancelled" && !step.result && (
+            <div className="mt-1 text-[11px] text-[#a3a3a3] italic">已取消</div>
           )}
         </div>
+      )}
+    </div>
+  );
+}
+
+/* -- Text flow line (AI intermediate text) -- */
+
+function TextFlowLine({ content }: { content: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const isLong = content.length > 150;
+  const display = !isLong || expanded ? content : content.slice(0, 147) + "...";
+
+  return (
+    <div
+      className={`text-[12px] text-[#737373] leading-relaxed pl-3 ${isLong ? "cursor-pointer" : ""}`}
+      onClick={isLong ? () => setExpanded((v) => !v) : undefined}
+    >
+      <span className="whitespace-pre-wrap">{display}</span>
+      {isLong && !expanded && (
+        <span className="text-[11px] text-[#a3a3a3] ml-1 hover:text-[#737373]">展开</span>
       )}
     </div>
   );
@@ -266,4 +284,3 @@ function formatRelativeTime(startTime: number): string {
   const hours = Math.floor(mins / 60);
   return `${hours}h`;
 }
-
