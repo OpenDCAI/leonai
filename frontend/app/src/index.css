@@ -184,20 +184,52 @@ button:focus-visible,
   scrollbar-width: none;
 }
 
-/* L0 Detail Box — border breathing glow when running */
-@keyframes borderGlow {
-  0%, 100% {
-    border-color: rgba(147, 197, 253, 0.4);
-    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0);
-  }
-  50% {
-    border-color: rgba(96, 165, 250, 0.7);
-    box-shadow: 0 0 10px -2px rgba(59, 130, 246, 0.15);
-  }
+/* L0 Detail Box — flowing light border when running */
+@property --border-angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+
+@keyframes borderSpin {
+  to { --border-angle: 360deg; }
+}
+
+@keyframes glowBreath {
+  0%, 100% { box-shadow: 0 0 6px -2px rgba(59, 130, 246, 0.08); }
+  50% { box-shadow: 0 0 16px -2px rgba(59, 130, 246, 0.22); }
 }
 
 .detail-box-glow {
-  animation: borderGlow 2.5s ease-in-out infinite;
+  position: relative;
+  border-color: transparent;
+  animation: glowBreath 2.5s ease-in-out infinite;
+}
+
+.detail-box-glow::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 1.5px;
+  background: conic-gradient(
+    from var(--border-angle),
+    transparent 25%,
+    rgba(59, 130, 246, 0.6) 45%,
+    rgba(147, 197, 253, 0.9) 50%,
+    rgba(59, 130, 246, 0.6) 55%,
+    transparent 75%
+  );
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+  animation: borderSpin 3s linear infinite;
+  pointer-events: none;
 }
 
 /* Markdown content */
