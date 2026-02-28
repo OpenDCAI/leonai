@@ -1,6 +1,39 @@
 import type { ChatEntry, ToolStep, WorkspaceEntry } from "../../api";
 import type { TreeNode } from "./types";
 
+/* ── Flow types for message-flow panel ── */
+
+export type FlowItem =
+  | { type: "text"; content: string; turnId: string }
+  | { type: "tool"; step: ToolStep; turnId: string };
+
+/** Extract a chronological message flow (text + tool) from chat entries.
+ *  The last non-empty text segment per turn is excluded (already shown in chat area). */
+export function extractMessageFlow(entries: ChatEntry[]): FlowItem[] {
+  const items: FlowItem[] = [];
+  for (const entry of entries) {
+    if (entry.role !== "assistant") continue;
+    const segs = entry.segments;
+    // Find last non-empty text index — exclude it (displayed in chat area)
+    let lastTextIdx = -1;
+    for (let i = segs.length - 1; i >= 0; i--) {
+      if (segs[i].type === "text" && segs[i].content.trim()) {
+        lastTextIdx = i;
+        break;
+      }
+    }
+    for (let i = 0; i < segs.length; i++) {
+      const seg = segs[i];
+      if (seg.type === "tool") {
+        items.push({ type: "tool", step: seg.step, turnId: entry.id });
+      } else if (seg.type === "text" && i !== lastTextIdx && seg.content.trim()) {
+        items.push({ type: "text", content: seg.content, turnId: entry.id });
+      }
+    }
+  }
+  return items;
+}
+
 export function joinPath(base: string, name: string): string {
   if (base.endsWith("/")) return `${base}${name}`;
   return `${base}/${name}`;
