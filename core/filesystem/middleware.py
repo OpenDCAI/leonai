@@ -196,24 +196,68 @@ class FileSystemMiddleware(AgentMiddleware):
         except Exception as e:
             raise RuntimeError(f"[FileSystemMiddleware] Failed to record operation: {e}") from e
 
+    def _count_lines(self, resolved: Path) -> int:
+        """Count total lines in a file (for error messages)."""
+        try:
+            raw = self.backend.read_file(str(resolved))
+            return raw.content.count('\n') + 1
+        except Exception:
+            return 0
+
     def _read_file_impl(self, file_path: str, offset: int = 0, limit: int | None = None) -> ReadResult:
-        """Read file - local uses rich dispatcher, sandbox uses basic text read."""
+        """Read file with hard-reject for oversized files (when no offset/limit specified).
+
+        Two layers:
+        - max_file_size (10MB): Absolute limit, always rejects (even with offset/limit)
+        - max_size_bytes (256KB) / max_tokens (25K): Rejects only when no offset/limit
+        """
         is_valid, error, resolved = self._validate_path(file_path, "read")
         if not is_valid:
             return ReadResult(file_path=file_path, file_type=None, error=error)  # type: ignore[arg-type]
 
         file_size = self.backend.file_size(str(resolved))
+
+        # Absolute limit — always reject (even with offset/limit)
         if file_size is not None and file_size > self.max_file_size:
             return ReadResult(
                 file_path=file_path,
                 file_type=None,  # type: ignore[arg-type]
-                error=f"File too large: {file_size} bytes (max: {self.max_file_size})",
+                error=f"File too large: {file_size:,} bytes (max: {self.max_file_size:,} bytes)",
             )
+
+        # Hard-reject for oversized files when no offset/limit specified
+        has_pagination = offset > 0 or limit is not None
+        if not has_pagination and file_size is not None:
+            limits = ReadLimits()
+            if file_size > limits.max_size_bytes:
+                total_lines = self._count_lines(resolved)
+                return ReadResult(
+                    file_path=file_path,
+                    file_type=None,  # type: ignore[arg-type]
+                    error=(
+                        f"File content ({file_size:,} bytes) exceeds maximum allowed size ({limits.max_size_bytes:,} bytes).\n"
+                        f"Use offset and limit parameters to read specific sections.\n"
+                        f"Total lines: {total_lines}"
+                    ),
+                )
+            # Estimate tokens (rough: chars / 4)
+            estimated_tokens = file_size // 4
+            if estimated_tokens > limits.max_tokens:
+                total_lines = self._count_lines(resolved)
+                return ReadResult(
+                    file_path=file_path,
+                    file_type=None,  # type: ignore[arg-type]
+                    error=(
+                        f"File content (~{estimated_tokens:,} tokens) exceeds maximum allowed tokens ({limits.max_tokens:,}).\n"
+                        f"Use offset and limit parameters to read specific sections.\n"
+                        f"Total lines: {total_lines}"
+                    ),
+                )
 
         from core.filesystem.local_backend import LocalBackend
 
         if isinstance(self.backend, LocalBackend):
-            limits = ReadLimits(max_lines=1000, max_chars=100_000, max_line_length=2000)
+            limits = ReadLimits()
             result = read_file_dispatch(
                 path=resolved, limits=limits, offset=offset if offset > 0 else None, limit=limit
             )
@@ -224,8 +268,10 @@ class FileSystemMiddleware(AgentMiddleware):
         try:
             raw = self.backend.read_file(str(resolved))
             lines = raw.content.split("\n")
+            total_lines = len(lines)
+            limits = ReadLimits()
             start = max(0, offset - 1) if offset > 0 else 0
-            end = start + limit if limit else len(lines)
+            end = min(start + limit if limit else total_lines, start + limits.max_lines)
             selected = lines[start:end]
             numbered = [f"{start + i + 1:>6}\t{line}" for i, line in enumerate(selected)]
             content = "\n".join(numbered)
@@ -236,7 +282,7 @@ class FileSystemMiddleware(AgentMiddleware):
                 file_path=file_path,
                 file_type=None,  # type: ignore[arg-type]
                 content=content,
-                total_lines=len(lines),
+                total_lines=total_lines,
                 start_line=start + 1,
                 end_line=start + len(selected),
                 total_size=raw.size or len(raw.content),

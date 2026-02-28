@@ -77,7 +77,7 @@ class FetchResult:
                 parts.append(f"  ... and {len(self.chunks) - 5} more chunks")
 
             parts.append("")
-            parts.append("Use view_web_content tool with position to read specific chunks.")
+            parts.append("Use read_file tool with offset and limit to read specific sections.")
 
         if self.truncated:
             reason = self.truncation_reason or "limit reached"
@@ -120,7 +120,7 @@ class SearchResult:
             parts.append("---")
 
         parts.append("")
-        parts.append("Use read_url_content tool to fetch full content from URLs.")
+        parts.append("Use Fetch tool with a Prompt to extract specific information from URLs.")
 
         return "\n".join(parts)
 

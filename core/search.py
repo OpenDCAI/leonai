@@ -1,15 +1,15 @@
 """
-Search Middleware - Code search functionality
+Search Middleware - Grep + Glob tools aligned to Claude Code design.
 
-Tools (pure Middleware implementation):
-- grep_search: Content search (ripgrep preferred, Python fallback)
-- find_by_name: Filename search (fd preferred, Python fallback)
+Tools:
+- Grep: Content search using regex (ripgrep preferred, Python fallback)
+- Glob: File pattern matching sorted by modification time (Python Path.glob)
 
-Features:
-- PascalCase parameter naming (SearchPath, Query, Includes, MatchPerLine)
-- Absolute path requirement
-- Concise output format
-- System tools preferred, Python fallback
+Design:
+- Parameter names mirror rg CLI flags for Grep
+- DEFAULT_EXCLUDES applied automatically (node_modules, .git, etc.)
+- output_mode controls Grep output format (files_with_matches | content | count)
+- head_limit / offset for pagination of results
 """
 
 from __future__ import annotations
@@ -29,148 +29,191 @@ from langchain.agents.middleware.types import (
 )
 from langchain_core.messages import ToolMessage
 
+# Directories excluded by default from both Grep and Glob searches.
+DEFAULT_EXCLUDES: list[str] = [
+    "node_modules",
+    ".git",
+    "__pycache__",
+    ".venv",
+    "venv",
+    "dist",
+    "build",
+    ".next",
+    ".nuxt",
+    ".tox",
+    ".mypy_cache",
+    ".pytest_cache",
+]
+
 
 class SearchMiddleware(AgentMiddleware):
-    """
-    Search Middleware
+    """Search middleware providing Grep and Glob tools.
 
-    Features:
-    - Prefers ripgrep/fd system tools (best performance)
-    - Fallback to Python implementation (cross-platform)
-    - PascalCase parameter naming
-    - Absolute path enforcement
-    - Concise output format
+    - Grep: regex content search (ripgrep with Python fallback)
+    - Glob: file pattern matching sorted by mtime descending
     """
 
-    TOOL_GREP_SEARCH = "grep_search"
-    TOOL_FIND_BY_NAME = "find_by_name"
+    TOOL_GREP = "Grep"
+    TOOL_GLOB = "Glob"
 
     def __init__(
         self,
         workspace_root: str | Path,
         *,
-        max_results: int = 50,  # Default limit
-        max_file_size: int = 10 * 1024 * 1024,  # 10MB
-        prefer_system_tools: bool = True,
-        enabled_tools: dict[str, bool] | None = None,
+        max_file_size: int = 10 * 1024 * 1024,
         verbose: bool = True,
     ):
-        """
-        Initialize search middleware
-
-        Args:
-            workspace_root: Working directory (search restricted to this directory)
-            max_results: Maximum results (default 50)
-            max_file_size: Maximum file size (bytes)
-            prefer_system_tools: Whether to prefer system tools (ripgrep/fd)
-            verbose: Whether to output detailed logs
-        """
         self.workspace_root = Path(workspace_root).resolve()
-        self.max_results = max_results
         self.max_file_size = max_file_size
-        self.prefer_system_tools = prefer_system_tools
-        self.enabled_tools = enabled_tools or {"grep_search": True, "find_by_name": True}
         self.verbose = verbose
 
-        # 检查系统工具可用性
         self.has_ripgrep = shutil.which("rg") is not None
-        self.has_fd = shutil.which("fd") is not None
 
         if self.verbose:
-            print(f"[SearchMiddleware] Initialized with workspace: {self.workspace_root}")
-            if self.prefer_system_tools:
-                print(f"[SearchMiddleware] ripgrep available: {self.has_ripgrep}")
-                print(f"[SearchMiddleware] fd available: {self.has_fd}")
+            print(f"[SearchMiddleware] workspace: {self.workspace_root}")
+            print(f"[SearchMiddleware] ripgrep: {self.has_ripgrep}")
 
-    def _validate_path(self, path: str) -> tuple[bool, str, Path | None]:
-        """验证搜索路径"""
+    # ------------------------------------------------------------------
+    # Path validation
+    # ------------------------------------------------------------------
+
+    def _validate_path(self, path: str | None) -> tuple[bool, str, Path]:
+        """Validate and resolve a search path.
+
+        If *path* is ``None`` or empty, defaults to ``workspace_root``.
+        Returns ``(ok, error_message, resolved_path)``.
+        """
+        if not path:
+            return True, "", self.workspace_root
+
         if not Path(path).is_absolute():
-            return False, f"Path must be absolute: {path}", None
+            return False, f"Path must be absolute: {path}", self.workspace_root
 
         try:
             resolved = Path(path).resolve()
         except Exception as e:
-            return False, f"Invalid path: {path} ({e})", None
+            return False, f"Invalid path: {path} ({e})", self.workspace_root
 
-        # 必须在 workspace 内
         try:
             resolved.relative_to(self.workspace_root)
         except ValueError:
             return (
                 False,
-                f"Path outside workspace\n   Workspace: {self.workspace_root}\n   Attempted: {resolved}",
-                None,
+                f"Path outside workspace\n  Workspace: {self.workspace_root}\n  Attempted: {resolved}",
+                self.workspace_root,
             )
 
         return True, "", resolved
 
-    def _grep_search_impl(
-        self,
-        SearchPath: str,
-        Query: str,
-        CaseSensitive: bool = False,
-        FixedStrings: bool = False,
-        Includes: list[str] | None = None,
-        MatchPerLine: bool = False,
-    ) -> str:
-        """
-        Implement grep_search
+    # ------------------------------------------------------------------
+    # Grep implementation
+    # ------------------------------------------------------------------
 
-        Prefers ripgrep, fallback to Python implementation
-        PascalCase parameter naming
-        """
-        is_valid, error, resolved = self._validate_path(SearchPath)
-        if not is_valid:
+    def _grep_impl(
+        self,
+        pattern: str,
+        path: str | None = None,
+        glob: str | None = None,
+        type: str | None = None,
+        case_insensitive: bool = False,
+        after_context: int | None = None,
+        before_context: int | None = None,
+        context: int | None = None,
+        output_mode: str = "files_with_matches",
+        head_limit: int | None = None,
+        offset: int | None = None,
+        multiline: bool = False,
+    ) -> str:
+        ok, error, resolved = self._validate_path(path)
+        if not ok:
             return error
 
         if not resolved.exists():
-            return f"Path not found: {SearchPath}"
+            return f"Path not found: {path or self.workspace_root}"
 
-        # 尝试使用 ripgrep（性能最佳）
-        if self.prefer_system_tools and self.has_ripgrep:
+        if self.has_ripgrep:
             try:
-                return self._ripgrep_search(resolved, Query, CaseSensitive, FixedStrings, Includes, MatchPerLine)
+                return self._ripgrep_search(
+                    resolved,
+                    pattern,
+                    glob=glob,
+                    type_filter=type,
+                    case_insensitive=case_insensitive,
+                    after_context=after_context,
+                    before_context=before_context,
+                    context=context,
+                    output_mode=output_mode,
+                    head_limit=head_limit,
+                    offset=offset,
+                    multiline=multiline,
+                )
             except Exception as e:
-                print(f"[SearchMiddleware] ripgrep failed, fallback to Python: {e}")
+                if self.verbose:
+                    print(f"[SearchMiddleware] ripgrep failed, fallback to Python: {e}")
 
-        # Fallback 到 Python 实现
-        return self._python_grep_search(resolved, Query, CaseSensitive, FixedStrings, Includes, MatchPerLine)
+        return self._python_grep(
+            resolved,
+            pattern,
+            glob=glob,
+            case_insensitive=case_insensitive,
+            output_mode=output_mode,
+            head_limit=head_limit,
+            offset=offset,
+        )
 
     def _ripgrep_search(
         self,
         path: Path,
-        query: str,
-        case_sensitive: bool,
-        fixed_strings: bool,
-        includes: list[str] | None,
-        match_per_line: bool,
+        pattern: str,
+        *,
+        glob: str | None,
+        type_filter: str | None,
+        case_insensitive: bool,
+        after_context: int | None,
+        before_context: int | None,
+        context: int | None,
+        output_mode: str,
+        head_limit: int | None,
+        offset: int | None,
+        multiline: bool,
     ) -> str:
-        """Use ripgrep for search"""
-        cmd = ["rg", query, str(path)]
+        cmd: list[str] = ["rg", pattern, str(path)]
 
-        # 大小写敏感
-        if not case_sensitive:
+        # Default excludes
+        for excl in DEFAULT_EXCLUDES:
+            cmd.extend(["--glob", f"!{excl}"])
+
+        # File glob filter
+        if glob:
+            cmd.extend(["--glob", glob])
+
+        # File type filter
+        if type_filter:
+            cmd.extend(["--type", type_filter])
+
+        # Case insensitivity
+        if case_insensitive:
             cmd.append("-i")
 
-        # 字面匹配
-        if fixed_strings:
-            cmd.append("-F")
+        # Multiline
+        if multiline:
+            cmd.extend(["-U", "--multiline-dotall"])
 
-        # 文件过滤
-        if includes:
-            for pattern in includes:
-                cmd.extend(["-g", pattern])
+        # Output mode
+        if output_mode == "files_with_matches":
+            cmd.append("--files-with-matches")
+        elif output_mode == "count":
+            cmd.append("--count")
+        elif output_mode == "content":
+            cmd.extend(["--line-number", "--no-heading"])
+            if context is not None:
+                cmd.extend(["-C", str(context)])
+            else:
+                if after_context is not None:
+                    cmd.extend(["-A", str(after_context)])
+                if before_context is not None:
+                    cmd.extend(["-B", str(before_context)])
 
-        # 输出格式
-        if match_per_line:
-            cmd.extend(["--line-number", "--no-heading", "-C", "2"])  # 前后各 2 行上下文
-        else:
-            cmd.extend(["--files-with-matches"])
-
-        # 限制结果数
-        cmd.extend(["--max-count", str(self.max_results)])
-
-        # 执行命令
         try:
             result = subprocess.run(
                 cmd,
@@ -179,371 +222,233 @@ class SearchMiddleware(AgentMiddleware):
                 timeout=30,
                 cwd=str(self.workspace_root),
             )
-
-            if result.returncode == 0:
-                # 成功找到匹配
-                output = result.stdout.strip()
-                if not output:
-                    return "No matches found"
-
-                # 处理 ripgrep 输出
-                lines = []
-                for line in output.split("\n"):
-                    if not line:
-                        continue
-
-                    if match_per_line:
-                        # ripgrep -C 输出格式：
-                        # 行号:匹配内容（匹配行）
-                        # 行号-上下文内容（上下文行）
-                        # -- （分隔符，忽略）
-                        if line == "--":
-                            continue
-
-                        # 直接使用 ripgrep 的格式（已经是 行号:内容 或 行号-内容）
-                        lines.append(line)
-                    else:
-                        # 只返回文件名
-                        try:
-                            file_path = Path(line)
-                            rel_path = file_path.relative_to(self.workspace_root)
-                            lines.append(str(rel_path))
-                        except ValueError:
-                            lines.append(line)
-
-                return "\n".join(lines) if lines else "No matches found"
-
-            elif result.returncode == 1:
-                # 没有找到匹配
-                return "No matches found"
-            else:
-                # 错误
-                raise RuntimeError(f"ripgrep error: {result.stderr}")
-
         except subprocess.TimeoutExpired:
-            raise RuntimeError("Search timeout (30s)")
+            return "Search timeout (30s)"
 
-    def _python_grep_search(
+        if result.returncode not in (0, 1):
+            return f"ripgrep error: {result.stderr.strip()}"
+
+        output = result.stdout.strip()
+        if not output:
+            return "No matches found"
+
+        return self._paginate(output, head_limit, offset)
+
+    def _python_grep(
         self,
         path: Path,
-        query: str,
-        case_sensitive: bool,
-        fixed_strings: bool,
-        includes: list[str] | None,
-        match_per_line: bool,
+        pattern: str,
+        *,
+        glob: str | None,
+        case_insensitive: bool,
+        output_mode: str,
+        head_limit: int | None,
+        offset: int | None,
     ) -> str:
-        """Python 实现的 grep 搜索（fallback）"""
-        # 编译正则表达式
+        """Pure-Python fallback for grep search."""
+        flags = re.IGNORECASE if case_insensitive else 0
         try:
-            if fixed_strings:
-                pattern = re.escape(query)
-            else:
-                pattern = query
-
-            flags = 0 if case_sensitive else re.IGNORECASE
             regex = re.compile(pattern, flags)
         except re.error as e:
-            return f"Invalid regex pattern: {e}"
+            return f"Invalid regex: {e}"
 
-        # 收集要搜索的文件
-        files_to_search = []
-        if path.is_file():
-            files_to_search.append(path)
-        else:
-            for file_path in path.rglob("*"):
-                if not file_path.is_file():
-                    continue
+        files = self._collect_files(path, glob)
+        lines: list[str] = []
 
-                if file_path.stat().st_size > self.max_file_size:
-                    continue
-
-                if includes:
-                    match = False
-                    for pattern in includes:
-                        if file_path.match(pattern):
-                            match = True
-                            break
-                    if not match:
-                        continue
-
-                files_to_search.append(file_path)
-
-        # 搜索文件
-        results = []
-        count = 0
-
-        for file_path in files_to_search:
-            if count >= self.max_results:
-                break
-
+        for fp in files:
             try:
-                with open(file_path, encoding="utf-8") as f:
-                    lines = f.readlines()
-
-                match_line_nums = []
-                for line_num, line in enumerate(lines, start=1):
-                    if regex.search(line):
-                        match_line_nums.append(line_num)
-
-                if match_line_nums:
-                    if match_per_line:
-                        # Show matching line + context
-                        context_lines = 2  # 前后各 2 行
-                        displayed_lines = set()
-
-                        for match_line in match_line_nums:
-                            # 计算上下文范围
-                            start = max(1, match_line - context_lines)
-                            end = min(len(lines), match_line + context_lines)
-
-                            for line_num in range(start, end + 1):
-                                if line_num not in displayed_lines:
-                                    displayed_lines.add(line_num)
-                                    line_content = lines[line_num - 1].rstrip()
-
-                                    # 匹配行用 :，上下文行用 -
-                                    marker = ":" if line_num in match_line_nums else "-"
-                                    results.append(f"{line_num}{marker}{line_content}")
-
-                            count += 1
-                            if count >= self.max_results:
-                                break
-                    else:
-                        # 只返回文件名
-                        rel_path = file_path.relative_to(self.workspace_root)
-                        results.append(str(rel_path))
-                        count += 1
-
-            except (UnicodeDecodeError, PermissionError):
+                text = fp.read_text(encoding="utf-8", errors="ignore")
+            except (PermissionError, OSError):
                 continue
 
-        return "\n".join(results) if results else "No matches found"
+            if output_mode == "files_with_matches":
+                if regex.search(text):
+                    lines.append(str(fp))
+            elif output_mode == "count":
+                cnt = len(regex.findall(text))
+                if cnt:
+                    lines.append(f"{fp}:{cnt}")
+            else:  # content
+                for i, line in enumerate(text.splitlines(), 1):
+                    if regex.search(line):
+                        lines.append(f"{fp}:{i}:{line}")
 
-    def _find_by_name_impl(
-        self,
-        SearchDirectory: str,
-        Pattern: str,
-        Extensions: list[str] | None = None,
-        Type: str = "any",
-        MaxDepth: int | None = None,
-        FullPath: bool = False,
-    ) -> str:
-        """
-        Implement find_by_name
+        if not lines:
+            return "No matches found"
 
-        Prefers fd, fallback to Python implementation
-        PascalCase parameter naming
-        """
-        is_valid, error, resolved = self._validate_path(SearchDirectory)
-        if not is_valid:
+        return self._paginate("\n".join(lines), head_limit, offset)
+
+    # ------------------------------------------------------------------
+    # Glob implementation
+    # ------------------------------------------------------------------
+
+    def _glob_impl(self, pattern: str, path: str | None = None) -> str:
+        ok, error, resolved = self._validate_path(path)
+        if not ok:
             return error
 
         if not resolved.exists():
-            return f"Directory not found: {SearchDirectory}"
+            return f"Path not found: {path or self.workspace_root}"
 
         if not resolved.is_dir():
-            return f"Not a directory: {SearchDirectory}"
+            return f"Not a directory: {resolved}"
 
-        # 尝试使用 fd（性能最佳）
-        if self.prefer_system_tools and self.has_fd:
+        matches: list[tuple[float, str]] = []
+        for p in resolved.glob(pattern):
+            if not p.is_file():
+                continue
+            if self._is_excluded(p):
+                continue
             try:
-                return self._fd_search(resolved, Pattern, Extensions, Type, MaxDepth, FullPath)
-            except Exception as e:
-                print(f"[SearchMiddleware] fd failed, fallback to Python: {e}")
+                mtime = p.stat().st_mtime
+            except OSError:
+                mtime = 0.0
+            matches.append((mtime, str(p)))
 
-        # Fallback 到 Python 实现
-        return self._python_find_search(resolved, Pattern, Extensions, Type, MaxDepth, FullPath)
-
-    def _fd_search(
-        self,
-        path: Path,
-        pattern: str,
-        extensions: list[str] | None,
-        type_filter: str,
-        max_depth: int | None,
-        full_path: bool,
-    ) -> str:
-        """Use fd for filename search"""
-        cmd = ["fd", pattern, str(path)]
-
-        # 类型过滤
-        if type_filter == "file":
-            cmd.append("--type=f")
-        elif type_filter == "directory":
-            cmd.append("--type=d")
-
-        # 扩展名过滤
-        if extensions:
-            for ext in extensions:
-                cmd.extend(["--extension", ext])
-
-        # 最大深度
-        if max_depth:
-            cmd.extend(["--max-depth", str(max_depth)])
-
-        # 全路径匹配
-        if full_path:
-            cmd.append("--full-path")
-
-        # 限制结果数
-        cmd.extend(["--max-results", str(self.max_results)])
-
-        # 执行命令
-        try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, cwd=str(self.workspace_root))
-
-            if result.returncode == 0:
-                output = result.stdout.strip()
-                if not output:
-                    return "No files found"
-
-                # 收集绝对路径
-                lines = []
-                for line in output.split("\n"):
-                    if line:
-                        file_path = Path(line)
-                        if not file_path.is_absolute():
-                            file_path = (self.workspace_root / line).resolve()
-                        lines.append(str(file_path))
-
-                if not lines:
-                    return "No files found"
-                return f"Found {len(lines)} results\n" + "\n".join(lines)
-            else:
-                raise RuntimeError(f"fd error: {result.stderr}")
-
-        except subprocess.TimeoutExpired:
-            raise RuntimeError("Search timeout (30s)")
-
-    def _python_find_search(
-        self,
-        path: Path,
-        pattern: str,
-        extensions: list[str] | None,
-        type_filter: str,
-        max_depth: int | None,
-        full_path: bool,
-    ) -> str:
-        """Python 实现的文件名搜索（fallback）"""
-        results = []
-        count = 0
-
-        def search_recursive(current_path: Path, depth: int = 0):
-            nonlocal count
-            if max_depth and depth > max_depth:
-                return
-
-            if count >= self.max_results:
-                return
-
-            try:
-                for item in sorted(current_path.iterdir()):
-                    if count >= self.max_results:
-                        break
-
-                    # 类型过滤
-                    if type_filter == "file" and not item.is_file():
-                        continue
-                    if type_filter == "directory" and not item.is_dir():
-                        continue
-
-                    # 扩展名过滤
-                    if extensions and item.is_file():
-                        if item.suffix.lstrip(".") not in extensions:
-                            continue
-
-                    # 名称匹配
-                    match_target = str(item) if full_path else item.name
-                    if item.match(pattern):
-                        results.append(str(item))
-                        count += 1
-
-                    # 递归搜索子目录
-                    if item.is_dir():
-                        search_recursive(item, depth + 1)
-
-            except PermissionError:
-                pass
-
-        search_recursive(path)
-
-        if not results:
+        if not matches:
             return "No files found"
-        return f"Found {len(results)} results\n" + "\n".join(results)
+
+        # Sort by mtime descending (newest first)
+        matches.sort(key=lambda x: x[0], reverse=True)
+        return "\n".join(filepath for _, filepath in matches)
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _is_excluded(p: Path) -> bool:
+        """Return True if any path component is in DEFAULT_EXCLUDES."""
+        parts = p.parts
+        return any(part in DEFAULT_EXCLUDES for part in parts)
+
+    def _collect_files(self, path: Path, glob_pattern: str | None) -> list[Path]:
+        """Collect files under *path*, applying glob and exclude filters."""
+        if path.is_file():
+            return [path]
+
+        files: list[Path] = []
+        for fp in path.rglob(glob_pattern or "*"):
+            if not fp.is_file():
+                continue
+            if self._is_excluded(fp):
+                continue
+            if fp.stat().st_size > self.max_file_size:
+                continue
+            files.append(fp)
+        return files
+
+    @staticmethod
+    def _paginate(output: str, head_limit: int | None, offset: int | None) -> str:
+        """Apply offset and head_limit to line-based output."""
+        lines = output.split("\n")
+        start = offset or 0
+        if start:
+            lines = lines[start:]
+        if head_limit and head_limit > 0:
+            lines = lines[:head_limit]
+        return "\n".join(lines) if lines else "No matches found"
+
+    # ------------------------------------------------------------------
+    # Tool schemas
+    # ------------------------------------------------------------------
 
     def _get_tool_schemas(self) -> list[dict]:
-        """获取搜索工具 schema（sync/async 共享）"""
         return [
             {
                 "type": "function",
                 "function": {
-                    "name": self.TOOL_GREP_SEARCH,
-                    "description": "Search file contents using regex. Path must be absolute.",
+                    "name": self.TOOL_GREP,
+                    "description": "Search file contents using regex (powered by ripgrep).",
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "SearchPath": {
+                            "pattern": {
                                 "type": "string",
-                                "description": "Absolute path to file or directory",
+                                "description": "Regex pattern to search for",
                             },
-                            "Query": {"type": "string", "description": "Search pattern (regex by default)"},
-                            "CaseSensitive": {"type": "boolean", "description": "Case sensitive search"},
-                            "FixedStrings": {
+                            "path": {
+                                "type": "string",
+                                "description": "File or directory (absolute). Defaults to workspace.",
+                            },
+                            "glob": {
+                                "type": "string",
+                                "description": "Filter files by glob (e.g., '*.py')",
+                            },
+                            "type": {
+                                "type": "string",
+                                "description": "Filter by file type (e.g., 'py', 'js')",
+                            },
+                            "case_insensitive": {
                                 "type": "boolean",
-                                "description": "Treat query as literal string",
+                                "description": "Case insensitive search (rg -i)",
                             },
-                            "Includes": {
-                                "type": "array",
-                                "items": {"type": "string"},
-                                "description": "Glob patterns to filter files (e.g., '*.py')",
+                            "after_context": {
+                                "type": "integer",
+                                "description": "Lines after match (rg -A)",
                             },
-                            "MatchPerLine": {
+                            "before_context": {
+                                "type": "integer",
+                                "description": "Lines before match (rg -B)",
+                            },
+                            "context": {
+                                "type": "integer",
+                                "description": "Context lines before and after (rg -C)",
+                            },
+                            "output_mode": {
+                                "type": "string",
+                                "enum": ["content", "files_with_matches", "count"],
+                                "description": "Output format. Default: files_with_matches",
+                            },
+                            "head_limit": {
+                                "type": "integer",
+                                "description": "Limit to first N entries",
+                            },
+                            "offset": {
+                                "type": "integer",
+                                "description": "Skip first N entries",
+                            },
+                            "multiline": {
                                 "type": "boolean",
-                                "description": "Show line-by-line matches",
+                                "description": "Pattern can span multiple lines (rg -U)",
                             },
                         },
-                        "required": ["SearchPath", "Query"],
+                        "required": ["pattern"],
                     },
                 },
             },
             {
                 "type": "function",
                 "function": {
-                    "name": self.TOOL_FIND_BY_NAME,
-                    "description": "Find files by name pattern. Path must be absolute.",
+                    "name": self.TOOL_GLOB,
+                    "description": "Find files by glob pattern. Returns paths sorted by modification time.",
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "SearchDirectory": {
+                            "pattern": {
                                 "type": "string",
-                                "description": "Absolute directory path",
+                                "description": "Glob pattern (e.g., '**/*.py')",
                             },
-                            "Pattern": {"type": "string", "description": "Glob pattern (e.g., '*.py')"},
-                            "Extensions": {
-                                "type": "array",
-                                "items": {"type": "string"},
-                                "description": "File extensions to include",
-                            },
-                            "Type": {
+                            "path": {
                                 "type": "string",
-                                "enum": ["file", "directory", "any"],
-                                "description": "Filter by type",
+                                "description": "Directory to search (absolute). Defaults to workspace.",
                             },
-                            "MaxDepth": {"type": "integer", "description": "Maximum search depth"},
-                            "FullPath": {"type": "boolean", "description": "Match against full path"},
                         },
-                        "required": ["SearchDirectory", "Pattern"],
+                        "required": ["pattern"],
                     },
                 },
             },
         ]
+
+    # ------------------------------------------------------------------
+    # Middleware interface
+    # ------------------------------------------------------------------
 
     def wrap_model_call(
         self,
         request: ModelRequest,
         handler: Callable[[ModelRequest], ModelResponse],
     ) -> ModelResponse:
-        """注入搜索工具定义"""
         tools = list(request.tools or [])
         tools.extend(self._get_tool_schemas())
         return handler(request.override(tools=tools))
@@ -553,43 +458,50 @@ class SearchMiddleware(AgentMiddleware):
         request: ModelRequest,
         handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
     ) -> ModelResponse:
-        """异步：注入搜索工具定义"""
         tools = list(request.tools or [])
         tools.extend(self._get_tool_schemas())
         return await handler(request.override(tools=tools))
+
+    def _handle_tool(self, tool_call: dict) -> ToolMessage | None:
+        """Dispatch a tool call. Returns ToolMessage if handled, else None."""
+        name = tool_call.get("name")
+        args = tool_call.get("args", {})
+        call_id = tool_call.get("id", "")
+
+        if name == self.TOOL_GREP:
+            result = self._grep_impl(
+                pattern=args.get("pattern", ""),
+                path=args.get("path"),
+                glob=args.get("glob"),
+                type=args.get("type"),
+                case_insensitive=args.get("case_insensitive", False),
+                after_context=args.get("after_context"),
+                before_context=args.get("before_context"),
+                context=args.get("context"),
+                output_mode=args.get("output_mode", "files_with_matches"),
+                head_limit=args.get("head_limit"),
+                offset=args.get("offset"),
+                multiline=args.get("multiline", False),
+            )
+            return ToolMessage(content=result, tool_call_id=call_id)
+
+        if name == self.TOOL_GLOB:
+            result = self._glob_impl(
+                pattern=args.get("pattern", ""),
+                path=args.get("path"),
+            )
+            return ToolMessage(content=result, tool_call_id=call_id)
+
+        return None
 
     def wrap_tool_call(
         self,
         request: ToolCallRequest,
         handler: Callable[[ToolCallRequest], Any],
     ) -> Any:
-        """拦截并处理搜索工具调用"""
-        tool_call = request.tool_call
-        tool_name = tool_call.get("name")
-        args = tool_call.get("args", {})
-
-        if tool_name == self.TOOL_GREP_SEARCH:
-            result = self._grep_search_impl(
-                SearchPath=args.get("SearchPath", ""),
-                Query=args.get("Query", ""),
-                CaseSensitive=args.get("CaseSensitive", False),
-                FixedStrings=args.get("FixedStrings", False),
-                Includes=args.get("Includes"),
-                MatchPerLine=args.get("MatchPerLine", False),
-            )
-            return ToolMessage(content=result, tool_call_id=tool_call.get("id", ""))
-
-        elif tool_name == self.TOOL_FIND_BY_NAME:
-            result = self._find_by_name_impl(
-                SearchDirectory=args.get("SearchDirectory", ""),
-                Pattern=args.get("Pattern", ""),
-                Extensions=args.get("Extensions"),
-                Type=args.get("Type", "any"),
-                MaxDepth=args.get("MaxDepth"),
-                FullPath=args.get("FullPath", False),
-            )
-            return ToolMessage(content=result, tool_call_id=tool_call.get("id", ""))
-
+        msg = self._handle_tool(request.tool_call)
+        if msg is not None:
+            return msg
         return handler(request)
 
     async def awrap_tool_call(
@@ -597,34 +509,10 @@ class SearchMiddleware(AgentMiddleware):
         request: ToolCallRequest,
         handler: Callable[[ToolCallRequest], Awaitable[Any]],
     ) -> Any:
-        """异步：拦截并处理搜索工具调用"""
-        tool_call = request.tool_call
-        tool_name = tool_call.get("name")
-        args = tool_call.get("args", {})
-
-        if tool_name == self.TOOL_GREP_SEARCH:
-            result = self._grep_search_impl(
-                SearchPath=args.get("SearchPath", ""),
-                Query=args.get("Query", ""),
-                CaseSensitive=args.get("CaseSensitive", False),
-                FixedStrings=args.get("FixedStrings", False),
-                Includes=args.get("Includes"),
-                MatchPerLine=args.get("MatchPerLine", False),
-            )
-            return ToolMessage(content=result, tool_call_id=tool_call.get("id", ""))
-
-        elif tool_name == self.TOOL_FIND_BY_NAME:
-            result = self._find_by_name_impl(
-                SearchDirectory=args.get("SearchDirectory", ""),
-                Pattern=args.get("Pattern", ""),
-                Extensions=args.get("Extensions"),
-                Type=args.get("Type", "any"),
-                MaxDepth=args.get("MaxDepth"),
-                FullPath=args.get("FullPath", False),
-            )
-            return ToolMessage(content=result, tool_call_id=tool_call.get("id", ""))
-
+        msg = self._handle_tool(request.tool_call)
+        if msg is not None:
+            return msg
         return await handler(request)
 
 
-__all__ = ["SearchMiddleware"]
+__all__ = ["SearchMiddleware", "DEFAULT_EXCLUDES"]

@@ -68,12 +68,12 @@ class SubagentRunner:
             "edit_file": FileSystemMiddleware,
             "multi_edit": FileSystemMiddleware,
             "list_dir": FileSystemMiddleware,
-            "grep_search": SearchMiddleware,
-            "find_by_name": SearchMiddleware,
+            "Grep": SearchMiddleware,
+            "Glob": SearchMiddleware,
             "run_command": CommandMiddleware,
             "command_status": CommandMiddleware,
             "web_search": WebMiddleware,
-            "read_url_content": WebMiddleware,
+            "Fetch": WebMiddleware,
         }
 
         # Determine which middleware classes are needed
@@ -108,16 +108,10 @@ class SubagentRunner:
                     filtered_middleware.append(new_mw)
 
                 elif mw_class == SearchMiddleware:
-                    enabled = {
-                        "grep_search": "grep_search" in config.tools,
-                        "find_by_name": "find_by_name" in config.tools,
-                    }
                     new_mw = SearchMiddleware(
                         workspace_root=mw.workspace_root,
-                        max_results=mw.max_results,
                         max_file_size=mw.max_file_size,
-                        prefer_system_tools=mw.prefer_system_tools,
-                        enabled_tools=enabled,
+                        verbose=False,
                     )
                     filtered_middleware.append(new_mw)
 
@@ -137,8 +131,7 @@ class SubagentRunner:
                 elif mw_class == WebMiddleware:
                     enabled = {
                         "web_search": "web_search" in config.tools,
-                        "read_url_content": "read_url_content" in config.tools,
-                        "view_web_content": False,
+                        "Fetch": "Fetch" in config.tools,
                     }
                     new_mw = WebMiddleware(
                         tavily_api_key=getattr(mw, "_tavily_api_key", None),

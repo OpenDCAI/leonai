@@ -3,7 +3,7 @@ Leon - AI Coding Agent with Middleware Architecture
 
 Middleware-based tool implementation:
 - FileSystemMiddleware: read_file, write_file, edit_file, multi_edit, list_dir
-- SearchMiddleware: grep_search, find_by_name
+- SearchMiddleware: Grep, Glob
 - CommandMiddleware: run_command (with hooks)
 - PromptCachingMiddleware: cost optimization
 
@@ -39,6 +39,9 @@ from config.models_schema import ModelsConfig
 from config.observation_loader import ObservationLoader
 from config.observation_schema import ObservationConfig
 from core.command import CommandMiddleware
+
+# 导入 SpillBuffer
+from core.spill_buffer import SpillBufferMiddleware
 
 # 导入 hooks
 from core.command.hooks.dangerous_commands import DangerousCommandsHook
@@ -76,7 +79,7 @@ class LeonAgent:
 
     Tools:
     1. File operations: read_file, write_file, edit_file, multi_edit, list_dir
-    2. Search: grep_search, find_by_name
+    2. Search: Grep, Glob
     3. Command execution: run_command (via CommandMiddleware)
     """
 
@@ -758,6 +761,18 @@ class LeonAgent:
         )
         middleware.append(self._monitor_middleware)
 
+        # 11. SpillBuffer (outermost — catches all oversized tool outputs)
+        if self.config.tools.spill_buffer.enabled:
+            spill_cfg = self.config.tools.spill_buffer
+            middleware.append(
+                SpillBufferMiddleware(
+                    fs_backend=fs_backend,
+                    workspace_root=self.workspace_root,
+                    thresholds=spill_cfg.thresholds,
+                    default_threshold=spill_cfg.default_threshold,
+                )
+            )
+
         return middleware
 
     def _add_memory_middleware(self, middleware: list) -> None:
@@ -823,20 +838,12 @@ class LeonAgent:
 
     def _add_search_middleware(self, middleware: list) -> None:
         """Add search middleware to stack."""
-        search_tools = {
-            "grep_search": self.config.tools.search.tools.grep_search.enabled,
-            "find_by_name": self.config.tools.search.tools.find_by_name,
-        }
-        max_results = self.config.tools.search.max_results
-        max_file_size = self.config.tools.search.tools.grep_search.max_file_size
+        max_file_size = self.config.tools.search.tools.grep.max_file_size
 
         middleware.append(
             SearchMiddleware(
                 workspace_root=self.workspace_root,
-                max_results=max_results,
                 max_file_size=max_file_size,
-                prefer_system_tools=True,
-                enabled_tools=search_tools,
                 verbose=self.verbose,
             )
         )
@@ -845,13 +852,12 @@ class LeonAgent:
         """Add web middleware to stack."""
         web_tools = {
             "web_search": self.config.tools.web.tools.web_search.enabled,
-            "read_url_content": self.config.tools.web.tools.read_url_content.enabled,
-            "view_web_content": self.config.tools.web.tools.view_web_content,
+            "Fetch": self.config.tools.web.tools.fetch.enabled,
         }
         tavily_key = self.config.tools.web.tools.web_search.tavily_api_key or os.getenv("TAVILY_API_KEY")
         exa_key = self.config.tools.web.tools.web_search.exa_api_key or os.getenv("EXA_API_KEY")
         firecrawl_key = self.config.tools.web.tools.web_search.firecrawl_api_key or os.getenv("FIRECRAWL_API_KEY")
-        jina_key = self.config.tools.web.tools.read_url_content.jina_api_key or os.getenv("JINA_AI_API_KEY")
+        jina_key = self.config.tools.web.tools.fetch.jina_api_key or os.getenv("JINA_AI_API_KEY")
         max_search_results = self.config.tools.web.tools.web_search.max_results
         timeout = self.config.tools.web.timeout
 
@@ -1081,7 +1087,7 @@ When to use Task:
 
 When NOT to use Task:
 - Simple file reads (use read_file directly)
-- Specific searches with known patterns (use grep_search directly)
+- Specific searches with known patterns (use Grep directly)
 - Quick operations that don't need isolation
 
 **Todo Tools (Task Management):**

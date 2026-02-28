@@ -3,11 +3,10 @@ Web Middleware - Web search and content fetching
 
 Tools (pure Middleware implementation):
 - web_search: Web search (Tavily → Exa → Firecrawl fallback)
-- read_url_content: Fetch web content (Jina → Markdownify fallback)
-- view_web_content: View specific chunk content
+- Fetch: Fetch web content and extract information using AI
 
 Features:
-- Chunked design (consistent with read_file)
+- AI-powered content extraction (no chunking needed)
 - Multi-provider fallback strategy
 - PascalCase parameter naming
 """
@@ -39,13 +38,12 @@ class WebMiddleware(AgentMiddleware):
 
     特点：
     - 所有工具都在 middleware 层实现
-    - 分块设计，支持大内容分段读取
+    - AI-powered content extraction（无需分块）
     - 多提供商降级策略
     """
 
     TOOL_WEB_SEARCH = "web_search"
-    TOOL_READ_URL = "read_url_content"
-    TOOL_VIEW_CHUNK = "view_web_content"
+    TOOL_FETCH = "Fetch"
 
     def __init__(
         self,
@@ -76,7 +74,7 @@ class WebMiddleware(AgentMiddleware):
         self.fetch_limits = fetch_limits or FetchLimits()
         self.max_search_results = max_search_results
         self.timeout = timeout
-        self.enabled_tools = enabled_tools or {"web_search": True, "read_url_content": True, "view_web_content": True}
+        self.enabled_tools = enabled_tools or {"web_search": True, "Fetch": True}
         self.verbose = verbose
 
         self._searchers: list[tuple[str, Any]] = []
@@ -91,8 +89,6 @@ class WebMiddleware(AgentMiddleware):
         if jina_api_key:
             self._fetchers.append(("Jina", JinaFetcher(jina_api_key, self.fetch_limits, timeout)))
         self._fetchers.append(("Markdownify", MarkdownifyFetcher(self.fetch_limits, timeout)))
-
-        self._content_cache: dict[str, FetchResult] = {}
 
         if self.verbose:
             print("[WebMiddleware] Initialized")
@@ -132,41 +128,62 @@ class WebMiddleware(AgentMiddleware):
 
         return SearchResult(query=Query, error="All search providers failed")
 
-    async def _read_url_impl(self, Url: str) -> FetchResult:
+    async def _fetch_impl(self, Url: str, Prompt: str) -> str:
         """
-        实现 read_url_content（多提供商降级）
+        Fetch URL content and extract information using AI.
 
-        优先级：Jina → Markdownify
+        Priority: Jina → Markdownify for fetching, then AI extraction.
         """
         if not self._fetchers:
-            return FetchResult(url=Url, error="No fetch providers configured")
+            return "Error: No fetch providers configured"
 
+        fetch_result: FetchResult | None = None
         for name, fetcher in self._fetchers:
             try:
                 result = await fetcher.fetch(Url)
                 if not result.error:
-                    self._content_cache[Url] = result
-                    return result
+                    fetch_result = result
+                    break
                 print(f"[WebMiddleware] {name} failed: {result.error}")
             except Exception as e:
                 print(f"[WebMiddleware] {name} exception: {e}")
 
-        return FetchResult(url=Url, error="All fetch providers failed")
+        if fetch_result is None:
+            return f"Error: Failed to fetch URL: {Url}"
 
-    def _view_chunk_impl(self, Url: str, position: int) -> str:
-        """
-        实现 view_web_content（查看指定 chunk）
-        """
-        if Url not in self._content_cache:
-            return f"URL not in cache. Use read_url_content first: {Url}"
+        content = fetch_result.markdown or ""
+        if not content:
+            return f"Error: No content retrieved from URL: {Url}"
 
-        result = self._content_cache[Url]
-        chunk_content = result.get_chunk(position)
+        # Truncate if too large
+        max_chars = 100_000
+        if len(content) > max_chars:
+            content = content[:max_chars]
 
-        if chunk_content is None:
-            return f"Chunk position {position} not found. Available: 0-{result.total_chunks - 1}"
+        return await self._ai_extract(content, Prompt, Url)
 
-        return f"URL: {Url}\nPosition: {position}/{result.total_chunks - 1}\n\n{chunk_content}"
+    async def _ai_extract(self, content: str, prompt: str, url: str) -> str:
+        """Use a small model to extract information from web content."""
+        try:
+            from langchain.chat_models import init_chat_model
+
+            # Use a small, fast model for extraction
+            model = init_chat_model("gpt-4o-mini", model_provider="openai")
+
+            extraction_prompt = (
+                f"You are extracting information from a web page.\n"
+                f"URL: {url}\n\n"
+                f"Web page content:\n{content}\n\n"
+                f"User's request: {prompt}\n\n"
+                f"Provide a concise, relevant answer based on the web page content."
+            )
+
+            response = await model.ainvoke(extraction_prompt)
+            return response.content
+        except Exception as e:
+            # Fallback: return truncated content with a note
+            preview = content[:5000] if len(content) > 5000 else content
+            return f"AI extraction failed ({e}). Raw content preview:\n\n{preview}"
 
     def _get_tool_definitions(self) -> list[dict]:
         """获取工具定义"""
@@ -205,8 +222,8 @@ class WebMiddleware(AgentMiddleware):
             {
                 "type": "function",
                 "function": {
-                    "name": self.TOOL_READ_URL,
-                    "description": "Fetch and read content from a URL. Returns chunked content for large pages.",
+                    "name": self.TOOL_FETCH,
+                    "description": "Fetch a URL and extract specific information using AI. Returns processed content, not raw HTML.",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -214,29 +231,12 @@ class WebMiddleware(AgentMiddleware):
                                 "type": "string",
                                 "description": "URL to fetch content from",
                             },
-                        },
-                        "required": ["Url"],
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": self.TOOL_VIEW_CHUNK,
-                    "description": "View a specific chunk of previously fetched URL content.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "Url": {
+                            "Prompt": {
                                 "type": "string",
-                                "description": "URL that was previously fetched",
-                            },
-                            "position": {
-                                "type": "integer",
-                                "description": "Chunk position to view (0-indexed)",
+                                "description": "What information to extract from the page",
                             },
                         },
-                        "required": ["Url", "position"],
+                        "required": ["Url", "Prompt"],
                     },
                 },
             },
@@ -273,16 +273,12 @@ class WebMiddleware(AgentMiddleware):
             )
             return ToolMessage(content=result.format_output(), tool_call_id=tool_call_id)
 
-        elif tool_name == self.TOOL_READ_URL:
-            result = await self._read_url_impl(Url=args.get("Url", ""))
-            return ToolMessage(content=result.format_output(), tool_call_id=tool_call_id)
-
-        elif tool_name == self.TOOL_VIEW_CHUNK:
-            content = self._view_chunk_impl(
+        elif tool_name == self.TOOL_FETCH:
+            result = await self._fetch_impl(
                 Url=args.get("Url", ""),
-                position=args.get("position", 0),
+                Prompt=args.get("Prompt", ""),
             )
-            return ToolMessage(content=content, tool_call_id=tool_call_id)
+            return ToolMessage(content=result, tool_call_id=tool_call_id)
 
         return None
 
