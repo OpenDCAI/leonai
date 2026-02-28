@@ -468,7 +468,8 @@ class LeonAgent:
         Returns:
             Normalized base URL
         """
-        # Remove trailing slash
+        # Remove whitespace and trailing slash
+        base_url = base_url.strip()
         base_url = base_url.rstrip("/")
 
         # Remove /v1 suffix if present (we'll add it back if needed)
