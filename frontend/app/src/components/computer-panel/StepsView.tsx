@@ -7,6 +7,13 @@ import { getToolRenderer } from "../tool-renderers";
 
 const ACTIVITY_VISIBLE_AFTER_DONE_MS = 30_000;
 
+function getResultPreview(step: ToolStep): string | null {
+  if (!step.result || step.status === "calling") return null;
+  const firstLine = step.result.split("\n")[0].trim();
+  if (!firstLine) return null;
+  return firstLine.length > 100 ? firstLine.slice(0, 97) + "..." : firstLine;
+}
+
 interface StepsViewProps {
   steps: ToolStep[];
   activities: Activity[];
@@ -87,6 +94,7 @@ function StepCard({
   const [expanded, setExpanded] = useState(false);
   const badge = TOOL_BADGE_STYLES[step.name] ?? { ...DEFAULT_BADGE, label: step.name };
   const Renderer = getToolRenderer(step);
+  const preview = getResultPreview(step);
 
   // Auto-expand when focused from chat area jump
   useEffect(() => {
@@ -119,7 +127,16 @@ function StepCard({
           : <ChevronRight className="w-3.5 h-3.5 text-[#d4d4d4] flex-shrink-0" />}
       </div>
 
-      {/* Detail — only when expanded */}
+      {/* L1 — collapsed result preview */}
+      {!expanded && preview && (
+        <div className="px-3 pb-1.5 -mt-0.5">
+          <div className="text-[11px] text-[#a3a3a3] font-mono truncate pl-5">
+            {preview}
+          </div>
+        </div>
+      )}
+
+      {/* L2 — expanded detail */}
       {expanded && (
         <div className="px-3 pb-2">
           <div className="text-xs">
