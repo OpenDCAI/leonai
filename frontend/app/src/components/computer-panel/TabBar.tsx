@@ -11,7 +11,7 @@ const TABS: { key: TabType; label: string; icon: typeof Terminal }[] = [
   { key: "terminal", label: "终端", icon: Terminal },
   { key: "files", label: "文件", icon: FileText },
   { key: "agents", label: "助手", icon: Bot },
-  { key: "steps", label: "步骤", icon: ListChecks },
+  { key: "steps", label: "细节", icon: ListChecks },
 ];
 
 export function TabBar({ activeTab, onTabChange, hasRunningAgents }: TabBarProps) {
