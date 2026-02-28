@@ -34,7 +34,7 @@ class RuntimeConfig(BaseModel):
     allowed_extensions: list[str] | None = Field(None, description="Allowed extensions (None = all)")
     block_dangerous_commands: bool = Field(True, description="Block dangerous commands")
     block_network_commands: bool = Field(False, description="Block network commands")
-    queue_mode: str = Field("steer", description="Queue mode: steer/followup/collect/steer_backlog/interrupt")
+    queue_mode: str = Field("steer", deprecated=True, description="Deprecated. Queue mode is now determined by message timing.")
 
 
 # ============================================================================
@@ -103,8 +103,8 @@ class FileSystemConfig(BaseModel):
     tools: FileSystemToolsConfig = Field(default_factory=FileSystemToolsConfig)
 
 
-class GrepSearchConfig(BaseModel):
-    """Configuration for grep_search tool."""
+class GrepConfig(BaseModel):
+    """Configuration for Grep tool."""
 
     enabled: bool = True
     max_file_size: int = Field(10485760, gt=0, description="Max file size in bytes (10MB)")
@@ -113,15 +113,14 @@ class GrepSearchConfig(BaseModel):
 class SearchToolsConfig(BaseModel):
     """Configuration for search tools."""
 
-    grep_search: GrepSearchConfig = Field(default_factory=GrepSearchConfig)
-    find_by_name: bool = True
+    grep: GrepConfig = Field(default_factory=GrepConfig)
+    glob: bool = True
 
 
 class SearchConfig(BaseModel):
     """Configuration for search middleware."""
 
     enabled: bool = True
-    max_results: int = Field(50, gt=0, description="Max search results")
     tools: SearchToolsConfig = Field(default_factory=SearchToolsConfig)
 
 
@@ -135,8 +134,8 @@ class WebSearchConfig(BaseModel):
     firecrawl_api_key: str | None = Field(None, description="Firecrawl API key")
 
 
-class ReadUrlConfig(BaseModel):
-    """Configuration for read_url_content tool."""
+class FetchConfig(BaseModel):
+    """Configuration for Fetch tool (AI extraction mode)."""
 
     enabled: bool = True
     jina_api_key: str | None = Field(None, description="Jina AI API key")
@@ -146,8 +145,7 @@ class WebToolsConfig(BaseModel):
     """Configuration for web tools."""
 
     web_search: WebSearchConfig = Field(default_factory=WebSearchConfig)
-    read_url_content: ReadUrlConfig = Field(default_factory=ReadUrlConfig)
-    view_web_content: bool = True
+    fetch: FetchConfig = Field(default_factory=FetchConfig)
 
 
 class WebConfig(BaseModel):
@@ -179,6 +177,23 @@ class CommandConfig(BaseModel):
     tools: CommandToolsConfig = Field(default_factory=CommandToolsConfig)
 
 
+class SpillBufferConfig(BaseModel):
+    """Configuration for SpillBuffer middleware."""
+
+    enabled: bool = True
+    default_threshold: int = Field(50_000, gt=0, description="Default spill threshold in bytes")
+    thresholds: dict[str, int] = Field(
+        default_factory=lambda: {
+            "Grep": 20_000,
+            "Glob": 20_000,
+            "run_command": 50_000,
+            "command_status": 50_000,
+            "Fetch": 50_000,
+        },
+        description="Per-tool spill thresholds in bytes",
+    )
+
+
 class ToolsConfig(BaseModel):
     """Tools configuration."""
 
@@ -186,6 +201,7 @@ class ToolsConfig(BaseModel):
     search: SearchConfig = Field(default_factory=SearchConfig)
     web: WebConfig = Field(default_factory=WebConfig)
     command: CommandConfig = Field(default_factory=CommandConfig)
+    spill_buffer: SpillBufferConfig = Field(default_factory=SpillBufferConfig)
 
 
 # ============================================================================

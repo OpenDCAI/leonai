@@ -19,11 +19,18 @@ class FileType(Enum):
 
 @dataclass
 class ReadLimits:
-    """Limits for file reading to prevent excessive token usage."""
+    """Limits for file reading to prevent excessive token usage.
 
-    max_lines: int = 1000
-    max_chars: int = 100_000
+    Two layers of limits:
+    - max_size_bytes / max_tokens: Hard-reject when no offset/limit specified (bypassed with offset/limit)
+    - max_lines / max_chars: Per-read limits (always enforced)
+    """
+
+    max_lines: int = 2000
+    max_chars: int = 200_000
     max_line_length: int = 2000
+    max_size_bytes: int = 256_000
+    max_tokens: int = 25_000
 
     def __post_init__(self) -> None:
         if self.max_lines <= 0:
@@ -32,6 +39,10 @@ class ReadLimits:
             raise ValueError("max_chars must be positive")
         if self.max_line_length <= 0:
             raise ValueError("max_line_length must be positive")
+        if self.max_size_bytes <= 0:
+            raise ValueError("max_size_bytes must be positive")
+        if self.max_tokens <= 0:
+            raise ValueError("max_tokens must be positive")
 
 
 @dataclass

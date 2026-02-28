@@ -6,7 +6,7 @@ Provides run_command and command_status tools.
 from __future__ import annotations
 
 import asyncio
-import uuid
+
 from pathlib import Path
 from typing import Any
 
@@ -25,7 +25,6 @@ COMMAND_STATUS_TOOL_NAME = "command_status"
 
 DEFAULT_TIMEOUT = 120.0
 DEFAULT_WAIT_MS_BEFORE_ASYNC = 500
-DEFAULT_MAX_OUTPUT_CHARS = 50000
 
 
 class CommandState(AgentState):
@@ -129,19 +128,16 @@ class CommandMiddleware(AgentMiddleware[CommandState]):
             runtime: ToolRuntime[CommandState],
             CommandId: str,
             WaitDurationSeconds: int = 0,
-            OutputCharacterCount: int = 10000,
         ) -> str:
             """Check status of a non-blocking command.
 
             Args:
                 CommandId: ID returned by run_command with Blocking=false
                 WaitDurationSeconds: Seconds to wait for completion (0 = immediate check)
-                OutputCharacterCount: Max characters to return
             """
             return await self._get_command_status(
                 command_id=CommandId,
                 wait_seconds=WaitDurationSeconds,
-                max_chars=OutputCharacterCount,
             )
 
         self._run_command_tool = run_command_tool
@@ -187,7 +183,7 @@ class CommandMiddleware(AgentMiddleware[CommandState]):
             return await self._execute_async(command_line, work_dir, timeout)
 
     async def _execute_blocking(self, command_line: str, work_dir: str | None, timeout: int | None) -> str:
-        """Execute blocking command."""
+        """Execute blocking command. SpillBuffer middleware handles oversized output."""
         timeout_secs = float(timeout) if timeout else self.default_timeout
         result = await self._executor.execute(
             command=command_line,
@@ -195,24 +191,7 @@ class CommandMiddleware(AgentMiddleware[CommandState]):
             timeout=timeout_secs,
             env=self.env,
         )
-        output = result.to_tool_result()
-
-        if len(output) <= DEFAULT_MAX_OUTPUT_CHARS:
-            return output
-
-        command_id = f"cmd_{uuid.uuid4().hex[:12]}"
-        self._executor.store_completed_result(
-            command_id=command_id,
-            command_line=command_line,
-            cwd=work_dir,
-            result=result,
-        )
-        return (
-            output[:DEFAULT_MAX_OUTPUT_CHARS]
-            + f"\n\n... (truncated, showing {DEFAULT_MAX_OUTPUT_CHARS} of {len(output)} chars)\n"
-            f"CommandId: {command_id}\n"
-            f"Use command_status with this CommandId to read the full output."
-        )
+        return result.to_tool_result()
 
     async def _execute_async(self, command_line: str, work_dir: str | None, timeout: int | None) -> str:
         """Execute async command."""
@@ -229,22 +208,13 @@ class CommandMiddleware(AgentMiddleware[CommandState]):
         if status and status.done:
             result = await self._executor.wait_for(async_cmd.command_id)
             if result:
-                output = result.to_tool_result()
-                return self._truncate_output(output, DEFAULT_MAX_OUTPUT_CHARS)
+                return result.to_tool_result()
 
         return (
             f"Command started in background.\n"
             f"CommandId: {async_cmd.command_id}\n"
             f"Use command_status tool to check progress."
         )
-
-    def _truncate_output(self, output: str, max_chars: int) -> str:
-        """Truncate output to last max_chars with truncation notice."""
-        if len(output) <= max_chars:
-            return output
-
-        truncated_lines = output[:-max_chars].count("\n")
-        return f"<truncated {truncated_lines} lines>\n{output[-max_chars:]}"
 
     def _clean_running_output(self, output: str, command_line: str) -> str:
         return normalize_pty_result(output, command_line)
@@ -261,7 +231,6 @@ class CommandMiddleware(AgentMiddleware[CommandState]):
         self,
         command_id: str,
         wait_seconds: int,
-        max_chars: int,
     ) -> str:
         """Get status of async command."""
         if wait_seconds > 0:
@@ -274,9 +243,8 @@ class CommandMiddleware(AgentMiddleware[CommandState]):
                         return f"Error: Command {command_id} not found"
                     combined_output = self._merge_running_output(status)
                     cleaned_output = self._clean_running_output(combined_output, status.command_line)
-                    current_output = self._truncate_output(cleaned_output, max_chars)
-                    return f"Status: running\nCommand: {status.command_line}\nOutput so far:\n{current_output}"
-                output = self._truncate_output(result.to_tool_result(), max_chars)
+                    return f"Status: running\nCommand: {status.command_line}\nOutput so far:\n{cleaned_output}"
+                output = result.to_tool_result()
                 return f"Status: done\nExit code: {result.exit_code}\n{output}"
 
         status = await self._executor.get_status(command_id)
@@ -286,13 +254,12 @@ class CommandMiddleware(AgentMiddleware[CommandState]):
         if status.done:
             result = await self._executor.wait_for(command_id)
             if result:
-                output = self._truncate_output(result.to_tool_result(), max_chars)
+                output = result.to_tool_result()
                 return f"Status: done\nExit code: {result.exit_code}\n{output}"
 
         combined_output = self._merge_running_output(status)
         cleaned_output = self._clean_running_output(combined_output, status.command_line)
-        current_output = self._truncate_output(cleaned_output, max_chars)
-        return f"Status: running\nCommand: {status.command_line}\nOutput so far:\n{current_output}"
+        return f"Status: running\nCommand: {status.command_line}\nOutput so far:\n{cleaned_output}"
 
     def before_agent(self, state: CommandState, runtime: Runtime) -> dict[str, Any] | None:
         return None
