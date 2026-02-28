@@ -174,8 +174,15 @@ class SubagentRunner:
         model_name = params.get("Model") or config.model or self.parent_model
 
         # Build model (unified path via init_chat_model)
-        model_kwargs = normalize_model_kwargs(model_name, self.model_kwargs)
-        model = init_chat_model(model_name, api_key=self.api_key, **model_kwargs)
+        try:
+            model_kwargs = normalize_model_kwargs(model_name, self.model_kwargs)
+            model = init_chat_model(model_name, api_key=self.api_key, **model_kwargs)
+        except Exception as e:
+            return TaskResult(
+                task_id=task_id,
+                status="error",
+                error=f"Failed to initialize model '{model_name}': {e}",
+            )
 
         # Build filtered middleware
         middleware = self._build_subagent_middleware(config, all_middleware)
@@ -192,13 +199,20 @@ class SubagentRunner:
         middleware_has_tools = any(getattr(m, "tools", None) for m in middleware)
         tools = [] if middleware_has_tools else [_placeholder_tool]
 
-        agent = create_agent(
-            model=model,
-            tools=tools,
-            system_prompt=system_prompt,
-            middleware=middleware,
-            checkpointer=checkpointer,
-        )
+        try:
+            agent = create_agent(
+                model=model,
+                tools=tools,
+                system_prompt=system_prompt,
+                middleware=middleware,
+                checkpointer=checkpointer,
+            )
+        except Exception as e:
+            return TaskResult(
+                task_id=task_id,
+                status="error",
+                error=f"Failed to create subagent: {e}",
+            )
 
         # Execute
         prompt = params["Prompt"]
@@ -258,8 +272,15 @@ class SubagentRunner:
         model_name = params.get("Model") or config.model or self.parent_model
 
         # Build model
-        model_kwargs = normalize_model_kwargs(model_name, self.model_kwargs)
-        model = init_chat_model(model_name, api_key=self.api_key, **model_kwargs)
+        try:
+            model_kwargs = normalize_model_kwargs(model_name, self.model_kwargs)
+            model = init_chat_model(model_name, api_key=self.api_key, **model_kwargs)
+        except Exception as e:
+            yield {
+                "event": "task_error",
+                "data": json.dumps({"task_id": task_id, "error": f"Failed to initialize model '{model_name}': {e}"}),
+            }
+            return
 
         # Build filtered middleware
         middleware = self._build_subagent_middleware(config, all_middleware)
@@ -275,13 +296,20 @@ class SubagentRunner:
         middleware_has_tools = any(getattr(m, "tools", None) for m in middleware)
         tools = [] if middleware_has_tools else [_placeholder_tool]
 
-        agent = create_agent(
-            model=model,
-            tools=tools,
-            system_prompt=system_prompt,
-            middleware=middleware,
-            checkpointer=checkpointer,
-        )
+        try:
+            agent = create_agent(
+                model=model,
+                tools=tools,
+                system_prompt=system_prompt,
+                middleware=middleware,
+                checkpointer=checkpointer,
+            )
+        except Exception as e:
+            yield {
+                "event": "task_error",
+                "data": json.dumps({"task_id": task_id, "error": f"Failed to create subagent: {e}"}),
+            }
+            return
 
         # Execute with streaming
         prompt = params["Prompt"]
