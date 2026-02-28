@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
+from storage.providers.supabase import _query
 
 
 class SupabaseThreadConfigRepo:
@@ -114,30 +115,8 @@ class SupabaseThreadConfigRepo:
 
     def _select_rows(self, thread_id: str, columns: str) -> list[dict[str, Any]]:
         response = self._table().select(columns).eq("thread_id", thread_id).execute()
-        return self._rows(response, "select thread config")
+        return _query.rows(response, "select thread config")
 
     def _table(self) -> Any:
         return self._client.table(self._TABLE)
 
-    def _rows(self, response: Any, operation: str) -> list[dict[str, Any]]:
-        if isinstance(response, dict):
-            payload = response.get("data")
-        else:
-            payload = getattr(response, "data", None)
-        if payload is None:
-            raise RuntimeError(
-                f"Supabase thread config repo expected `.data` payload for {operation}. "
-                "Check Supabase client compatibility."
-            )
-        if not isinstance(payload, list):
-            raise RuntimeError(
-                f"Supabase thread config repo expected list payload for {operation}, "
-                f"got {type(payload).__name__}."
-            )
-        for row in payload:
-            if not isinstance(row, dict):
-                raise RuntimeError(
-                    f"Supabase thread config repo expected dict row payload for {operation}, "
-                    f"got {type(row).__name__}."
-                )
-        return payload

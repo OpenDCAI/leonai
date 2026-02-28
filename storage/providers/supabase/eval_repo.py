@@ -6,6 +6,7 @@ from typing import Any
 from uuid import uuid4
 
 from eval.models import RunTrajectory
+from storage.providers.supabase import _query
 
 
 class SupabaseEvalRepo:
@@ -30,7 +31,7 @@ class SupabaseEvalRepo:
 
     def save_trajectory(self, trajectory: RunTrajectory, trajectory_json: str) -> str:
         run_id = trajectory.id
-        run_rows = self._rows(
+        run_rows = _query.rows(
             self._table("eval_runs").insert(
                 {
                     "id": run_id,
@@ -53,7 +54,7 @@ class SupabaseEvalRepo:
             )
 
         for call in trajectory.llm_calls:
-            rows = self._rows(
+            rows = _query.rows(
                 self._table("eval_llm_calls").insert(
                     {
                         "id": str(uuid4()),
@@ -76,7 +77,7 @@ class SupabaseEvalRepo:
                 )
 
         for call in trajectory.tool_calls:
-            rows = self._rows(
+            rows = _query.rows(
                 self._table("eval_tool_calls").insert(
                     {
                         "id": str(uuid4()),
@@ -101,7 +102,7 @@ class SupabaseEvalRepo:
         return run_id
 
     def save_metrics(self, run_id: str, tier: str, timestamp: str, metrics_json: str) -> None:
-        rows = self._rows(
+        rows = _query.rows(
             self._table("eval_metrics").insert(
                 {
                     "id": str(uuid4()),
@@ -121,8 +122,8 @@ class SupabaseEvalRepo:
 
     def get_trajectory_json(self, run_id: str) -> str | None:
         query = self._table("eval_runs").select("trajectory_json").eq("id", run_id)
-        query = self._limit(query, 1, "get_trajectory_json")
-        rows = self._rows(query.execute(), "get_trajectory_json")
+        query = _query.limit(query, 1, "get_trajectory_json")
+        rows = _query.rows(query.execute(), "get_trajectory_json")
         if not rows:
             return None
         trajectory_json = rows[0].get("trajectory_json")
@@ -140,9 +141,9 @@ class SupabaseEvalRepo:
         if thread_id:
             query = query.eq("thread_id", thread_id)
         # @@@eval-list-order - match SQLite path by returning newest started_at first.
-        query = self._order(query, "started_at", desc=True, operation="list_runs")
-        query = self._limit(query, limit, "list_runs")
-        rows = self._rows(query.execute(), "list_runs")
+        query = _query.order(query, "started_at", desc=True, operation="list_runs")
+        query = _query.limit(query, limit, "list_runs")
+        rows = _query.rows(query.execute(), "list_runs")
         result: list[dict] = []
         for row in rows:
             result.append(
@@ -161,7 +162,7 @@ class SupabaseEvalRepo:
         query = self._table("eval_metrics").select("id,tier,timestamp,metrics_json").eq("run_id", run_id)
         if tier:
             query = query.eq("tier", tier)
-        rows = self._rows(query.execute(), "get_metrics")
+        rows = _query.rows(query.execute(), "get_metrics")
         result: list[dict] = []
         for row in rows:
             result.append(
@@ -177,41 +178,5 @@ class SupabaseEvalRepo:
     def _table(self, table_name: str) -> Any:
         return self._client.table(table_name)
 
-    def _rows(self, response: Any, operation: str) -> list[dict[str, Any]]:
-        if isinstance(response, dict):
-            payload = response.get("data")
-        else:
-            payload = getattr(response, "data", None)
-        if payload is None:
-            raise RuntimeError(
-                f"Supabase eval repo expected `.data` payload for {operation}. "
-                "Check Supabase client compatibility."
-            )
-        if not isinstance(payload, list):
-            raise RuntimeError(
-                f"Supabase eval repo expected list payload for {operation}, "
-                f"got {type(payload).__name__}."
-            )
-        for row in payload:
-            if not isinstance(row, dict):
-                raise RuntimeError(
-                    f"Supabase eval repo expected dict row payload for {operation}, "
-                    f"got {type(row).__name__}."
-                )
-        return payload
 
-    def _order(self, query: Any, column: str, *, desc: bool, operation: str) -> Any:
-        if not hasattr(query, "order"):
-            raise RuntimeError(
-                f"Supabase eval repo expects query.order(column, desc=bool) support for {operation}. "
-                "Provide a supabase-py compatible query object."
-            )
-        return query.order(column, desc=desc)
 
-    def _limit(self, query: Any, value: int, operation: str) -> Any:
-        if not hasattr(query, "limit"):
-            raise RuntimeError(
-                f"Supabase eval repo expects query.limit(value) support for {operation}. "
-                "Provide a supabase-py compatible query object."
-            )
-        return query.limit(value)

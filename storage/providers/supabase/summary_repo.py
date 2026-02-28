@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
+from storage.providers.supabase import _query
 
 
 class SupabaseSummaryRepo:
@@ -56,7 +57,7 @@ class SupabaseSummaryRepo:
                 "created_at": created_at,
             }
         ).execute()
-        rows = self._rows(response, "save_summary")
+        rows = _query.rows(response, "save_summary")
         if not rows:
             raise RuntimeError(
                 "Supabase summary repo expected inserted row payload for save_summary. "
@@ -74,9 +75,9 @@ class SupabaseSummaryRepo:
             "summary_id,thread_id,summary_text,compact_up_to_index,compacted_at,"
             "is_split_turn,split_turn_prefix,is_active,created_at"
         ).eq("thread_id", thread_id).eq("is_active", True)
-        query = self._order(query, "created_at", desc=True, operation="get_latest_summary_row")
-        query = self._limit(query, 1, "get_latest_summary_row")
-        rows = self._rows(query.execute(), "get_latest_summary_row")
+        query = _query.order(query, "created_at", desc=True, operation="get_latest_summary_row")
+        query = _query.limit(query, 1, "get_latest_summary_row")
+        rows = _query.rows(query.execute(), "get_latest_summary_row")
         if not rows:
             return None
         return self._row_to_latest_summary(rows[0], "get_latest_summary_row")
@@ -85,8 +86,8 @@ class SupabaseSummaryRepo:
         query = self._table().select(
             "summary_id,thread_id,compact_up_to_index,compacted_at,is_split_turn,is_active,created_at"
         ).eq("thread_id", thread_id)
-        query = self._order(query, "created_at", desc=True, operation="list_summaries")
-        rows = self._rows(query.execute(), "list_summaries")
+        query = _query.order(query, "created_at", desc=True, operation="list_summaries")
+        rows = _query.rows(query.execute(), "list_summaries")
         return [self._row_to_summary_listing(row, "list_summaries") for row in rows]
 
     def delete_thread_summaries(self, thread_id: str) -> None:
@@ -95,44 +96,8 @@ class SupabaseSummaryRepo:
     def _table(self) -> Any:
         return self._client.table(self._TABLE)
 
-    def _rows(self, response: Any, operation: str) -> list[dict[str, Any]]:
-        if isinstance(response, dict):
-            payload = response.get("data")
-        else:
-            payload = getattr(response, "data", None)
-        if payload is None:
-            raise RuntimeError(
-                f"Supabase summary repo expected `.data` payload for {operation}. "
-                "Check Supabase client compatibility."
-            )
-        if not isinstance(payload, list):
-            raise RuntimeError(
-                f"Supabase summary repo expected list payload for {operation}, "
-                f"got {type(payload).__name__}."
-            )
-        for row in payload:
-            if not isinstance(row, dict):
-                raise RuntimeError(
-                    f"Supabase summary repo expected dict row payload for {operation}, "
-                    f"got {type(row).__name__}."
-                )
-        return payload
 
-    def _order(self, query: Any, column: str, *, desc: bool, operation: str) -> Any:
-        if not hasattr(query, "order"):
-            raise RuntimeError(
-                f"Supabase summary repo expects query.order(column, desc=bool) support for {operation}. "
-                "Provide a supabase-py compatible query object."
-            )
-        return query.order(column, desc=desc)
 
-    def _limit(self, query: Any, value: int, operation: str) -> Any:
-        if not hasattr(query, "limit"):
-            raise RuntimeError(
-                f"Supabase summary repo expects query.limit(value) support for {operation}. "
-                "Provide a supabase-py compatible query object."
-            )
-        return query.limit(value)
 
     def _row_to_latest_summary(self, row: dict[str, Any], operation: str) -> dict[str, Any]:
         summary_id = self._required(row, "summary_id", operation)

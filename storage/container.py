@@ -6,7 +6,6 @@ import importlib
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Literal
-import sqlite3
 
 from .contracts import (
     CheckpointRepo,
@@ -150,6 +149,7 @@ class StorageContainer:
         return SQLiteFileOperationRepo(db_path=self._main_db)
 
     def _sqlite_summary_repo(self) -> SummaryRepo:
+        import sqlite3
         from storage.providers.sqlite.summary_repo import SQLiteSummaryRepo
         return SQLiteSummaryRepo(
             db_path=self._main_db,

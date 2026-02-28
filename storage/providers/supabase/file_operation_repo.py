@@ -7,7 +7,8 @@ import time
 import uuid
 from typing import Any
 
-from storage.providers.sqlite.file_operation_repo import FileOperationRow
+from storage.models import FileOperationRow
+from storage.providers.supabase import _query
 
 
 class SupabaseFileOperationRepo:
@@ -57,7 +58,7 @@ class SupabaseFileOperationRepo:
                 "status": "applied",
             }
         ).execute()
-        rows = self._rows(response, "record")
+        rows = _query.rows(response, "record")
         if not rows:
             raise RuntimeError(
                 "Supabase file operation repo expected inserted row payload for record. "
@@ -73,28 +74,28 @@ class SupabaseFileOperationRepo:
 
     def get_operations_for_thread(self, thread_id: str, status: str = "applied") -> list[FileOperationRow]:
         query = self._table().select("*").eq("thread_id", thread_id).eq("status", status)
-        query = self._order(query, "timestamp", desc=False, operation="get_operations_for_thread")
-        rows = self._rows(query.execute(), "get_operations_for_thread")
+        query = _query.order(query, "timestamp", desc=False, operation="get_operations_for_thread")
+        rows = _query.rows(query.execute(), "get_operations_for_thread")
         return [self._row_to_operation(row, "get_operations_for_thread") for row in rows]
 
     def get_operations_after_checkpoint(self, thread_id: str, checkpoint_id: str) -> list[FileOperationRow]:
         checkpoint_query = self._table().select("timestamp").eq("thread_id", thread_id).eq("checkpoint_id", checkpoint_id)
-        checkpoint_query = self._order(
+        checkpoint_query = _query.order(
             checkpoint_query,
             "timestamp",
             desc=False,
             operation="get_operations_after_checkpoint checkpoint timestamp",
         )
-        checkpoint_query = self._limit(checkpoint_query, 1, "get_operations_after_checkpoint checkpoint timestamp")
-        checkpoint_rows = self._rows(
+        checkpoint_query = _query.limit(checkpoint_query, 1, "get_operations_after_checkpoint checkpoint timestamp")
+        checkpoint_rows = _query.rows(
             checkpoint_query.execute(),
             "get_operations_after_checkpoint checkpoint timestamp",
         )
 
         if not checkpoint_rows:
             query = self._table().select("*").eq("thread_id", thread_id).eq("status", "applied")
-            query = self._order(query, "timestamp", desc=True, operation="get_operations_after_checkpoint")
-            rows = self._rows(query.execute(), "get_operations_after_checkpoint")
+            query = _query.order(query, "timestamp", desc=True, operation="get_operations_after_checkpoint")
+            rows = _query.rows(query.execute(), "get_operations_after_checkpoint")
             return [self._row_to_operation(row, "get_operations_after_checkpoint") for row in rows]
 
         target_ts = checkpoint_rows[0].get("timestamp")
@@ -104,9 +105,9 @@ class SupabaseFileOperationRepo:
                 "Check file_operations table schema."
             )
         query = self._table().select("*").eq("thread_id", thread_id).eq("status", "applied")
-        query = self._gte(query, "timestamp", target_ts, "get_operations_after_checkpoint")
-        query = self._order(query, "timestamp", desc=True, operation="get_operations_after_checkpoint")
-        rows = self._rows(query.execute(), "get_operations_after_checkpoint")
+        query = _query.gte(query, "timestamp", target_ts, "get_operations_after_checkpoint")
+        query = _query.order(query, "timestamp", desc=True, operation="get_operations_after_checkpoint")
+        rows = _query.rows(query.execute(), "get_operations_after_checkpoint")
         return [self._row_to_operation(row, "get_operations_after_checkpoint") for row in rows]
 
     def get_operations_between_checkpoints(
@@ -116,8 +117,8 @@ class SupabaseFileOperationRepo:
         to_checkpoint_id: str,
     ) -> list[FileOperationRow]:
         query = self._table().select("*").eq("thread_id", thread_id).eq("status", "applied")
-        query = self._order(query, "timestamp", desc=True, operation="get_operations_between_checkpoints")
-        rows = self._rows(query.execute(), "get_operations_between_checkpoints")
+        query = _query.order(query, "timestamp", desc=True, operation="get_operations_between_checkpoints")
+        rows = _query.rows(query.execute(), "get_operations_between_checkpoints")
 
         result: list[FileOperationRow] = []
         found_target = False
@@ -135,19 +136,19 @@ class SupabaseFileOperationRepo:
 
     def get_operations_for_checkpoint(self, thread_id: str, checkpoint_id: str) -> list[FileOperationRow]:
         query = self._table().select("*").eq("thread_id", thread_id).eq("checkpoint_id", checkpoint_id).eq("status", "applied")
-        query = self._order(query, "timestamp", desc=False, operation="get_operations_for_checkpoint")
-        rows = self._rows(query.execute(), "get_operations_for_checkpoint")
+        query = _query.order(query, "timestamp", desc=False, operation="get_operations_for_checkpoint")
+        rows = _query.rows(query.execute(), "get_operations_for_checkpoint")
         return [self._row_to_operation(row, "get_operations_for_checkpoint") for row in rows]
 
     def count_operations_for_checkpoint(self, thread_id: str, checkpoint_id: str) -> int:
         query = self._table().select("id").eq("thread_id", thread_id).eq("checkpoint_id", checkpoint_id).eq("status", "applied")
-        rows = self._rows(query.execute(), "count_operations_for_checkpoint")
+        rows = _query.rows(query.execute(), "count_operations_for_checkpoint")
         return len(rows)
 
     def mark_reverted(self, operation_ids: list[str]) -> None:
         if not operation_ids:
             return
-        query = self._in_(
+        query = _query.in_(
             self._table().update({"status": "reverted"}),
             "id",
             operation_ids,
@@ -156,67 +157,14 @@ class SupabaseFileOperationRepo:
         query.execute()
 
     def delete_thread_operations(self, thread_id: str) -> int:
-        rows = self._rows(self._table().select("id").eq("thread_id", thread_id).execute(), "delete_thread_operations pre-count")
+        rows = _query.rows(self._table().select("id").eq("thread_id", thread_id).execute(), "delete_thread_operations pre-count")
         self._table().delete().eq("thread_id", thread_id).execute()
         return len(rows)
 
     def _table(self) -> Any:
         return self._client.table(self._TABLE)
 
-    def _rows(self, response: Any, operation: str) -> list[dict[str, Any]]:
-        if isinstance(response, dict):
-            payload = response.get("data")
-        else:
-            payload = getattr(response, "data", None)
-        if payload is None:
-            raise RuntimeError(
-                f"Supabase file operation repo expected `.data` payload for {operation}. "
-                "Check Supabase client compatibility."
-            )
-        if not isinstance(payload, list):
-            raise RuntimeError(
-                f"Supabase file operation repo expected list payload for {operation}, "
-                f"got {type(payload).__name__}."
-            )
-        for row in payload:
-            if not isinstance(row, dict):
-                raise RuntimeError(
-                    f"Supabase file operation repo expected dict row payload for {operation}, "
-                    f"got {type(row).__name__}."
-                )
-        return payload
 
-    def _in_(self, query: Any, column: str, values: list[str], operation: str) -> Any:
-        if not hasattr(query, "in_"):
-            raise RuntimeError(
-                f"Supabase file operation repo expects query.in_(column, values) support for {operation}. "
-                "Provide a supabase-py compatible query object."
-            )
-        return query.in_(column, values)
-
-    def _gte(self, query: Any, column: str, value: Any, operation: str) -> Any:
-        if not hasattr(query, "gte"):
-            raise RuntimeError(
-                f"Supabase file operation repo expects query.gte(column, value) support for {operation}. "
-                "Provide a supabase-py compatible query object."
-            )
-        return query.gte(column, value)
-
-    def _order(self, query: Any, column: str, *, desc: bool, operation: str) -> Any:
-        if not hasattr(query, "order"):
-            raise RuntimeError(
-                f"Supabase file operation repo expects query.order(column, desc=bool) support for {operation}. "
-                "Provide a supabase-py compatible query object."
-            )
-        return query.order(column, desc=desc)
-
-    def _limit(self, query: Any, value: int, operation: str) -> Any:
-        if not hasattr(query, "limit"):
-            raise RuntimeError(
-                f"Supabase file operation repo expects query.limit(value) support for {operation}. "
-                "Provide a supabase-py compatible query object."
-            )
-        return query.limit(value)
 
     def _row_to_operation(self, row: dict[str, Any], operation: str) -> FileOperationRow:
         op_id = row.get("id")
