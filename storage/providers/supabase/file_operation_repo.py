@@ -7,13 +7,15 @@ import time
 import uuid
 from typing import Any
 
-from storage.providers.sqlite.file_operation_repo import FileOperationRow
+from storage.models import FileOperationRow
+from storage.providers.supabase import _query as q
+
+_REPO = "file operation repo"
+_TABLE = "file_operations"
 
 
 class SupabaseFileOperationRepo:
     """Minimal file operation repository backed by a Supabase client."""
-
-    _TABLE = "file_operations"
 
     def __init__(self, client: Any) -> None:
         if client is None:
@@ -29,7 +31,6 @@ class SupabaseFileOperationRepo:
         self._client = client
 
     def close(self) -> None:
-        """Compatibility no-op with SQLiteFileOperationRepo."""
         return None
 
     def record(
@@ -43,7 +44,7 @@ class SupabaseFileOperationRepo:
         changes: list[dict] | None = None,
     ) -> str:
         op_id = str(uuid.uuid4())
-        response = self._table().insert(
+        response = self._t().insert(
             {
                 "id": op_id,
                 "thread_id": thread_id,
@@ -57,57 +58,59 @@ class SupabaseFileOperationRepo:
                 "status": "applied",
             }
         ).execute()
-        rows = self._rows(response, "record")
-        if not rows:
+        inserted = q.rows(response, _REPO, "record")
+        if not inserted:
             raise RuntimeError(
-                "Supabase file operation repo expected inserted row payload for record. "
-                "Check table permissions and Supabase client settings."
+                "Supabase file operation repo expected inserted row for record. "
+                "Check table permissions."
             )
-        inserted_id = rows[0].get("id")
+        inserted_id = inserted[0].get("id")
         if not inserted_id:
             raise RuntimeError(
-                "Supabase file operation repo expected inserted row with non-null id for record. "
+                "Supabase file operation repo expected non-null id in record response. "
                 "Check file_operations table schema."
             )
         return str(inserted_id)
 
     def get_operations_for_thread(self, thread_id: str, status: str = "applied") -> list[FileOperationRow]:
-        query = self._table().select("*").eq("thread_id", thread_id).eq("status", status)
-        query = self._order(query, "timestamp", desc=False, operation="get_operations_for_thread")
-        rows = self._rows(query.execute(), "get_operations_for_thread")
-        return [self._row_to_operation(row, "get_operations_for_thread") for row in rows]
+        query = q.order(
+            self._t().select("*").eq("thread_id", thread_id).eq("status", status),
+            "timestamp", desc=False, repo=_REPO, operation="get_operations_for_thread",
+        )
+        return [self._hydrate(row, "get_operations_for_thread") for row in q.rows(query.execute(), _REPO, "get_operations_for_thread")]
 
     def get_operations_after_checkpoint(self, thread_id: str, checkpoint_id: str) -> list[FileOperationRow]:
-        checkpoint_query = self._table().select("timestamp").eq("thread_id", thread_id).eq("checkpoint_id", checkpoint_id)
-        checkpoint_query = self._order(
-            checkpoint_query,
-            "timestamp",
-            desc=False,
-            operation="get_operations_after_checkpoint checkpoint timestamp",
-        )
-        checkpoint_query = self._limit(checkpoint_query, 1, "get_operations_after_checkpoint checkpoint timestamp")
-        checkpoint_rows = self._rows(
-            checkpoint_query.execute(),
-            "get_operations_after_checkpoint checkpoint timestamp",
+        ts_rows = q.rows(
+            q.limit(
+                q.order(
+                    self._t().select("timestamp").eq("thread_id", thread_id).eq("checkpoint_id", checkpoint_id),
+                    "timestamp", desc=False, repo=_REPO, operation="get_operations_after_checkpoint ts",
+                ),
+                1, _REPO, "get_operations_after_checkpoint ts",
+            ).execute(),
+            _REPO, "get_operations_after_checkpoint ts",
         )
 
-        if not checkpoint_rows:
-            query = self._table().select("*").eq("thread_id", thread_id).eq("status", "applied")
-            query = self._order(query, "timestamp", desc=True, operation="get_operations_after_checkpoint")
-            rows = self._rows(query.execute(), "get_operations_after_checkpoint")
-            return [self._row_to_operation(row, "get_operations_after_checkpoint") for row in rows]
-
-        target_ts = checkpoint_rows[0].get("timestamp")
-        if target_ts is None:
-            raise RuntimeError(
-                "Supabase file operation repo expected non-null timestamp in checkpoint lookup row. "
-                "Check file_operations table schema."
+        if not ts_rows:
+            query = q.order(
+                self._t().select("*").eq("thread_id", thread_id).eq("status", "applied"),
+                "timestamp", desc=True, repo=_REPO, operation="get_operations_after_checkpoint",
             )
-        query = self._table().select("*").eq("thread_id", thread_id).eq("status", "applied")
-        query = self._gte(query, "timestamp", target_ts, "get_operations_after_checkpoint")
-        query = self._order(query, "timestamp", desc=True, operation="get_operations_after_checkpoint")
-        rows = self._rows(query.execute(), "get_operations_after_checkpoint")
-        return [self._row_to_operation(row, "get_operations_after_checkpoint") for row in rows]
+        else:
+            target_ts = ts_rows[0].get("timestamp")
+            if target_ts is None:
+                raise RuntimeError(
+                    "Supabase file operation repo expected non-null timestamp in checkpoint ts lookup. "
+                    "Check file_operations table schema."
+                )
+            query = q.order(
+                q.gte(
+                    self._t().select("*").eq("thread_id", thread_id).eq("status", "applied"),
+                    "timestamp", target_ts, _REPO, "get_operations_after_checkpoint",
+                ),
+                "timestamp", desc=True, repo=_REPO, operation="get_operations_after_checkpoint",
+            )
+        return [self._hydrate(row, "get_operations_after_checkpoint") for row in q.rows(query.execute(), _REPO, "get_operations_after_checkpoint")]
 
     def get_operations_between_checkpoints(
         self,
@@ -115,130 +118,50 @@ class SupabaseFileOperationRepo:
         from_checkpoint_id: str,
         to_checkpoint_id: str,
     ) -> list[FileOperationRow]:
-        query = self._table().select("*").eq("thread_id", thread_id).eq("status", "applied")
-        query = self._order(query, "timestamp", desc=True, operation="get_operations_between_checkpoints")
-        rows = self._rows(query.execute(), "get_operations_between_checkpoints")
+        # @@@checkpoint-window-parity - mirror SQLite WHERE checkpoint_id != from_checkpoint_id at query level.
+        query = q.order(
+            self._t().select("*")
+                .eq("thread_id", thread_id)
+                .neq("checkpoint_id", from_checkpoint_id)
+                .eq("status", "applied"),
+            "timestamp", desc=True, repo=_REPO, operation="get_operations_between_checkpoints",
+        )
+        all_rows = q.rows(query.execute(), _REPO, "get_operations_between_checkpoints")
 
         result: list[FileOperationRow] = []
-        found_target = False
-        for row in rows:
-            checkpoint_id = row.get("checkpoint_id")
-            if checkpoint_id == from_checkpoint_id:
-                continue
-            if checkpoint_id == to_checkpoint_id:
-                found_target = True
-            # @@@checkpoint-window-order - preserve SQLite loop behavior: stop once the target checkpoint is seen in descending timeline.
-            if found_target:
+        for row in all_rows:
+            if row.get("checkpoint_id") == to_checkpoint_id:
                 break
-            result.append(self._row_to_operation(row, "get_operations_between_checkpoints"))
+            result.append(self._hydrate(row, "get_operations_between_checkpoints"))
         return result
 
     def get_operations_for_checkpoint(self, thread_id: str, checkpoint_id: str) -> list[FileOperationRow]:
-        query = self._table().select("*").eq("thread_id", thread_id).eq("checkpoint_id", checkpoint_id).eq("status", "applied")
-        query = self._order(query, "timestamp", desc=False, operation="get_operations_for_checkpoint")
-        rows = self._rows(query.execute(), "get_operations_for_checkpoint")
-        return [self._row_to_operation(row, "get_operations_for_checkpoint") for row in rows]
+        query = q.order(
+            self._t().select("*").eq("thread_id", thread_id).eq("checkpoint_id", checkpoint_id).eq("status", "applied"),
+            "timestamp", desc=False, repo=_REPO, operation="get_operations_for_checkpoint",
+        )
+        return [self._hydrate(row, "get_operations_for_checkpoint") for row in q.rows(query.execute(), _REPO, "get_operations_for_checkpoint")]
 
     def count_operations_for_checkpoint(self, thread_id: str, checkpoint_id: str) -> int:
-        query = self._table().select("id").eq("thread_id", thread_id).eq("checkpoint_id", checkpoint_id).eq("status", "applied")
-        rows = self._rows(query.execute(), "count_operations_for_checkpoint")
-        return len(rows)
+        query = self._t().select("id").eq("thread_id", thread_id).eq("checkpoint_id", checkpoint_id).eq("status", "applied")
+        return len(q.rows(query.execute(), _REPO, "count_operations_for_checkpoint"))
 
     def mark_reverted(self, operation_ids: list[str]) -> None:
         if not operation_ids:
             return
-        query = self._in_(
-            self._table().update({"status": "reverted"}),
-            "id",
-            operation_ids,
-            "mark_reverted",
-        )
-        query.execute()
+        q.in_(self._t().update({"status": "reverted"}), "id", operation_ids, _REPO, "mark_reverted").execute()
 
     def delete_thread_operations(self, thread_id: str) -> int:
-        rows = self._rows(self._table().select("id").eq("thread_id", thread_id).execute(), "delete_thread_operations pre-count")
-        self._table().delete().eq("thread_id", thread_id).execute()
-        return len(rows)
+        pre = q.rows(self._t().select("id").eq("thread_id", thread_id).execute(), _REPO, "delete_thread_operations")
+        self._t().delete().eq("thread_id", thread_id).execute()
+        return len(pre)
 
-    def _table(self) -> Any:
-        return self._client.table(self._TABLE)
+    def _t(self) -> Any:
+        return self._client.table(_TABLE)
 
-    def _rows(self, response: Any, operation: str) -> list[dict[str, Any]]:
-        if isinstance(response, dict):
-            payload = response.get("data")
-        else:
-            payload = getattr(response, "data", None)
-        if payload is None:
-            raise RuntimeError(
-                f"Supabase file operation repo expected `.data` payload for {operation}. "
-                "Check Supabase client compatibility."
-            )
-        if not isinstance(payload, list):
-            raise RuntimeError(
-                f"Supabase file operation repo expected list payload for {operation}, "
-                f"got {type(payload).__name__}."
-            )
-        for row in payload:
-            if not isinstance(row, dict):
-                raise RuntimeError(
-                    f"Supabase file operation repo expected dict row payload for {operation}, "
-                    f"got {type(row).__name__}."
-                )
-        return payload
-
-    def _in_(self, query: Any, column: str, values: list[str], operation: str) -> Any:
-        if not hasattr(query, "in_"):
-            raise RuntimeError(
-                f"Supabase file operation repo expects query.in_(column, values) support for {operation}. "
-                "Provide a supabase-py compatible query object."
-            )
-        return query.in_(column, values)
-
-    def _gte(self, query: Any, column: str, value: Any, operation: str) -> Any:
-        if not hasattr(query, "gte"):
-            raise RuntimeError(
-                f"Supabase file operation repo expects query.gte(column, value) support for {operation}. "
-                "Provide a supabase-py compatible query object."
-            )
-        return query.gte(column, value)
-
-    def _order(self, query: Any, column: str, *, desc: bool, operation: str) -> Any:
-        if not hasattr(query, "order"):
-            raise RuntimeError(
-                f"Supabase file operation repo expects query.order(column, desc=bool) support for {operation}. "
-                "Provide a supabase-py compatible query object."
-            )
-        return query.order(column, desc=desc)
-
-    def _limit(self, query: Any, value: int, operation: str) -> Any:
-        if not hasattr(query, "limit"):
-            raise RuntimeError(
-                f"Supabase file operation repo expects query.limit(value) support for {operation}. "
-                "Provide a supabase-py compatible query object."
-            )
-        return query.limit(value)
-
-    def _row_to_operation(self, row: dict[str, Any], operation: str) -> FileOperationRow:
-        op_id = row.get("id")
-        thread_id = row.get("thread_id")
-        checkpoint_id = row.get("checkpoint_id")
-        timestamp = row.get("timestamp")
-        operation_type = row.get("operation_type")
-        file_path = row.get("file_path")
-        after_content = row.get("after_content")
-        status = row.get("status")
-
-        required_fields = {
-            "id": op_id,
-            "thread_id": thread_id,
-            "checkpoint_id": checkpoint_id,
-            "timestamp": timestamp,
-            "operation_type": operation_type,
-            "file_path": file_path,
-            "after_content": after_content,
-            "status": status,
-        }
-        missing = [name for name, value in required_fields.items() if value is None]
+    def _hydrate(self, row: dict[str, Any], operation: str) -> FileOperationRow:
+        required = ("id", "thread_id", "checkpoint_id", "timestamp", "operation_type", "file_path", "after_content", "status")
+        missing = [f for f in required if row.get(f) is None]
         if missing:
             raise RuntimeError(
                 f"Supabase file operation repo expected non-null {', '.join(missing)} in {operation} row. "
@@ -248,52 +171,46 @@ class SupabaseFileOperationRepo:
         before_content = row.get("before_content")
         if before_content is not None and not isinstance(before_content, str):
             raise RuntimeError(
-                "Supabase file operation repo expected before_content to be str or null, "
-                f"got {type(before_content).__name__} in {operation} row."
+                f"Supabase file operation repo expected before_content to be str or null in {operation}, "
+                f"got {type(before_content).__name__}."
             )
 
-        changes_value = row.get("changes")
-        if changes_value in (None, ""):
+        changes_raw = row.get("changes")
+        if changes_raw in (None, ""):
             changes: list[dict[str, Any]] | None = None
-        elif isinstance(changes_value, str):
+        elif isinstance(changes_raw, str):
             try:
-                loaded = json.loads(changes_value)
+                loaded = json.loads(changes_raw)
             except json.JSONDecodeError as exc:
                 raise RuntimeError(
-                    "Supabase file operation repo expected valid JSON string payload in changes column. "
-                    f"Decode error: {exc}."
+                    f"Supabase file operation repo expected valid JSON in changes column ({operation}): {exc}."
                 ) from exc
-            if not isinstance(loaded, list):
+            if not isinstance(loaded, list) or not all(isinstance(i, dict) for i in loaded):
                 raise RuntimeError(
-                    "Supabase file operation repo expected changes JSON payload to decode to list, "
-                    f"got {type(loaded).__name__}."
-                )
-            if not all(isinstance(item, dict) for item in loaded):
-                raise RuntimeError(
-                    "Supabase file operation repo expected changes JSON payload items to be dict."
+                    f"Supabase file operation repo expected changes JSON to decode to list[dict] in {operation}."
                 )
             changes = loaded
-        elif isinstance(changes_value, list):
-            if not all(isinstance(item, dict) for item in changes_value):
+        elif isinstance(changes_raw, list):
+            if not all(isinstance(i, dict) for i in changes_raw):
                 raise RuntimeError(
-                    "Supabase file operation repo expected changes list payload items to be dict."
+                    f"Supabase file operation repo expected changes list items to be dict in {operation}."
                 )
-            changes = changes_value
+            changes = changes_raw
         else:
             raise RuntimeError(
-                "Supabase file operation repo expected changes to be list, JSON string, or null, "
-                f"got {type(changes_value).__name__} in {operation} row."
+                f"Supabase file operation repo expected changes to be list, JSON string, or null in {operation}, "
+                f"got {type(changes_raw).__name__}."
             )
 
         return FileOperationRow(
-            id=str(op_id),
-            thread_id=str(thread_id),
-            checkpoint_id=str(checkpoint_id),
-            timestamp=float(timestamp),
-            operation_type=str(operation_type),
-            file_path=str(file_path),
+            id=str(row["id"]),
+            thread_id=str(row["thread_id"]),
+            checkpoint_id=str(row["checkpoint_id"]),
+            timestamp=float(row["timestamp"]),
+            operation_type=str(row["operation_type"]),
+            file_path=str(row["file_path"]),
             before_content=before_content,
-            after_content=str(after_content),
+            after_content=str(row["after_content"]),
             changes=changes,
-            status=str(status),
+            status=str(row["status"]),
         )

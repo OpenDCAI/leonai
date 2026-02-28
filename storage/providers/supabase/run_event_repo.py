@@ -5,11 +5,14 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from storage.providers.supabase import _query as q
+
+_REPO = "run event repo"
+_TABLE = "run_events"
+
 
 class SupabaseRunEventRepo:
     """Minimal run event repository backed by a Supabase client."""
-
-    _TABLE = "run_events"
 
     def __init__(self, client: Any) -> None:
         if client is None:
@@ -25,7 +28,6 @@ class SupabaseRunEventRepo:
         self._client = client
 
     def close(self) -> None:
-        """Compatibility no-op with SQLiteRunEventRepo."""
         return None
 
     def append_event(
@@ -36,7 +38,7 @@ class SupabaseRunEventRepo:
         data: dict[str, Any],
         message_id: str | None = None,
     ) -> int:
-        response = self._table().insert(
+        response = self._t().insert(
             {
                 "thread_id": thread_id,
                 "run_id": run_id,
@@ -45,16 +47,16 @@ class SupabaseRunEventRepo:
                 "message_id": message_id,
             }
         ).execute()
-        rows = self._rows(response, "append_event")
-        if not rows:
+        inserted = q.rows(response, _REPO, "append_event")
+        if not inserted:
             raise RuntimeError(
-                "Supabase run event repo expected inserted row payload for append_event. "
-                "Check table permissions and Supabase client settings."
+                "Supabase run event repo expected inserted row for append_event. "
+                "Check table permissions."
             )
-        seq = rows[0].get("seq")
+        seq = inserted[0].get("seq")
         if seq is None:
             raise RuntimeError(
-                "Supabase run event repo expected inserted row with non-null seq for append_event. "
+                "Supabase run event repo expected non-null seq in append_event response. "
                 "Check run_events table schema."
             )
         return int(seq)
@@ -67,14 +69,20 @@ class SupabaseRunEventRepo:
         after: int = 0,
         limit: int = 200,
     ) -> list[dict[str, Any]]:
-        query = self._table().select("seq,event_type,data,message_id").eq("thread_id", thread_id).eq("run_id", run_id)
-        query = self._gt(query, "seq", after, "list_events")
-        query = self._order(query, "seq", desc=False, operation="list_events")
-        query = self._limit(query, limit, "list_events")
-        rows = self._rows(query.execute(), "list_events")
+        query = q.limit(
+            q.order(
+                q.gt(
+                    self._t().select("seq,event_type,data,message_id").eq("thread_id", thread_id).eq("run_id", run_id),
+                    "seq", after, _REPO, "list_events",
+                ),
+                "seq", desc=False, repo=_REPO, operation="list_events",
+            ),
+            limit, _REPO, "list_events",
+        )
+        raw_rows = q.rows(query.execute(), _REPO, "list_events")
 
         events: list[dict[str, Any]] = []
-        for row in rows:
+        for row in raw_rows:
             seq = row.get("seq")
             if seq is None:
                 raise RuntimeError(
@@ -83,51 +91,45 @@ class SupabaseRunEventRepo:
                 )
             payload = row.get("data")
             if payload in (None, ""):
-                parsed_payload: dict[str, Any] = {}
+                parsed: dict[str, Any] = {}
             elif isinstance(payload, str):
                 try:
                     loaded = json.loads(payload)
                 except json.JSONDecodeError as exc:
                     raise RuntimeError(
-                        "Supabase run event repo expected valid JSON string payload in list_events. "
-                        f"Decode error: {exc}."
+                        f"Supabase run event repo expected valid JSON in list_events data: {exc}."
                     ) from exc
                 if not isinstance(loaded, dict):
                     raise RuntimeError(
-                        "Supabase run event repo expected dict JSON payload in list_events row, "
-                        f"got {type(loaded).__name__}."
+                        f"Supabase run event repo expected dict JSON in list_events, got {type(loaded).__name__}."
                     )
-                parsed_payload = loaded
+                parsed = loaded
             elif isinstance(payload, dict):
-                parsed_payload = payload
+                parsed = payload
             else:
                 raise RuntimeError(
-                    "Supabase run event repo expected string or dict payload in list_events row, "
-                    f"got {type(payload).__name__}."
+                    f"Supabase run event repo expected str or dict data in list_events, got {type(payload).__name__}."
                 )
 
             message_id = row.get("message_id")
             if message_id is not None and not isinstance(message_id, str):
                 raise RuntimeError(
-                    "Supabase run event repo expected message_id to be str or null in list_events row, "
-                    f"got {type(message_id).__name__}."
+                    f"Supabase run event repo expected message_id to be str or null, got {type(message_id).__name__}."
                 )
-
-            events.append(
-                {
-                    "seq": int(seq),
-                    "event_type": str(row.get("event_type") or ""),
-                    "data": parsed_payload,
-                    "message_id": message_id,
-                }
-            )
+            events.append({
+                "seq": int(seq),
+                "event_type": str(row.get("event_type") or ""),
+                "data": parsed,
+                "message_id": message_id,
+            })
         return events
 
     def latest_seq(self, thread_id: str) -> int:
-        query = self._table().select("seq").eq("thread_id", thread_id)
-        query = self._order(query, "seq", desc=True, operation="latest_seq")
-        query = self._limit(query, 1, "latest_seq")
-        rows = self._rows(query.execute(), "latest_seq")
+        query = q.limit(
+            q.order(self._t().select("seq").eq("thread_id", thread_id), "seq", desc=True, repo=_REPO, operation="latest_seq"),
+            1, _REPO, "latest_seq",
+        )
+        rows = q.rows(query.execute(), _REPO, "latest_seq")
         if not rows:
             return 0
         seq = rows[0].get("seq")
@@ -139,104 +141,51 @@ class SupabaseRunEventRepo:
         return int(seq)
 
     def latest_run_id(self, thread_id: str) -> str | None:
-        query = self._table().select("run_id,seq").eq("thread_id", thread_id)
-        query = self._order(query, "seq", desc=True, operation="latest_run_id")
-        query = self._limit(query, 1, "latest_run_id")
-        rows = self._rows(query.execute(), "latest_run_id")
+        query = q.limit(
+            q.order(self._t().select("run_id,seq").eq("thread_id", thread_id), "seq", desc=True, repo=_REPO, operation="latest_run_id"),
+            1, _REPO, "latest_run_id",
+        )
+        rows = q.rows(query.execute(), _REPO, "latest_run_id")
         if not rows:
             return None
         run_id = rows[0].get("run_id")
         return str(run_id) if run_id else None
 
     def list_run_ids(self, thread_id: str) -> list[str]:
-        query = self._table().select("run_id,seq").eq("thread_id", thread_id)
-        query = self._order(query, "seq", desc=True, operation="list_run_ids")
-        rows = self._rows(query.execute(), "list_run_ids")
+        query = q.order(
+            self._t().select("run_id,seq").eq("thread_id", thread_id),
+            "seq", desc=True, repo=_REPO, operation="list_run_ids",
+        )
+        raw_rows = q.rows(query.execute(), _REPO, "list_run_ids")
 
         run_ids: list[str] = []
         seen: set[str] = set()
-        # @@@run-id-ordering - preserve SQLite ordering: latest sequence first, with duplicates removed by first sighting.
-        for row in rows:
+        # @@@run-id-ordering - latest seq first, deduped by first sighting.
+        for row in raw_rows:
             run_id = row.get("run_id")
             if not run_id:
                 continue
-            run_id_value = str(run_id)
-            if run_id_value in seen:
+            rid = str(run_id)
+            if rid in seen:
                 continue
-            seen.add(run_id_value)
-            run_ids.append(run_id_value)
+            seen.add(rid)
+            run_ids.append(rid)
         return run_ids
 
     def delete_runs(self, thread_id: str, run_ids: list[str]) -> int:
         if not run_ids:
             return 0
-
-        rows = self._rows(
-            self._in_(self._table().select("seq").eq("thread_id", thread_id), "run_id", run_ids, "delete_runs").execute(),
-            "delete_runs pre-count",
+        pre = q.rows(
+            q.in_(self._t().select("seq").eq("thread_id", thread_id), "run_id", run_ids, _REPO, "delete_runs").execute(),
+            _REPO, "delete_runs pre-count",
         )
-        self._in_(self._table().delete().eq("thread_id", thread_id), "run_id", run_ids, "delete_runs").execute()
-        return len(rows)
+        q.in_(self._t().delete().eq("thread_id", thread_id), "run_id", run_ids, _REPO, "delete_runs").execute()
+        return len(pre)
 
     def delete_thread_events(self, thread_id: str) -> int:
-        rows = self._rows(self._table().select("seq").eq("thread_id", thread_id).execute(), "delete_thread_events pre-count")
-        self._table().delete().eq("thread_id", thread_id).execute()
-        return len(rows)
+        pre = q.rows(self._t().select("seq").eq("thread_id", thread_id).execute(), _REPO, "delete_thread_events")
+        self._t().delete().eq("thread_id", thread_id).execute()
+        return len(pre)
 
-    def _table(self) -> Any:
-        return self._client.table(self._TABLE)
-
-    def _rows(self, response: Any, operation: str) -> list[dict[str, Any]]:
-        if isinstance(response, dict):
-            payload = response.get("data")
-        else:
-            payload = getattr(response, "data", None)
-        if payload is None:
-            raise RuntimeError(
-                f"Supabase run event repo expected `.data` payload for {operation}. "
-                "Check Supabase client compatibility."
-            )
-        if not isinstance(payload, list):
-            raise RuntimeError(
-                f"Supabase run event repo expected list payload for {operation}, "
-                f"got {type(payload).__name__}."
-            )
-        for row in payload:
-            if not isinstance(row, dict):
-                raise RuntimeError(
-                    f"Supabase run event repo expected dict row payload for {operation}, "
-                    f"got {type(row).__name__}."
-                )
-        return payload
-
-    def _in_(self, query: Any, column: str, values: list[str], operation: str) -> Any:
-        if not hasattr(query, "in_"):
-            raise RuntimeError(
-                f"Supabase run event repo expects query.in_(column, values) support for {operation}. "
-                "Provide a supabase-py compatible query object."
-            )
-        return query.in_(column, values)
-
-    def _gt(self, query: Any, column: str, value: int, operation: str) -> Any:
-        if not hasattr(query, "gt"):
-            raise RuntimeError(
-                f"Supabase run event repo expects query.gt(column, value) support for {operation}. "
-                "Provide a supabase-py compatible query object."
-            )
-        return query.gt(column, value)
-
-    def _order(self, query: Any, column: str, *, desc: bool, operation: str) -> Any:
-        if not hasattr(query, "order"):
-            raise RuntimeError(
-                f"Supabase run event repo expects query.order(column, desc=bool) support for {operation}. "
-                "Provide a supabase-py compatible query object."
-            )
-        return query.order(column, desc=desc)
-
-    def _limit(self, query: Any, value: int, operation: str) -> Any:
-        if not hasattr(query, "limit"):
-            raise RuntimeError(
-                f"Supabase run event repo expects query.limit(value) support for {operation}. "
-                "Provide a supabase-py compatible query object."
-            )
-        return query.limit(value)
+    def _t(self) -> Any:
+        return self._client.table(_TABLE)
