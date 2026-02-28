@@ -16,12 +16,8 @@ class RunRequest(BaseModel):
     model: str | None = None
 
 
-class SteerRequest(BaseModel):
+class SendMessageRequest(BaseModel):
     message: str
-
-
-class QueueModeRequest(BaseModel):
-    mode: str
 
 
 class TaskAgentRequest(BaseModel):

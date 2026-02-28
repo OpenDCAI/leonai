@@ -1,8 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import {
-  getQueueMode,
-  setQueueMode,
-  steerThread,
+  sendMessage,
   type ChatEntry,
 } from "../api";
 
@@ -16,7 +14,6 @@ interface AppActionsDeps {
 }
 
 export interface AppActionsState {
-  queueEnabled: boolean;
   computerOpen: boolean;
   computerTab: "terminal" | "files" | "agents";
   focusedAgentStepId: string | null;
@@ -39,7 +36,6 @@ export interface AppActionsSetters {
 export interface AppActionsHandlers {
   handleFocusAgent: (stepId: string) => void;
   handleSendQueueMessage: (message: string) => Promise<void>;
-  handleToggleQueue: () => Promise<void>;
 }
 
 export function useAppActions(deps: AppActionsDeps): AppActionsState & AppActionsSetters & AppActionsHandlers {
@@ -52,15 +48,6 @@ export function useAppActions(deps: AppActionsDeps): AppActionsState & AppAction
   const [searchOpen, setSearchOpen] = useState(false);
   const [sessionsOpen, setSessionsOpen] = useState(false);
   const [newThreadOpen, setNewThreadOpen] = useState(false);
-  const [queueEnabled, setQueueEnabled] = useState(false);
-
-  // Load queue mode from backend on mount
-  useEffect(() => {
-    if (!activeThreadId) return;
-    getQueueMode(activeThreadId)
-      .then((r) => setQueueEnabled(r.mode !== "steer"))
-      .catch(() => {});
-  }, [activeThreadId]);
 
   const handleFocusAgent = useCallback((stepId: string) => {
     setFocusedAgentStepId(stepId);
@@ -73,28 +60,17 @@ export function useAppActions(deps: AppActionsDeps): AppActionsState & AppAction
       if (!activeThreadId) return;
       const userEntry: ChatEntry = { id: makeId("user"), role: "user", content: message, timestamp: Date.now() };
       setEntries((prev) => [...prev, userEntry]);
-      await steerThread(activeThreadId, message);
+      // Server auto-routes: ACTIVE → steer, IDLE → new run
+      await sendMessage(activeThreadId, message);
     },
     [activeThreadId, setEntries],
   );
 
-  const handleToggleQueue = useCallback(async () => {
-    const next = !queueEnabled;
-    setQueueEnabled(next);
-    if (activeThreadId) {
-      try {
-        await setQueueMode(activeThreadId, next ? "followup" : "steer");
-      } catch {
-        // ignore -- backend may not support this yet
-      }
-    }
-  }, [activeThreadId, queueEnabled]);
-
   return {
-    queueEnabled, computerOpen, computerTab, focusedAgentStepId,
+    computerOpen, computerTab, focusedAgentStepId,
     sidebarCollapsed, searchOpen, sessionsOpen, newThreadOpen,
     setComputerOpen, setComputerTab, setFocusedAgentStepId,
     setSidebarCollapsed, setSearchOpen, setSessionsOpen, setNewThreadOpen,
-    handleFocusAgent, handleSendQueueMessage, handleToggleQueue,
+    handleFocusAgent, handleSendQueueMessage,
   };
 }

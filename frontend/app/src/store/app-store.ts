@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import type {
   Member, Task, ResourceItem, UserProfile,
-  MemberConfig, TaskStatus, Priority,
+  MemberConfig, TaskStatus,
 } from "./types";
 
 const API = "/api/panel";

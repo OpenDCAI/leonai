@@ -1,24 +1,47 @@
-"""Queue Mode types for message injection during agent execution"""
+"""Queue types — deprecated module.
 
-import time
-from dataclasses import dataclass, field
-from enum import Enum
+QueueMode and QueueMessage are deprecated. Message routing is now determined
+by send timing (inject for steer, enqueue/dequeue for followup), not by
+session-level mode declarations.
+"""
 
-
-class QueueMode(Enum):
-    """Message queue modes following OpenClaw semantics"""
-
-    STEER = "steer"
-    FOLLOWUP = "followup"
-    COLLECT = "collect"
-    STEER_BACKLOG = "steer_backlog"
-    INTERRUPT = "interrupt"
+import warnings
 
 
-@dataclass
-class QueueMessage:
-    """A queued user message"""
+def __getattr__(name: str):
+    if name == "QueueMode":
+        warnings.warn(
+            "QueueMode is deprecated and will be removed. "
+            "Use MessageQueueManager.inject() for steer and .enqueue() for followup.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        from enum import Enum
 
-    content: str
-    mode: QueueMode
-    timestamp: float = field(default_factory=time.time)
+        class QueueMode(Enum):
+            STEER = "steer"
+            FOLLOWUP = "followup"
+            COLLECT = "collect"
+            STEER_BACKLOG = "steer_backlog"
+            INTERRUPT = "interrupt"
+
+        return QueueMode
+
+    if name == "QueueMessage":
+        warnings.warn(
+            "QueueMessage is deprecated and will be removed.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        import time
+        from dataclasses import dataclass, field
+
+        @dataclass
+        class QueueMessage:
+            content: str
+            mode: object
+            timestamp: float = field(default_factory=time.time)
+
+        return QueueMessage
+
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

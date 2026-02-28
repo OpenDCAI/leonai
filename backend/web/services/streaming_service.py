@@ -168,9 +168,6 @@ async def _run_agent_to_buffer(
         config = {"configurable": {"thread_id": thread_id}}
         if hasattr(agent, "_current_model_config"):
             config["configurable"].update(agent._current_model_config)
-        from core.queue import get_queue_manager
-
-        config["configurable"]["queue_mode"] = get_queue_manager().get_mode(thread_id=thread_id).value
         set_current_thread_id(thread_id)
         # @@@web-run-context - web runs have no TUI checkpoint; use run_id to group file ops per run.
         set_current_run_id(run_id)
@@ -440,6 +437,18 @@ async def _run_agent_to_buffer(
             await stream_gen.aclose()
         if agent and hasattr(agent, "runtime") and agent.runtime.current_state == AgentState.ACTIVE:
             agent.runtime.transition(AgentState.IDLE)
+
+        # Consume followup queue: if messages are pending, start a new run
+        try:
+            from core.queue import get_queue_manager
+
+            followup = get_queue_manager().dequeue(thread_id)
+            if followup and app:
+                if hasattr(agent, "runtime") and agent.runtime.transition(AgentState.ACTIVE):
+                    start_agent_run(agent, thread_id, followup, app)
+        except Exception:
+            pass
+
         try:
             await cleanup_old_runs(thread_id, keep_latest=1, run_event_repo=run_event_repo)
         except Exception:

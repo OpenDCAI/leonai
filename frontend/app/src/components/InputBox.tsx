@@ -4,7 +4,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 interface InputBoxProps {
   disabled?: boolean;
   placeholder?: string;
-  queueEnabled?: boolean;
   isStreaming?: boolean;
   onSendMessage: (message: string) => Promise<void> | void;
   onSendQueueMessage?: (message: string) => Promise<void> | void;
@@ -14,7 +13,6 @@ interface InputBoxProps {
 export default function InputBox({
   disabled = false,
   placeholder = "告诉 Leon 你需要什么帮助...",
-  queueEnabled = false,
   isStreaming = false,
   onSendMessage,
   onSendQueueMessage,
@@ -83,7 +81,7 @@ export default function InputBox({
                   void handleSend();
                 }
               }}
-              placeholder={canSendQueue ? (queueEnabled ? "输入消息，将在当前任务完成后执行..." : "输入消息，将立即插入对话...") : placeholder}
+              placeholder={canSendQueue ? "输入消息，将立即插入对话..." : placeholder}
               className="w-full bg-transparent text-sm resize-none outline-none border-none text-[#171717] placeholder:text-[#a3a3a3] disabled:opacity-50"
               rows={1}
               style={{ boxShadow: "none", overflow: "hidden" }}

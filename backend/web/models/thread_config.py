@@ -9,6 +9,6 @@ class ThreadConfig(BaseModel):
     sandbox_type: str = "local"
     cwd: str | None = None
     model: str | None = None
-    queue_mode: str = "steer"
+    queue_mode: str = "steer"  # Deprecated: kept for SQLite schema compat, not read/written
     observation_provider: str | None = None  # "langfuse" | "langsmith" | None
     agent: str | None = None  # Member name for this thread

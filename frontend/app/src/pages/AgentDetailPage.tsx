@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
   ArrowLeft, Bot, FileText, Wrench, Plug, Zap, Users, BookOpen,
-  Play, Tag, History, Save, Plus, Trash2, Search, X, Check,
+  Play, Tag, Save, Plus, Trash2, Search, X, Check,
 } from "lucide-react";
 import TestPanel from "@/components/TestPanel";
 import PublishDialog from "@/components/PublishDialog";
@@ -11,9 +11,8 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { useIsMobile } from "@/hooks/use-mobile";
 import { useAppStore } from "@/store/app-store";
-import type { CrudItem, SubAgent, RuleItem, McpItem, ResourceItem } from "@/store/types";
+import type { CrudItem, RuleItem, ResourceItem } from "@/store/types";
 
 // ==================== Types ====================
 
@@ -40,7 +39,6 @@ const modules: ModuleDef[] = [
 export default function AgentDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const isMobile = useIsMobile();
   const [showTest, setShowTest] = useState(false);
   const [showPublish, setShowPublish] = useState(false);
   const [activeModule, setActiveModule] = useState<ModuleId>("prompt");
@@ -233,8 +231,8 @@ export default function AgentDetail() {
         </div>
       </div>
 
-      {showTest && <TestPanel agentId={member.id} onClose={() => setShowTest(false)} />}
-      {showPublish && <PublishDialog agentId={member.id} onClose={() => setShowPublish(false)} />}
+      {showTest && <TestPanel memberName={member.name} onClose={() => setShowTest(false)} />}
+      {showPublish && <PublishDialog open={showPublish} onOpenChange={setShowPublish} memberId={member.id} />}
       {pickerType && (
         <ResourcePicker
           type={pickerType}
