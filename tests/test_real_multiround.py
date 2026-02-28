@@ -15,18 +15,29 @@ import os
 import sys
 from pathlib import Path
 
-project_root = Path(__file__).parent
-sys.path.insert(0, str(project_root))
+import pytest
 
-env_file = project_root / ".env"
-if env_file.exists():
-    for line in env_file.read_text().splitlines():
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            key, value = line.split("=", 1)
-            os.environ[key] = value
+pytestmark = pytest.mark.skipif(
+    not os.getenv("LEON_E2E_AGENT"),
+    reason="LEON_E2E_AGENT not set (requires working LLM API key for real agent calls)",
+)
 
-from agent import create_leon_agent
+# Guard: only load heavy agent module when actually running e2e
+if not os.getenv("LEON_E2E_AGENT"):
+    create_leon_agent = None  # type: ignore[assignment]
+else:
+    project_root = Path(__file__).parent
+    sys.path.insert(0, str(project_root))
+
+    env_file = project_root / ".env"
+    if env_file.exists():
+        for line in env_file.read_text().splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                key, value = line.split("=", 1)
+                os.environ[key] = value
+
+    from agent import create_leon_agent
 
 
 class Colors:

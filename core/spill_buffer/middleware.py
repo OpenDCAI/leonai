@@ -42,11 +42,15 @@ class SpillBufferMiddleware(AgentMiddleware):
 
     def __init__(
         self,
-        fs_backend: FileSystemBackend,
-        workspace_root: str | Path,
+        fs_backend: FileSystemBackend | None = None,
+        workspace_root: str | Path = "",
         thresholds: dict[str, int] | None = None,
         default_threshold: int = 50_000,
     ) -> None:
+        if fs_backend is None:
+            from core.filesystem.local_backend import LocalBackend
+
+            fs_backend = LocalBackend()
         self.fs_backend = fs_backend
         self.workspace_root = str(workspace_root)
         self.thresholds: dict[str, int] = thresholds or {}
