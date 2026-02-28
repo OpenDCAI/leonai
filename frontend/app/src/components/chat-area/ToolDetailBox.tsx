@@ -51,7 +51,7 @@ export const ToolDetailBox = memo(function ToolDetailBox({
     >
       <div
         ref={scrollRef}
-        className="max-h-[80px] overflow-y-auto detail-box-scroll detail-box-mask px-2.5 py-1.5"
+        className="relative z-[1] max-h-[80px] overflow-y-auto detail-box-scroll detail-box-mask px-2.5 py-1.5"
       >
         <div className="flex flex-col gap-0.5">
           {toolSegments.map((seg) => {
