@@ -244,6 +244,18 @@ async def _run_agent_to_buffer(
         except Exception as obs_err:
             print(f"[streaming_service] Observation handler error: {obs_err}")
 
+        # Real-time activity event callback (replaces post-hoc batch drain)
+        activity_queue: asyncio.Queue[dict] = asyncio.Queue(maxsize=1000)
+
+        def on_activity_event(event: dict) -> None:
+            try:
+                activity_queue.put_nowait(event)
+            except asyncio.QueueFull:
+                pass  # Backpressure: drop under overload
+
+        if hasattr(agent, "runtime"):
+            agent.runtime.set_event_callback(on_activity_event)
+
         if hasattr(agent, "_sandbox"):
             await prime_sandbox(agent, thread_id)
 
@@ -362,19 +374,13 @@ async def _run_agent_to_buffer(
                                     }
                                 )
 
-        # Forward sub-agent events
-        if hasattr(agent, "runtime"):
-            for tool_call_id, events in agent.runtime.get_pending_subagent_events():
-                for event in events:
-                    event_type = event.get("event", "")
-                    event_data = json.loads(event.get("data", "{}"))
-                    event_data["parent_tool_call_id"] = tool_call_id
-                    await emit(
-                        {
-                            "event": f"subagent_{event_type}",
-                            "data": json.dumps(event_data, ensure_ascii=False),
-                        }
-                    )
+            # Drain real-time activity events (sub-agent, command progress, etc.)
+            while not activity_queue.empty():
+                try:
+                    act_event = activity_queue.get_nowait()
+                    await emit(act_event)
+                except asyncio.QueueEmpty:
+                    break
 
         # Final status
         if hasattr(agent, "runtime"):
@@ -420,6 +426,9 @@ async def _run_agent_to_buffer(
         traceback.print_exc()
         await emit({"event": "error", "data": json.dumps({"error": str(e)}, ensure_ascii=False)})
     finally:
+        # Detach event callback to avoid leaking references
+        if hasattr(agent, "runtime"):
+            agent.runtime.set_event_callback(None)
         # Flush observation handler
         if obs_handler is not None:
             try:
