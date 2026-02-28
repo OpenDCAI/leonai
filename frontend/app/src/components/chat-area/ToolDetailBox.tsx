@@ -39,7 +39,7 @@ export const ToolDetailBox = memo(function ToolDetailBox({
   }, [toolSegments.length]);
 
   const firstStepId = toolSegments[0]?.step.id;
-  const hasRunning = toolSegments.some((s) => s.step.status === "calling");
+  const hasRunning = isStreaming || toolSegments.some((s) => s.step.status === "calling");
 
   return (
     <div
