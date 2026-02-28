@@ -26,6 +26,9 @@ export default function ComputerPanel({
   onFocusAgent,
   focusedStepId = null,
   onFocusStep,
+  activities = [],
+  onCancelCommand,
+  onCancelTask,
 }: ComputerPanelProps) {
   const [internalTab, setInternalTab] = useState<TabType>("terminal");
   const activeTab = controlledTab ?? internalTab;
@@ -107,8 +110,11 @@ export default function ComputerPanel({
         {activeTab === "steps" && (
           <StepsView
             steps={allSteps}
+            activities={activities}
             focusedStepId={focusedStepId}
             onFocusStep={(id) => onFocusStep?.(id)}
+            onCancelCommand={onCancelCommand}
+            onCancelTask={onCancelTask}
           />
         )}
       </div>

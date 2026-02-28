@@ -1,16 +1,28 @@
-import { CheckCircle2, Loader2, XCircle } from "lucide-react";
+import { CheckCircle2, Loader2, Square, XCircle } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ToolStep } from "../../api";
+import type { Activity, ToolStep } from "../../api";
 import { DEFAULT_BADGE, TOOL_BADGE_STYLES } from "../chat-area/constants";
 import { getToolRenderer } from "../tool-renderers";
 
+const ACTIVITY_VISIBLE_AFTER_DONE_MS = 30_000;
+
 interface StepsViewProps {
   steps: ToolStep[];
+  activities: Activity[];
   focusedStepId: string | null;
   onFocusStep: (id: string | null) => void;
+  onCancelCommand?: (commandId: string) => void;
+  onCancelTask?: (taskId: string) => void;
 }
 
-export function StepsView({ steps, focusedStepId, onFocusStep }: StepsViewProps) {
+export function StepsView({
+  steps,
+  activities,
+  focusedStepId,
+  onFocusStep,
+  onCancelCommand,
+  onCancelTask,
+}: StepsViewProps) {
   const detailRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const [leftWidth, setLeftWidth] = useState(320);
@@ -22,6 +34,11 @@ export function StepsView({ steps, focusedStepId, onFocusStep }: StepsViewProps)
 
   // Newest first for the list
   const reversedSteps = [...steps].reverse();
+
+  // Filter activities: show running ones + recently completed (within 30s)
+  const visibleActivities = activities.filter(
+    (a) => a.status === "running" || Date.now() - a.startTime < ACTIVITY_VISIBLE_AFTER_DONE_MS,
+  );
 
   // Auto-scroll list to focused item
   useEffect(() => {
@@ -63,7 +80,7 @@ export function StepsView({ steps, focusedStepId, onFocusStep }: StepsViewProps)
     };
   }, [isDragging]);
 
-  if (steps.length === 0) {
+  if (steps.length === 0 && visibleActivities.length === 0) {
     return (
       <div className="h-full flex items-center justify-center text-sm text-[#a3a3a3]">
         暂无工具调用
@@ -84,6 +101,14 @@ export function StepsView({ steps, focusedStepId, onFocusStep }: StepsViewProps)
           </div>
         </div>
         <div ref={listRef} className="flex-1 overflow-y-auto">
+          {/* Running Activities section */}
+          {visibleActivities.length > 0 && (
+            <ActivitySection
+              activities={visibleActivities}
+              onCancelCommand={onCancelCommand}
+              onCancelTask={onCancelTask}
+            />
+          )}
           {reversedSteps.map((step) => (
             <StepListItem
               key={step.id}
@@ -130,6 +155,100 @@ export function StepsView({ steps, focusedStepId, onFocusStep }: StepsViewProps)
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+/* -- Activity section -- */
+
+function ActivitySection({
+  activities,
+  onCancelCommand,
+  onCancelTask,
+}: {
+  activities: Activity[];
+  onCancelCommand?: (commandId: string) => void;
+  onCancelTask?: (taskId: string) => void;
+}) {
+  return (
+    <div className="border-b border-[#e5e5e5]">
+      <div className="px-3 py-1.5 bg-[#fafafa]">
+        <div className="text-[10px] text-[#a3a3a3] font-medium uppercase tracking-wide">
+          Running Activities
+        </div>
+      </div>
+      {activities.map((activity) => (
+        <ActivityItem
+          key={activity.id}
+          activity={activity}
+          onCancel={() => {
+            if (activity.type === "command" && activity.commandId) {
+              onCancelCommand?.(activity.commandId);
+            } else if (activity.type === "background_task" && activity.taskId) {
+              onCancelTask?.(activity.taskId);
+            }
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
+function ActivityStatusIcon({ status }: { status: Activity["status"] }) {
+  switch (status) {
+    case "running":
+      return <Loader2 className="w-3.5 h-3.5 text-blue-500 animate-spin flex-shrink-0" />;
+    case "done":
+      return <CheckCircle2 className="w-3.5 h-3.5 text-green-500 flex-shrink-0" />;
+    case "error":
+      return <XCircle className="w-3.5 h-3.5 text-red-500 flex-shrink-0" />;
+    case "cancelled":
+      return <XCircle className="w-3.5 h-3.5 text-[#a3a3a3] flex-shrink-0" />;
+  }
+}
+
+function formatRelativeTime(startTime: number): string {
+  const elapsed = Math.floor((Date.now() - startTime) / 1000);
+  if (elapsed < 60) return `${elapsed}s ago`;
+  const mins = Math.floor(elapsed / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  return `${hours}h ago`;
+}
+
+function ActivityItem({
+  activity,
+  onCancel,
+}: {
+  activity: Activity;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="px-3 py-2 border-b border-[#f5f5f5] bg-[#fefefe]">
+      <div className="flex items-center gap-2">
+        <ActivityStatusIcon status={activity.status} />
+        <span className="text-[11px] font-mono text-[#525252] truncate flex-1 min-w-0">
+          {activity.label}
+        </span>
+        {activity.status === "running" ? (
+          <button
+            onClick={onCancel}
+            className="flex-shrink-0 p-0.5 rounded hover:bg-red-50 text-red-400 hover:text-red-600 transition-colors"
+            title="Cancel"
+          >
+            <Square className="w-3 h-3" />
+          </button>
+        ) : (
+          <span className="text-[10px] text-[#a3a3a3] flex-shrink-0">
+            {formatRelativeTime(activity.startTime)}
+          </span>
+        )}
+      </div>
+      {activity.outputPreview && (
+        <pre className="mt-1 ml-5.5 text-[10px] text-[#737373] font-mono truncate max-w-full overflow-hidden">
+          {activity.outputPreview.slice(-200)}
+        </pre>
+      )}
     </div>
   );
 }
