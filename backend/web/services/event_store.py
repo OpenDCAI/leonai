@@ -13,14 +13,12 @@ from core.storage.runtime import build_storage_container
 _DB_PATH = Path.home() / ".leon" / "leon.db"
 _default_run_event_repo: RunEventRepo | None = None
 _default_run_event_repo_path: Path | None = None
-
-# Single async connection, lazily created, serialises all writes via the event loop.
-# NOTE: assumes single uvicorn worker. Multi-worker (--workers > 1) needs a connection pool.
 _conn: aiosqlite.Connection | None = None
 _lock = asyncio.Lock()
 
 
 async def _get_conn() -> aiosqlite.Connection:
+    """Legacy async sqlite connector kept for test/runtime compatibility."""
     global _conn
     if _conn is not None:
         return _conn
@@ -35,7 +33,7 @@ async def _get_conn() -> aiosqlite.Connection:
 
 
 def init_event_store() -> None:
-    """Create the run_events table if it doesn't exist (sync, called once at import)."""
+    """Initialize run event storage for current provider strategy."""
     global _default_run_event_repo, _default_run_event_repo_path
     if _default_run_event_repo is not None:
         close_fn = getattr(_default_run_event_repo, "close", None)
@@ -43,26 +41,25 @@ def init_event_store() -> None:
             close_fn()
     _default_run_event_repo = None
     _default_run_event_repo_path = None
+
+    container = build_storage_container(main_db_path=_DB_PATH)
+    provider = container.provider_for("run_event_repo")
+    if provider != "sqlite":
+        return
+
     _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(_DB_PATH))
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
-    conn.executescript(
-        """
-        CREATE TABLE IF NOT EXISTS run_events (
-            seq        INTEGER PRIMARY KEY AUTOINCREMENT,
-            thread_id  TEXT NOT NULL,
-            run_id     TEXT NOT NULL,
-            event_type TEXT NOT NULL,
-            data       TEXT NOT NULL,
-            message_id TEXT,
-            created_at TEXT DEFAULT (datetime('now'))
-        );
-        CREATE INDEX IF NOT EXISTS idx_run_events_thread_run
-        ON run_events (thread_id, run_id, seq);
-        """
-    )
     conn.close()
+    repo_factory = getattr(container, "run_event_repo", None)
+    if not callable(repo_factory):
+        raise RuntimeError("StorageContainer must expose callable run_event_repo().")
+    # @@@sqlite-init-via-provider - create run_events schema through sqlite provider construction instead of ad-hoc SQL path.
+    repo = repo_factory()
+    close_fn = getattr(repo, "close", None)
+    if callable(close_fn):
+        close_fn()
 
 
 def _resolve_run_event_repo(run_event_repo: RunEventRepo | None) -> RunEventRepo:
