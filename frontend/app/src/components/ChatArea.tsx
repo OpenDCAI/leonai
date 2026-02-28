@@ -9,11 +9,10 @@ interface ChatAreaProps {
   isStreaming: boolean;
   runtimeStatus: StreamStatus | null;
   loading?: boolean;
-  onFocusAgent?: (stepId: string) => void;
   onFocusStep?: (stepId: string) => void;
 }
 
-export default function ChatArea({ entries, isStreaming: _isStreaming, runtimeStatus, loading, onFocusAgent, onFocusStep }: ChatAreaProps) {
+export default function ChatArea({ entries, isStreaming: _isStreaming, runtimeStatus, loading, onFocusStep }: ChatAreaProps) {
   const containerRef = useStickyScroll<HTMLDivElement>();
 
   return (
@@ -34,7 +33,6 @@ export default function ChatArea({ entries, isStreaming: _isStreaming, runtimeSt
                 entry={assistantEntry}
                 isStreamingThis={isStreamingThis}
                 runtimeStatus={isStreamingThis ? runtimeStatus : null}
-                onFocusAgent={onFocusAgent}
                 onFocusStep={onFocusStep}
               />
             );

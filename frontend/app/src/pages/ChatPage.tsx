@@ -127,7 +127,6 @@ function ChatPageInner({ threadId }: { threadId: string }) {
             isStreaming={isStreaming}
             runtimeStatus={runtimeStatus}
             loading={loading}
-            onFocusAgent={handleFocusAgent}
             onFocusStep={handleFocusStep}
           />
           <TaskProgress
