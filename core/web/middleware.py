@@ -56,6 +56,7 @@ class WebMiddleware(AgentMiddleware):
         max_search_results: int = 5,
         timeout: int = 15,
         enabled_tools: dict[str, bool] | None = None,
+        extraction_model: Any = None,
         verbose: bool = True,
     ):
         """
@@ -69,12 +70,14 @@ class WebMiddleware(AgentMiddleware):
             fetch_limits: Fetch 限制配置
             max_search_results: 最大搜索结果数
             timeout: 请求超时时间
+            extraction_model: ChatModel for AI extraction (e.g. leon:mini resolved instance)
             verbose: 是否输出详细日志
         """
         self.fetch_limits = fetch_limits or FetchLimits()
         self.max_search_results = max_search_results
         self.timeout = timeout
         self.enabled_tools = enabled_tools or {"web_search": True, "Fetch": True}
+        self._extraction_model = extraction_model
         self.verbose = verbose
 
         self._searchers: list[tuple[str, Any]] = []
@@ -165,10 +168,11 @@ class WebMiddleware(AgentMiddleware):
     async def _ai_extract(self, content: str, prompt: str, url: str) -> str:
         """Use a small model to extract information from web content."""
         try:
-            from langchain.chat_models import init_chat_model
+            model = self._extraction_model
+            if model is None:
+                from langchain.chat_models import init_chat_model
 
-            # Use a small, fast model for extraction
-            model = init_chat_model("gpt-4o-mini", model_provider="openai")
+                model = init_chat_model("gpt-4o-mini", model_provider="openai")
 
             extraction_prompt = (
                 f"You are extracting information from a web page.\n"
