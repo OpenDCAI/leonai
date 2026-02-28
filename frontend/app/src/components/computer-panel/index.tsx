@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ComputerPanelProps, TabType } from "./types";
-import { extractAgentSteps, extractCommandSteps } from "./utils";
+import { extractAgentSteps, extractAllToolSteps, extractCommandSteps } from "./utils";
 import { useSandboxStatus } from "./use-sandbox-status";
 import { useFileExplorer } from "./use-file-explorer";
 import { useResizable } from "./use-resizable";
@@ -8,6 +8,7 @@ import { PanelHeader } from "./PanelHeader";
 import { TabBar } from "./TabBar";
 import { TerminalView } from "./TerminalView";
 import { AgentsView } from "./AgentsView";
+import { StepsView } from "./StepsView";
 import { FilesView } from "./FilesView";
 
 export type { ComputerPanelProps };
@@ -23,6 +24,8 @@ export default function ComputerPanel({
   onTabChange,
   focusedAgentStepId = null,
   onFocusAgent,
+  focusedStepId = null,
+  onFocusStep,
 }: ComputerPanelProps) {
   const [internalTab, setInternalTab] = useState<TabType>("terminal");
   const activeTab = controlledTab ?? internalTab;
@@ -31,6 +34,7 @@ export default function ComputerPanel({
   const isRemote = sandboxType !== null && sandboxType !== "local";
   const commandSteps = useMemo(() => extractCommandSteps(chatEntries), [chatEntries]);
   const agentSteps = useMemo(() => extractAgentSteps(chatEntries), [chatEntries]);
+  const allSteps = useMemo(() => extractAllToolSteps(chatEntries), [chatEntries]);
   const { width: treeWidth, onMouseDown: onDragStart } = useResizable(288, 160, 500);
 
   const { lease, statusError: _statusError, refreshStatus } = useSandboxStatus({ threadId, isRemote });
@@ -97,6 +101,14 @@ export default function ComputerPanel({
             onDragStart={onDragStart}
             onToggleFolder={fileExplorer.handleToggleFolder}
             onSelectFile={fileExplorer.handleSelectFile}
+          />
+        )}
+
+        {activeTab === "steps" && (
+          <StepsView
+            steps={allSteps}
+            focusedStepId={focusedStepId}
+            onFocusStep={(id) => onFocusStep?.(id)}
           />
         )}
       </div>

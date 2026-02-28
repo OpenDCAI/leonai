@@ -1,6 +1,6 @@
 import type { ChatEntry, LeaseStatus, SessionStatus, TerminalStatus } from "../../api";
 
-export type TabType = "terminal" | "files" | "agents";
+export type TabType = "terminal" | "files" | "agents" | "steps";
 
 export interface ComputerPanelProps {
   isOpen: boolean;
@@ -13,6 +13,8 @@ export interface ComputerPanelProps {
   onTabChange?: (tab: TabType) => void;
   focusedAgentStepId?: string | null;
   onFocusAgent?: (stepId: string | null) => void;
+  focusedStepId?: string | null;
+  onFocusStep?: (stepId: string | null) => void;
 }
 
 export interface TreeNode {
