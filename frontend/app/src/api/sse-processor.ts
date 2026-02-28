@@ -5,6 +5,8 @@ const VALID_EVENT_TYPES = new Set<StreamEventType>([
   "task_start", "task_text", "task_tool_call", "task_tool_result", "task_done", "task_error",
   "subagent_task_start", "subagent_task_text", "subagent_task_tool_call",
   "subagent_task_tool_result", "subagent_task_done", "subagent_task_error",
+  "background_task_start", "background_task_text", "background_task_done", "background_task_error",
+  "command_progress",
 ]);
 
 function normalizeStreamType(raw: string): StreamEventType {
