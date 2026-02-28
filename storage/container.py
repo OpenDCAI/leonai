@@ -22,12 +22,12 @@ RepoProviderMap = Mapping[str, str]
 
 # @@@repo-registry - maps repo name → (supabase module path, class name) for generic dispatch.
 _REPO_REGISTRY: dict[str, tuple[str, str]] = {
-    "checkpoint_repo":     ("core.storage.providers.supabase.checkpoint_repo",     "SupabaseCheckpointRepo"),
-    "thread_config_repo":  ("core.storage.providers.supabase.thread_config_repo",  "SupabaseThreadConfigRepo"),
-    "run_event_repo":      ("core.storage.providers.supabase.run_event_repo",       "SupabaseRunEventRepo"),
-    "file_operation_repo": ("core.storage.providers.supabase.file_operation_repo", "SupabaseFileOperationRepo"),
-    "summary_repo":        ("core.storage.providers.supabase.summary_repo",        "SupabaseSummaryRepo"),
-    "eval_repo":           ("core.storage.providers.supabase.eval_repo",           "SupabaseEvalRepo"),
+    "checkpoint_repo":     ("storage.providers.supabase.checkpoint_repo",     "SupabaseCheckpointRepo"),
+    "thread_config_repo":  ("storage.providers.supabase.thread_config_repo",  "SupabaseThreadConfigRepo"),
+    "run_event_repo":      ("storage.providers.supabase.run_event_repo",       "SupabaseRunEventRepo"),
+    "file_operation_repo": ("storage.providers.supabase.file_operation_repo", "SupabaseFileOperationRepo"),
+    "summary_repo":        ("storage.providers.supabase.summary_repo",        "SupabaseSummaryRepo"),
+    "eval_repo":           ("storage.providers.supabase.eval_repo",           "SupabaseEvalRepo"),
 }
 
 
@@ -144,28 +144,28 @@ class StorageContainer:
         return resolved
 
     def _sqlite_checkpoint_repo(self):
-        from core.storage.providers.sqlite.checkpoint_repo import SQLiteCheckpointRepo
+        from storage.providers.sqlite.checkpoint_repo import SQLiteCheckpointRepo
         return SQLiteCheckpointRepo(db_path=self._main_db)
 
     def _sqlite_thread_config_repo(self):
-        from core.storage.providers.sqlite.thread_config_repo import SQLiteThreadConfigRepo
+        from storage.providers.sqlite.thread_config_repo import SQLiteThreadConfigRepo
         return SQLiteThreadConfigRepo(db_path=self._main_db)
 
     def _sqlite_run_event_repo(self):
-        from core.storage.providers.sqlite.run_event_repo import SQLiteRunEventRepo
+        from storage.providers.sqlite.run_event_repo import SQLiteRunEventRepo
         return SQLiteRunEventRepo(db_path=self._main_db)
 
     def _sqlite_file_operation_repo(self):
-        from core.storage.providers.sqlite.file_operation_repo import SQLiteFileOperationRepo
+        from storage.providers.sqlite.file_operation_repo import SQLiteFileOperationRepo
         return SQLiteFileOperationRepo(db_path=self._main_db)
 
     def _sqlite_summary_repo(self):
-        from core.storage.providers.sqlite.summary_repo import SQLiteSummaryRepo
+        from storage.providers.sqlite.summary_repo import SQLiteSummaryRepo
         return SQLiteSummaryRepo(
             db_path=self._main_db,
             connect_fn=lambda p: sqlite3.connect(str(p)),
         )
 
     def _sqlite_eval_repo(self):
-        from core.storage.providers.sqlite.eval_repo import SQLiteEvalRepo
+        from storage.providers.sqlite.eval_repo import SQLiteEvalRepo
         return SQLiteEvalRepo(db_path=self._eval_db)

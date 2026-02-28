@@ -3,8 +3,8 @@
 import json
 from pathlib import Path
 
-from core.storage.providers.sqlite.checkpoint_repo import SQLiteCheckpointRepo
-from core.storage.providers.sqlite.file_operation_repo import SQLiteFileOperationRepo
+from storage.providers.sqlite.checkpoint_repo import SQLiteCheckpointRepo
+from storage.providers.sqlite.file_operation_repo import SQLiteFileOperationRepo
 
 
 class SessionManager:

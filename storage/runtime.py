@@ -9,7 +9,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Callable, Literal
 
-from core.storage.container import StorageContainer
+from storage.container import StorageContainer
 
 StorageStrategy = Literal["sqlite", "supabase"]
 _REPO_NAMES = (

@@ -22,9 +22,9 @@ from pathlib import Path
 from typing import Any
 
 from sandbox.db import DEFAULT_DB_PATH
-from core.storage.contracts import SummaryRepo, SummaryRow
+from storage.contracts import SummaryRepo, SummaryRow
 
-from core.storage.providers.sqlite.summary_repo import SQLiteSummaryRepo
+from storage.providers.sqlite.summary_repo import SQLiteSummaryRepo
 
 logger = logging.getLogger(__name__)
 

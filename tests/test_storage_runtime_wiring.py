@@ -12,9 +12,9 @@ import pytest
 from backend.web.services import agent_pool
 from backend.web.services.event_buffer import RunEventBuffer
 from backend.web.services.streaming_service import _run_agent_to_buffer
-from core.storage.providers.sqlite.checkpoint_repo import SQLiteCheckpointRepo
-from core.storage.providers.sqlite.eval_repo import SQLiteEvalRepo
-from core.storage.providers.supabase.checkpoint_repo import SupabaseCheckpointRepo
+from storage.providers.sqlite.checkpoint_repo import SQLiteCheckpointRepo
+from storage.providers.sqlite.eval_repo import SQLiteEvalRepo
+from storage.providers.supabase.checkpoint_repo import SupabaseCheckpointRepo
 
 
 class _FakeSupabaseClient:

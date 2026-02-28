@@ -7,8 +7,8 @@ from pathlib import Path
 from typing import Any
 
 import aiosqlite
-from core.storage.contracts import RunEventRepo
-from core.storage.runtime import build_storage_container
+from storage.contracts import RunEventRepo
+from storage.runtime import build_storage_container
 
 _DB_PATH = Path.home() / ".leon" / "leon.db"
 _default_run_event_repo: RunEventRepo | None = None

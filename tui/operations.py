@@ -4,7 +4,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 
-from core.storage.providers.sqlite.file_operation_repo import FileOperationRow, SQLiteFileOperationRepo
+from storage.providers.sqlite.file_operation_repo import FileOperationRow, SQLiteFileOperationRepo
 
 # Context variable for tracking current thread (TUI only; web uses sandbox.thread_context)
 current_thread_id: ContextVar[str] = ContextVar("current_thread_id", default="")

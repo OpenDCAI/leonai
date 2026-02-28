@@ -1,6 +1,6 @@
 import sqlite3
 
-from core.storage.providers.sqlite.file_operation_repo import SQLiteFileOperationRepo
+from storage.providers.sqlite.file_operation_repo import SQLiteFileOperationRepo
 from tui.session import SessionManager
 
 

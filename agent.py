@@ -53,7 +53,7 @@ from core.prompt_caching import PromptCachingMiddleware
 from core.queue import SteeringMiddleware
 from core.search import SearchMiddleware
 from core.skills import SkillsMiddleware
-from core.storage.contracts import SummaryRepo
+from storage.contracts import SummaryRepo
 from core.task import TaskMiddleware
 from core.todo import TodoMiddleware
 from core.web import WebMiddleware

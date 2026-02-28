@@ -9,16 +9,16 @@ from pathlib import Path
 
 import pytest
 
-from core.storage import StorageContainer
-from core.storage.providers.sqlite.checkpoint_repo import SQLiteCheckpointRepo
-from core.storage.providers.sqlite.eval_repo import SQLiteEvalRepo
-from core.storage.providers.sqlite.thread_config_repo import SQLiteThreadConfigRepo
-from core.storage.providers.supabase.checkpoint_repo import SupabaseCheckpointRepo
-from core.storage.providers.supabase.eval_repo import SupabaseEvalRepo
-from core.storage.providers.supabase.file_operation_repo import SupabaseFileOperationRepo
-from core.storage.providers.supabase.run_event_repo import SupabaseRunEventRepo
-from core.storage.providers.supabase.summary_repo import SupabaseSummaryRepo
-from core.storage.providers.supabase.thread_config_repo import SupabaseThreadConfigRepo
+from storage import StorageContainer
+from storage.providers.sqlite.checkpoint_repo import SQLiteCheckpointRepo
+from storage.providers.sqlite.eval_repo import SQLiteEvalRepo
+from storage.providers.sqlite.thread_config_repo import SQLiteThreadConfigRepo
+from storage.providers.supabase.checkpoint_repo import SupabaseCheckpointRepo
+from storage.providers.supabase.eval_repo import SupabaseEvalRepo
+from storage.providers.supabase.file_operation_repo import SupabaseFileOperationRepo
+from storage.providers.supabase.run_event_repo import SupabaseRunEventRepo
+from storage.providers.supabase.summary_repo import SupabaseSummaryRepo
+from storage.providers.supabase.thread_config_repo import SupabaseThreadConfigRepo
 from sandbox.manager import SandboxManager
 from sandbox.provider import Metrics, ProviderCapability, ProviderExecResult, SandboxProvider, SessionInfo
 

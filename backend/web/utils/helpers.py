@@ -8,8 +8,8 @@ from typing import Any
 from fastapi import HTTPException
 
 from backend.web.core.config import DB_PATH
-from core.storage.contracts import ThreadConfigRepo
-from core.storage.runtime import build_storage_container
+from storage.contracts import ThreadConfigRepo
+from storage.runtime import build_storage_container
 from sandbox.db import DEFAULT_DB_PATH as SANDBOX_DB_PATH
 
 

@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 from langgraph.checkpoint.sqlite import SqliteSaver
 
-from core.storage.providers.sqlite.checkpoint_repo import SQLiteCheckpointRepo
+from storage.providers.sqlite.checkpoint_repo import SQLiteCheckpointRepo
 from tui.operations import FileOperation, FileOperationRecorder, get_recorder
 
 if TYPE_CHECKING:

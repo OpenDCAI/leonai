@@ -3,8 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from core.storage.providers.sqlite.checkpoint_repo import SQLiteCheckpointRepo
-from core.storage.providers.supabase.checkpoint_repo import SupabaseCheckpointRepo
+from storage.providers.sqlite.checkpoint_repo import SQLiteCheckpointRepo
+from storage.providers.supabase.checkpoint_repo import SupabaseCheckpointRepo
 
 
 def _setup_tables(db_path: Path) -> None:
