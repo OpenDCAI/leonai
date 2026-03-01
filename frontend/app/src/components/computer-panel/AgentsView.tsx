@@ -70,7 +70,7 @@ export function AgentsView({ steps, focusedStepId, onFocusStep }: AgentsViewProp
       {/* Left sidebar - agent list */}
       <div className="flex-shrink-0 border-r border-[#e5e5e5] flex flex-col" style={{ width: `${leftWidth}px` }}>
         <div className="px-3 py-2 border-b border-[#e5e5e5]">
-          <div className="text-xs text-[#737373] font-medium">运行中的助手</div>
+          <div className="text-xs text-[#737373] font-medium">助手任务</div>
         </div>
         <div className="flex-1 overflow-y-auto">
           {steps.map((step) => (
@@ -132,7 +132,8 @@ function AgentListItem({ step, isSelected, onClick }: { step: ToolStep; isSelect
   const ss = step.subagent_stream;
   const isRunning = step.status === "calling" && ss?.status === "running";
   const isError = step.status === "error" || ss?.status === "error";
-  const statusDot = isRunning ? "bg-green-400 animate-pulse" : isError ? "bg-red-400" : "bg-[#a3a3a3]";
+  const isDone = step.status === "done" || ss?.status === "completed";
+  const statusDot = isRunning ? "bg-green-400 animate-pulse" : isError ? "bg-red-400" : isDone ? "bg-green-500" : "bg-yellow-400 animate-pulse";
 
   return (
     <button
@@ -165,7 +166,7 @@ function getStatusDotClass(focused: ToolStep, stream: SubagentStream | undefined
   if (stream?.status === "running") return "bg-green-400 animate-pulse";
   if (stream?.status === "error") return "bg-red-400";
   if (focused.status === "calling") return "bg-yellow-400 animate-pulse";
-  return "bg-[#a3a3a3]";
+  return "bg-green-500";
 }
 
 function AgentDetailHeader({ focused, stream }: { focused: ToolStep; stream: SubagentStream | undefined }) {
