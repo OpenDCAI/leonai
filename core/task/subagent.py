@@ -503,7 +503,11 @@ class SubagentRunner:
         if parent_running:
             qm.inject(xml, parent_thread_id)
         else:
-            qm.enqueue(xml, parent_thread_id)
+            # Agent IDLE → request host to start a new run (bypasses queue)
+            if self._parent_runtime and hasattr(self._parent_runtime, "request_continue"):
+                self._parent_runtime.request_continue(xml)
+            else:
+                qm.enqueue(xml, parent_thread_id)  # fallback
 
     async def _execute_agent_invoke(
         self,
