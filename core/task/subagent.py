@@ -480,7 +480,7 @@ class SubagentRunner:
     def _inject_task_notification(
         self, task_id: str, result: TaskResult, parent_thread_id: str
     ) -> None:
-        """Inject task completion notification into parent agent's steer queue."""
+        """Enqueue task completion notification into parent agent's followup queue."""
         from core.queue import format_task_notification, get_queue_manager
 
         summary = (result.result or "")[:200] if result.status == "completed" else (result.error or "")
@@ -491,7 +491,7 @@ class SubagentRunner:
             result=result.result,
             description=result.description,
         )
-        get_queue_manager().inject(xml, parent_thread_id)
+        get_queue_manager().enqueue(xml, parent_thread_id)
 
     async def _execute_agent_invoke(
         self,
