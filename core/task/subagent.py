@@ -156,6 +156,7 @@ class SubagentRunner:
         params: TaskParams,
         all_middleware: list[Any],
         checkpointer: Any,
+        parent_tool_call_id: str | None = None,
     ) -> TaskResult:
         """Run a subagent task."""
         task_id = str(uuid.uuid4())[:8]
@@ -230,7 +231,7 @@ class SubagentRunner:
         if params.get("RunInBackground"):
             # Background execution
             task = asyncio.create_task(
-                self._execute_agent(agent, prompt, subagent_thread_id, max_turns, task_id, parent_thread_id, description)
+                self._execute_agent(agent, prompt, subagent_thread_id, max_turns, task_id, parent_thread_id, description, parent_tool_call_id)
             )
             self._active_tasks[task_id] = task
             return TaskResult(
@@ -460,6 +461,7 @@ class SubagentRunner:
         task_id: str,
         parent_thread_id: str | None = None,
         description: str = "",
+        parent_tool_call_id: str | None = None,
     ) -> TaskResult:
         """Execute agent and return result.
 
@@ -468,7 +470,7 @@ class SubagentRunner:
         """
         runtime = self._parent_runtime
         if runtime:
-            result = await self._execute_agent_streaming(agent, prompt, thread_id, task_id, runtime, description)
+            result = await self._execute_agent_streaming(agent, prompt, thread_id, task_id, runtime, description, parent_tool_call_id)
         else:
             result = await self._execute_agent_invoke(agent, prompt, thread_id, task_id, description)
 
@@ -559,8 +561,13 @@ class SubagentRunner:
         task_id: str,
         runtime: Any,
         description: str = "",
+        parent_tool_call_id: str | None = None,
     ) -> TaskResult:
-        """Streaming execution that emits background_task_* events via runtime."""
+        """Streaming execution that emits background_task_* events via runtime.
+
+        When parent_tool_call_id is provided, also emits subagent_task_* events
+        so the frontend AgentsView can track real-time progress.
+        """
         start_data: dict[str, Any] = {"task_id": task_id, "thread_id": thread_id}
         if description:
             start_data["description"] = description
@@ -568,6 +575,12 @@ class SubagentRunner:
             "event": "background_task_start",
             "data": json.dumps(start_data),
         })
+        # Also emit subagent event for AgentsView real-time tracking
+        if parent_tool_call_id:
+            runtime.emit_subagent_event(parent_tool_call_id, {
+                "event": "task_start",
+                "data": json.dumps(start_data),
+            })
 
         text_parts: list[str] = []
         max_text_chars = 200_000
@@ -595,6 +608,11 @@ class SubagentRunner:
                                 "event": "background_task_text",
                                 "data": json.dumps({"task_id": task_id, "content": content}),
                             })
+                            if parent_tool_call_id:
+                                runtime.emit_subagent_event(parent_tool_call_id, {
+                                    "event": "task_text",
+                                    "data": json.dumps({"task_id": task_id, "content": content}),
+                                })
 
             final_text = "".join(text_parts).strip() or None
             desc = description or None
@@ -609,6 +627,11 @@ class SubagentRunner:
                 "event": "background_task_done",
                 "data": json.dumps({"task_id": task_id, "status": "completed"}),
             })
+            if parent_tool_call_id:
+                runtime.emit_subagent_event(parent_tool_call_id, {
+                    "event": "task_done",
+                    "data": json.dumps({"task_id": task_id, "status": "completed"}),
+                })
 
         except Exception as e:
             desc = description or None
@@ -623,6 +646,11 @@ class SubagentRunner:
                 "event": "background_task_error",
                 "data": json.dumps({"task_id": task_id, "error": str(e)}),
             })
+            if parent_tool_call_id:
+                runtime.emit_subagent_event(parent_tool_call_id, {
+                    "event": "task_error",
+                    "data": json.dumps({"task_id": task_id, "error": str(e)}),
+                })
 
         self._task_results[task_id] = task_result
         return task_result

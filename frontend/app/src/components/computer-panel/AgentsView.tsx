@@ -29,6 +29,7 @@ export function AgentsView({ steps, focusedStepId, onFocusStep }: AgentsViewProp
   const threadId = stream?.thread_id || undefined;
   const isRunning = stream?.status === "running" || focused?.status === "calling";
 
+
   // Load sub-agent thread conversation
   const { entries, loading, refreshThread } = useThreadData(threadId);
 
@@ -46,6 +47,7 @@ export function AgentsView({ steps, focusedStepId, onFocusStep }: AgentsViewProp
     }
     prevRunningRef.current = !!isRunning;
   }, [isRunning, threadId, refreshThread]);
+
 
   // Merge polled entries + live stream into FlowItem[]
   const flowItems = useMemo<FlowItem[]>(() => {
@@ -178,9 +180,9 @@ function AgentListItem({ step, isSelected, onClick }: { step: ToolStep; isSelect
   const ss = step.subagent_stream;
   const displayName = ss?.description || args.description || args.prompt?.slice(0, 40) || "子任务";
   const prompt = args.prompt || "";
-  const isRunning = step.status === "calling" && ss?.status === "running";
+  const isRunning = ss?.status === "running" || (step.status === "calling" && ss?.status !== "completed");
   const isError = step.status === "error" || ss?.status === "error";
-  const isDone = step.status === "done" || ss?.status === "completed";
+  const isDone = !isRunning && !isError && (step.status === "done" || ss?.status === "completed");
   const statusDot = isRunning ? "bg-green-400 animate-pulse" : isError ? "bg-red-400" : isDone ? "bg-green-500" : "bg-yellow-400 animate-pulse";
 
   return (

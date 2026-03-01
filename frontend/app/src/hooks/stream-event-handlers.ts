@@ -68,25 +68,41 @@ function handleToolCall(event: StreamEvent, turnId: string, onUpdate: UpdateEntr
   });
 }
 
-function markToolDone(turn: AssistantTurn, tcId: string | undefined, result: string): AssistantTurn {
-  return { ...turn, segments: turn.segments.map((s) =>
-    s.type === "tool" && s.step.id === tcId ? { ...s, step: { ...s.step, result, status: "done" as const } } : s,
-  ) };
+function markToolDone(turn: AssistantTurn, tcId: string | undefined, result: string, metadata?: Record<string, unknown>): AssistantTurn {
+  return { ...turn, segments: turn.segments.map((s) => {
+    if (s.type !== "tool" || s.step.id !== tcId) return s;
+    const step = { ...s.step, result, status: "done" as const };
+    // For background Task calls: create subagent_stream from metadata so AgentsView can track
+    const taskId = metadata?.task_id as string | undefined;
+    const threadId = (metadata?.subagent_thread_id as string | undefined) || (taskId ? `subagent_${taskId}` : undefined);
+    if (threadId && !step.subagent_stream) {
+      step.subagent_stream = {
+        task_id: taskId || "",
+        thread_id: threadId,
+        description: (metadata?.description as string) || undefined,
+        text: "",
+        tool_calls: [],
+        status: "running",
+      };
+    }
+    return { ...s, step };
+  }) };
 }
 
 function handleToolResult(event: StreamEvent, turnId: string, onUpdate: UpdateEntries) {
-  const payload = (event.data ?? {}) as { content?: string; tool_call_id?: string };
+  const payload = (event.data ?? {}) as { content?: string; tool_call_id?: string; metadata?: Record<string, unknown> };
   const tcId = payload.tool_call_id;
   const result = payload.content ?? "";
+  const metadata = payload.metadata;
 
   onUpdate((prev) => {
     const seg = tcId ? findTurnToolSeg(prev, turnId, tcId) : undefined;
     if (seg?.step.status === "done") return prev;
     if (seg && Date.now() - seg.step.timestamp < 200) {
-      setTimeout(() => updateTurnSegments(onUpdate, turnId, (t) => markToolDone(t, tcId, result)), 200 - (Date.now() - seg.step.timestamp));
+      setTimeout(() => updateTurnSegments(onUpdate, turnId, (t) => markToolDone(t, tcId, result, metadata)), 200 - (Date.now() - seg.step.timestamp));
       return prev;
     }
-    return prev.map((e) => e.id === turnId && e.role === "assistant" ? markToolDone(e as AssistantTurn, tcId, result) : e);
+    return prev.map((e) => e.id === turnId && e.role === "assistant" ? markToolDone(e as AssistantTurn, tcId, result, metadata) : e);
   });
 }
 
