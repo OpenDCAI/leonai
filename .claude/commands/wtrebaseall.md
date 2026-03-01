@@ -22,7 +22,7 @@ git fetch origin
 
 ## Step 2：遍历所有 worktree
 
-对每个 worktree 逐一处理（跳过主仓库本身）：
+对每个 worktree 逐一处理（跳过主仓库本身），无论在 `~/worktrees/` 还是旧路径 `$MAIN_REPO/worktrees/`：
 
 ```bash
 git worktree list --porcelain
@@ -51,11 +51,11 @@ DIRTY 检查
 wtrebaseall 完成
 ─────────────────────────────────────
 ✅ 成功 rebase：
-  - worktrees/feat-x (feat/x)  +2 新 commit
-  - worktrees/fix-y  (fix/y)   已是最新
+  - ~/worktrees/leon--feat-x (feat/x)  +2 新 commit
+  - ~/worktrees/leon--fix-y  (fix/y)   已是最新
 
 ⚠ 跳过（有未提交改动，需手动处理）：
-  - worktrees/wip-z (wip/z)
+  - ~/worktrees/leon--wip-z (wip/z)
 
 ❌ 冲突（已 abort，需手动处理）：
   - worktrees/old-a (old/a)
@@ -67,3 +67,5 @@ wtrebaseall 完成
 ─────────────────────────────────────
 成功 2 / 跳过 1 / 冲突 1 / 待清理 1
 ```
+
+报告中使用 `git worktree list` 返回的实际路径，兼容新旧两种位置。

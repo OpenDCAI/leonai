@@ -16,7 +16,7 @@ CWD=$(pwd)
 ```
 
 - `CWD == MAIN_REPO` → 提示"你在主仓库，不需要 sync"，退出
-- `CWD` 在某个 worktree 下 → 继续
+- `CWD` 在某个 worktree 下 → 继续（无论是 `~/worktrees/` 还是旧路径 `$MAIN_REPO/worktrees/`）
 
 ## Step 1：链接本地配置
 

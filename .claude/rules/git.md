@@ -32,15 +32,15 @@
 
 ## Worktree 规范
 
-新功能开发使用 worktree 隔离：
+新功能开发使用 worktree 隔离，存放在全局目录，避免与主仓库混淆：
 
 ```bash
-# 在项目内的 worktrees/ 文件夹创建 worktree
-git worktree add worktrees/<feature> -b <feature>
-cd worktrees/<feature>
+# 在全局 ~/worktrees/ 目录创建
+git worktree add ~/worktrees/<项目名>--<feature> -b <feature> origin/main
+cd ~/worktrees/<项目名>--<feature>
 ```
 
 规则：
-- 统一使用项目内的 `worktrees/` 文件夹（不是同级目录 `../`）
-- 确保 `worktrees/` 已加入 `.gitignore`
+- 统一使用 `~/worktrees/`，命名 `<项目名>--<目录名>`（目录名 = 分支名 `/` → `-`）
+- 创建时自动分配端口对（写入 `git config --worktree`），避免多 worktree 端口冲突
 - 开发完成后用 `git worktree remove` 清理
