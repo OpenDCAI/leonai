@@ -22,6 +22,7 @@ export function AgentsView({ steps, focusedStepId, onFocusStep }: AgentsViewProp
   const [agentFocusedStepId, setAgentFocusedStepId] = useState<string | null>(null);
   const dragStartX = useRef(0);
   const dragStartWidth = useRef(0);
+  const prevRunningRef = useRef(false);
 
   const focused = steps.find((s) => s.id === focusedStepId) ?? null;
   const stream = focused?.subagent_stream;
@@ -31,33 +32,57 @@ export function AgentsView({ steps, focusedStepId, onFocusStep }: AgentsViewProp
   // Load sub-agent thread conversation
   const { entries, loading, refreshThread } = useThreadData(threadId);
 
-  // Auto-refresh while sub-agent is running (1s for tighter sync)
+  // Poll while running (1s interval)
   useEffect(() => {
     if (!threadId || !isRunning) return;
     const interval = setInterval(() => void refreshThread(), 1000);
     return () => clearInterval(interval);
   }, [threadId, isRunning, refreshThread]);
 
-  // Convert entries → FlowItem[] (include all text, unlike extractMessageFlow)
-  // When poll hasn't caught up, inject streaming text from subagent_stream
+  // Final refresh when sub-agent completes (running → not running)
+  useEffect(() => {
+    if (prevRunningRef.current && !isRunning && threadId) {
+      void refreshThread();
+    }
+    prevRunningRef.current = !!isRunning;
+  }, [isRunning, threadId, refreshThread]);
+
+  // Merge polled entries + live stream into FlowItem[]
   const flowItems = useMemo<FlowItem[]>(() => {
+    // 1) Build items from polled entries (have full results)
     const items: FlowItem[] = [];
+    const knownToolIds = new Set<string>();
     for (const entry of entries) {
       if (entry.role !== "assistant") continue;
       for (const seg of (entry as AssistantTurn).segments) {
         if (seg.type === "tool") {
           items.push({ type: "tool", step: seg.step, turnId: entry.id });
+          knownToolIds.add(seg.step.id);
         } else if (seg.type === "text" && seg.content.trim()) {
           items.push({ type: "text", content: seg.content, turnId: entry.id });
         }
       }
     }
-    // Inject live streaming text when polled data hasn't caught up yet
-    if (isRunning && stream?.text?.trim() && items.length === 0) {
-      items.push({ type: "text", content: stream.text, turnId: "live-stream" });
+
+    if (!stream) return items;
+
+    // 2) Append live tool calls from SSE that polling hasn't caught up to
+    for (const tc of stream.tool_calls) {
+      if (knownToolIds.has(tc.id)) continue;
+      items.push({
+        type: "tool",
+        step: { id: tc.id, name: tc.name, args: tc.args, status: "calling", timestamp: Date.now() },
+        turnId: "live",
+      });
     }
+
+    // 3) If stream has text but entries are empty (first poll pending), show it
+    if (stream.text.trim() && items.every((i) => i.type === "tool")) {
+      items.push({ type: "text", content: stream.text, turnId: "live" });
+    }
+
     return items;
-  }, [entries, isRunning, stream?.text]);
+  }, [entries, stream]);
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
