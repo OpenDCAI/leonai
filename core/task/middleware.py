@@ -291,6 +291,7 @@ The agent will work independently and return results when complete.""",
                 params=params,
                 all_middleware=self.parent_middleware,
                 checkpointer=self.checkpointer,
+                parent_tool_call_id=tool_id,
             )
 
         # Foreground: use streaming mode to capture sub-agent events

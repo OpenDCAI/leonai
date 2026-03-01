@@ -358,6 +358,7 @@ async def _run_agent_to_buffer(
                                             "tool_call_id": tc_id,
                                             "name": getattr(msg, "name", "unknown"),
                                             "content": str(getattr(msg, "content", "")),
+                                            "metadata": getattr(msg, "metadata", None) or {},
                                         },
                                         ensure_ascii=False,
                                     ),
