@@ -9,17 +9,7 @@ interface NoticeBubbleProps {
  * Visually distinct from user/assistant messages — not prominent.
  */
 export function NoticeBubble({ entry }: NoticeBubbleProps) {
-  // Strip XML tags for display, show human-readable content
-  const displayContent = entry.content
-    .replace(/<system-reminder>\n?/g, "")
-    .replace(/<\/system-reminder>/g, "")
-    .replace(/<task-notification>[\s\S]*?<\/task-notification>/g, (match) => {
-      // Extract summary from task notification
-      const summary = match.match(/<summary>([\s\S]*?)<\/summary>/)?.[1] ?? "";
-      const status = match.match(/<status>([\s\S]*?)<\/status>/)?.[1] ?? "";
-      return `[Task ${status}] ${summary}`;
-    })
-    .trim();
+  const displayContent = parseNoticeContent(entry.content);
 
   if (!displayContent) return null;
 
@@ -30,4 +20,23 @@ export function NoticeBubble({ entry }: NoticeBubbleProps) {
       </div>
     </div>
   );
+}
+
+function parseNoticeContent(raw: string): string {
+  // Task notification: show concise "Task {id} {status}"
+  const taskMatch = raw.match(/<task-notification>[\s\S]*?<\/task-notification>/);
+  if (taskMatch) {
+    const taskId = taskMatch[0].match(/<task-id>([\s\S]*?)<\/task-id>/)?.[1] ?? "";
+    const status = taskMatch[0].match(/<status>([\s\S]*?)<\/status>/)?.[1] ?? "";
+    return `Task ${taskId} ${status}`;
+  }
+
+  // Steer reminder: extract only the user's original message
+  const steerMatch = raw.match(/The user sent a new message while you were working:\n([\s\S]*?)\n\nIMPORTANT:/);
+  if (steerMatch) {
+    return steerMatch[1].trim();
+  }
+
+  // Fallback: strip all XML tags
+  return raw.replace(/<[^>]+>/g, "").trim();
 }
