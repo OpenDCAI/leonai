@@ -1,16 +1,12 @@
 import type { StreamEvent, StreamEventType } from "./types";
+import { STREAM_EVENT_TYPES } from "./types";
 
-const VALID_EVENT_TYPES = new Set<StreamEventType>([
-  "text", "tool_call", "tool_result", "status", "done", "error", "cancelled",
-  "task_start", "task_text", "task_tool_call", "task_tool_result", "task_done", "task_error",
-  "subagent_task_start", "subagent_task_text", "subagent_task_tool_call",
-  "subagent_task_tool_result", "subagent_task_done", "subagent_task_error",
-  "background_task_start", "background_task_text", "background_task_done", "background_task_error",
-  "command_progress",
-]);
+const VALID_EVENT_TYPES = new Set<string>(STREAM_EVENT_TYPES);
 
 function normalizeStreamType(raw: string): StreamEventType {
-  return VALID_EVENT_TYPES.has(raw as StreamEventType) ? (raw as StreamEventType) : "text";
+  if (VALID_EVENT_TYPES.has(raw)) return raw as StreamEventType;
+  console.warn(`[SSE] Unknown event type: "${raw}", falling back to "text"`);
+  return "text";
 }
 
 function tryParse(value: string): unknown {
