@@ -31,14 +31,15 @@ export function AgentsView({ steps, focusedStepId, onFocusStep }: AgentsViewProp
   // Load sub-agent thread conversation
   const { entries, loading, refreshThread } = useThreadData(threadId);
 
-  // Auto-refresh while sub-agent is running
+  // Auto-refresh while sub-agent is running (1s for tighter sync)
   useEffect(() => {
     if (!threadId || !isRunning) return;
-    const interval = setInterval(() => void refreshThread(), 2000);
+    const interval = setInterval(() => void refreshThread(), 1000);
     return () => clearInterval(interval);
   }, [threadId, isRunning, refreshThread]);
 
   // Convert entries → FlowItem[] (include all text, unlike extractMessageFlow)
+  // When poll hasn't caught up, inject streaming text from subagent_stream
   const flowItems = useMemo<FlowItem[]>(() => {
     const items: FlowItem[] = [];
     for (const entry of entries) {
@@ -51,8 +52,12 @@ export function AgentsView({ steps, focusedStepId, onFocusStep }: AgentsViewProp
         }
       }
     }
+    // Inject live streaming text when polled data hasn't caught up yet
+    if (isRunning && stream?.text?.trim() && items.length === 0) {
+      items.push({ type: "text", content: stream.text, turnId: "live-stream" });
+    }
     return items;
-  }, [entries]);
+  }, [entries, isRunning, stream?.text]);
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -121,6 +126,7 @@ export function AgentsView({ steps, focusedStepId, onFocusStep }: AgentsViewProp
         ) : (
           <>
             <AgentDetailHeader focused={focused} stream={stream} />
+            <AgentPromptSection args={focused.args} />
             {loading ? (
               <div className="h-full flex items-center justify-center">
                 <Loader2 className="w-5 h-5 text-[#a3a3a3] animate-spin" />
@@ -198,6 +204,22 @@ function AgentDetailHeader({ focused, stream }: { focused: ToolStep; stream: Sub
       <div className="text-sm font-medium text-[#171717] truncate flex-1">{displayName}</div>
       <span className={`w-2 h-2 rounded-full flex-shrink-0 ${getStatusDotClass(focused, stream)}`} />
       <span className="text-[10px] text-[#a3a3a3] flex-shrink-0">{getStatusLabel(focused, stream)}</span>
+    </div>
+  );
+}
+
+/* -- Sub-agent prompt display -- */
+
+function AgentPromptSection({ args }: { args: unknown }) {
+  const { prompt } = parseAgentArgs(args);
+  if (!prompt) return null;
+
+  return (
+    <div className="px-4 py-2.5 border-b border-[#e5e5e5] bg-[#f9fafb] flex-shrink-0">
+      <div className="text-[10px] text-[#a3a3a3] font-medium mb-1">PROMPT</div>
+      <div className="text-[12px] text-[#525252] leading-relaxed whitespace-pre-wrap break-words max-h-[120px] overflow-y-auto">
+        {prompt}
+      </div>
     </div>
   );
 }
