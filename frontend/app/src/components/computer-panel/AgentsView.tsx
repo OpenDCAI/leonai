@@ -73,7 +73,12 @@ export function AgentsView({ steps, focusedStepId, onFocusStep }: AgentsViewProp
       if (knownToolIds.has(tc.id)) continue;
       items.push({
         type: "tool",
-        step: { id: tc.id, name: tc.name, args: tc.args, status: "calling", timestamp: Date.now() },
+        step: {
+          id: tc.id, name: tc.name, args: tc.args,
+          status: tc.status === "done" ? "done" : "calling",
+          result: tc.result,
+          timestamp: Date.now(),
+        },
         turnId: "live",
       });
     }

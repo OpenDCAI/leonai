@@ -584,6 +584,7 @@ class SubagentRunner:
 
         text_parts: list[str] = []
         max_text_chars = 200_000
+        emitted_tool_call_ids: set[str] = set()
 
         try:
             async for chunk in agent.astream(
@@ -613,6 +614,48 @@ class SubagentRunner:
                                     "event": "task_text",
                                     "data": json.dumps({"task_id": task_id, "content": content}),
                                 })
+
+                elif mode == "updates":
+                    if not isinstance(data, dict):
+                        continue
+                    for _node_name, node_update in data.items():
+                        if not isinstance(node_update, dict):
+                            continue
+                        messages = node_update.get("messages", [])
+                        if not isinstance(messages, list):
+                            messages = [messages]
+                        for msg in messages:
+                            msg_class = msg.__class__.__name__
+                            if msg_class == "AIMessage":
+                                for tc in getattr(msg, "tool_calls", []):
+                                    tc_id = tc.get("id")
+                                    if tc_id and tc_id in emitted_tool_call_ids:
+                                        continue
+                                    if tc_id:
+                                        emitted_tool_call_ids.add(tc_id)
+                                    tc_data = {
+                                        "task_id": task_id,
+                                        "id": tc_id,
+                                        "name": tc.get("name", "unknown"),
+                                        "args": tc.get("args", {}),
+                                    }
+                                    if parent_tool_call_id:
+                                        runtime.emit_subagent_event(parent_tool_call_id, {
+                                            "event": "task_tool_call",
+                                            "data": json.dumps(tc_data),
+                                        })
+                            elif msg_class == "ToolMessage":
+                                tr_data = {
+                                    "task_id": task_id,
+                                    "tool_call_id": getattr(msg, "tool_call_id", None),
+                                    "name": getattr(msg, "name", "unknown"),
+                                    "content": str(getattr(msg, "content", "")),
+                                }
+                                if parent_tool_call_id:
+                                    runtime.emit_subagent_event(parent_tool_call_id, {
+                                        "event": "task_tool_result",
+                                        "data": json.dumps(tr_data),
+                                    })
 
             final_text = "".join(text_parts).strip() or None
             desc = description or None

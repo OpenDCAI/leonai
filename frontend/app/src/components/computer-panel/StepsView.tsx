@@ -1,5 +1,5 @@
 import { CheckCircle2, ChevronDown, ChevronRight, Loader2, Square, XCircle } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Activity, ToolStep } from "../../api";
 import { DEFAULT_BADGE, TOOL_BADGE_STYLES } from "../chat-area/constants";
 import { getStepSummary } from "../chat-area/utils";
@@ -36,11 +36,18 @@ export function StepsView({
   autoScroll = false,
 }: StepsViewProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
-  const prevItemCountRef = useRef(0);
+  const isAtBottomRef = useRef(true);
 
   const visibleActivities = activities.filter(
     (a) => a.status === "running" || Date.now() - a.startTime < ACTIVITY_VISIBLE_AFTER_DONE_MS,
   );
+
+  // Track user scroll position: only auto-scroll if user is near bottom
+  const handleScroll = useCallback(() => {
+    if (!scrollRef.current) return;
+    const { scrollTop, scrollHeight, clientHeight } = scrollRef.current;
+    isAtBottomRef.current = scrollHeight - scrollTop - clientHeight < 50;
+  }, []);
 
   // Auto-scroll to focused step
   useEffect(() => {
@@ -51,14 +58,11 @@ export function StepsView({
     }
   }, [focusedStepId]);
 
-  // Auto-scroll to bottom when new items arrive
+  // Auto-scroll to bottom when new items arrive (only if user hasn't scrolled up)
   useEffect(() => {
-    if (!autoScroll || !scrollRef.current) return;
-    if (flowItems.length > prevItemCountRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
-    prevItemCountRef.current = flowItems.length;
-  }, [autoScroll, flowItems.length]);
+    if (!autoScroll || !scrollRef.current || !isAtBottomRef.current) return;
+    scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+  }, [autoScroll, flowItems]);
 
   if (flowItems.length === 0 && visibleActivities.length === 0) {
     return (
@@ -69,7 +73,7 @@ export function StepsView({
   }
 
   return (
-    <div ref={scrollRef} className="h-full overflow-y-auto bg-white">
+    <div ref={scrollRef} onScroll={handleScroll} className="h-full overflow-y-auto bg-white">
       {/* Running Activities */}
       {visibleActivities.length > 0 && (
         <ActivitySection
