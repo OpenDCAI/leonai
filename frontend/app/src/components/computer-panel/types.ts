@@ -18,6 +18,7 @@ export interface ComputerPanelProps {
   activities?: Activity[];
   onCancelCommand?: (commandId: string) => void;
   onCancelTask?: (taskId: string) => void;
+  isStreaming?: boolean;
 }
 
 export interface TreeNode {

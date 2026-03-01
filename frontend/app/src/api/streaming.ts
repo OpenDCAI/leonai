@@ -104,3 +104,33 @@ export async function runTaskAgent(
   await postJSON(`/api/threads/${encodeURIComponent(threadId)}/task-agent/runs`, taskRequest, signal);
   await streamEvents(threadId, onEvent, signal);
 }
+
+/** Subscribe to activity SSE for background events after main SSE closes. */
+export async function streamActivityEvents(
+  threadId: string,
+  onEvent: (event: StreamEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  let after = 0;
+  let attempts = 0;
+
+  while (!signal?.aborted) {
+    try {
+      const url = `/api/threads/${encodeURIComponent(threadId)}/activity/events?after=${after}`;
+      const res = await fetch(url, { signal });
+      if (!res.ok) {
+        if (res.status === 204) return; // No activity buffer
+        throw new Error(`Activity SSE failed: ${res.status}`);
+      }
+      if (!res.body) return;
+      const { lastSeq, finished } = await consumeSSEStream(res.body.getReader(), onEvent, after);
+      after = lastSeq;
+      attempts = 0;
+      if (finished) return;
+    } catch {
+      if (signal?.aborted) return;
+      await new Promise((r) => setTimeout(r, Math.min(1000 * 2 ** attempts, 30000)));
+      attempts++;
+    }
+  }
+}
