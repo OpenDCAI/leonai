@@ -10,11 +10,11 @@ export function getStepSummary(step: ToolStep): string {
   const args = step.args as Record<string, unknown> | null;
   if (!args) return step.name;
 
-  // Task tool: show description
+  // Task tool: show description (PascalCase from backend)
   if (step.name === "Task") {
-    const description = args.description as string;
+    const description = (args.Description ?? args.description) as string;
     if (description) return description.length > 60 ? description.slice(0, 57) + "..." : description;
-    const prompt = args.prompt as string;
+    const prompt = (args.Prompt ?? args.prompt) as string;
     if (prompt) return prompt.length > 60 ? prompt.slice(0, 57) + "..." : prompt;
   }
 
@@ -49,7 +49,7 @@ export function getStepSummary(step: ToolStep): string {
     return pattern.length > 60 ? pattern.slice(0, 57) + "..." : pattern;
   }
 
-  const desc = (args.description as string) ?? (args.prompt as string);
+  const desc = (args.Description ?? args.description ?? args.Prompt ?? args.prompt) as string;
   if (desc) {
     return desc.length > 60 ? desc.slice(0, 57) + "..." : desc;
   }
