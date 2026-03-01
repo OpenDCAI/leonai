@@ -94,7 +94,14 @@ export function parseCommandArgs(args: unknown): { command?: string; cwd?: strin
 }
 
 export function parseAgentArgs(args: unknown): { description?: string; prompt?: string; subagent_type?: string } {
-  if (args && typeof args === "object") return args as { description?: string; prompt?: string; subagent_type?: string };
+  if (args && typeof args === "object") {
+    const a = args as Record<string, unknown>;
+    return {
+      description: (a.Description ?? a.description) as string | undefined,
+      prompt: (a.Prompt ?? a.prompt) as string | undefined,
+      subagent_type: (a.SubagentType ?? a.subagent_type) as string | undefined,
+    };
+  }
   return {};
 }
 

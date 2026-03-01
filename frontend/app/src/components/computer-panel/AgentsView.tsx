@@ -126,9 +126,10 @@ export function AgentsView({ steps, focusedStepId, onFocusStep }: AgentsViewProp
 
 function AgentListItem({ step, isSelected, onClick }: { step: ToolStep; isSelected: boolean; onClick: () => void }) {
   const args = parseAgentArgs(step.args);
-  const displayName = args.description || args.prompt?.slice(0, 40) || "子任务";
+  const ss = step.subagent_stream;
+  const displayName = ss?.description || args.description || args.prompt?.slice(0, 40) || "子任务";
   const prompt = args.prompt || "";
-  const promptPreview = args.description ? (prompt.slice(0, 80) + (prompt.length > 80 ? "..." : "")) : "";
+  const promptPreview = (ss?.description || args.description) ? (prompt.slice(0, 80) + (prompt.length > 80 ? "..." : "")) : "";
   const ss = step.subagent_stream;
   const isRunning = step.status === "calling" && ss?.status === "running";
   const isError = step.status === "error" || ss?.status === "error";
