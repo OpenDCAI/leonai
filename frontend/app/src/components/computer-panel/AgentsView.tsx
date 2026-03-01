@@ -103,18 +103,12 @@ export function AgentsView({ steps, focusedStepId, onFocusStep }: AgentsViewProp
           <>
             <AgentDetailHeader focused={focused} stream={stream} />
             <AgentPromptBlock prompt={parseAgentArgs(focused.args).prompt} />
-            {threadId ? (
-              <ChatArea
-                entries={entries}
-                isStreaming={!!isRunning}
-                runtimeStatus={null}
-                loading={loading}
-              />
-            ) : (
-              <div className="flex-1 flex items-center justify-center">
-                <span className="text-xs text-[#a3a3a3]">助手启动中...</span>
-              </div>
-            )}
+            <ChatArea
+              entries={entries}
+              isStreaming={!!isRunning}
+              runtimeStatus={null}
+              loading={loading}
+            />
           </>
         )}
       </div>
