@@ -2,9 +2,12 @@
 
 import asyncio
 import json
+import logging
 import uuid as _uuid
 from collections.abc import AsyncGenerator
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from backend.web.services.event_buffer import RunEventBuffer
 from backend.web.services.event_store import cleanup_old_runs
@@ -196,6 +199,7 @@ async def _run_agent_to_buffer(
         # Observation provider: provider from thread config, credentials from global config
         obs_handler = None
         obs_active = None
+        obs_provider = None
         try:
             from backend.web.utils.helpers import load_thread_config
 
@@ -241,9 +245,9 @@ async def _run_agent_to_buffer(
                         config.setdefault("callbacks", []).append(obs_handler)
                         config.setdefault("metadata", {})["session_id"] = thread_id
         except ImportError as imp_err:
-            print(f"[streaming_service] Observation provider '{obs_provider}' requires missing package: {imp_err}. Install with: uv pip install 'leonai[{obs_provider}]'")
+            logger.warning("Observation provider '%s' missing package: %s. Install: uv pip install 'leonai[%s]'", obs_provider, imp_err, obs_provider)
         except Exception as obs_err:
-            print(f"[streaming_service] Observation handler error: {obs_err}")
+            logger.warning("Observation handler error: %s", obs_err, exc_info=True)
 
         # Real-time activity event callback (replaces post-hoc batch drain)
         activity_queue: asyncio.Queue[dict] = asyncio.Queue(maxsize=1000)
@@ -487,8 +491,8 @@ async def _run_agent_to_buffer(
                     get_client().flush()
                 elif obs_active == "langsmith":
                     obs_handler.wait_for_futures()
-            except Exception:
-                pass
+            except Exception as flush_err:
+                logger.warning("Observation flush error: %s", flush_err)
         await buf.mark_done()
         app.state.thread_tasks.pop(thread_id, None)
         app.state.thread_event_buffers.pop(thread_id, None)
