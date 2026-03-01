@@ -63,7 +63,7 @@ export default function InputBox({
       <div className="max-w-3xl mx-auto px-4">
         <div
           onClick={() => inputRef.current?.focus()}
-          className={`flex items-end gap-2 rounded-2xl border transition-all cursor-text ${
+          className={`flex items-end gap-2 rounded-2xl border transition-[border-color,box-shadow] duration-150 cursor-text ${
             focused ? "border-[#e5e5e5] shadow-sm" : "border-transparent"
           } bg-[#fafafa]`}
         >
