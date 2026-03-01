@@ -19,9 +19,9 @@ html, body, #root {
   color: #171717;
 }
 
-/* Smooth transitions */
+/* Smooth transitions — explicit properties to avoid outline/ring flash */
 button, input, textarea {
-  transition: all 0.15s ease;
+  transition: color 0.15s ease, background-color 0.15s ease, border-color 0.15s ease, opacity 0.15s ease, box-shadow 0.15s ease;
 }
 
 /* Prevent text selection on UI elements */
