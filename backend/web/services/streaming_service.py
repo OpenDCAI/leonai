@@ -285,10 +285,13 @@ async def _run_agent_to_buffer(
             if hasattr(agent, "runtime") and agent.runtime.transition(AgentState.ACTIVE):
                 new_buf = start_agent_run(agent, thread_id, message, app)
                 # Notify frontend via activity buffer
-                asyncio.get_running_loop().create_task(activity_buf.put({
-                    "event": "new_run",
-                    "data": json.dumps({"thread_id": thread_id, "run_id": new_buf.run_id}),
-                }))
+                try:
+                    asyncio.get_running_loop().create_task(activity_buf.put({
+                        "event": "new_run",
+                        "data": json.dumps({"thread_id": thread_id, "run_id": new_buf.run_id}),
+                    }))
+                except RuntimeError:
+                    pass  # No event loop (shutdown)
 
         if hasattr(agent, "runtime"):
             agent.runtime.set_continue_handler(continue_handler)

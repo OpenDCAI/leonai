@@ -65,10 +65,9 @@ async function connectOnce(
   return { after: lastSeq, done: finished };
 }
 
-/** Subscribe to SSE event stream with built-in reconnection. */
-export async function streamEvents(
-  threadId: string,
-  onEvent: (event: StreamEvent) => void,
+/** Reconnecting SSE loop with exponential backoff. */
+async function withReconnection(
+  connect: (after: number) => Promise<{ after: number; done: boolean }>,
   signal?: AbortSignal,
   startAfter = 0,
 ): Promise<void> {
@@ -77,7 +76,7 @@ export async function streamEvents(
 
   while (!signal?.aborted) {
     try {
-      const result = await connectOnce(threadId, onEvent, after, signal);
+      const result = await connect(after);
       after = result.after;
       attempts = 0;
       if (result.done) return;
@@ -87,6 +86,20 @@ export async function streamEvents(
       attempts++;
     }
   }
+}
+
+/** Subscribe to SSE event stream with built-in reconnection. */
+export async function streamEvents(
+  threadId: string,
+  onEvent: (event: StreamEvent) => void,
+  signal?: AbortSignal,
+  startAfter = 0,
+): Promise<void> {
+  await withReconnection(
+    (after) => connectOnce(threadId, onEvent, after, signal),
+    signal,
+    startAfter,
+  );
 }
 
 export async function cancelRun(threadId: string): Promise<void> {
@@ -111,26 +124,18 @@ export async function streamActivityEvents(
   onEvent: (event: StreamEvent) => void,
   signal?: AbortSignal,
 ): Promise<void> {
-  let after = 0;
-  let attempts = 0;
-
-  while (!signal?.aborted) {
-    try {
+  await withReconnection(
+    async (after) => {
       const url = `/api/threads/${encodeURIComponent(threadId)}/activity/events?after=${after}`;
       const res = await fetch(url, { signal });
       if (!res.ok) {
-        if (res.status === 204) return; // No activity buffer
+        if (res.status === 204) return { after, done: true }; // No activity buffer
         throw new Error(`Activity SSE failed: ${res.status}`);
       }
-      if (!res.body) return;
+      if (!res.body) return { after, done: true };
       const { lastSeq, finished } = await consumeSSEStream(res.body.getReader(), onEvent, after);
-      after = lastSeq;
-      attempts = 0;
-      if (finished) return;
-    } catch {
-      if (signal?.aborted) return;
-      await new Promise((r) => setTimeout(r, Math.min(1000 * 2 ** attempts, 30000)));
-      attempts++;
-    }
-  }
+      return { after: lastSeq, done: finished };
+    },
+    signal,
+  );
 }

@@ -141,6 +141,8 @@ async def delete_thread(
     # Clean up thread-specific state
     app.state.thread_sandbox.pop(thread_id, None)
     app.state.thread_cwd.pop(thread_id, None)
+    activity_buffers = getattr(app.state, "activity_buffers", {})
+    activity_buffers.pop(thread_id, None)
     get_queue_manager().clear_all(thread_id)
 
     # Remove per-thread Agent from pool

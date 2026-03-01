@@ -1,5 +1,7 @@
 """Agent 运行时状态聚合"""
 
+import asyncio
+import json
 from collections.abc import Callable
 from typing import Any
 
@@ -158,17 +160,19 @@ class AgentRuntime:
         if self._continue_handler:
             self._continue_handler(message)
 
+    def _dispatch_to_sink(self, event: dict[str, Any]) -> None:
+        """Fire-and-forget dispatch to persistent activity sink."""
+        if not self._activity_sink:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(self._activity_sink(event))
+        except RuntimeError:
+            pass  # No event loop running (e.g., during shutdown)
+
     def emit_activity_event(self, event: dict[str, Any]) -> None:
         """Emit activity event (command progress, background task, etc)."""
-        # 1. Persistent sink (always, survives main SSE close)
-        if self._activity_sink:
-            import asyncio
-            try:
-                loop = asyncio.get_running_loop()
-                loop.create_task(self._activity_sink(event))
-            except RuntimeError:
-                pass  # No event loop running (e.g., during shutdown)
-        # 2. Main SSE callback (only while run is active)
+        self._dispatch_to_sink(event)
         if self._event_callback:
             self._event_callback(event)
 
@@ -176,8 +180,6 @@ class AgentRuntime:
 
     def emit_subagent_event(self, parent_tool_call_id: str, event: dict[str, Any]) -> None:
         """Push sub-agent event via real-time callback, or buffer for batch retrieval."""
-        import json
-
         event_type = event.get("event", "")
         try:
             data = json.loads(event.get("data", "{}"))
@@ -189,23 +191,12 @@ class AgentRuntime:
             "data": json.dumps(data, ensure_ascii=False),
         }
 
-        # 1. Persistent sink (always)
-        if self._activity_sink:
-            import asyncio
-            try:
-                loop = asyncio.get_running_loop()
-                loop.create_task(self._activity_sink(prefixed_event))
-            except RuntimeError:
-                pass
-        # 2. Main SSE callback (while run active)
+        self._dispatch_to_sink(prefixed_event)
         if self._event_callback:
             self._event_callback(prefixed_event)
-        elif parent_tool_call_id not in self._subagent_event_buffer:
-            # Batch fallback (backward compat for TUI / non-SSE callers)
-            self._subagent_event_buffer[parent_tool_call_id] = []
-            self._subagent_event_buffer[parent_tool_call_id].append(event)
         else:
-            self._subagent_event_buffer[parent_tool_call_id].append(event)
+            # Batch fallback (backward compat for TUI / non-SSE callers)
+            self._subagent_event_buffer.setdefault(parent_tool_call_id, []).append(prefixed_event)
 
     def get_pending_subagent_events(self) -> list[tuple[str, list[dict[str, Any]]]]:
         """Get and clear pending sub-agent events."""
