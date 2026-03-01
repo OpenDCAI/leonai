@@ -37,6 +37,7 @@ async def lifespan(app: FastAPI):
     app.state.thread_locks_guard = asyncio.Lock()
     app.state.thread_tasks: dict[str, asyncio.Task] = {}
     app.state.thread_event_buffers: dict[str, RunEventBuffer] = {}
+    app.state.activity_buffers: dict[str, RunEventBuffer] = {}
     app.state.idle_reaper_task: asyncio.Task | None = None
 
     try:

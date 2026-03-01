@@ -256,6 +256,43 @@ async def _run_agent_to_buffer(
         if hasattr(agent, "runtime"):
             agent.runtime.set_event_callback(on_activity_event)
 
+        # Activity persistent sink (survives main SSE close)
+        activity_buf = app.state.activity_buffers.get(thread_id)
+        if not activity_buf:
+            activity_buf = RunEventBuffer()
+            activity_buf.run_id = f"activity_{thread_id}"
+            app.state.activity_buffers[thread_id] = activity_buf
+
+        async def activity_sink(event: dict) -> None:
+            from backend.web.services.event_store import append_event as _append
+
+            seq = await _append(thread_id, activity_buf.run_id, event)
+            try:
+                data = json.loads(event.get("data", "{}")) if isinstance(event.get("data"), str) else event.get("data", {})
+            except (json.JSONDecodeError, TypeError):
+                data = event.get("data", {})
+            if isinstance(data, dict):
+                data["_seq"] = seq
+                event = {**event, "data": json.dumps(data, ensure_ascii=False)}
+            await activity_buf.put(event)
+
+        if hasattr(agent, "runtime"):
+            agent.runtime.set_activity_sink(activity_sink)
+
+        # Continue handler: when core needs a new run (e.g., background task done, agent IDLE)
+        def continue_handler(message: str) -> None:
+            """Host adapter: core says 'continue with this message'."""
+            if hasattr(agent, "runtime") and agent.runtime.transition(AgentState.ACTIVE):
+                new_buf = start_agent_run(agent, thread_id, message, app)
+                # Notify frontend via activity buffer
+                asyncio.get_running_loop().create_task(activity_buf.put({
+                    "event": "new_run",
+                    "data": json.dumps({"thread_id": thread_id, "run_id": new_buf.run_id}),
+                }))
+
+        if hasattr(agent, "runtime"):
+            agent.runtime.set_continue_handler(continue_handler)
+
         if hasattr(agent, "_sandbox"):
             await prime_sandbox(agent, thread_id)
 
