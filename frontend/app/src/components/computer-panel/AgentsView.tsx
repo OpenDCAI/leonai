@@ -102,7 +102,6 @@ export function AgentsView({ steps, focusedStepId, onFocusStep }: AgentsViewProp
         ) : (
           <>
             <AgentDetailHeader focused={focused} stream={stream} />
-            <AgentPromptBlock prompt={parseAgentArgs(focused.args).prompt} />
             <ChatArea
               entries={entries}
               isStreaming={!!isRunning}
@@ -160,28 +159,6 @@ function getStatusDotClass(focused: ToolStep, stream: SubagentStream | undefined
   if (stream?.status === "error") return "bg-red-400";
   if (focused.status === "calling") return "bg-yellow-400 animate-pulse";
   return "bg-green-500";
-}
-
-function AgentPromptBlock({ prompt }: { prompt?: string }) {
-  const [expanded, setExpanded] = useState(false);
-  if (!prompt) return null;
-  return (
-    <div className="px-4 py-2 border-b border-[#f0f0f0] bg-[#fafafa] flex-shrink-0">
-      <div
-        className={`text-xs text-[#525252] leading-relaxed whitespace-pre-wrap ${expanded ? "" : "line-clamp-4"}`}
-      >
-        {prompt}
-      </div>
-      {prompt.length > 200 && (
-        <button
-          className="text-[10px] text-blue-500 hover:text-blue-600 mt-1"
-          onClick={() => setExpanded(!expanded)}
-        >
-          {expanded ? "收起" : "展开全文"}
-        </button>
-      )}
-    </div>
-  );
 }
 
 function AgentDetailHeader({ focused, stream }: { focused: ToolStep; stream: SubagentStream | undefined }) {
