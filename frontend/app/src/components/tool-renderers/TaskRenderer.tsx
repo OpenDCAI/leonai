@@ -31,11 +31,8 @@ function getTaskLabel(name: string, args: ReturnType<typeof parseArgs>): string 
       return "查看任务列表";
     case "TaskGet":
       return `查看任务 #${args.taskId ?? "?"}`;
-    case "Task": {
-      const agentType = args.subagent_type || "agent";
-      const desc = args.description?.slice(0, 40) || args.prompt?.slice(0, 40) || "子任务";
-      return `${agentType} · ${desc}`;
-    }
+    case "Task":
+      return args.description?.slice(0, 50) || args.prompt?.slice(0, 50) || "子任务";
     default:
       return args.description?.slice(0, 60) || args.prompt?.slice(0, 60) || "执行子任务";
   }
@@ -70,7 +67,7 @@ export default memo(function TaskRenderer({ step, expanded }: ToolRendererProps)
       {stream && (
         <div className="p-3 rounded-lg text-xs bg-[#f0f9ff] border border-[#bae6fd] space-y-2">
           <div className="flex items-center gap-2 text-[#0369a1] font-medium">
-            <span>Sub-agent: {stream.thread_id}</span>
+            <span>{stream.description || args.description || "子任务"}</span>
             {stream.status === "running" && (
               <span className="inline-block w-2 h-2 bg-[#0369a1] rounded-full animate-pulse" />
             )}

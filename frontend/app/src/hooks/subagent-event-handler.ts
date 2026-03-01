@@ -6,7 +6,7 @@ type SubagentStream = NonNullable<ToolStep["subagent_stream"]>;
 type Mutator = (stream: SubagentStream, data: EventPayload) => void;
 
 const MUTATORS: Record<string, Mutator> = {
-  subagent_task_start: (s, d) => { s.task_id = (d.task_id as string) || ""; s.thread_id = (d.thread_id as string) || ""; s.status = "running"; },
+  subagent_task_start: (s, d) => { s.task_id = (d.task_id as string) || ""; s.thread_id = (d.thread_id as string) || ""; s.description = (d.description as string) || undefined; s.status = "running"; },
   subagent_task_text: (s, d) => { s.text += (d.content as string) || ""; },
   subagent_task_tool_call: (s, d) => { s.tool_calls = [...s.tool_calls, { id: (d.tool_call_id as string) || "", name: (d.name as string) || "", args: d.args || {} }]; },
   subagent_task_done: (s) => { s.status = "completed"; },

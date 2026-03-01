@@ -102,6 +102,7 @@ function handleTool(msg: BackendMessage, _i: number, state: MapState): void {
       seg.step.subagent_stream = {
         task_id: (msg.metadata?.task_id as string) || "",
         thread_id: threadId,
+        description: (msg.metadata?.description as string) || undefined,
         text: "",
         tool_calls: [],
         status: "completed",

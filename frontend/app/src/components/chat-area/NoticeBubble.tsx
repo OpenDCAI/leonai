@@ -41,12 +41,14 @@ export function NoticeBubble({ entry, onTaskNoticeClick }: NoticeBubbleProps) {
 }
 
 function parseNoticeContent(raw: string): ParsedNotice {
-  // Task notification: show concise "Task {id} {status}" with link
+  // Task notification: show concise "description status" with link
   const taskMatch = raw.match(/<task-notification>[\s\S]*?<\/task-notification>/);
   if (taskMatch) {
     const taskId = taskMatch[0].match(/<task-id>([\s\S]*?)<\/task-id>/)?.[1] ?? "";
     const status = taskMatch[0].match(/<status>([\s\S]*?)<\/status>/)?.[1] ?? "";
-    return { text: `Task ${taskId} ${status}`, taskId: taskId || undefined };
+    const description = taskMatch[0].match(/<description>([\s\S]*?)<\/description>/)?.[1] ?? "";
+    const label = description || `Task ${taskId}`;
+    return { text: `${label} ${status}`, taskId: taskId || undefined };
   }
 
   // Steer reminder: extract only the user's original message
