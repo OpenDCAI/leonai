@@ -240,6 +240,15 @@ class _FakeRuntime:
     def get_status_dict(self) -> dict[str, Any]:
         return {}
 
+    def set_event_callback(self, cb: Any) -> None:
+        pass
+
+    def set_activity_sink(self, sink: Any) -> None:
+        pass
+
+    def set_continue_handler(self, handler: Any) -> None:
+        pass
+
 
 class _FakeRuntimeAgent:
     def __init__(self, storage_container: Any = None) -> None:
@@ -252,7 +261,7 @@ def test_run_runtime_consumes_storage_container_run_event_repo(monkeypatch: pyte
     async def _run() -> None:
         repo = _FakeRunEventRepo()
         agent = _FakeRuntimeAgent(storage_container=_FakeStorageContainer(repo))
-        app = SimpleNamespace(state=SimpleNamespace(thread_tasks={}, thread_event_buffers={}))
+        app = SimpleNamespace(state=SimpleNamespace(thread_tasks={}, thread_event_buffers={}, activity_buffers={}))
         buf = RunEventBuffer()
         buf.run_id = "run-1"
 
@@ -300,7 +309,7 @@ def test_run_runtime_without_storage_container_keeps_sqlite_event_store_path(mon
         monkeypatch.setattr(event_store, "cleanup_old_runs", _fake_cleanup_old_runs)
 
         agent = _FakeRuntimeAgent(storage_container=None)
-        app = SimpleNamespace(state=SimpleNamespace(thread_tasks={}, thread_event_buffers={}))
+        app = SimpleNamespace(state=SimpleNamespace(thread_tasks={}, thread_event_buffers={}, activity_buffers={}))
         buf = RunEventBuffer()
         buf.run_id = "run-1"
 
