@@ -25,7 +25,7 @@ function buildToolSegments(toolCalls: unknown[], msgIndex: number, now: number):
         id: call.id ?? `hist-tc-${msgIndex}-${j}`,
         name: call.name ?? "unknown",
         args: call.args ?? {},
-        status: "done" as const,
+        status: "calling" as const,
         timestamp: now,
       },
     };
