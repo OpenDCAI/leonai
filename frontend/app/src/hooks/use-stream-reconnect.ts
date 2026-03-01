@@ -9,6 +9,8 @@ interface ReconnectDeps {
   loading: boolean;
   /** When true, a run was just started — skip runtime active check. */
   runStarted?: boolean;
+  /** Bump to force a reconnection attempt (e.g., when activity SSE signals new_run). */
+  reconnectKey?: number;
   refreshThreads: () => Promise<void>;
   onUpdateRef: React.RefObject<(updater: (prev: ChatEntry[]) => ChatEntry[]) => void>;
   abortRef: React.RefObject<AbortController | null>;
@@ -88,5 +90,5 @@ export function useStreamReconnect(deps: ReconnectDeps) {
     })();
 
     return () => { ac.abort(); };
-  }, [threadId, loading, refreshThreads]);
+  }, [threadId, loading, refreshThreads, deps.reconnectKey]);
 }
