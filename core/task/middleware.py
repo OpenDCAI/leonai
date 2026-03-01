@@ -131,7 +131,7 @@ The agent will work independently and return results when complete.""",
                             },
                             "Description": {
                                 "type": "string",
-                                "description": "Optional 3-5 word summary of the task",
+                                "description": "3-5 word summary of the task",
                             },
                             "Model": {
                                 "type": "string",
@@ -145,8 +145,12 @@ The agent will work independently and return results when complete.""",
                                 "type": "integer",
                                 "description": "Maximum number of turns for the sub-agent",
                             },
+                            "Resume": {
+                                "type": "string",
+                                "description": "Agent ID to resume from previous execution",
+                            },
                         },
-                        "required": ["SubagentType", "Prompt"],
+                        "required": ["SubagentType", "Prompt", "Description"],
                     },
                 },
             },
@@ -278,6 +282,8 @@ The agent will work independently and return results when complete.""",
             params["RunInBackground"] = args["RunInBackground"]
         if "MaxTurns" in args:
             params["MaxTurns"] = args["MaxTurns"]
+        if "Resume" in args:
+            params["Resume"] = args["Resume"]
 
         if params.get("RunInBackground"):
             # Background execution uses runner.run() which registers task_id for TaskOutput.
@@ -400,6 +406,8 @@ The agent will work independently and return results when complete.""",
             metadata["task_id"] = result.task_id
         if result.thread_id:
             metadata["subagent_thread_id"] = result.thread_id
+        if result.description:
+            metadata["description"] = result.description
 
         return ToolMessage(content=content, tool_call_id=tool_id, metadata=metadata)
 

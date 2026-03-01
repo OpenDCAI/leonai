@@ -230,17 +230,18 @@ class SubagentRunner:
         if params.get("RunInBackground"):
             # Background execution
             task = asyncio.create_task(
-                self._execute_agent(agent, prompt, subagent_thread_id, max_turns, task_id, parent_thread_id)
+                self._execute_agent(agent, prompt, subagent_thread_id, max_turns, task_id, parent_thread_id, description)
             )
             self._active_tasks[task_id] = task
             return TaskResult(
                 task_id=task_id,
                 status="running",
+                description=description or None,
                 result=f"Task started in background. Use TaskOutput with TaskId='{task_id}' to get results.",
             )
         else:
             # Synchronous execution
-            return await self._execute_agent(agent, prompt, subagent_thread_id, max_turns, task_id)
+            return await self._execute_agent(agent, prompt, subagent_thread_id, max_turns, task_id, description=description)
 
     async def run_streaming(
         self,
@@ -400,11 +401,13 @@ class SubagentRunner:
 
             # Task completed
             final_text = "".join(text_parts).strip() or None
+            desc = params.get("Description") or None
             self._task_results[task_id] = TaskResult(
                 task_id=task_id,
                 thread_id=subagent_thread_id,
                 status="completed",
                 result=final_text,
+                description=desc,
                 turns_used=turns_used,
             )
             yield {
@@ -419,11 +422,13 @@ class SubagentRunner:
             }
 
         except Exception as e:
+            desc = params.get("Description") or None
             self._task_results[task_id] = TaskResult(
                 task_id=task_id,
                 thread_id=subagent_thread_id,
                 status="error",
                 error=str(e),
+                description=desc,
                 turns_used=turns_used,
             )
             yield {
@@ -453,6 +458,7 @@ class SubagentRunner:
         max_turns: int,
         task_id: str,
         parent_thread_id: str | None = None,
+        description: str = "",
     ) -> TaskResult:
         """Execute agent and return result.
 
@@ -461,9 +467,9 @@ class SubagentRunner:
         """
         runtime = self._parent_runtime
         if runtime:
-            result = await self._execute_agent_streaming(agent, prompt, thread_id, task_id, runtime)
+            result = await self._execute_agent_streaming(agent, prompt, thread_id, task_id, runtime, description)
         else:
-            result = await self._execute_agent_invoke(agent, prompt, thread_id, task_id)
+            result = await self._execute_agent_invoke(agent, prompt, thread_id, task_id, description)
 
         # Inject completion notification into parent's steer channel
         if parent_thread_id and result.status in ("completed", "error"):
@@ -483,6 +489,7 @@ class SubagentRunner:
             status=result.status,
             summary=summary,
             result=result.result,
+            description=result.description,
         )
         get_queue_manager().inject(xml, parent_thread_id)
 
@@ -492,9 +499,11 @@ class SubagentRunner:
         prompt: str,
         thread_id: str,
         task_id: str,
+        description: str = "",
     ) -> TaskResult:
         """Fallback execution via ainvoke (no event emission)."""
         turns_used = 0
+        desc = description or None
         try:
             result = await agent.ainvoke(
                 {"messages": [{"role": "user", "content": prompt}]},
@@ -515,6 +524,7 @@ class SubagentRunner:
                 thread_id=thread_id,
                 status="completed",
                 result=content,
+                description=desc,
                 turns_used=turns_used,
             )
 
@@ -524,6 +534,7 @@ class SubagentRunner:
                 thread_id=thread_id,
                 status="error",
                 error=str(e),
+                description=desc,
                 turns_used=turns_used,
             )
 
@@ -537,11 +548,15 @@ class SubagentRunner:
         thread_id: str,
         task_id: str,
         runtime: Any,
+        description: str = "",
     ) -> TaskResult:
         """Streaming execution that emits background_task_* events via runtime."""
+        start_data: dict[str, Any] = {"task_id": task_id, "thread_id": thread_id}
+        if description:
+            start_data["description"] = description
         runtime.emit_activity_event({
             "event": "background_task_start",
-            "data": json.dumps({"task_id": task_id, "thread_id": thread_id}),
+            "data": json.dumps(start_data),
         })
 
         text_parts: list[str] = []
@@ -572,11 +587,13 @@ class SubagentRunner:
                             })
 
             final_text = "".join(text_parts).strip() or None
+            desc = description or None
             task_result = TaskResult(
                 task_id=task_id,
                 thread_id=thread_id,
                 status="completed",
                 result=final_text,
+                description=desc,
             )
             runtime.emit_activity_event({
                 "event": "background_task_done",
@@ -584,11 +601,13 @@ class SubagentRunner:
             })
 
         except Exception as e:
+            desc = description or None
             task_result = TaskResult(
                 task_id=task_id,
                 thread_id=thread_id,
                 status="error",
                 error=str(e),
+                description=desc,
             )
             runtime.emit_activity_event({
                 "event": "background_task_error",
