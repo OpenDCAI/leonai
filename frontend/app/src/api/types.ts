@@ -123,7 +123,7 @@ export interface ToolStep {
     thread_id: string;
     description?: string;
     text: string;
-    tool_calls: Array<{ id: string; name: string; args: unknown }>;
+    tool_calls: Array<{ id: string; name: string; args: unknown; result?: string; status?: "calling" | "done" }>;
     status: "running" | "completed" | "error";
     error?: string;
   };

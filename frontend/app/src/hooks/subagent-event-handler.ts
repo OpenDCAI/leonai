@@ -8,7 +8,8 @@ type Mutator = (stream: SubagentStream, data: EventPayload) => void;
 const MUTATORS: Record<string, Mutator> = {
   subagent_task_start: (s, d) => { s.task_id = (d.task_id as string) || ""; s.thread_id = (d.thread_id as string) || ""; s.description = (d.description as string) || undefined; s.status = "running"; },
   subagent_task_text: (s, d) => { s.text += (d.content as string) || ""; },
-  subagent_task_tool_call: (s, d) => { s.tool_calls = [...s.tool_calls, { id: (d.tool_call_id as string) || "", name: (d.name as string) || "", args: d.args || {} }]; },
+  subagent_task_tool_call: (s, d) => { s.tool_calls = [...s.tool_calls, { id: (d.id as string) || "", name: (d.name as string) || "", args: d.args || {}, status: "calling" as const }]; },
+  subagent_task_tool_result: (s, d) => { const tcId = (d.tool_call_id as string) || ""; s.tool_calls = s.tool_calls.map(tc => tc.id === tcId ? { ...tc, result: (d.content as string) || "", status: "done" as const } : tc); },
   subagent_task_done: (s) => { s.status = "completed"; },
   subagent_task_error: (s, d) => { s.status = "error"; s.error = (d.error as string) || "Unknown error"; },
 };

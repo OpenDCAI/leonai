@@ -24,8 +24,8 @@ export function useThreadData(threadId: string | undefined, skipInitialLoad = fa
   const [activeSandbox, setActiveSandbox] = useState<SandboxInfo | null>(null);
   const [loading, setLoading] = useState(!skipInitialLoad);
 
-  const loadThread = useCallback(async (id: string) => {
-    setLoading(true);
+  const loadThread = useCallback(async (id: string, silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const thread = await getThread(id);
       setEntries(mapBackendEntries(thread.messages));
@@ -34,22 +34,14 @@ export function useThreadData(threadId: string | undefined, skipInitialLoad = fa
     } catch (err) {
       console.error("[useThreadData] Failed to load thread:", err);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, []);
 
   const refreshThread = useCallback(async () => {
     if (!threadId) return;
-    // Silent refresh: don't set loading to avoid flickering (unmount/remount)
-    try {
-      const thread = await getThread(threadId);
-      setEntries(mapBackendEntries(thread.messages));
-      const sandbox = thread.sandbox;
-      setActiveSandbox(sandbox && typeof sandbox === "object" ? (sandbox as SandboxInfo) : null);
-    } catch (err) {
-      console.error("[useThreadData] Failed to refresh thread:", err);
-    }
-  }, [threadId]);
+    await loadThread(threadId, true);
+  }, [threadId, loadThread]);
 
   // Load thread data when threadId changes
   useEffect(() => {
