@@ -39,10 +39,17 @@ export function useThreadData(threadId: string | undefined, skipInitialLoad = fa
   }, []);
 
   const refreshThread = useCallback(async () => {
-    if (threadId) {
-      await loadThread(threadId);
+    if (!threadId) return;
+    // Silent refresh: don't set loading to avoid flickering (unmount/remount)
+    try {
+      const thread = await getThread(threadId);
+      setEntries(mapBackendEntries(thread.messages));
+      const sandbox = thread.sandbox;
+      setActiveSandbox(sandbox && typeof sandbox === "object" ? (sandbox as SandboxInfo) : null);
+    } catch (err) {
+      console.error("[useThreadData] Failed to refresh thread:", err);
     }
-  }, [threadId, loadThread]);
+  }, [threadId]);
 
   // Load thread data when threadId changes
   useEffect(() => {

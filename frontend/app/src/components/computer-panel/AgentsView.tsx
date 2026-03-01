@@ -164,6 +164,7 @@ export function AgentsView({ steps, focusedStepId, onFocusStep }: AgentsViewProp
                 activities={[]}
                 focusedStepId={agentFocusedStepId}
                 onFocusStep={setAgentFocusedStepId}
+                autoScroll={!!isRunning}
               />
             )}
           </>
