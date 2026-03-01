@@ -12,11 +12,18 @@
 
 ```bash
 MAIN_REPO=$(git worktree list | head -1 | awk '{print $1}')
+PROJECT_NAME=$(basename "$MAIN_REPO")
 ```
 
 - 当前目录是某个 worktree → 默认操作当前 worktree，确认后执行
 - 当前目录是主仓库且无参数 → 列出所有 worktree，询问移除哪个
 - 提供了参数 → 匹配分支名或目录名
+
+worktree 可能在两个位置（兼容新旧路径）：
+- 新路径：`~/worktrees/<项目名>--<目录名>`
+- 旧路径：`$MAIN_REPO/worktrees/<目录名>`
+
+用 `git worktree list` 获取实际路径，按分支名匹配即可。
 
 ## Step 1：检查未提交改动
 
@@ -31,7 +38,7 @@ git -C <worktree路径> status --short
 先移除已知的 symlink（`CLAUDE.local.md` 由 `wtnew` 创建，不在 Git 里）：
 
 ```bash
-TARGET="$MAIN_REPO/worktrees/<目录名>/CLAUDE.local.md"
+TARGET="<worktree路径>/CLAUDE.local.md"
 [ -L "$TARGET" ] && rm "$TARGET" || echo "跳过：$TARGET 不是符号链接，不删除"
 ```
 
@@ -40,15 +47,17 @@ TARGET="$MAIN_REPO/worktrees/<目录名>/CLAUDE.local.md"
 ## Step 3：移除 worktree
 
 ```bash
-git worktree remove "$MAIN_REPO/worktrees/<目录名>"
+git worktree remove "<worktree路径>"
 ```
 
 如果仍然失败（`.venv`、`__pycache__` 等其他 untracked 文件残留）：
 
 ```bash
-rm -rf "$MAIN_REPO/worktrees/<目录名>"
+rm -rf "<worktree路径>"
 git worktree prune
 ```
+
+移除后，`config.worktree` 随 `.git/worktrees/<name>/` 自动清除，无需额外处理。
 
 ## Step 4：询问是否删除本地分支
 

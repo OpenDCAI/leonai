@@ -25,22 +25,28 @@ git -C <path> rev-list HEAD..origin/main --count   # BEHIND
 git -C <path> log -1 --format="%ai"               # 最近 commit 时间
 git -C <path> log --format="%ai" $(git -C <path> merge-base HEAD origin/main) -1  # 分叉时间
 gh pr view --json state,url,number -R <repo> -b <branch> 2>/dev/null  # PR 状态
+
+# 读取 worktree config（新创建的 worktree 才有）：
+git -C <path> config --worktree --get worktree.ports.backend 2>/dev/null
+git -C <path> config --worktree --get worktree.ports.frontend 2>/dev/null
+git -C <path> config --worktree --get worktree.description 2>/dev/null
 ```
 
 ## Step 2：输出表格
 
 ```
-worktree            branch          ahead  behind  dirty  PR
-────────────────────────────────────────────────────────────────
-worktrees/feat-x    feat/x          +3     -0      ✗      #12 open
-worktrees/fix-y     fix/y           +0     -5      ✓      none
-worktrees/old-feat  old/feat        +1     -12     ✗      #8 merged ⚠
+worktree                        branch          ports        ahead  behind  dirty  PR           description
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+~/worktrees/leon--feat-x        feat/x          8002:5174    +3     -0      ✗      #12 open     评估系统开发
+~/worktrees/leon--fix-y         fix/y           8003:5175    +0     -5      ✓      none         修复登录 bug
+worktrees/old-feat              old/feat        -            +1     -12     ✗      #8 merged ⚠  (旧路径)
 ```
 
 状态标注：
 - `⚠` = PR 已 merged/closed，建议清理
 - `✓` dirty = 有未提交改动
 - behind 较多 = 落后 main，建议 rebase
+- `-` ports = 旧路径 worktree，无端口配置
 
 ## Step 3：输出 Mermaid 时间轴
 
