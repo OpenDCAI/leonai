@@ -97,10 +97,12 @@ function handleTool(msg: BackendMessage, _i: number, state: MapState): void {
     seg.step.status = "done";
 
     // Restore subagent_stream from persisted metadata (history replay path)
-    const threadId = msg.metadata?.subagent_thread_id as string | undefined;
+    const taskId = msg.metadata?.task_id as string | undefined;
+    const threadId = (msg.metadata?.subagent_thread_id as string | undefined)
+      || (taskId ? `subagent_${taskId}` : undefined);
     if (threadId && !seg.step.subagent_stream) {
       seg.step.subagent_stream = {
-        task_id: (msg.metadata?.task_id as string) || "",
+        task_id: taskId || "",
         thread_id: threadId,
         description: (msg.metadata?.description as string) || undefined,
         text: "",
