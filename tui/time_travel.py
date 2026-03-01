@@ -9,7 +9,8 @@ from typing import TYPE_CHECKING
 from langgraph.checkpoint.sqlite import SqliteSaver
 
 from storage.providers.sqlite.checkpoint_repo import SQLiteCheckpointRepo
-from tui.operations import FileOperation, FileOperationRecorder, get_recorder
+from storage.models import FileOperationRow
+from tui.operations import FileOperationRecorder, get_recorder
 
 if TYPE_CHECKING:
     pass
@@ -33,7 +34,7 @@ class RewindResult:
 
     success: bool
     message: str
-    reverted_operations: list[FileOperation]
+    reverted_operations: list[FileOperationRow]
     errors: list[str]
 
 
@@ -133,7 +134,7 @@ class TimeTravelManager:
 
         return checkpoints
 
-    def get_operations_to_revert(self, thread_id: str, target_checkpoint_id: str) -> list[FileOperation]:
+    def get_operations_to_revert(self, thread_id: str, target_checkpoint_id: str) -> list[FileOperationRow]:
         """Get list of operations that would be reverted when rewinding to target"""
         checkpoints = self.get_checkpoints(thread_id)
 
@@ -218,7 +219,7 @@ class TimeTravelManager:
 
         self.checkpoint_repo.delete_checkpoints_by_ids(thread_id, ids_to_delete)
 
-    def _revert_operation(self, op: FileOperation) -> None:
+    def _revert_operation(self, op: FileOperationRow) -> None:
         """Revert a single file operation"""
         path = Path(op.file_path)
 

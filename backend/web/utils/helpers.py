@@ -66,12 +66,20 @@ def extract_webhook_instance_id(payload: dict[str, Any]) -> str | None:
     return None
 
 
+_thread_config_repo: ThreadConfigRepo | None = None
+
+
 def _build_thread_config_repo() -> ThreadConfigRepo:
+    # @@@singleton - build once; matches event_store.py pattern to avoid per-call Supabase client churn.
+    global _thread_config_repo
+    if _thread_config_repo is not None:
+        return _thread_config_repo
     container = build_storage_container(main_db_path=DB_PATH)
     repo_factory = getattr(container, "thread_config_repo", None)
     if not callable(repo_factory):
         raise RuntimeError("StorageContainer must expose callable thread_config_repo().")
-    return repo_factory()
+    _thread_config_repo = repo_factory()
+    return _thread_config_repo
 
 
 def save_thread_config(thread_id: str, **fields: Any) -> None:
