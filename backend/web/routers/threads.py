@@ -171,7 +171,7 @@ async def send_message(
         get_queue_manager().inject(format_steer_reminder(payload.message), thread_id)
         return {"status": "injected", "routing": "steer", "thread_id": thread_id}
 
-    # Agent is IDLE — start new run
+    # Agent is IDLE — start new run (both transition and run start must be atomic)
     set_current_thread_id(thread_id)
     lock = await get_thread_lock(app, thread_id)
     async with lock:
@@ -179,8 +179,7 @@ async def send_message(
             # Race: became active between check and lock
             get_queue_manager().inject(format_steer_reminder(payload.message), thread_id)
             return {"status": "injected", "routing": "steer", "thread_id": thread_id}
-
-    buf = start_agent_run(agent, thread_id, payload.message, app)
+        buf = start_agent_run(agent, thread_id, payload.message, app)
     return {"status": "started", "routing": "direct", "run_id": buf.run_id, "thread_id": thread_id}
 
 
@@ -333,8 +332,7 @@ async def run_thread(
     async with lock:
         if hasattr(agent, "runtime") and not agent.runtime.transition(AgentState.ACTIVE):
             raise HTTPException(status_code=409, detail="Thread is already running")
-
-    buf = start_agent_run(agent, thread_id, payload.message, app, payload.enable_trajectory)
+        buf = start_agent_run(agent, thread_id, payload.message, app, payload.enable_trajectory)
     return {"run_id": buf.run_id, "thread_id": thread_id}
 
 
@@ -422,10 +420,15 @@ async def cancel_command(
     for mw in parent_mw:
         if not isinstance(mw, CommandMiddleware):
             continue
-        status = await mw._executor.get_status(command_id)
-        if status and not status.done and status.process:
-            status.process.terminate()
-            return {"cancelled": True, "command_id": command_id}
+        executor = getattr(mw, "_executor", None)
+        if not executor:
+            continue
+        status = await executor.get_status(command_id)
+        if status and not status.done:
+            process = getattr(status, "process", None)
+            if process:
+                process.terminate()
+                return {"cancelled": True, "command_id": command_id}
 
     raise HTTPException(404, "Command not found or already completed")
 
