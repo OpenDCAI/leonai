@@ -19,17 +19,6 @@ html, body, #root {
   color: #171717;
 }
 
-/* Focus outline */
-*:focus-visible {
-  outline: 2px solid #171717;
-  outline-offset: 2px;
-}
-
-/* Remove focus outline from textarea inputs (handled by container border) */
-textarea:focus-visible {
-  outline: none;
-}
-
 /* Smooth transitions */
 button, input, textarea {
   transition: all 0.15s ease;
