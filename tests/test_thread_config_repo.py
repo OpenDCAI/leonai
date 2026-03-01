@@ -61,10 +61,9 @@ def test_helpers_compatibility_api(tmp_path, monkeypatch):
     assert config is not None
     assert (config.sandbox_type, config.cwd) == ("local", "/tmp/p")
     assert helpers.lookup_thread_model("t-3") == "m-3"
-    helpers.save_thread_config("t-3", queue_mode="followup", observation_provider="langsmith")
+    helpers.save_thread_config("t-3", observation_provider="langsmith")
     config2 = helpers.load_thread_config("t-3")
     assert config2 is not None
-    assert config2.queue_mode == "followup"
     assert config2.observation_provider == "langsmith"
 
 
