@@ -3,7 +3,7 @@ import type { ToolStep } from "../../api";
 import ChatArea from "../ChatArea";
 import { useThreadData } from "../../hooks/use-thread-data";
 import { parseAgentArgs } from "./utils";
-import { getToolRenderer } from "../tool-renderers";
+
 
 type SubagentStream = NonNullable<ToolStep["subagent_stream"]>;
 
@@ -103,20 +103,16 @@ export function AgentsView({ steps, focusedStepId, onFocusStep }: AgentsViewProp
           <>
             <AgentDetailHeader focused={focused} stream={stream} />
             <AgentPromptBlock prompt={parseAgentArgs(focused.args).prompt} />
-            {threadId && (entries.length > 0 || loading) ? (
+            {threadId ? (
               <ChatArea
                 entries={entries}
                 isStreaming={!!isRunning}
                 runtimeStatus={null}
                 loading={loading}
               />
-            ) : !threadId ? (
+            ) : (
               <div className="flex-1 flex items-center justify-center">
                 <span className="text-xs text-[#a3a3a3]">助手启动中...</span>
-              </div>
-            ) : (
-              <div className="flex-1 overflow-y-auto p-4">
-                {(() => { const Renderer = getToolRenderer(focused); return <Renderer step={focused} expanded={true} />; })()}
               </div>
             )}
           </>
