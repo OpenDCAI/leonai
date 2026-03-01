@@ -8,7 +8,7 @@ interface ToolDetailBoxProps {
   toolSegments: ToolSegment[];
   isStreaming: boolean;
   onFocusStep?: (stepId: string) => void;
-  onNavigateAgent?: (taskId: string) => void;
+  onFocusAgent?: (stepId: string) => void;
 }
 
 function MiniStatusIcon({ status }: { status: string }) {
@@ -26,17 +26,11 @@ function MiniStatusIcon({ status }: { status: string }) {
   }
 }
 
-function extractTaskId(step: { name: string; result?: string }): string | null {
-  if (step.name !== "Task") return null;
-  const match = step.result?.match(/Task (\w{8})/);
-  return match?.[1] ?? null;
-}
-
 export const ToolDetailBox = memo(function ToolDetailBox({
   toolSegments,
   isStreaming,
   onFocusStep,
-  onNavigateAgent,
+  onFocusAgent,
 }: ToolDetailBoxProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -70,16 +64,15 @@ export const ToolDetailBox = memo(function ToolDetailBox({
             const { step } = seg;
             const badge = TOOL_BADGE_STYLES[step.name] ?? { ...DEFAULT_BADGE, label: step.name };
             const isCalling = step.status === "calling";
-            const taskId = extractTaskId(step);
-            const isClickableTask = !!taskId && !!onNavigateAgent;
+            const isTaskStep = step.name === "Task" && !!onFocusAgent;
 
             return (
               <div
                 key={step.id}
                 className={`flex items-center gap-1.5 h-6 min-w-0 animate-fade-in ${
-                  isClickableTask ? "cursor-pointer hover:bg-black/[0.03] rounded -mx-0.5 px-0.5" : ""
+                  isTaskStep ? "cursor-pointer hover:bg-black/[0.03] rounded -mx-0.5 px-0.5" : ""
                 }`}
-                onClick={isClickableTask ? (e) => { e.stopPropagation(); onNavigateAgent(taskId); } : undefined}
+                onClick={isTaskStep ? (e) => { e.stopPropagation(); onFocusAgent(step.id); } : undefined}
               >
                 <MiniStatusIcon status={step.status} />
                 <span
@@ -89,7 +82,7 @@ export const ToolDetailBox = memo(function ToolDetailBox({
                 </span>
                 <span
                   className={`text-[11px] text-[#737373] font-mono truncate min-w-0 ${isCalling ? "animate-pulse-slow" : ""} ${
-                    isClickableTask ? "underline decoration-dotted underline-offset-2" : ""
+                    isTaskStep ? "underline decoration-dotted underline-offset-2" : ""
                   }`}
                 >
                   {getStepSummary(step)}
