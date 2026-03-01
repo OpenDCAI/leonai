@@ -217,6 +217,12 @@ def resolve_local_workspace_path(
     return target
 
 
+def purge_thread_storage(thread_id: str) -> None:
+    """Purge all provider-managed storage records for a thread (Supabase or SQLite repos)."""
+    container = build_storage_container(main_db_path=DB_PATH)
+    container.purge_thread(thread_id)
+
+
 def delete_thread_in_db(thread_id: str) -> None:
     """Delete all records for a thread from both databases."""
     ident_re = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")

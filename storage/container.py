@@ -80,6 +80,14 @@ class StorageContainer:
     def provider_for(self, repo_name: str) -> StorageStrategy:
         return self._provider_for(repo_name)
 
+    def purge_thread(self, thread_id: str) -> None:
+        """Delete all storage records for a thread across all configured providers."""
+        self.checkpoint_repo().delete_thread_data(thread_id)
+        self.thread_config_repo().delete_thread_config(thread_id)
+        self.file_operation_repo().delete_thread_operations(thread_id)
+        self.run_event_repo().delete_thread_events(thread_id)
+        self.summary_repo().delete_thread_summaries(thread_id)
+
     # --- internal ---
 
     def _build_repo(self, name: str, sqlite_factory):

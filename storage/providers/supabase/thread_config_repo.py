@@ -113,6 +113,9 @@ class SupabaseThreadConfigRepo:
         cwd = rows[0].get("cwd")
         return str(sandbox_type), str(cwd) if cwd is not None else None
 
+    def delete_thread_config(self, thread_id: str) -> None:
+        self._table().delete().eq("thread_id", thread_id).execute()
+
     def _select_rows(self, thread_id: str, columns: str) -> list[dict[str, Any]]:
         response = self._table().select(columns).eq("thread_id", thread_id).execute()
         return _query.rows(response, "select thread config")

@@ -96,6 +96,10 @@ class SQLiteThreadConfigRepo:
             return None
         return row[0], row[1]
 
+    def delete_thread_config(self, thread_id: str) -> None:
+        self._conn.execute("DELETE FROM thread_config WHERE thread_id = ?", (thread_id,))
+        self._conn.commit()
+
     def _ensure_table(self) -> None:
         tables = {r[0] for r in self._conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         # @@@table_migration - keep backward compatibility by renaming old thread_metadata table once.

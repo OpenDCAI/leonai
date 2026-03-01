@@ -31,7 +31,7 @@ from backend.web.services.thread_state_service import (
     get_session_status,
     get_terminal_status,
 )
-from backend.web.utils.helpers import delete_thread_in_db
+from backend.web.utils.helpers import delete_thread_in_db, purge_thread_storage
 from backend.web.utils.serializers import serialize_message
 
 logger = logging.getLogger(__name__)
@@ -127,6 +127,7 @@ async def delete_thread(
             await asyncio.to_thread(destroy_thread_resources_sync, thread_id, sandbox_type, app.state.agent_pool)
         except Exception as exc:
             logger.warning("Failed to destroy sandbox resources for thread %s: %s", thread_id, exc)
+        await asyncio.to_thread(purge_thread_storage, thread_id)
         await asyncio.to_thread(delete_thread_in_db, thread_id)
 
     # Clean up thread-specific state
