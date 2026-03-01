@@ -102,6 +102,7 @@ export function AgentsView({ steps, focusedStepId, onFocusStep }: AgentsViewProp
         ) : (
           <>
             <AgentDetailHeader focused={focused} stream={stream} />
+            <AgentPromptBlock prompt={parseAgentArgs(focused.args).prompt} />
             {threadId && (entries.length > 0 || loading) ? (
               <ChatArea
                 entries={entries}
@@ -109,7 +110,7 @@ export function AgentsView({ steps, focusedStepId, onFocusStep }: AgentsViewProp
                 runtimeStatus={null}
                 loading={loading}
               />
-            ) : focused.status === "calling" && !stream ? (
+            ) : !threadId ? (
               <div className="flex-1 flex items-center justify-center">
                 <span className="text-xs text-[#a3a3a3]">助手启动中...</span>
               </div>
@@ -132,7 +133,6 @@ function AgentListItem({ step, isSelected, onClick }: { step: ToolStep; isSelect
   const ss = step.subagent_stream;
   const displayName = ss?.description || args.description || args.prompt?.slice(0, 40) || "子任务";
   const prompt = args.prompt || "";
-  const promptPreview = (ss?.description || args.description) ? (prompt.slice(0, 80) + (prompt.length > 80 ? "..." : "")) : "";
   const isRunning = step.status === "calling" && ss?.status === "running";
   const isError = step.status === "error" || ss?.status === "error";
   const isDone = step.status === "done" || ss?.status === "completed";
@@ -145,12 +145,12 @@ function AgentListItem({ step, isSelected, onClick }: { step: ToolStep; isSelect
       }`}
       onClick={onClick}
     >
-      <div className="flex items-center gap-2 mb-1.5">
+      <div className="flex items-center gap-2">
         <span className={`w-2 h-2 rounded-full flex-shrink-0 ${statusDot}`} />
         <div className="text-[11px] font-semibold text-[#171717] truncate">{displayName}</div>
       </div>
-      {promptPreview && (
-        <div className="text-[10px] text-[#737373] line-clamp-3 leading-relaxed">{promptPreview}</div>
+      {prompt && (
+        <div className="text-[10px] text-[#737373] truncate mt-0.5 pl-4">{prompt}</div>
       )}
     </button>
   );
@@ -172,17 +172,40 @@ function getStatusDotClass(focused: ToolStep, stream: SubagentStream | undefined
   return "bg-green-500";
 }
 
+function AgentPromptBlock({ prompt }: { prompt?: string }) {
+  const [expanded, setExpanded] = useState(false);
+  if (!prompt) return null;
+  return (
+    <div className="px-4 py-2 border-b border-[#f0f0f0] bg-[#fafafa] flex-shrink-0">
+      <div
+        className={`text-xs text-[#525252] leading-relaxed whitespace-pre-wrap ${expanded ? "" : "line-clamp-4"}`}
+      >
+        {prompt}
+      </div>
+      {prompt.length > 200 && (
+        <button
+          className="text-[10px] text-blue-500 hover:text-blue-600 mt-1"
+          onClick={() => setExpanded(!expanded)}
+        >
+          {expanded ? "收起" : "展开全文"}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function AgentDetailHeader({ focused, stream }: { focused: ToolStep; stream: SubagentStream | undefined }) {
   const args = parseAgentArgs(focused.args);
   const displayName = stream?.description || args.description || args.prompt?.slice(0, 40) || "子任务";
+  const agentType = args.subagent_type;
   return (
     <div className="flex items-center gap-2 px-4 py-2.5 border-b border-[#e5e5e5] bg-[#fafafa] flex-shrink-0">
-      <div className="flex-1">
-        <div className="text-sm font-medium text-[#171717]">{displayName}</div>
-        <div className="text-[10px] text-[#737373] line-clamp-1">{args.prompt || ""}</div>
-      </div>
-      <span className={`w-2 h-2 rounded-full ${getStatusDotClass(focused, stream)}`} />
-      <span className="text-[10px] text-[#a3a3a3]">{getStatusLabel(focused, stream)}</span>
+      {agentType && (
+        <span className="text-[10px] font-mono bg-[#e5e5e5] text-[#525252] px-1.5 py-0.5 rounded flex-shrink-0">{agentType}</span>
+      )}
+      <div className="text-sm font-medium text-[#171717] truncate flex-1">{displayName}</div>
+      <span className={`w-2 h-2 rounded-full flex-shrink-0 ${getStatusDotClass(focused, stream)}`} />
+      <span className="text-[10px] text-[#a3a3a3] flex-shrink-0">{getStatusLabel(focused, stream)}</span>
     </div>
   );
 }

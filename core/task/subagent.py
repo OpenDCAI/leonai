@@ -235,6 +235,7 @@ class SubagentRunner:
             self._active_tasks[task_id] = task
             return TaskResult(
                 task_id=task_id,
+                thread_id=subagent_thread_id,
                 status="running",
                 description=description or None,
                 result=f"Task started in background. Use TaskOutput with TaskId='{task_id}' to get results.",
