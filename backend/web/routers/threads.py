@@ -451,6 +451,34 @@ async def cancel_background_task(
     raise HTTPException(404, "Task not found or already completed")
 
 
+@router.get("/{thread_id}/activity/events")
+async def stream_activity_events(
+    thread_id: str,
+    request: Request,
+    after: int = 0,
+    app: Annotated[Any, Depends(get_app)] = None,
+) -> EventSourceResponse:
+    """SSE for background activity events. Used when main SSE has closed."""
+    from starlette.responses import Response
+
+    last_id = request.headers.get("Last-Event-ID")
+    if last_id:
+        try:
+            after = max(after, int(last_id))
+        except ValueError:
+            pass
+
+    activity_buffers = getattr(app.state, "activity_buffers", {})
+    buf = activity_buffers.get(thread_id)
+    if buf:
+        return EventSourceResponse(
+            observe_run_events(buf, after=after),
+            headers=SSE_HEADERS,
+        )
+    # No buffer → 204 No Content
+    return Response(status_code=204)
+
+
 @router.post("/{thread_id}/task-agent/runs")
 async def run_task_agent(
     thread_id: str,
