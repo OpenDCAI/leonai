@@ -475,8 +475,22 @@ class SubagentRunner:
             result = await self._execute_agent_invoke(agent, prompt, thread_id, task_id, description)
 
         # Inject completion notification into parent's steer channel
+        # This may trigger new_run (via request_continue) when parent is idle.
         if parent_thread_id and result.status in ("completed", "error"):
             self._inject_task_notification(task_id, result, parent_thread_id)
+
+        # Emit background_task_done/error AFTER notification injection.
+        # This ensures new_run arrives before background_task_done on the
+        # activity SSE, preventing premature frontend disconnect.
+        if runtime and result.status in ("completed", "error"):
+            event_name = "background_task_done" if result.status == "completed" else "background_task_error"
+            event_data: dict[str, Any] = {"task_id": task_id, "status": result.status}
+            if result.status == "error":
+                event_data["error"] = result.error or ""
+            runtime.emit_activity_event({
+                "event": event_name,
+                "data": json.dumps(event_data),
+            })
 
         return result
 
@@ -670,10 +684,9 @@ class SubagentRunner:
                 result=final_text,
                 description=desc,
             )
-            runtime.emit_activity_event({
-                "event": "background_task_done",
-                "data": json.dumps({"task_id": task_id, "status": "completed"}),
-            })
+            # NOTE: background_task_done is emitted by _execute_agent (the caller)
+            # AFTER _inject_task_notification, so that new_run arrives before
+            # background_task_done on the activity SSE — preventing premature disconnect.
             if parent_tool_call_id:
                 runtime.emit_subagent_event(parent_tool_call_id, {
                     "event": "task_done",
@@ -689,10 +702,7 @@ class SubagentRunner:
                 error=str(e),
                 description=desc,
             )
-            runtime.emit_activity_event({
-                "event": "background_task_error",
-                "data": json.dumps({"task_id": task_id, "error": str(e)}),
-            })
+            # NOTE: background_task_error is emitted by _execute_agent (the caller)
             if parent_tool_call_id:
                 runtime.emit_subagent_event(parent_tool_call_id, {
                     "event": "task_error",
