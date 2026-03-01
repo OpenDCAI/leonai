@@ -9,6 +9,7 @@ import InputBox from "../components/InputBox";
 import TaskProgress from "../components/TaskProgress";
 import TokenStats from "../components/TokenStats";
 import { useActivities } from "../hooks/use-activities";
+import { useActivitySSE } from "../hooks/use-activity-sse";
 import { useAppActions } from "../hooks/use-app-actions";
 import { useResizableX } from "../hooks/use-resizable-x";
 import { useSandboxManager } from "../hooks/use-sandbox-manager";
@@ -88,6 +89,19 @@ function ChatPageInner({ threadId }: { threadId: string }) {
     });
 
   const isStreaming = isRunning;
+
+  // Activity SSE: background events after main SSE closes
+  const hasRunningActivities = activities.some((a) => a.status === "running");
+  const needActivitySSE = !isStreaming && hasRunningActivities;
+
+  useActivitySSE(threadId, needActivitySSE, (event) => {
+    if (event.type === "new_run") {
+      // Agent started a new run (e.g., task notification response)
+      // The main SSE will reconnect automatically via useStreamReconnect
+      return;
+    }
+    handleActivityEvent(event);
+  });
 
   const { sandboxActionError, handlePauseSandbox, handleResumeSandbox } =
     useSandboxManager({
@@ -189,6 +203,7 @@ function ChatPageInner({ threadId }: { threadId: string }) {
               activities={activities}
               onCancelCommand={(id) => cancelCommand(threadId, id)}
               onCancelTask={(id) => cancelTask(threadId, id)}
+              isStreaming={isStreaming}
             />
           </>
         )}
