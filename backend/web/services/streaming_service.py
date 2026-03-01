@@ -502,15 +502,23 @@ async def _run_agent_to_buffer(
             agent.runtime.transition(AgentState.IDLE)
 
         # Consume followup queue: if messages are pending, start a new run
+        followup = None
         try:
             from core.queue import get_queue_manager
 
-            followup = get_queue_manager().dequeue(thread_id)
+            qm = get_queue_manager()
+            followup = qm.dequeue(thread_id)
             if followup and app:
                 if hasattr(agent, "runtime") and agent.runtime.transition(AgentState.ACTIVE):
                     start_agent_run(agent, thread_id, followup, app)
         except Exception:
-            pass
+            logger.exception("Failed to consume followup queue for thread %s", thread_id)
+            # Re-enqueue the message if it was already dequeued to prevent data loss
+            if followup:
+                try:
+                    get_queue_manager().enqueue(followup, thread_id)
+                except Exception:
+                    logger.error("Failed to re-enqueue followup for thread %s — message lost: %.200s", thread_id, followup)
 
         try:
             await cleanup_old_runs(thread_id, keep_latest=1, run_event_repo=run_event_repo)
