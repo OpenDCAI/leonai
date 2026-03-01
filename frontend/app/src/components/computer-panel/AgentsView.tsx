@@ -3,6 +3,7 @@ import type { ToolStep } from "../../api";
 import ChatArea from "../ChatArea";
 import { useThreadData } from "../../hooks/use-thread-data";
 import { parseAgentArgs } from "./utils";
+import { getToolRenderer } from "../tool-renderers";
 
 type SubagentStream = NonNullable<ToolStep["subagent_stream"]>;
 
@@ -108,8 +109,14 @@ export function AgentsView({ steps, focusedStepId, onFocusStep }: AgentsViewProp
                 runtimeStatus={null}
                 loading={loading}
               />
+            ) : focused.status === "calling" && !stream ? (
+              <div className="flex-1 flex items-center justify-center">
+                <span className="text-xs text-[#a3a3a3]">助手启动中...</span>
+              </div>
             ) : (
-              <AgentDetailFallback focused={focused} stream={stream} />
+              <div className="flex-1 overflow-y-auto p-4">
+                {(() => { const Renderer = getToolRenderer(focused); return <Renderer step={focused} expanded={true} />; })()}
+              </div>
             )}
           </>
         )}
@@ -180,51 +187,4 @@ function AgentDetailHeader({ focused, stream }: { focused: ToolStep; stream: Sub
   );
 }
 
-/* -- Fallback detail when thread not loadable -- */
-
-function AgentDetailFallback({ focused, stream }: { focused: ToolStep; stream: SubagentStream | undefined }) {
-  const args = parseAgentArgs(focused.args);
-
-  if (focused.status === "calling" && !stream) {
-    return (
-      <div className="flex-1 flex items-center justify-center">
-        <span className="text-xs text-[#a3a3a3]">助手启动中...</span>
-      </div>
-    );
-  }
-
-  return (
-    <div className="flex-1 overflow-y-auto p-4 space-y-3">
-      {args.prompt && (
-        <div className="p-3 rounded-lg text-xs bg-[#fafafa] border border-[#e5e5e5] text-[#525252] whitespace-pre-wrap">
-          {args.prompt}
-        </div>
-      )}
-      {stream?.text && (
-        <div className="p-3 rounded-lg text-xs bg-[#f0f9ff] border border-[#bae6fd] text-[#525252] whitespace-pre-wrap">
-          {stream.text}
-        </div>
-      )}
-      {stream && stream.tool_calls.length > 0 && (
-        <div className="space-y-1">
-          {stream.tool_calls.map((tc, i) => (
-            <div key={i} className="text-[11px] font-mono text-[#737373] px-3 py-1.5 bg-[#fafafa] rounded border border-[#e5e5e5]">
-              {tc.name}
-            </div>
-          ))}
-        </div>
-      )}
-      {focused.result && (
-        <pre className="p-3 rounded-lg text-xs overflow-x-auto max-h-[400px] overflow-y-auto font-mono bg-[#fafafa] border border-[#e5e5e5] text-[#525252]">
-          {focused.result}
-        </pre>
-      )}
-      {stream?.error && (
-        <div className="p-3 rounded-lg text-xs bg-red-50 border border-red-200 text-red-600">
-          {stream.error}
-        </div>
-      )}
-    </div>
-  );
-}
 
