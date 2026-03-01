@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { useParams, useOutletContext, useLocation } from "react-router-dom";
+import { useCallback, useEffect, useState } from "react";
+import { useParams, useOutletContext, useLocation, useNavigate } from "react-router-dom";
 import ChatArea from "../components/ChatArea";
 import ComputerPanel from "../components/ComputerPanel";
 import { DragHandle } from "../components/DragHandle";
@@ -31,6 +31,7 @@ export default function ChatPage() {
 
 function ChatPageInner({ threadId }: { threadId: string }) {
   const location = useLocation();
+  const navigate = useNavigate();
   const { tm, setSidebarCollapsed } = useOutletContext<OutletContext>();
   const [currentModel, setCurrentModel] = useState<string>("");
 
@@ -104,6 +105,11 @@ function ChatPageInner({ threadId }: { threadId: string }) {
     handleFocusAgent, handleFocusStep, handleSendQueueMessage,
   } = ui;
 
+  const handleNavigateAgent = useCallback(
+    (taskId: string) => navigate(`/agents/${taskId}`),
+    [navigate],
+  );
+
   const computerResize = useResizableX(600, 360, 1200, true);
 
   return (
@@ -132,6 +138,7 @@ function ChatPageInner({ threadId }: { threadId: string }) {
             runtimeStatus={runtimeStatus}
             loading={loading}
             onFocusStep={handleFocusStep}
+            onNavigateAgent={handleNavigateAgent}
           />
           <TaskProgress
             isStreaming={isStreaming}
