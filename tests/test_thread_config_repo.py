@@ -68,73 +68,12 @@ def test_helpers_compatibility_api(tmp_path, monkeypatch):
     assert config2.observation_provider == "langsmith"
 
 
-class _FakeSupabaseResponse:
-    def __init__(self, data):
-        self.data = data
-
-
-class _FakeSupabaseQuery:
-    def __init__(self, table_name: str, tables: dict[str, list[dict]]):
-        self._table_name = table_name
-        self._tables = tables
-        self._filters: list[tuple[str, object]] = []
-        self._insert_payload: dict | None = None
-        self._update_payload: dict | None = None
-
-    def select(self, _: str):
-        return self
-
-    def eq(self, column: str, value):
-        self._filters.append((column, value))
-        return self
-
-    def insert(self, payload: dict):
-        self._insert_payload = dict(payload)
-        return self
-
-    def update(self, payload: dict):
-        self._update_payload = dict(payload)
-        return self
-
-    def execute(self):
-        table = self._tables.setdefault(self._table_name, [])
-
-        if self._insert_payload is not None:
-            row = dict(self._insert_payload)
-            table.append(row)
-            return _FakeSupabaseResponse([row])
-
-        matching_rows = list(table)
-        for column, value in self._filters:
-            matching_rows = [row for row in matching_rows if row.get(column) == value]
-
-        if self._update_payload is not None:
-            updated_rows: list[dict] = []
-            for row in table:
-                include = True
-                for column, value in self._filters:
-                    if row.get(column) != value:
-                        include = False
-                        break
-                if include:
-                    row.update(self._update_payload)
-                    updated_rows.append(dict(row))
-            return _FakeSupabaseResponse(updated_rows)
-
-        return _FakeSupabaseResponse([dict(row) for row in matching_rows])
-
-
-class _FakeSupabaseClient:
-    def __init__(self, tables: dict[str, list[dict]]):
-        self._tables = tables
-
-    def table(self, table_name: str):
-        return _FakeSupabaseQuery(table_name, self._tables)
+from tests.fakes.supabase import FakeSupabaseClient
 
 
 def test_supabase_thread_config_repo_save_and_lookup():
     tables: dict[str, list[dict]] = {"thread_config": []}
-    repo = SupabaseThreadConfigRepo(client=_FakeSupabaseClient(tables=tables))
+    repo = SupabaseThreadConfigRepo(client=FakeSupabaseClient(tables=tables))
 
     repo.save_metadata("t-1", "docker", "/workspace")
     repo.save_model("t-1", "anthropic/claude-sonnet-4.6")

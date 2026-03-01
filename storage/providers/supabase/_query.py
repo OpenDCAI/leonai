@@ -5,6 +5,21 @@ from __future__ import annotations
 from typing import Any
 
 
+def validate_client(client: Any, repo: str) -> Any:
+    """Validate and return a Supabase client, raising on None or missing table()."""
+    if client is None:
+        raise RuntimeError(
+            f"Supabase {repo} requires a client. "
+            "Pass supabase_client=... into StorageContainer(strategy='supabase')."
+        )
+    if not hasattr(client, "table"):
+        raise RuntimeError(
+            f"Supabase {repo} requires a client with table(name). "
+            "Use supabase-py client or a compatible adapter."
+        )
+    return client
+
+
 def rows(response: Any, repo: str, operation: str) -> list[dict[str, Any]]:
     """Extract and validate the `.data` list from a supabase-py response."""
     if isinstance(response, dict):

@@ -68,10 +68,7 @@ def extract_webhook_instance_id(payload: dict[str, Any]) -> str | None:
 
 def _build_thread_config_repo() -> ThreadConfigRepo:
     container = build_storage_container(main_db_path=DB_PATH)
-    repo_factory = getattr(container, "thread_config_repo", None)
-    if not callable(repo_factory):
-        raise RuntimeError("StorageContainer must expose callable thread_config_repo().")
-    return repo_factory()
+    return container.thread_config_repo()
 
 
 def save_thread_config(thread_id: str, **fields: Any) -> None:
@@ -85,24 +82,16 @@ def save_thread_config(thread_id: str, **fields: Any) -> None:
         return
     repo = _build_thread_config_repo()
     try:
-        update_fn = getattr(repo, "update_fields", None)
-        if not callable(update_fn):
-            raise RuntimeError("Thread config repo must expose callable update_fields().")
-        update_fn(thread_id, **updates)
+        repo.update_fields(thread_id, **updates)
     finally:
-        close_fn = getattr(repo, "close", None)
-        if callable(close_fn):
-            close_fn()
+        repo.close()
 
 
 def load_thread_config(thread_id: str):
     """Load full thread config from SQLite. Returns ThreadConfig or None."""
     repo = _build_thread_config_repo()
     try:
-        lookup_fn = getattr(repo, "lookup_config", None)
-        if not callable(lookup_fn):
-            raise RuntimeError("Thread config repo must expose callable lookup_config().")
-        row = lookup_fn(thread_id)
+        row = repo.lookup_config(thread_id)
         if not row:
             return None
         from backend.web.models.thread_config import ThreadConfig
@@ -116,23 +105,16 @@ def load_thread_config(thread_id: str):
             agent=row.get("agent"),
         )
     finally:
-        close_fn = getattr(repo, "close", None)
-        if callable(close_fn):
-            close_fn()
+        repo.close()
 
 
 def init_thread_config(thread_id: str, sandbox_type: str, cwd: str | None) -> None:
     """Create initial thread config row in storage repo."""
     repo = _build_thread_config_repo()
     try:
-        save_metadata_fn = getattr(repo, "save_metadata", None)
-        if not callable(save_metadata_fn):
-            raise RuntimeError("Thread config repo must expose callable save_metadata().")
-        save_metadata_fn(thread_id, sandbox_type, cwd)
+        repo.save_metadata(thread_id, sandbox_type, cwd)
     finally:
-        close_fn = getattr(repo, "close", None)
-        if callable(close_fn):
-            close_fn()
+        repo.close()
 
 
 def get_active_observation_provider() -> str | None:
@@ -147,28 +129,18 @@ def save_thread_model(thread_id: str, model: str) -> None:
     """Persist the selected model for a thread."""
     repo = _build_thread_config_repo()
     try:
-        save_model_fn = getattr(repo, "save_model", None)
-        if not callable(save_model_fn):
-            raise RuntimeError("Thread config repo must expose callable save_model().")
-        save_model_fn(thread_id, model)
+        repo.save_model(thread_id, model)
     finally:
-        close_fn = getattr(repo, "close", None)
-        if callable(close_fn):
-            close_fn()
+        repo.close()
 
 
 def lookup_thread_model(thread_id: str) -> str | None:
     """Look up persisted model for a thread."""
     repo = _build_thread_config_repo()
     try:
-        lookup_model_fn = getattr(repo, "lookup_model", None)
-        if not callable(lookup_model_fn):
-            raise RuntimeError("Thread config repo must expose callable lookup_model().")
-        return lookup_model_fn(thread_id)
+        return repo.lookup_model(thread_id)
     finally:
-        close_fn = getattr(repo, "close", None)
-        if callable(close_fn):
-            close_fn()
+        repo.close()
 
 
 def resolve_local_workspace_path(

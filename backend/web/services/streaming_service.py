@@ -19,14 +19,8 @@ def _resolve_run_event_repo(agent: Any) -> RunEventRepo | None:
     if storage_container is None:
         return None
 
-    run_event_repo_factory = getattr(storage_container, "run_event_repo", None)
-    if not callable(run_event_repo_factory):
-        raise RuntimeError(
-            "Agent storage_container must expose callable run_event_repo() for runtime event persistence."
-        )
-
     # @@@runtime-storage-consumer - runtime run lifecycle must consume injected storage container, not assignment-only wiring.
-    return run_event_repo_factory()
+    return storage_container.run_event_repo()
 
 
 async def prime_sandbox(agent: Any, thread_id: str) -> None:
@@ -451,9 +445,7 @@ async def _run_agent_to_buffer(
         except Exception:
             pass
         if run_event_repo is not None:
-            close_fn = getattr(run_event_repo, "close", None)
-            if callable(close_fn):
-                close_fn()
+            run_event_repo.close()
 
 
 # ---------------------------------------------------------------------------

@@ -14,36 +14,28 @@ class SupabaseThreadConfigRepo:
     """Minimal thread config repository backed by a Supabase client."""
 
     def __init__(self, client: Any) -> None:
-        if client is None:
-            raise RuntimeError(
-                "Supabase thread config repo requires a client. "
-                "Pass supabase_client=... into StorageContainer(strategy='supabase')."
-            )
-        if not hasattr(client, "table"):
-            raise RuntimeError(
-                "Supabase thread config repo requires a client with table(name). "
-                "Use supabase-py client or a compatible adapter."
-            )
-        self._client = client
+        self._client = q.validate_client(client, _REPO)
 
     def close(self) -> None:
         return None
 
     def save_metadata(self, thread_id: str, sandbox_type: str, cwd: str | None) -> None:
-        if self.lookup_metadata(thread_id) is None:
-            self._t().insert({"thread_id": thread_id, "sandbox_type": sandbox_type, "cwd": cwd}).execute()
-            return
-        self._t().update({"sandbox_type": sandbox_type, "cwd": cwd}).eq("thread_id", thread_id).execute()
+        self._t().upsert(
+            {"thread_id": thread_id, "sandbox_type": sandbox_type, "cwd": cwd},
+            on_conflict="thread_id",
+        ).execute()
 
     def save_model(self, thread_id: str, model: str) -> None:
         # @@@model-update-contract - match SQLite behavior: update only model on existing rows.
+        # Cannot use upsert here: inserting sandbox_type="local" default would overwrite
+        # the real sandbox_type on existing rows.
         if self.lookup_metadata(thread_id) is None:
             self._t().insert({"thread_id": thread_id, "sandbox_type": "local", "model": model}).execute()
             return
         self._t().update({"model": model}).eq("thread_id", thread_id).execute()
 
     def update_fields(self, thread_id: str, **fields: str | None) -> None:
-        allowed = {"sandbox_type", "cwd", "model", "queue_mode", "observation_provider"}
+        allowed = {"sandbox_type", "cwd", "model", "queue_mode", "observation_provider", "agent"}
         updates = {k: v for k, v in fields.items() if k in allowed}
         if updates:
             self._t().update(updates).eq("thread_id", thread_id).execute()
@@ -56,7 +48,7 @@ class SupabaseThreadConfigRepo:
         return str(model) if model else None
 
     def lookup_config(self, thread_id: str) -> dict[str, str | None] | None:
-        rows = self._select(thread_id, "sandbox_type,cwd,model,queue_mode,observation_provider")
+        rows = self._select(thread_id, "sandbox_type,cwd,model,queue_mode,observation_provider,agent")
         if not rows:
             return None
         sandbox_type = rows[0].get("sandbox_type")
@@ -71,6 +63,7 @@ class SupabaseThreadConfigRepo:
             "model": str(rows[0]["model"]) if rows[0].get("model") is not None else None,
             "queue_mode": str(rows[0]["queue_mode"]) if rows[0].get("queue_mode") is not None else None,
             "observation_provider": str(rows[0]["observation_provider"]) if rows[0].get("observation_provider") is not None else None,
+            "agent": str(rows[0]["agent"]) if rows[0].get("agent") is not None else None,
         }
 
     def lookup_metadata(self, thread_id: str) -> tuple[str, str | None] | None:

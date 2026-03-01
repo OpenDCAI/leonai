@@ -18,17 +18,7 @@ class SupabaseFileOperationRepo:
     """Minimal file operation repository backed by a Supabase client."""
 
     def __init__(self, client: Any) -> None:
-        if client is None:
-            raise RuntimeError(
-                "Supabase file operation repo requires a client. "
-                "Pass supabase_client=... into StorageContainer(strategy='supabase')."
-            )
-        if not hasattr(client, "table"):
-            raise RuntimeError(
-                "Supabase file operation repo requires a client with table(name). "
-                "Use supabase-py client or a compatible adapter."
-            )
-        self._client = client
+        self._client = q.validate_client(client, _REPO)
 
     def close(self) -> None:
         return None

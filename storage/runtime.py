@@ -7,19 +7,9 @@ import json
 import os
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Callable, Literal
+from typing import Any, Callable
 
-from storage.container import StorageContainer
-
-StorageStrategy = Literal["sqlite", "supabase"]
-_REPO_NAMES = (
-    "checkpoint_repo",
-    "thread_config_repo",
-    "run_event_repo",
-    "file_operation_repo",
-    "summary_repo",
-    "eval_repo",
-)
+from storage.container import StorageContainer, StorageStrategy
 
 
 def build_storage_container(
@@ -120,7 +110,7 @@ def _uses_supabase_provider(
 ) -> bool:
     if repo_providers is None:
         return strategy == "supabase"
-    for repo_name in _REPO_NAMES:
+    for repo_name in StorageContainer._REPO_NAMES:
         provider = repo_providers.get(repo_name, strategy).strip().lower()
         if provider == "supabase":
             return True

@@ -15,17 +15,7 @@ class SupabaseEvalRepo:
     """Minimal eval repository backed by a Supabase client."""
 
     def __init__(self, client: Any) -> None:
-        if client is None:
-            raise RuntimeError(
-                "Supabase eval repo requires a client. "
-                "Pass supabase_client=... into StorageContainer(strategy='supabase')."
-            )
-        if not hasattr(client, "table"):
-            raise RuntimeError(
-                "Supabase eval repo requires a client with table(name). "
-                "Use supabase-py client or a compatible adapter."
-            )
-        self._client = client
+        self._client = q.validate_client(client, _REPO)
 
     def ensure_schema(self) -> None:
         """Supabase schema is managed via migrations, not runtime DDL."""
@@ -52,9 +42,9 @@ class SupabaseEvalRepo:
                 "Supabase eval repo expected inserted row for save_trajectory eval_runs. "
                 "Check table permissions."
             )
-        for call in trajectory.llm_calls:
-            rows = q.rows(
-                self._t("eval_llm_calls").insert({
+        if trajectory.llm_calls:
+            llm_rows = [
+                {
                     "id": str(uuid4()),
                     "run_id": run_id,
                     "parent_run_id": call.parent_run_id,
@@ -64,17 +54,16 @@ class SupabaseEvalRepo:
                     "total_tokens": call.total_tokens,
                     "cost_usd": call.cost_usd,
                     "model_name": call.model_name,
-                }).execute(),
+                }
+                for call in trajectory.llm_calls
+            ]
+            q.rows(
+                self._t("eval_llm_calls").insert(llm_rows).execute(),
                 _REPO, "save_trajectory eval_llm_calls",
             )
-            if not rows:
-                raise RuntimeError(
-                    "Supabase eval repo expected inserted row for eval_llm_calls. "
-                    "Check table permissions."
-                )
-        for call in trajectory.tool_calls:
-            rows = q.rows(
-                self._t("eval_tool_calls").insert({
+        if trajectory.tool_calls:
+            tool_rows = [
+                {
                     "id": str(uuid4()),
                     "run_id": run_id,
                     "parent_run_id": call.parent_run_id,
@@ -85,14 +74,13 @@ class SupabaseEvalRepo:
                     "error": call.error,
                     "args_summary": call.args_summary,
                     "result_summary": call.result_summary,
-                }).execute(),
+                }
+                for call in trajectory.tool_calls
+            ]
+            q.rows(
+                self._t("eval_tool_calls").insert(tool_rows).execute(),
                 _REPO, "save_trajectory eval_tool_calls",
             )
-            if not rows:
-                raise RuntimeError(
-                    "Supabase eval repo expected inserted row for eval_tool_calls. "
-                    "Check table permissions."
-                )
         return run_id
 
     def save_metrics(self, run_id: str, tier: str, timestamp: str, metrics_json: str) -> None:

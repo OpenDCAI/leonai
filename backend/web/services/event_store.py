@@ -36,9 +36,7 @@ def init_event_store() -> None:
     """Initialize run event storage for current provider strategy."""
     global _default_run_event_repo, _default_run_event_repo_path
     if _default_run_event_repo is not None:
-        close_fn = getattr(_default_run_event_repo, "close", None)
-        if callable(close_fn):
-            close_fn()
+        _default_run_event_repo.close()
     _default_run_event_repo = None
     _default_run_event_repo_path = None
 
@@ -52,14 +50,9 @@ def init_event_store() -> None:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
     conn.close()
-    repo_factory = getattr(container, "run_event_repo", None)
-    if not callable(repo_factory):
-        raise RuntimeError("StorageContainer must expose callable run_event_repo().")
     # @@@sqlite-init-via-provider - create run_events schema through sqlite provider construction instead of ad-hoc SQL path.
-    repo = repo_factory()
-    close_fn = getattr(repo, "close", None)
-    if callable(close_fn):
-        close_fn()
+    repo = container.run_event_repo()
+    repo.close()
 
 
 def _resolve_run_event_repo(run_event_repo: RunEventRepo | None) -> RunEventRepo:
@@ -71,18 +64,13 @@ def _resolve_run_event_repo(run_event_repo: RunEventRepo | None) -> RunEventRepo
         return _default_run_event_repo
 
     if _default_run_event_repo is not None:
-        close_fn = getattr(_default_run_event_repo, "close", None)
-        if callable(close_fn):
-            close_fn()
+        _default_run_event_repo.close()
         _default_run_event_repo = None
         _default_run_event_repo_path = None
 
     container = build_storage_container(main_db_path=_DB_PATH)
-    repo_factory = getattr(container, "run_event_repo", None)
-    if not callable(repo_factory):
-        raise RuntimeError("StorageContainer must expose callable run_event_repo().")
     # @@@event-store-single-path - keep one persistence boundary; when caller omits repo, resolve default repo from storage container.
-    _default_run_event_repo = repo_factory()
+    _default_run_event_repo = container.run_event_repo()
     _default_run_event_repo_path = _DB_PATH
     return _default_run_event_repo
 
