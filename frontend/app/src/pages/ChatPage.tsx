@@ -4,9 +4,10 @@ import ChatArea from "../components/ChatArea";
 import ComputerPanel from "../components/ComputerPanel";
 import { DragHandle } from "../components/DragHandle";
 import Header from "../components/Header";
-import InputBox from "../components/InputBox";
+import InputBox, { type DroppedUploadFile } from "../components/InputBox";
 import TaskProgress from "../components/TaskProgress";
 import TokenStats from "../components/TokenStats";
+import { uploadWorkspaceFile } from "../api";
 import { useAppActions } from "../hooks/use-app-actions";
 import { useResizableX } from "../hooks/use-resizable-x";
 import { useSandboxManager } from "../hooks/use-sandbox-manager";
@@ -98,6 +99,19 @@ function ChatPageInner({ threadId }: { threadId: string }) {
 
   const computerResize = useResizableX(600, 360, 1200, true);
 
+  async function handleDropUploadFiles(files: DroppedUploadFile[]): Promise<string[]> {
+    const uploadedPaths: string[] = [];
+    for (const item of files) {
+      const payload = await uploadWorkspaceFile(threadId, {
+        file: item.file,
+        channel: "upload",
+        path: item.relativePath,
+      });
+      uploadedPaths.push(payload.relative_path);
+    }
+    return uploadedPaths;
+  }
+
   return (
     <>
       <Header
@@ -143,6 +157,7 @@ function ChatPageInner({ threadId }: { threadId: string }) {
             onSendMessage={(msg) => void handleSendMessage(msg)}
             onSendQueueMessage={handleSendQueueMessage}
             onStop={handleStopStreaming}
+            onDropUploadFiles={handleDropUploadFiles}
           />
           <TokenStats runtimeStatus={runtimeStatus} />
         </div>

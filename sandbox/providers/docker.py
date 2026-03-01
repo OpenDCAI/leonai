@@ -9,8 +9,17 @@ from __future__ import annotations
 import shlex
 import subprocess
 import uuid
+from pathlib import Path
 
-from sandbox.provider import Metrics, ProviderCapability, ProviderExecResult, SandboxProvider, SessionInfo
+from sandbox.config import MountSpec
+from sandbox.provider import (
+    Metrics,
+    MountCapability,
+    ProviderCapability,
+    ProviderExecResult,
+    SandboxProvider,
+    SessionInfo,
+)
 
 
 class DockerProvider(SandboxProvider):
@@ -32,12 +41,20 @@ class DockerProvider(SandboxProvider):
             can_destroy=True,
             supports_webhook=False,
             runtime_kind="docker_pty",
+            mount=MountCapability(
+                supports_mount=True,
+                supports_copy=True,
+                supports_read_only=True,
+                mode_handlers={"mount": True, "copy": True},
+            ),
         )
 
     def __init__(
         self,
         image: str,
         mount_path: str = "/workspace",
+        default_cwd: str = "/workspace",
+        bind_mounts: list[MountSpec] | None = None,
         command_timeout_sec: float = 20.0,
         provider_name: str | None = None,
     ):
@@ -45,6 +62,10 @@ class DockerProvider(SandboxProvider):
             self.name = provider_name
         self.image = image
         self.mount_path = mount_path
+        self.default_cwd = default_cwd
+        self.bind_mounts: list[MountSpec] = [
+            MountSpec.model_validate(m) if isinstance(m, dict) else m for m in (bind_mounts or [])
+        ]
         self.command_timeout_sec = command_timeout_sec
         self._sessions: dict[str, str] = {}  # session_id -> container_id
 
@@ -62,16 +83,29 @@ class DockerProvider(SandboxProvider):
             f"leon.session_id={session_id}",
         ]
 
+        copy_mounts: list[tuple[str, str]] = []
+        for mount in self.bind_mounts:
+            if mount.mode == "copy":
+                copy_mounts.append((mount.source, mount.target))
+                continue
+            volume_arg = f"{mount.source}:{mount.target}"
+            if mount.read_only:
+                volume_arg = f"{volume_arg}:ro"
+            cmd.extend(["-v", volume_arg])
+
         if context_id:
             volume = context_id
             cmd.extend(["-v", f"{volume}:{self.mount_path}"])
 
-        cmd.extend(["-w", self.mount_path, self.image, "sleep", "infinity"])
+        cmd.extend(["-w", self.default_cwd, self.image, "sleep", "infinity"])
 
         result = self._run(cmd, timeout=self.command_timeout_sec)
         container_id = result.stdout.strip()
         if not container_id:
             raise RuntimeError("Failed to create docker container session")
+
+        for source, target in copy_mounts:
+            self._copy_host_path_into_container(container_id, source=source, target=target)
 
         self._sessions[session_id] = container_id
         return SessionInfo(session_id=session_id, provider=self.name, status="running")
@@ -119,7 +153,7 @@ class DockerProvider(SandboxProvider):
         cwd: str | None = None,
     ) -> ProviderExecResult:
         container_id = self._get_container_id(session_id)
-        workdir = cwd or self.mount_path
+        workdir = cwd or self.default_cwd
         shell_cmd = f"cd {shlex.quote(workdir)} && {command}"
         result = self._run(
             ["docker", "exec", container_id, "/bin/sh", "-lc", shell_cmd],
@@ -237,6 +271,33 @@ class DockerProvider(SandboxProvider):
             network_rx_kbps=net_rx,
             network_tx_kbps=net_tx,
         )
+
+    def _copy_host_path_into_container(self, container_id: str, *, source: str, target: str) -> None:
+        source_path = Path(source)
+        if not source_path.exists():
+            raise RuntimeError(f"Copy source path does not exist: {source}")
+        if source_path.is_dir():
+            self._run(
+                ["docker", "exec", container_id, "/bin/sh", "-lc", f"mkdir -p {shlex.quote(target)}"],
+                timeout=self.command_timeout_sec,
+            )
+            self._run(
+                ["docker", "cp", f"{source_path}/.", f"{container_id}:{target}"],
+                timeout=self.command_timeout_sec,
+            )
+            return
+        if source_path.is_file():
+            parent = str(Path(target).parent)
+            self._run(
+                ["docker", "exec", container_id, "/bin/sh", "-lc", f"mkdir -p {shlex.quote(parent)}"],
+                timeout=self.command_timeout_sec,
+            )
+            self._run(
+                ["docker", "cp", str(source_path), f"{container_id}:{target}"],
+                timeout=self.command_timeout_sec,
+            )
+            return
+        raise RuntimeError(f"Unsupported copy source path type: {source}")
 
     def _get_container_id(self, session_id: str, allow_missing: bool = False) -> str | None:
         container_id = self._sessions.get(session_id)
