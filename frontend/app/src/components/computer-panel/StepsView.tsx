@@ -23,6 +23,7 @@ interface StepsViewProps {
   onFocusStep: (id: string | null) => void;
   onCancelCommand?: (commandId: string) => void;
   onCancelTask?: (taskId: string) => void;
+  autoScroll?: boolean;
 }
 
 export function StepsView({
@@ -32,8 +33,10 @@ export function StepsView({
   onFocusStep,
   onCancelCommand,
   onCancelTask,
+  autoScroll = false,
 }: StepsViewProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const prevItemCountRef = useRef(0);
 
   const visibleActivities = activities.filter(
     (a) => a.status === "running" || Date.now() - a.startTime < ACTIVITY_VISIBLE_AFTER_DONE_MS,
@@ -47,6 +50,15 @@ export function StepsView({
       el.scrollIntoView({ block: "nearest", behavior: "smooth" });
     }
   }, [focusedStepId]);
+
+  // Auto-scroll to bottom when new items arrive
+  useEffect(() => {
+    if (!autoScroll || !scrollRef.current) return;
+    if (flowItems.length > prevItemCountRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+    prevItemCountRef.current = flowItems.length;
+  }, [autoScroll, flowItems.length]);
 
   if (flowItems.length === 0 && visibleActivities.length === 0) {
     return (
