@@ -79,6 +79,7 @@ export default function ComputerPanel({
         activeTab={activeTab}
         onTabChange={setActiveTab}
         hasRunningAgents={agentSteps.some((s) => s.status === "calling")}
+        hasAgents={agentSteps.length > 0}
       />
 
       <div className="flex-1 overflow-hidden">

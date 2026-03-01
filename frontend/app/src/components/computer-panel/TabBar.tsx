@@ -5,6 +5,7 @@ interface TabBarProps {
   activeTab: TabType;
   onTabChange: (tab: TabType) => void;
   hasRunningAgents: boolean;
+  hasAgents: boolean;
 }
 
 const TABS: { key: TabType; label: string; icon: typeof Terminal }[] = [
@@ -14,7 +15,7 @@ const TABS: { key: TabType; label: string; icon: typeof Terminal }[] = [
   { key: "steps", label: "细节", icon: ListChecks },
 ];
 
-export function TabBar({ activeTab, onTabChange, hasRunningAgents }: TabBarProps) {
+export function TabBar({ activeTab, onTabChange, hasRunningAgents, hasAgents }: TabBarProps) {
   return (
     <div className="h-10 flex items-center px-2 flex-shrink-0 border-b border-[#e5e5e5]">
       {TABS.map(({ key, label, icon: Icon }) => (
@@ -31,6 +32,9 @@ export function TabBar({ activeTab, onTabChange, hasRunningAgents }: TabBarProps
           <span>{label}</span>
           {key === "agents" && hasRunningAgents && (
             <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
+          )}
+          {key === "agents" && !hasRunningAgents && hasAgents && (
+            <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
           )}
         </button>
       ))}
