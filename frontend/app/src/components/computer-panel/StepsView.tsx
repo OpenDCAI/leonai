@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Activity, ToolStep } from "../../api";
 import { DEFAULT_BADGE, TOOL_BADGE_STYLES } from "../chat-area/constants";
 import { getStepSummary } from "../chat-area/utils";
+import MarkdownContent from "../MarkdownContent";
 import { getToolRenderer } from "../tool-renderers";
 import type { FlowItem } from "./utils";
 
@@ -156,22 +157,32 @@ function ToolFlowLine({
   );
 }
 
-/* -- Text flow line (AI intermediate text) -- */
+/* -- Text flow line (AI intermediate text, rendered as Markdown) -- */
 
 function TextFlowLine({ content }: { content: string }) {
   const [expanded, setExpanded] = useState(false);
-  const isLong = content.length > 150;
-  const display = !isLong || expanded ? content : content.slice(0, 147) + "...";
+  const isLong = content.length > 300;
+
+  if (!isLong || expanded) {
+    return (
+      <div className="pl-3">
+        <MarkdownContent content={content} />
+        {isLong && (
+          <button
+            className="text-[11px] text-[#a3a3a3] hover:text-[#737373] mt-0.5"
+            onClick={() => setExpanded(false)}
+          >
+            收起
+          </button>
+        )}
+      </div>
+    );
+  }
 
   return (
-    <div
-      className={`text-[12px] text-[#737373] leading-relaxed pl-3 ${isLong ? "cursor-pointer" : ""}`}
-      onClick={isLong ? () => setExpanded((v) => !v) : undefined}
-    >
-      <span className="whitespace-pre-wrap">{display}</span>
-      {isLong && !expanded && (
-        <span className="text-[11px] text-[#a3a3a3] ml-1 hover:text-[#737373]">展开</span>
-      )}
+    <div className="pl-3 cursor-pointer" onClick={() => setExpanded(true)}>
+      <MarkdownContent content={content.slice(0, 297) + "..."} />
+      <span className="text-[11px] text-[#a3a3a3] hover:text-[#737373]">展开</span>
     </div>
   );
 }
