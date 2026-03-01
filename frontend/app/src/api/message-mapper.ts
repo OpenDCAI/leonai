@@ -48,20 +48,27 @@ interface MapState {
 }
 
 function handleHuman(msg: BackendMessage, i: number, state: MapState): void {
-  state.currentTurn = null;
-
   // System-injected messages (steer reminders, task notifications) → notice
   if (msg.metadata?.source === "system") {
+    const content = extractTextContent(msg.content);
+    if (state.currentTurn) {
+      // Fold into current assistant turn as a notice segment
+      state.currentTurn.segments.push({ type: "notice", content });
+      return;
+    }
+    // No current turn → standalone notice entry (fallback)
     const notice: NoticeMessage = {
       id: msg.id ?? `hist-notice-${i}`,
       role: "notice",
-      content: extractTextContent(msg.content),
+      content,
       timestamp: state.now,
     };
     state.entries.push(notice);
     return;
   }
 
+  // Normal user message → breaks current turn
+  state.currentTurn = null;
   state.entries.push({
     id: msg.id ?? `hist-user-${i}`,
     role: "user",

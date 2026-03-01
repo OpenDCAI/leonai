@@ -19,21 +19,20 @@ interface ReconnectDeps {
   onActivityEventRef?: React.RefObject<((event: { type: string; data?: unknown }) => void) | undefined>;
 }
 
-/** Find existing assistant turn or create one with the given fallback id. */
+/** Reuse the last entry if it's an assistant turn; otherwise create a new one. */
 function applyReconnectTurn(
   prev: ChatEntry[],
   fallbackId: string,
 ): { entries: ChatEntry[]; turnId: string } {
-  for (let i = prev.length - 1; i >= 0; i--) {
-    if (prev[i].role === "assistant") {
-      return {
-        entries: prev.map((e) =>
-          e.id === prev[i].id && e.role === "assistant"
-            ? { ...e, streaming: true } as AssistantTurn : e,
-        ),
-        turnId: prev[i].id,
-      };
-    }
+  const last = prev[prev.length - 1];
+  if (last?.role === "assistant") {
+    return {
+      entries: prev.map((e) =>
+        e.id === last.id && e.role === "assistant"
+          ? { ...e, streaming: true } as AssistantTurn : e,
+      ),
+      turnId: last.id,
+    };
   }
   const newTurn: AssistantTurn = { id: fallbackId, role: "assistant", segments: [], timestamp: Date.now(), streaming: true };
   return { entries: [...prev, newTurn], turnId: fallbackId };
