@@ -53,7 +53,7 @@ from core.prompt_caching import PromptCachingMiddleware
 from core.queue import SteeringMiddleware
 from core.search import SearchMiddleware
 from core.skills import SkillsMiddleware
-from storage.contracts import SummaryRepo
+from storage.container import StorageContainer
 from core.task import TaskMiddleware
 from core.todo import TodoMiddleware
 from core.web import WebMiddleware
@@ -97,7 +97,7 @@ class LeonAgent:
         firecrawl_api_key: str | None = None,
         jina_api_key: str | None = None,
         sandbox: Any = None,
-        storage_container: Any = None,
+        storage_container: StorageContainer | None = None,
         verbose: bool = False,
     ):
         """
@@ -159,7 +159,7 @@ class LeonAgent:
         # Initialize workspace and configuration
         self.workspace_root = self._resolve_workspace_root()
         self._init_config_attributes()
-        self.storage_container = storage_container
+        self.storage_container: StorageContainer | None = storage_container
         self._sandbox = self._init_sandbox(sandbox)
 
         # Override workspace_root for sandbox mode
@@ -767,15 +767,8 @@ class LeonAgent:
         compaction_config = self.config.memory.compaction
 
         db_path = self.db_path
-        summary_repo: SummaryRepo | None = None
-        if self.storage_container is not None:
-            summary_repo_factory = getattr(self.storage_container, "summary_repo", None)
-            if not callable(summary_repo_factory):
-                raise RuntimeError(
-                    "Agent storage_container must expose callable summary_repo() for memory summary persistence."
-                )
-            # @@@memory-storage-consumer - memory summary persistence must consume injected storage container, not fixed sqlite path.
-            summary_repo = summary_repo_factory()
+        # @@@memory-storage-consumer - memory summary persistence must consume injected storage container, not fixed sqlite path.
+        summary_repo = self.storage_container.summary_repo() if self.storage_container is not None else None
         self._memory_middleware = MemoryMiddleware(
             context_limit=context_limit,
             pruning_config=pruning_config,
@@ -1206,7 +1199,7 @@ def create_leon_agent(
     api_key: str | None = None,
     workspace_root: str | Path | None = None,
     sandbox: Any = None,
-    storage_container: Any = None,
+    storage_container: StorageContainer | None = None,
     **kwargs,
 ) -> LeonAgent:
     """Create Leon Agent.

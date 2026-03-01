@@ -8,9 +8,14 @@ from typing import Any
 from fastapi import HTTPException
 
 from backend.web.core.config import DB_PATH
+from storage.container import StorageContainer
 from storage.contracts import ThreadConfigRepo
 from storage.runtime import build_storage_container
 from sandbox.db import DEFAULT_DB_PATH as SANDBOX_DB_PATH
+
+# @@@cached-container - reuse a single StorageContainer across helper calls to avoid per-call rebuild.
+_cached_container: StorageContainer | None = None
+_cached_container_db_path: Path | None = None
 
 
 def is_virtual_thread_id(thread_id: str | None) -> bool:
@@ -66,9 +71,17 @@ def extract_webhook_instance_id(payload: dict[str, Any]) -> str | None:
     return None
 
 
+def _get_container() -> StorageContainer:
+    global _cached_container, _cached_container_db_path
+    if _cached_container is not None and _cached_container_db_path == DB_PATH:
+        return _cached_container
+    _cached_container = build_storage_container(main_db_path=DB_PATH)
+    _cached_container_db_path = DB_PATH
+    return _cached_container
+
+
 def _build_thread_config_repo() -> ThreadConfigRepo:
-    container = build_storage_container(main_db_path=DB_PATH)
-    return container.thread_config_repo()
+    return _get_container().thread_config_repo()
 
 
 def save_thread_config(thread_id: str, **fields: Any) -> None:
@@ -182,25 +195,18 @@ def resolve_local_workspace_path(
 
 
 def delete_thread_in_db(thread_id: str) -> None:
-    """Delete all records for a thread from both databases."""
-    ident_re = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+    """Delete all records for a thread via storage repos + sandbox db."""
+    # Purge storage-managed repos (works for both sqlite and supabase strategies)
+    _get_container().purge_thread(thread_id)
 
-    def _sqlite_ident(name: str) -> str:
-        if not ident_re.match(name):
-            raise RuntimeError(f"Invalid sqlite identifier: {name}")
-        return f'"{name}"'
-
-    for db_path in (DB_PATH, SANDBOX_DB_PATH):
-        if not db_path.exists():
-            continue
-        with sqlite3.connect(str(db_path)) as conn:
-            existing = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
-            for table in existing:
-                try:
-                    table_ident = _sqlite_ident(table)
-                except RuntimeError:
+    # Purge sandbox db tables (not managed by storage repos)
+    if SANDBOX_DB_PATH.exists():
+        with sqlite3.connect(str(SANDBOX_DB_PATH)) as conn:
+            tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+            for table in tables:
+                if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", table):
                     continue
-                cols = {r[1] for r in conn.execute("PRAGMA table_info(" + table_ident + ")").fetchall()}
+                cols = {r[1] for r in conn.execute(f'PRAGMA table_info("{table}")').fetchall()}
                 if "thread_id" in cols:
-                    conn.execute("DELETE FROM " + table_ident + " WHERE thread_id = ?", (thread_id,))
+                    conn.execute(f'DELETE FROM "{table}" WHERE thread_id = ?', (thread_id,))
             conn.commit()

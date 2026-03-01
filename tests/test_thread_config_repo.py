@@ -91,6 +91,30 @@ def test_supabase_thread_config_repo_save_and_lookup():
     assert cfg["observation_provider"] == "langfuse"
 
 
+def test_supabase_thread_config_repo_delete():
+    tables: dict[str, list[dict]] = {"thread_config": []}
+    repo = SupabaseThreadConfigRepo(client=FakeSupabaseClient(tables=tables))
+    repo.save_metadata("t-1", "docker", "/workspace")
+    repo.save_metadata("t-2", "local", None)
+
+    repo.delete_thread_config("t-1")
+    assert repo.lookup_metadata("t-1") is None
+    assert repo.lookup_metadata("t-2") == ("local", None)
+
+
+def test_sqlite_thread_config_repo_delete(tmp_path):
+    db_path = tmp_path / "leon.db"
+    repo = SQLiteThreadConfigRepo(db_path)
+    try:
+        repo.save_metadata("t-1", "docker", "/workspace")
+        repo.save_metadata("t-2", "local", None)
+        repo.delete_thread_config("t-1")
+        assert repo.lookup_metadata("t-1") is None
+        assert repo.lookup_metadata("t-2") == ("local", None)
+    finally:
+        repo.close()
+
+
 def test_supabase_thread_config_repo_requires_compatible_client():
     with pytest.raises(RuntimeError, match="table\\(name\\)"):
         SupabaseThreadConfigRepo(client=object())

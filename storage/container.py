@@ -87,6 +87,38 @@ class StorageContainer:
     def eval_repo(self) -> EvalRepo:
         return self._build_repo("eval_repo", self._sqlite_eval_repo)
 
+    def purge_thread(self, thread_id: str) -> None:
+        """Delete all data for a thread across all repos."""
+        checkpoint = self.checkpoint_repo()
+        try:
+            checkpoint.delete_thread_data(thread_id)
+        finally:
+            checkpoint.close()
+
+        thread_config = self.thread_config_repo()
+        try:
+            thread_config.delete_thread_config(thread_id)
+        finally:
+            thread_config.close()
+
+        run_event = self.run_event_repo()
+        try:
+            run_event.delete_thread_events(thread_id)
+        finally:
+            run_event.close()
+
+        file_op = self.file_operation_repo()
+        try:
+            file_op.delete_thread_operations(thread_id)
+        finally:
+            file_op.close()
+
+        summary = self.summary_repo()
+        try:
+            summary.delete_thread_summaries(thread_id)
+        finally:
+            summary.close()
+
     def provider_for(self, repo_name: str) -> StorageStrategy:
         return self._provider_for(repo_name)
 

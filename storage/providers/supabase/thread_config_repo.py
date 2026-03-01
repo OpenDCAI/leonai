@@ -79,6 +79,9 @@ class SupabaseThreadConfigRepo:
         cwd = rows[0].get("cwd")
         return str(sandbox_type), str(cwd) if cwd is not None else None
 
+    def delete_thread_config(self, thread_id: str) -> None:
+        self._t().delete().eq("thread_id", thread_id).execute()
+
     def _t(self) -> Any:
         return self._client.table(_TABLE)
 

@@ -250,13 +250,6 @@ class _FakeRuntimeAgent:
 
 def test_run_runtime_consumes_storage_container_run_event_repo(monkeypatch: pytest.MonkeyPatch) -> None:
     async def _run() -> None:
-        import backend.web.services.event_store as event_store
-
-        async def _raise_if_sqlite_conn_used() -> Any:
-            raise AssertionError("sqlite connection path should not be used when storage container repo is present")
-
-        monkeypatch.setattr(event_store, "_get_conn", _raise_if_sqlite_conn_used)
-
         repo = _FakeRunEventRepo()
         agent = _FakeRuntimeAgent(storage_container=_FakeStorageContainer(repo))
         app = SimpleNamespace(state=SimpleNamespace(thread_tasks={}, thread_event_buffers={}))
@@ -317,3 +310,55 @@ def test_run_runtime_without_storage_container_keeps_sqlite_event_store_path(mon
         assert all(call["run_event_repo"] is None for call in calls)
 
     asyncio.run(_run())
+
+
+def test_purge_thread_deletes_all_repo_data(tmp_path: Path) -> None:
+    from storage.container import StorageContainer
+
+    db_path = tmp_path / "leon.db"
+    eval_db = tmp_path / "eval.db"
+    container = StorageContainer(main_db_path=db_path, eval_db_path=eval_db, strategy="sqlite")
+
+    # Populate repos for thread t-1 and t-2
+    tc = container.thread_config_repo()
+    tc.save_metadata("t-1", "docker", "/ws")
+    tc.save_metadata("t-2", "local", None)
+    tc.close()
+
+    re_repo = container.run_event_repo()
+    re_repo.append_event("t-1", "r-1", "status", {"ok": True})
+    re_repo.append_event("t-2", "r-2", "status", {"ok": True})
+    re_repo.close()
+
+    fo = container.file_operation_repo()
+    fo.record("t-1", "cp-1", "write", "/a.txt", None, "x")
+    fo.record("t-2", "cp-2", "write", "/b.txt", None, "y")
+    fo.close()
+
+    sr = container.summary_repo()
+    sr.ensure_tables()
+    sr.save_summary("s-1", "t-1", "summary", 10, 20, False, None, "2025-01-01")
+    sr.close()
+
+    # Purge t-1
+    container.purge_thread("t-1")
+
+    # Verify t-1 is gone, t-2 remains
+    tc2 = container.thread_config_repo()
+    assert tc2.lookup_metadata("t-1") is None
+    assert tc2.lookup_metadata("t-2") == ("local", None)
+    tc2.close()
+
+    re2 = container.run_event_repo()
+    assert re2.latest_seq("t-1") == 0
+    assert re2.latest_seq("t-2") > 0
+    re2.close()
+
+    fo2 = container.file_operation_repo()
+    assert fo2.get_operations_for_thread("t-1") == []
+    assert len(fo2.get_operations_for_thread("t-2")) == 1
+    fo2.close()
+
+    sr2 = container.summary_repo()
+    assert sr2.get_latest_summary_row("t-1") is None
+    sr2.close()

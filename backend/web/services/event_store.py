@@ -6,30 +6,12 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-import aiosqlite
 from storage.contracts import RunEventRepo
 from storage.runtime import build_storage_container
 
 _DB_PATH = Path.home() / ".leon" / "leon.db"
 _default_run_event_repo: RunEventRepo | None = None
 _default_run_event_repo_path: Path | None = None
-_conn: aiosqlite.Connection | None = None
-_lock = asyncio.Lock()
-
-
-async def _get_conn() -> aiosqlite.Connection:
-    """Legacy async sqlite connector kept for test/runtime compatibility."""
-    global _conn
-    if _conn is not None:
-        return _conn
-    async with _lock:
-        if _conn is not None:
-            return _conn
-        _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _conn = await aiosqlite.connect(str(_DB_PATH))
-        await _conn.execute("PRAGMA journal_mode=WAL")
-        await _conn.execute("PRAGMA synchronous=NORMAL")
-        return _conn
 
 
 def init_event_store() -> None:
