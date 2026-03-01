@@ -1,11 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ToolStep } from "../../api";
 import ChatArea from "../ChatArea";
-import MarkdownContent from "../MarkdownContent";
 import { useThreadData } from "../../hooks/use-thread-data";
 import { parseAgentArgs } from "./utils";
 
 type SubagentStream = NonNullable<ToolStep["subagent_stream"]>;
+
+/** Extract task_id from subagent_stream or result text */
+function extractTaskId(step: ToolStep): string | null {
+  if (step.subagent_stream?.task_id) return step.subagent_stream.task_id;
+  const match = step.result?.match(/Task\s+([a-f0-9]{8})/i);
+  if (match) return match[1];
+  return null;
+}
 
 interface AgentsViewProps {
   steps: ToolStep[];
@@ -21,8 +28,9 @@ export function AgentsView({ steps, focusedStepId, onFocusStep }: AgentsViewProp
 
   const focused = steps.find((s) => s.id === focusedStepId) ?? null;
   const stream = focused?.subagent_stream;
-  const threadId = stream?.thread_id;
-  const isRunning = stream?.status === "running";
+  const taskId = focused ? extractTaskId(focused) : null;
+  const threadId = stream?.thread_id || (taskId ? `subagent_${taskId}` : undefined);
+  const isRunning = stream?.status === "running" || focused?.status === "calling";
 
   // Load sub-agent thread conversation
   const { entries, loading, refreshThread } = useThreadData(threadId);
@@ -109,7 +117,11 @@ export function AgentsView({ steps, focusedStepId, onFocusStep }: AgentsViewProp
                 loading={loading}
               />
             ) : (
-              <AgentFallbackOutput focused={focused} stream={stream} />
+              <div className="flex-1 flex items-center justify-center">
+                <span className="text-xs text-[#a3a3a3]">
+                  {focused.status === "calling" ? "助手启动中..." : "暂无对话数据"}
+                </span>
+              </div>
             )}
           </>
         )}
@@ -178,42 +190,3 @@ function AgentDetailHeader({ focused, stream }: { focused: ToolStep; stream: Sub
   );
 }
 
-/* -- Fallback output (when thread_id is not yet available) -- */
-
-function AgentFallbackOutput({ focused, stream }: { focused: ToolStep; stream: SubagentStream | undefined }) {
-  return (
-    <div className="flex-1 overflow-y-auto px-4 py-3">
-      {stream ? (
-        <div className="space-y-3">
-          {stream.text && (
-            <div className="text-sm text-[#171717]">
-              <MarkdownContent content={stream.text} />
-            </div>
-          )}
-          {stream.tool_calls.length > 0 && (
-            <div className="space-y-2">
-              {stream.tool_calls.map((tc, idx) => (
-                <div key={tc.id || idx} className="border-l-2 border-blue-400 pl-3 py-1">
-                  <div className="text-[11px] font-medium text-[#525252] font-mono">{tc.name}</div>
-                </div>
-              ))}
-            </div>
-          )}
-          {stream.error && (
-            <div className="text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2">{stream.error}</div>
-          )}
-        </div>
-      ) : focused.status === "calling" ? (
-        <div className="flex items-center justify-center py-8">
-          <span className="text-[11px] text-[#525252]">助手启动中...</span>
-        </div>
-      ) : focused.result ? (
-        <div className="text-sm text-[#171717]">
-          <MarkdownContent content={focused.result} />
-        </div>
-      ) : (
-        <div className="text-xs text-[#525252] text-center py-8">(无输出)</div>
-      )}
-    </div>
-  );
-}
