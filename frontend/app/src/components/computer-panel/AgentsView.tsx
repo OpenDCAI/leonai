@@ -1,6 +1,8 @@
-import { forwardRef, useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ToolStep } from "../../api";
+import ChatArea from "../ChatArea";
 import MarkdownContent from "../MarkdownContent";
+import { useThreadData } from "../../hooks/use-thread-data";
 import { parseAgentArgs } from "./utils";
 
 type SubagentStream = NonNullable<ToolStep["subagent_stream"]>;
@@ -12,7 +14,6 @@ interface AgentsViewProps {
 }
 
 export function AgentsView({ steps, focusedStepId, onFocusStep }: AgentsViewProps) {
-  const outputRef = useRef<HTMLDivElement>(null);
   const [leftWidth, setLeftWidth] = useState(280);
   const [isDragging, setIsDragging] = useState(false);
   const dragStartX = useRef(0);
@@ -20,12 +21,18 @@ export function AgentsView({ steps, focusedStepId, onFocusStep }: AgentsViewProp
 
   const focused = steps.find((s) => s.id === focusedStepId) ?? null;
   const stream = focused?.subagent_stream;
+  const threadId = stream?.thread_id;
+  const isRunning = stream?.status === "running";
 
+  // Load sub-agent thread conversation
+  const { entries, loading, refreshThread } = useThreadData(threadId);
+
+  // Auto-refresh while sub-agent is running
   useEffect(() => {
-    if (outputRef.current) {
-      outputRef.current.scrollTop = outputRef.current.scrollHeight;
-    }
-  }, [focusedStepId, stream?.text, stream?.tool_calls.length]);
+    if (!threadId || !isRunning) return;
+    const interval = setInterval(() => void refreshThread(), 2000);
+    return () => clearInterval(interval);
+  }, [threadId, isRunning, refreshThread]);
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -36,18 +43,14 @@ export function AgentsView({ steps, focusedStepId, onFocusStep }: AgentsViewProp
 
   useEffect(() => {
     if (!isDragging) return;
-
     const handleMouseMove = (e: MouseEvent) => {
       const delta = e.clientX - dragStartX.current;
       const newWidth = Math.max(200, Math.min(600, dragStartWidth.current + delta));
       setLeftWidth(newWidth);
     };
-
     const handleMouseUp = () => setIsDragging(false);
-
     document.addEventListener("mousemove", handleMouseMove);
     document.addEventListener("mouseup", handleMouseUp);
-
     return () => {
       document.removeEventListener("mousemove", handleMouseMove);
       document.removeEventListener("mouseup", handleMouseUp);
@@ -98,7 +101,16 @@ export function AgentsView({ steps, focusedStepId, onFocusStep }: AgentsViewProp
         ) : (
           <>
             <AgentDetailHeader focused={focused} stream={stream} />
-            <AgentDetailOutput ref={outputRef} focused={focused} stream={stream} />
+            {threadId ? (
+              <ChatArea
+                entries={entries}
+                isStreaming={!!isRunning}
+                runtimeStatus={null}
+                loading={loading}
+              />
+            ) : (
+              <AgentFallbackOutput focused={focused} stream={stream} />
+            )}
           </>
         )}
       </div>
@@ -166,44 +178,42 @@ function AgentDetailHeader({ focused, stream }: { focused: ToolStep; stream: Sub
   );
 }
 
-/* -- Agent detail output -- */
+/* -- Fallback output (when thread_id is not yet available) -- */
 
-const AgentDetailOutput = forwardRef<HTMLDivElement, { focused: ToolStep; stream: SubagentStream | undefined }>(
-  function AgentDetailOutput({ focused, stream }, ref) {
-    return (
-      <div ref={ref} className="flex-1 overflow-y-auto px-4 py-3">
-        {stream ? (
-          <div className="space-y-3">
-            {stream.text && (
-              <div className="text-sm text-[#171717]">
-                <MarkdownContent content={stream.text} />
-              </div>
-            )}
-            {stream.tool_calls.length > 0 && (
-              <div className="space-y-2">
-                {stream.tool_calls.map((tc, idx) => (
-                  <div key={tc.id || idx} className="border-l-2 border-blue-400 pl-3 py-1">
-                    <div className="text-[11px] font-medium text-[#525252] font-mono">{tc.name}</div>
-                  </div>
-                ))}
-              </div>
-            )}
-            {stream.error && (
-              <div className="text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2">{stream.error}</div>
-            )}
-          </div>
-        ) : focused.status === "calling" ? (
-          <div className="flex items-center justify-center py-8">
-            <span className="text-[11px] text-[#525252]">助手启动中...</span>
-          </div>
-        ) : focused.result ? (
-          <div className="text-sm text-[#171717]">
-            <MarkdownContent content={focused.result} />
-          </div>
-        ) : (
-          <div className="text-xs text-[#525252] text-center py-8">(无输出)</div>
-        )}
-      </div>
-    );
-  },
-);
+function AgentFallbackOutput({ focused, stream }: { focused: ToolStep; stream: SubagentStream | undefined }) {
+  return (
+    <div className="flex-1 overflow-y-auto px-4 py-3">
+      {stream ? (
+        <div className="space-y-3">
+          {stream.text && (
+            <div className="text-sm text-[#171717]">
+              <MarkdownContent content={stream.text} />
+            </div>
+          )}
+          {stream.tool_calls.length > 0 && (
+            <div className="space-y-2">
+              {stream.tool_calls.map((tc, idx) => (
+                <div key={tc.id || idx} className="border-l-2 border-blue-400 pl-3 py-1">
+                  <div className="text-[11px] font-medium text-[#525252] font-mono">{tc.name}</div>
+                </div>
+              ))}
+            </div>
+          )}
+          {stream.error && (
+            <div className="text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2">{stream.error}</div>
+          )}
+        </div>
+      ) : focused.status === "calling" ? (
+        <div className="flex items-center justify-center py-8">
+          <span className="text-[11px] text-[#525252]">助手启动中...</span>
+        </div>
+      ) : focused.result ? (
+        <div className="text-sm text-[#171717]">
+          <MarkdownContent content={focused.result} />
+        </div>
+      ) : (
+        <div className="text-xs text-[#525252] text-center py-8">(无输出)</div>
+      )}
+    </div>
+  );
+}

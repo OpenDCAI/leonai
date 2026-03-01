@@ -1,8 +1,8 @@
-import { Link } from "react-router-dom";
 import type { NoticeMessage } from "../../api";
 
 interface NoticeBubbleProps {
   entry: NoticeMessage;
+  onTaskNoticeClick?: (taskId: string) => void;
 }
 
 interface ParsedNotice {
@@ -14,7 +14,7 @@ interface ParsedNotice {
  * Subtle notice for system-injected messages (steer reminders, task notifications).
  * Visually distinct from user/assistant messages — not prominent.
  */
-export function NoticeBubble({ entry }: NoticeBubbleProps) {
+export function NoticeBubble({ entry, onTaskNoticeClick }: NoticeBubbleProps) {
   const parsed = parseNoticeContent(entry.content);
 
   if (!parsed.text) return null;
@@ -29,8 +29,10 @@ export function NoticeBubble({ entry }: NoticeBubbleProps) {
 
   return (
     <div className="flex justify-center my-1.5">
-      {parsed.taskId ? (
-        <Link to={`/agents/${parsed.taskId}`}>{inner}</Link>
+      {parsed.taskId && onTaskNoticeClick ? (
+        <button onClick={() => onTaskNoticeClick(parsed.taskId!)} className="cursor-pointer">
+          {inner}
+        </button>
       ) : (
         inner
       )}

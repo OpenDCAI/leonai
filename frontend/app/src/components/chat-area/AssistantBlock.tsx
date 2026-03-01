@@ -38,10 +38,10 @@ interface AssistantBlockProps {
   isStreamingThis?: boolean;
   runtimeStatus?: StreamStatus | null;
   onFocusStep?: (stepId: string) => void;
-  onNavigateAgent?: (taskId: string) => void;
+  onFocusAgent?: (taskId: string) => void;
 }
 
-export const AssistantBlock = memo(function AssistantBlock({ entry, isStreamingThis, runtimeStatus, onFocusStep, onNavigateAgent }: AssistantBlockProps) {
+export const AssistantBlock = memo(function AssistantBlock({ entry, isStreamingThis, runtimeStatus, onFocusStep, onFocusAgent }: AssistantBlockProps) {
   const fullText = entry.segments
     .filter((s) => s.type === "text")
     .map((s) => s.content)
@@ -81,7 +81,7 @@ export const AssistantBlock = memo(function AssistantBlock({ entry, isStreamingT
             toolSegments={toolSegs}
             isStreaming={!!isStreamingThis}
             onFocusStep={onFocusStep}
-            onNavigateAgent={onNavigateAgent}
+            onFocusAgent={onFocusAgent}
           />
         )}
 

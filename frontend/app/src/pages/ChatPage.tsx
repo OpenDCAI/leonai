@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
-import { useParams, useOutletContext, useLocation, useNavigate } from "react-router-dom";
+import { useParams, useOutletContext, useLocation } from "react-router-dom";
 import ChatArea from "../components/ChatArea";
+import type { AssistantTurn } from "../api";
 import ComputerPanel from "../components/ComputerPanel";
 import { DragHandle } from "../components/DragHandle";
 import Header from "../components/Header";
@@ -31,7 +32,6 @@ export default function ChatPage() {
 
 function ChatPageInner({ threadId }: { threadId: string }) {
   const location = useLocation();
-  const navigate = useNavigate();
   const { tm, setSidebarCollapsed } = useOutletContext<OutletContext>();
   const [currentModel, setCurrentModel] = useState<string>("");
 
@@ -105,9 +105,19 @@ function ChatPageInner({ threadId }: { threadId: string }) {
     handleFocusAgent, handleFocusStep, handleSendQueueMessage,
   } = ui;
 
-  const handleNavigateAgent = useCallback(
-    (taskId: string) => navigate(`/agents/${taskId}`),
-    [navigate],
+  const handleTaskNoticeClick = useCallback(
+    (taskId: string) => {
+      for (const entry of entries) {
+        if (entry.role !== "assistant") continue;
+        for (const seg of (entry as AssistantTurn).segments) {
+          if (seg.type === "tool" && seg.step.name === "Task" && seg.step.subagent_stream?.task_id === taskId) {
+            handleFocusAgent(seg.step.id);
+            return;
+          }
+        }
+      }
+    },
+    [entries, handleFocusAgent],
   );
 
   const computerResize = useResizableX(600, 360, 1200, true);
@@ -138,7 +148,8 @@ function ChatPageInner({ threadId }: { threadId: string }) {
             runtimeStatus={runtimeStatus}
             loading={loading}
             onFocusStep={handleFocusStep}
-            onNavigateAgent={handleNavigateAgent}
+            onFocusAgent={handleFocusAgent}
+            onTaskNoticeClick={handleTaskNoticeClick}
           />
           <TaskProgress
             isStreaming={isStreaming}

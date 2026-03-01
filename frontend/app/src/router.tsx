@@ -6,7 +6,6 @@ import NewChatPage from './pages/NewChatPage';
 import SettingsPage from './pages/SettingsPage';
 import MembersPage from './pages/MembersPage';
 import AgentDetailPage from './pages/AgentDetailPage';
-import SubAgentPage from './pages/SubAgentPage';
 import TasksPage from './pages/TasksPage';
 import LibraryPage from './pages/LibraryPage';
 
@@ -40,10 +39,6 @@ export const router = createBrowserRouter([
       {
         path: 'members/:id',
         element: <AgentDetailPage />,
-      },
-      {
-        path: 'agents/:taskId',
-        element: <SubAgentPage />,
       },
       {
         path: 'tasks',
