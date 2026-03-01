@@ -7,6 +7,7 @@ import threading
 import pytest
 
 from core.queue import MessageQueueManager, get_queue_manager, reset_queue_manager
+from core.queue.formatters import format_steer_reminder, format_task_notification
 
 
 @pytest.fixture(autouse=True)
@@ -64,6 +65,37 @@ class TestInjectSteer:
         mgr.clear_steer("t1")
         assert not mgr.has_steer("t1")
         assert mgr.pop_steer("t1") is None
+
+
+class TestDrainSteer:
+    """Tests for batch drain_steer() method."""
+
+    def test_drain_returns_all(self, tmp_db):
+        mgr = MessageQueueManager(db_path=tmp_db)
+        mgr.inject("first", thread_id="t1")
+        mgr.inject("second", thread_id="t1")
+        mgr.inject("third", thread_id="t1")
+        items = mgr.drain_steer("t1")
+        assert items == ["first", "second", "third"]
+
+    def test_drain_empties_queue(self, tmp_db):
+        mgr = MessageQueueManager(db_path=tmp_db)
+        mgr.inject("msg", thread_id="t1")
+        mgr.drain_steer("t1")
+        assert not mgr.has_steer("t1")
+        assert mgr.pop_steer("t1") is None
+        assert mgr.drain_steer("t1") == []
+
+    def test_drain_empty_returns_empty_list(self, tmp_db):
+        mgr = MessageQueueManager(db_path=tmp_db)
+        assert mgr.drain_steer("nonexistent") == []
+
+    def test_drain_thread_isolation(self, tmp_db):
+        mgr = MessageQueueManager(db_path=tmp_db)
+        mgr.inject("for-t1", thread_id="t1")
+        mgr.inject("for-t2", thread_id="t2")
+        assert mgr.drain_steer("t1") == ["for-t1"]
+        assert mgr.drain_steer("t2") == ["for-t2"]
 
 
 # ---------------------------------------------------------------------------
@@ -194,12 +226,12 @@ class TestGlobalSingleton:
 
 
 # ---------------------------------------------------------------------------
-# 5. SteeringMiddleware integration
+# 5. SteeringMiddleware integration — non-preemptive behavior
 # ---------------------------------------------------------------------------
 
 
 class TestSteeringMiddlewareIntegration:
-    """Verify SteeringMiddleware reads from inject channel via pop_steer."""
+    """Verify SteeringMiddleware reads from inject channel via drain_steer."""
 
     def test_middleware_consumes_injected_steer(self):
         from core.queue.middleware import SteeringMiddleware
@@ -212,6 +244,83 @@ class TestSteeringMiddlewareIntegration:
 
         # Middleware should be able to detect pending steer via the global manager
         assert mgr.has_steer(thread_id)
-        # pop_steer is what middleware calls internally
-        assert mgr.pop_steer(thread_id) == "change direction"
+        # drain_steer is what middleware now calls internally
+        items = mgr.drain_steer(thread_id)
+        assert items == ["change direction"]
         assert not mgr.has_steer(thread_id)
+
+    def test_middleware_drains_multiple(self):
+        """Middleware drains all pending steers at once."""
+        from core.queue.middleware import SteeringMiddleware
+
+        mgr = get_queue_manager()
+
+        thread_id = "test-multi"
+        mgr.inject("first", thread_id=thread_id)
+        mgr.inject("second", thread_id=thread_id)
+
+        items = mgr.drain_steer(thread_id)
+        assert items == ["first", "second"]
+        assert mgr.drain_steer(thread_id) == []
+
+    def test_tool_calls_never_skipped(self):
+        """Verify wrap_tool_call is a pure passthrough (non-preemptive)."""
+        from unittest.mock import MagicMock
+
+        from core.queue.middleware import SteeringMiddleware
+
+        middleware = SteeringMiddleware()
+
+        # Inject steer to simulate mid-execution message
+        mgr = get_queue_manager()
+        mgr.inject("urgent message", thread_id="test-no-skip")
+
+        # Create mock tool call request and handler
+        mock_request = MagicMock()
+        mock_result = MagicMock()
+        mock_handler = MagicMock(return_value=mock_result)
+
+        # wrap_tool_call should call handler normally, NOT skip
+        result = middleware.wrap_tool_call(mock_request, mock_handler)
+        mock_handler.assert_called_once_with(mock_request)
+        assert result is mock_result
+
+
+# ---------------------------------------------------------------------------
+# 6. XML formatters
+# ---------------------------------------------------------------------------
+
+
+class TestFormatters:
+    def test_format_steer_reminder(self):
+        xml = format_steer_reminder("stop and do X")
+        assert "<system-reminder>" in xml
+        assert "stop and do X" in xml
+        assert "IMPORTANT" in xml
+        assert "</system-reminder>" in xml
+
+    def test_format_task_notification(self):
+        xml = format_task_notification(
+            task_id="abc123",
+            status="completed",
+            summary="Analysis done",
+            result="Found 5 issues",
+        )
+        assert "<task-notification>" in xml
+        assert "<task-id>abc123</task-id>" in xml
+        assert "<status>completed</status>" in xml
+        assert "<summary>Analysis done</summary>" in xml
+        assert "<result>Found 5 issues</result>" in xml
+
+    def test_format_task_notification_truncates_long_result(self):
+        long_result = "x" * 3000
+        xml = format_task_notification(
+            task_id="t1", status="completed", summary="done", result=long_result
+        )
+        assert "..." in xml
+        # Result field should be truncated
+        assert len(xml) < 3000
+
+    def test_format_task_notification_no_result(self):
+        xml = format_task_notification(task_id="t1", status="error", summary="failed")
+        assert "<result>" not in xml

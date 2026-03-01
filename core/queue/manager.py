@@ -70,6 +70,16 @@ class MessageQueueManager:
             dq = self._steer.get(thread_id)
             return bool(dq)
 
+    def drain_steer(self, thread_id: str) -> list[str]:
+        """Pop ALL pending steer messages at once."""
+        with self._lock:
+            dq = self._steer.get(thread_id)
+            if not dq:
+                return []
+            items = list(dq)
+            dq.clear()
+            return items
+
     # ------------------------------------------------------------------
     # Followup channel (SQLite)
     # ------------------------------------------------------------------

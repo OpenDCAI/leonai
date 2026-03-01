@@ -1,7 +1,8 @@
-import type { AssistantTurn, ChatEntry, StreamStatus } from "../api";
+import type { AssistantTurn, ChatEntry, NoticeMessage, StreamStatus } from "../api";
 import { useStickyScroll } from "../hooks/use-sticky-scroll";
 import { AssistantBlock } from "./chat-area/AssistantBlock";
 import { ChatSkeleton } from "./chat-area/ChatSkeleton";
+import { NoticeBubble } from "./chat-area/NoticeBubble";
 import { UserBubble } from "./chat-area/UserBubble";
 
 interface ChatAreaProps {
@@ -22,6 +23,9 @@ export default function ChatArea({ entries, isStreaming: _isStreaming, runtimeSt
       ) : (
         <div className="max-w-3xl mx-auto px-5 space-y-3.5">
           {entries.map((entry) => {
+            if (entry.role === "notice") {
+              return <NoticeBubble key={entry.id} entry={entry as NoticeMessage} />;
+            }
             if (entry.role === "user") {
               return <UserBubble key={entry.id} entry={entry} />;
             }

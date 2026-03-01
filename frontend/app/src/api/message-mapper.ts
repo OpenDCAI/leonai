@@ -1,4 +1,4 @@
-import type { AssistantTurn, BackendMessage, ChatEntry, ToolSegment, TurnSegment } from "./types";
+import type { AssistantTurn, BackendMessage, ChatEntry, NoticeMessage, ToolSegment, TurnSegment } from "./types";
 
 function extractTextContent(raw: unknown): string {
   if (typeof raw === "string") return raw;
@@ -49,6 +49,19 @@ interface MapState {
 
 function handleHuman(msg: BackendMessage, i: number, state: MapState): void {
   state.currentTurn = null;
+
+  // System-injected messages (steer reminders, task notifications) → notice
+  if (msg.metadata?.source === "system") {
+    const notice: NoticeMessage = {
+      id: msg.id ?? `hist-notice-${i}`,
+      role: "notice",
+      content: extractTextContent(msg.content),
+      timestamp: state.now,
+    };
+    state.entries.push(notice);
+    return;
+  }
+
   state.entries.push({
     id: msg.id ?? `hist-user-${i}`,
     role: "user",

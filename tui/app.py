@@ -26,7 +26,7 @@ except ImportError:
     set_sandbox_run_id = None
     set_sandbox_thread_id = None
 from core.monitor import AgentState
-from core.queue import get_queue_manager
+from core.queue import format_steer_reminder, get_queue_manager
 
 
 class WelcomeBanner(Static):
@@ -243,7 +243,7 @@ class LeonApp(App):
 
     def _handle_active_agent_message(self, content: str) -> None:
         """Handle message when agent is active — inject as steer."""
-        get_queue_manager().inject(content, thread_id=self.thread_id)
+        get_queue_manager().inject(format_steer_reminder(content), thread_id=self.thread_id)
         self.notify("✓ 消息已注入（转向）")
 
     def _start_agent_run(self, content: str) -> None:

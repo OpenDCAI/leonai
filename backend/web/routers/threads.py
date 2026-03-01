@@ -35,7 +35,7 @@ from backend.web.utils.serializers import serialize_message
 
 logger = logging.getLogger(__name__)
 from core.monitor import AgentState
-from core.queue import get_queue_manager
+from core.queue import format_steer_reminder, get_queue_manager
 from sandbox.thread_context import set_current_thread_id
 
 router = APIRouter(prefix="/api/threads", tags=["threads"])
@@ -166,7 +166,7 @@ async def send_message(
     agent = await get_or_create_agent(app, sandbox_type, thread_id=thread_id)
 
     if hasattr(agent, "runtime") and agent.runtime.current_state == AgentState.ACTIVE:
-        get_queue_manager().inject(payload.message, thread_id)
+        get_queue_manager().inject(format_steer_reminder(payload.message), thread_id)
         return {"status": "injected", "routing": "steer", "thread_id": thread_id}
 
     # Agent is IDLE — start new run
@@ -175,7 +175,7 @@ async def send_message(
     async with lock:
         if hasattr(agent, "runtime") and not agent.runtime.transition(AgentState.ACTIVE):
             # Race: became active between check and lock
-            get_queue_manager().inject(payload.message, thread_id)
+            get_queue_manager().inject(format_steer_reminder(payload.message), thread_id)
             return {"status": "injected", "routing": "steer", "thread_id": thread_id}
 
     buf = start_agent_run(agent, thread_id, payload.message, app)
