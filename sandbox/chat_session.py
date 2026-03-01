@@ -290,7 +290,15 @@ class ChatSessionManager:
             ).fetchone()
         return str(row[0]) if row else None
 
-    def get(self, thread_id: str, terminal_id: str) -> ChatSession | None:
+    def get(self, thread_id: str, terminal_id: str | None = None) -> ChatSession | None:
+        if terminal_id is None:
+            from sandbox.terminal import TerminalStore
+
+            # @@@thread-get-back-compat - Legacy callers query by thread only; route to current active terminal.
+            terminal = TerminalStore(db_path=self.db_path).get_active(thread_id)
+            if terminal is None:
+                return None
+            terminal_id = terminal.terminal_id
         live = self._live_sessions.get(terminal_id)
         if live:
             if live.is_expired():

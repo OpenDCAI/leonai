@@ -10,7 +10,17 @@ from backend.web.services.event_buffer import RunEventBuffer
 from backend.web.services.event_store import cleanup_old_runs
 from backend.web.utils.serializers import extract_text_content
 from core.monitor import AgentState
-from sandbox.thread_context import set_current_thread_id
+from storage.contracts import RunEventRepo
+from sandbox.thread_context import set_current_run_id, set_current_thread_id
+
+
+def _resolve_run_event_repo(agent: Any) -> RunEventRepo | None:
+    storage_container = getattr(agent, "storage_container", None)
+    if storage_container is None:
+        return None
+
+    # @@@runtime-storage-consumer - runtime run lifecycle must consume injected storage container, not assignment-only wiring.
+    return storage_container.run_event_repo()
 
 
 async def prime_sandbox(agent: Any, thread_id: str) -> None:
@@ -129,9 +139,16 @@ async def _run_agent_to_buffer(
     from backend.web.services.event_store import append_event
 
     run_id = buf.run_id
+    run_event_repo = _resolve_run_event_repo(agent)
 
     async def emit(event: dict, message_id: str | None = None) -> None:
-        seq = await append_event(thread_id, run_id, event, message_id)
+        seq = await append_event(
+            thread_id,
+            run_id,
+            event,
+            message_id,
+            run_event_repo=run_event_repo,
+        )
         try:
             data = json.loads(event.get("data", "{}")) if isinstance(event.get("data"), str) else event.get("data", {})
         except (json.JSONDecodeError, TypeError):
@@ -155,6 +172,8 @@ async def _run_agent_to_buffer(
 
         config["configurable"]["queue_mode"] = get_queue_manager().get_mode(thread_id=thread_id).value
         set_current_thread_id(thread_id)
+        # @@@web-run-context - web runs have no TUI checkpoint; use run_id to group file ops per run.
+        set_current_run_id(run_id)
 
         # Trajectory tracing (eval system)
         tracer = None
@@ -422,9 +441,11 @@ async def _run_agent_to_buffer(
         if agent and hasattr(agent, "runtime") and agent.runtime.current_state == AgentState.ACTIVE:
             agent.runtime.transition(AgentState.IDLE)
         try:
-            await cleanup_old_runs(thread_id, keep_latest=1)
+            await cleanup_old_runs(thread_id, keep_latest=1, run_event_repo=run_event_repo)
         except Exception:
             pass
+        if run_event_repo is not None:
+            run_event_repo.close()
 
 
 # ---------------------------------------------------------------------------

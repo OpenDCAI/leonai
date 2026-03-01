@@ -520,7 +520,7 @@ class TestEventStoreEdgeCases:
         """Verify WAL mode is enabled for concurrent read/write."""
 
         async def _run():
-            # WAL is set by _get_conn() (async path), trigger it first
+            # WAL is set during init_event_store(), trigger via append_event
             from backend.web.services.event_store import append_event
 
             await append_event("t1", "r1", {"event": "text", "data": "{}"})

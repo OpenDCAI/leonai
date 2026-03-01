@@ -7,6 +7,18 @@ import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import pytest
+
+from storage import StorageContainer
+from storage.providers.sqlite.checkpoint_repo import SQLiteCheckpointRepo
+from storage.providers.sqlite.eval_repo import SQLiteEvalRepo
+from storage.providers.sqlite.thread_config_repo import SQLiteThreadConfigRepo
+from storage.providers.supabase.checkpoint_repo import SupabaseCheckpointRepo
+from storage.providers.supabase.eval_repo import SupabaseEvalRepo
+from storage.providers.supabase.file_operation_repo import SupabaseFileOperationRepo
+from storage.providers.supabase.run_event_repo import SupabaseRunEventRepo
+from storage.providers.supabase.summary_repo import SupabaseSummaryRepo
+from storage.providers.supabase.thread_config_repo import SupabaseThreadConfigRepo
 from sandbox.manager import SandboxManager
 from sandbox.provider import Metrics, ProviderCapability, ProviderExecResult, SandboxProvider, SessionInfo
 
@@ -77,6 +89,11 @@ class FakeProvider(SandboxProvider):
         return [
             SessionInfo(session_id=sid, provider=self.name, status=status) for sid, status in self._statuses.items()
         ]
+
+
+class _FakeSupabaseClient:
+    def table(self, table_name: str):
+        raise AssertionError(f"table() should not be called in this container wiring test: {table_name}")
 
 
 def _temp_db() -> Path:
@@ -173,3 +190,130 @@ def test_enforce_idle_timeouts_continues_on_pause_failure() -> None:
         assert mgr.session_manager.get("thread-1") is not None
     finally:
         db.unlink(missing_ok=True)
+
+
+def test_storage_container_sqlite_strategy_is_non_regression() -> None:
+    db = _temp_db()
+    try:
+        container = StorageContainer(main_db_path=db, strategy="sqlite")
+        repo = container.checkpoint_repo()
+        assert isinstance(repo, SQLiteCheckpointRepo)
+    finally:
+        db.unlink(missing_ok=True)
+
+
+def test_storage_container_supabase_repos_are_concrete() -> None:
+    fake_client = _FakeSupabaseClient()
+    container = StorageContainer(strategy="supabase", supabase_client=fake_client)
+    checkpoint_repo = container.checkpoint_repo()
+    assert isinstance(checkpoint_repo, SupabaseCheckpointRepo)
+    thread_config_repo = container.thread_config_repo()
+    assert isinstance(thread_config_repo, SupabaseThreadConfigRepo)
+    run_event_repo = container.run_event_repo()
+    assert isinstance(run_event_repo, SupabaseRunEventRepo)
+    file_operation_repo = container.file_operation_repo()
+    assert isinstance(file_operation_repo, SupabaseFileOperationRepo)
+    summary_repo = container.summary_repo()
+    assert isinstance(summary_repo, SupabaseSummaryRepo)
+    eval_repo = container.eval_repo()
+    assert isinstance(eval_repo, SupabaseEvalRepo)
+
+
+def test_storage_container_repo_level_provider_override_from_sqlite_default() -> None:
+    fake_client = _FakeSupabaseClient()
+    container = StorageContainer(
+        strategy="sqlite",
+        repo_providers={"checkpoint_repo": "supabase"},
+        supabase_client=fake_client,
+    )
+    assert isinstance(container.checkpoint_repo(), SupabaseCheckpointRepo)
+    assert isinstance(container.thread_config_repo(), SQLiteThreadConfigRepo)
+
+
+def test_storage_container_repo_level_provider_override_from_supabase_default() -> None:
+    fake_client = _FakeSupabaseClient()
+    container = StorageContainer(
+        strategy="supabase",
+        repo_providers={"eval_repo": "sqlite"},
+        supabase_client=fake_client,
+    )
+    assert isinstance(container.eval_repo(), SQLiteEvalRepo)
+    assert isinstance(container.checkpoint_repo(), SupabaseCheckpointRepo)
+
+
+def test_storage_container_supabase_checkpoint_requires_client() -> None:
+    container = StorageContainer(strategy="supabase")
+    with pytest.raises(
+        RuntimeError,
+        match="Supabase strategy checkpoint_repo requires supabase_client",
+    ):
+        container.checkpoint_repo()
+
+
+def test_storage_container_supabase_thread_config_requires_client() -> None:
+    container = StorageContainer(strategy="supabase")
+    with pytest.raises(
+        RuntimeError,
+        match="Supabase strategy thread_config_repo requires supabase_client",
+    ):
+        container.thread_config_repo()
+
+
+def test_storage_container_supabase_run_event_requires_client() -> None:
+    container = StorageContainer(strategy="supabase")
+    with pytest.raises(
+        RuntimeError,
+        match="Supabase strategy run_event_repo requires supabase_client",
+    ):
+        container.run_event_repo()
+
+
+def test_storage_container_supabase_file_operation_requires_client() -> None:
+    container = StorageContainer(strategy="supabase")
+    with pytest.raises(
+        RuntimeError,
+        match="Supabase strategy file_operation_repo requires supabase_client",
+    ):
+        container.file_operation_repo()
+
+
+def test_storage_container_supabase_summary_requires_client() -> None:
+    container = StorageContainer(strategy="supabase")
+    with pytest.raises(
+        RuntimeError,
+        match="Supabase strategy summary_repo requires supabase_client",
+    ):
+        container.summary_repo()
+
+
+def test_storage_container_supabase_eval_requires_client() -> None:
+    container = StorageContainer(strategy="supabase")
+    with pytest.raises(
+        RuntimeError,
+        match="Supabase strategy eval_repo requires supabase_client",
+    ):
+        container.eval_repo()
+
+
+def test_storage_container_rejects_unknown_strategy() -> None:
+    with pytest.raises(
+        ValueError,
+        match="Unsupported storage strategy: redis. Supported strategies: sqlite, supabase",
+    ):
+        StorageContainer(strategy="redis")  # type: ignore[arg-type]
+
+
+def test_storage_container_rejects_unknown_repo_provider_binding() -> None:
+    with pytest.raises(
+        ValueError,
+        match="Unknown repo provider bindings: foo_repo",
+    ):
+        StorageContainer(repo_providers={"foo_repo": "sqlite"})
+
+
+def test_storage_container_rejects_invalid_repo_provider_value() -> None:
+    with pytest.raises(
+        ValueError,
+        match="Unsupported provider for checkpoint_repo",
+    ):
+        StorageContainer(repo_providers={"checkpoint_repo": "mysql"})

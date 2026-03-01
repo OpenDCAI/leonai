@@ -53,6 +53,7 @@ from core.prompt_caching import PromptCachingMiddleware
 from core.queue import SteeringMiddleware
 from core.search import SearchMiddleware
 from core.skills import SkillsMiddleware
+from storage.container import StorageContainer
 from core.task import TaskMiddleware
 from core.todo import TodoMiddleware
 from core.web import WebMiddleware
@@ -96,6 +97,7 @@ class LeonAgent:
         firecrawl_api_key: str | None = None,
         jina_api_key: str | None = None,
         sandbox: Any = None,
+        storage_container: StorageContainer | None = None,
         verbose: bool = False,
     ):
         """
@@ -157,6 +159,7 @@ class LeonAgent:
         # Initialize workspace and configuration
         self.workspace_root = self._resolve_workspace_root()
         self._init_config_attributes()
+        self.storage_container: StorageContainer | None = storage_container
         self._sandbox = self._init_sandbox(sandbox)
 
         # Override workspace_root for sandbox mode
@@ -763,12 +766,15 @@ class LeonAgent:
         pruning_config = self.config.memory.pruning
         compaction_config = self.config.memory.compaction
 
-        db_path = Path.home() / ".leon" / "leon.db"
+        db_path = self.db_path
+        # @@@memory-storage-consumer - memory summary persistence must consume injected storage container, not fixed sqlite path.
+        summary_repo = self.storage_container.summary_repo() if self.storage_container is not None else None
         self._memory_middleware = MemoryMiddleware(
             context_limit=context_limit,
             pruning_config=pruning_config,
             compaction_config=compaction_config,
             db_path=db_path,
+            summary_repo=summary_repo,
             checkpointer=self.checkpointer,
             compaction_threshold=0.7,
             verbose=self.verbose,
@@ -951,7 +957,7 @@ class LeonAgent:
 
     async def _init_checkpointer(self):
         """Initialize async checkpointer for conversation persistence"""
-        db_path = Path.home() / ".leon" / "leon.db"
+        db_path = self.db_path
         db_path.parent.mkdir(parents=True, exist_ok=True)
         conn = await aiosqlite.connect(str(db_path))
         # @@@ WAL mode allows concurrent reads/writes from sandbox manager
@@ -1193,6 +1199,7 @@ def create_leon_agent(
     api_key: str | None = None,
     workspace_root: str | Path | None = None,
     sandbox: Any = None,
+    storage_container: StorageContainer | None = None,
     **kwargs,
 ) -> LeonAgent:
     """Create Leon Agent.
@@ -1202,6 +1209,7 @@ def create_leon_agent(
         api_key: API key
         workspace_root: Workspace directory
         sandbox: Sandbox instance, name string, or None for local
+        storage_container: Optional pre-built storage container (runtime wiring injection)
         **kwargs: Additional configuration parameters
 
     Returns:
@@ -1222,6 +1230,7 @@ def create_leon_agent(
         api_key=api_key,
         workspace_root=workspace_root,
         sandbox=sandbox,
+        storage_container=storage_container,
         **kwargs,
     )
 

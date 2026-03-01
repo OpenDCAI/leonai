@@ -402,6 +402,10 @@ def _extract_state_from_output(
     pattern = re.compile(rf"{re.escape(start_marker)}(.*?){re.escape(end_marker)}", re.S)
     matches = list(pattern.finditer(raw_output))
     if not matches:
+        # @@@markerless-empty-output-fallback - Some lightweight providers/tests return empty stdout on successful exec.
+        # Keep previous terminal snapshot only for truly-empty output; any non-empty markerless output still fails loudly.
+        if not _sanitize_shell_output(raw_output).strip():
+            return cwd_fallback, dict(env_fallback), ""
         raise RuntimeError("Failed to parse terminal state: state markers not found")
 
     match = matches[-1]

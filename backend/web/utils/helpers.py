@@ -8,7 +8,14 @@ from typing import Any
 from fastapi import HTTPException
 
 from backend.web.core.config import DB_PATH
+from storage.container import StorageContainer
+from storage.contracts import ThreadConfigRepo
+from storage.runtime import build_storage_container
 from sandbox.db import DEFAULT_DB_PATH as SANDBOX_DB_PATH
+
+# @@@cached-container - reuse a single StorageContainer across helper calls to avoid per-call rebuild.
+_cached_container: StorageContainer | None = None
+_cached_container_db_path: Path | None = None
 
 
 def is_virtual_thread_id(thread_id: str | None) -> bool:
@@ -64,22 +71,17 @@ def extract_webhook_instance_id(payload: dict[str, Any]) -> str | None:
     return None
 
 
-def _ensure_thread_config_table(conn: sqlite3.Connection) -> None:
-    """Create thread_config table and run migrations from old thread_metadata."""
-    # Migrate old table name if exists
-    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
-    if "thread_metadata" in tables and "thread_config" not in tables:
-        conn.execute("ALTER TABLE thread_metadata RENAME TO thread_config")
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS thread_config"
-        "(thread_id TEXT PRIMARY KEY, sandbox_type TEXT NOT NULL, cwd TEXT, model TEXT, queue_mode TEXT DEFAULT 'steer')"
-    )
-    for col, default in [("model", None), ("queue_mode", "'steer'"), ("observation_provider", None), ("agent", None)]:
-        try:
-            default_clause = f" DEFAULT {default}" if default else ""
-            conn.execute(f"ALTER TABLE thread_config ADD COLUMN {col} TEXT{default_clause}")
-        except sqlite3.OperationalError:
-            pass
+def _get_container() -> StorageContainer:
+    global _cached_container, _cached_container_db_path
+    if _cached_container is not None and _cached_container_db_path == DB_PATH:
+        return _cached_container
+    _cached_container = build_storage_container(main_db_path=DB_PATH)
+    _cached_container_db_path = DB_PATH
+    return _cached_container
+
+
+def _build_thread_config_repo() -> ThreadConfigRepo:
+    return _get_container().thread_config_repo()
 
 
 def save_thread_config(thread_id: str, **fields: Any) -> None:
@@ -91,53 +93,41 @@ def save_thread_config(thread_id: str, **fields: Any) -> None:
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
         return
-    with sqlite3.connect(str(DB_PATH)) as conn:
-        _ensure_thread_config_table(conn)
-        set_clause = ", ".join(f"{k} = ?" for k in updates)
-        conn.execute(
-            f"UPDATE thread_config SET {set_clause} WHERE thread_id = ?",
-            (*updates.values(), thread_id),
-        )
-        conn.commit()
+    repo = _build_thread_config_repo()
+    try:
+        repo.update_fields(thread_id, **updates)
+    finally:
+        repo.close()
 
 
 def load_thread_config(thread_id: str):
     """Load full thread config from SQLite. Returns ThreadConfig or None."""
-    if not DB_PATH.exists():
-        return None
+    repo = _build_thread_config_repo()
     try:
-        with sqlite3.connect(str(DB_PATH)) as conn:
-            conn.row_factory = sqlite3.Row
-            _ensure_thread_config_table(conn)
-            row = conn.execute(
-                "SELECT sandbox_type, cwd, model, queue_mode, observation_provider, agent FROM thread_config WHERE thread_id = ?",
-                (thread_id,),
-            ).fetchone()
-            if not row:
-                return None
-            from backend.web.models.thread_config import ThreadConfig
+        row = repo.lookup_config(thread_id)
+        if not row:
+            return None
+        from backend.web.models.thread_config import ThreadConfig
 
-            return ThreadConfig(
-                sandbox_type=row["sandbox_type"],
-                cwd=row["cwd"],
-                model=row["model"],
-                queue_mode=row["queue_mode"] or "steer",
-                observation_provider=row["observation_provider"],
-                agent=row["agent"],
-            )
-    except sqlite3.OperationalError:
-        return None
+        return ThreadConfig(
+            sandbox_type=row["sandbox_type"] or "local",
+            cwd=row["cwd"],
+            model=row["model"],
+            queue_mode=row["queue_mode"] or "steer",
+            observation_provider=row["observation_provider"],
+            agent=row.get("agent"),
+        )
+    finally:
+        repo.close()
 
 
 def init_thread_config(thread_id: str, sandbox_type: str, cwd: str | None) -> None:
-    """Create initial thread config row in SQLite."""
-    with sqlite3.connect(str(DB_PATH)) as conn:
-        _ensure_thread_config_table(conn)
-        conn.execute(
-            "INSERT OR REPLACE INTO thread_config (thread_id, sandbox_type, cwd) VALUES (?, ?, ?)",
-            (thread_id, sandbox_type, cwd),
-        )
-        conn.commit()
+    """Create initial thread config row in storage repo."""
+    repo = _build_thread_config_repo()
+    try:
+        repo.save_metadata(thread_id, sandbox_type, cwd)
+    finally:
+        repo.close()
 
 
 def get_active_observation_provider() -> str | None:
@@ -150,13 +140,20 @@ def get_active_observation_provider() -> str | None:
 
 def save_thread_model(thread_id: str, model: str) -> None:
     """Persist the selected model for a thread."""
-    save_thread_config(thread_id, model=model)
+    repo = _build_thread_config_repo()
+    try:
+        repo.save_model(thread_id, model)
+    finally:
+        repo.close()
 
 
 def lookup_thread_model(thread_id: str) -> str | None:
     """Look up persisted model for a thread."""
-    config = load_thread_config(thread_id)
-    return config.model if config else None
+    repo = _build_thread_config_repo()
+    try:
+        return repo.lookup_model(thread_id)
+    finally:
+        repo.close()
 
 
 def resolve_local_workspace_path(
@@ -198,25 +195,18 @@ def resolve_local_workspace_path(
 
 
 def delete_thread_in_db(thread_id: str) -> None:
-    """Delete all records for a thread from both databases."""
-    ident_re = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+    """Delete all records for a thread via storage repos + sandbox db."""
+    # Purge storage-managed repos (works for both sqlite and supabase strategies)
+    _get_container().purge_thread(thread_id)
 
-    def _sqlite_ident(name: str) -> str:
-        if not ident_re.match(name):
-            raise RuntimeError(f"Invalid sqlite identifier: {name}")
-        return f'"{name}"'
-
-    for db_path in (DB_PATH, SANDBOX_DB_PATH):
-        if not db_path.exists():
-            continue
-        with sqlite3.connect(str(db_path)) as conn:
-            existing = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
-            for table in existing:
-                try:
-                    table_ident = _sqlite_ident(table)
-                except RuntimeError:
+    # Purge sandbox db tables (not managed by storage repos)
+    if SANDBOX_DB_PATH.exists():
+        with sqlite3.connect(str(SANDBOX_DB_PATH)) as conn:
+            tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+            for table in tables:
+                if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", table):
                     continue
-                cols = {r[1] for r in conn.execute("PRAGMA table_info(" + table_ident + ")").fetchall()}
+                cols = {r[1] for r in conn.execute(f'PRAGMA table_info("{table}")').fetchall()}
                 if "thread_id" in cols:
-                    conn.execute("DELETE FROM " + table_ident + " WHERE thread_id = ?", (thread_id,))
+                    conn.execute(f'DELETE FROM "{table}" WHERE thread_id = ?', (thread_id,))
             conn.commit()

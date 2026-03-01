@@ -30,7 +30,7 @@ from sandbox.lifecycle import (
 if TYPE_CHECKING:
     from sandbox.provider import SandboxProvider
 
-LEASE_FRESHNESS_TTL_SEC = 60.0
+LEASE_FRESHNESS_TTL_SEC = 3.0
 
 REQUIRED_LEASE_COLUMNS = {
     "lease_id",
@@ -114,6 +114,15 @@ class SandboxLease(ABC):
         self.last_error = last_error
         self.needs_refresh = needs_refresh
         self.refresh_hint_at = refresh_hint_at
+
+    # @@@compat-refresh-error - legacy callers still read refresh_error while storage canonicalized to last_error.
+    @property
+    def refresh_error(self) -> str | None:
+        return self.last_error
+
+    @refresh_error.setter
+    def refresh_error(self, value: str | None) -> None:
+        self.last_error = value
 
     def get_instance(self) -> SandboxInstance | None:
         return self._current_instance
@@ -314,6 +323,7 @@ class SQLiteLease(SandboxLease):
                     instance_created_at = ?,
                     desired_state = ?,
                     observed_state = ?,
+                    instance_status = ?,
                     version = ?,
                     observed_at = ?,
                     last_error = ?,
@@ -327,6 +337,7 @@ class SQLiteLease(SandboxLease):
                     self._current_instance.instance_id if self._current_instance else None,
                     self._current_instance.created_at.isoformat() if self._current_instance else None,
                     self.desired_state,
+                    self.observed_state,
                     self.observed_state,
                     self.version,
                     self.observed_at.isoformat() if self.observed_at else None,
@@ -383,6 +394,7 @@ class SQLiteLease(SandboxLease):
                 UPDATE sandbox_leases
                 SET desired_state = ?,
                     observed_state = ?,
+                    instance_status = ?,
                     version = ?,
                     observed_at = ?,
                     last_error = ?,
@@ -394,6 +406,7 @@ class SQLiteLease(SandboxLease):
                 """,
                 (
                     self.desired_state,
+                    self.observed_state,
                     self.observed_state,
                     self.version,
                     self.observed_at.isoformat() if self.observed_at else None,
@@ -720,6 +733,7 @@ class LeaseStore:
                     instance_created_at TIMESTAMP,
                     desired_state TEXT NOT NULL DEFAULT 'running',
                     observed_state TEXT NOT NULL DEFAULT 'detached',
+                    instance_status TEXT NOT NULL DEFAULT 'detached',
                     version INTEGER NOT NULL DEFAULT 0,
                     observed_at TIMESTAMP,
                     last_error TEXT,
@@ -764,6 +778,14 @@ class LeaseStore:
             )
             conn.commit()
             lease_cols = {row[1] for row in conn.execute("PRAGMA table_info(sandbox_leases)").fetchall()}
+            if "instance_status" not in lease_cols:
+                # @@@lease-instance-status-compat - keep legacy readers alive while observed_state stays canonical.
+                conn.execute(
+                    "ALTER TABLE sandbox_leases ADD COLUMN instance_status TEXT NOT NULL DEFAULT 'detached'"
+                )
+                conn.execute("UPDATE sandbox_leases SET instance_status = observed_state")
+                conn.commit()
+                lease_cols = {row[1] for row in conn.execute("PRAGMA table_info(sandbox_leases)").fetchall()}
             instance_cols = {row[1] for row in conn.execute("PRAGMA table_info(sandbox_instances)").fetchall()}
             event_cols = {row[1] for row in conn.execute("PRAGMA table_info(lease_events)").fetchall()}
 
@@ -847,6 +869,7 @@ class LeaseStore:
                     provider_name,
                     desired_state,
                     observed_state,
+                    instance_status,
                     version,
                     observed_at,
                     last_error,
@@ -856,12 +879,13 @@ class LeaseStore:
                     created_at,
                     updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     lease_id,
                     provider_name,
                     "running",
+                    "detached",
                     "detached",
                     0,
                     now,
@@ -933,6 +957,7 @@ class LeaseStore:
                     instance_created_at = ?,
                     desired_state = ?,
                     observed_state = ?,
+                    instance_status = ?,
                     version = version + 1,
                     observed_at = ?,
                     last_error = ?,
@@ -946,6 +971,7 @@ class LeaseStore:
                     instance_id,
                     now,
                     desired,
+                    normalized,
                     normalized,
                     now,
                     None,
