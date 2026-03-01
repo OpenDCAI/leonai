@@ -1,4 +1,13 @@
-export type StreamEventType = "text" | "tool_call" | "tool_result" | "status" | "done" | "error" | "cancelled" | "task_start" | "task_text" | "task_tool_call" | "task_tool_result" | "task_done" | "task_error" | "subagent_task_start" | "subagent_task_text" | "subagent_task_tool_call" | "subagent_task_tool_result" | "subagent_task_done" | "subagent_task_error" | "command_progress" | "background_task_start" | "background_task_text" | "background_task_done" | "background_task_error" | "new_run";
+export const STREAM_EVENT_TYPES = [
+  "text", "tool_call", "tool_result", "status", "done", "error", "cancelled",
+  "task_start", "task_text", "task_tool_call", "task_tool_result", "task_done", "task_error",
+  "subagent_task_start", "subagent_task_text", "subagent_task_tool_call",
+  "subagent_task_tool_result", "subagent_task_done", "subagent_task_error",
+  "background_task_start", "background_task_text", "background_task_done", "background_task_error",
+  "command_progress", "new_run",
+] as const;
+
+export type StreamEventType = (typeof STREAM_EVENT_TYPES)[number];
 
 export interface StreamEvent {
   type: StreamEventType;
@@ -139,7 +148,12 @@ export interface ToolSegment {
   step: ToolStep;
 }
 
-export type TurnSegment = TextSegment | ToolSegment;
+export interface NoticeSegment {
+  type: "notice";
+  content: string;
+}
+
+export type TurnSegment = TextSegment | ToolSegment | NoticeSegment;
 
 export interface AssistantTurn {
   id: string;
