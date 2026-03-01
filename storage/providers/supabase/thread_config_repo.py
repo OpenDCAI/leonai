@@ -35,7 +35,7 @@ class SupabaseThreadConfigRepo:
         self._t().update({"model": model}).eq("thread_id", thread_id).execute()
 
     def update_fields(self, thread_id: str, **fields: str | None) -> None:
-        allowed = {"sandbox_type", "cwd", "model", "queue_mode", "observation_provider", "agent"}
+        allowed = {"sandbox_type", "cwd", "model", "queue_mode", "observation_provider", "agent", "workspace_id"}
         updates = {k: v for k, v in fields.items() if k in allowed}
         if updates:
             self._t().update(updates).eq("thread_id", thread_id).execute()
@@ -48,7 +48,7 @@ class SupabaseThreadConfigRepo:
         return str(model) if model else None
 
     def lookup_config(self, thread_id: str) -> dict[str, str | None] | None:
-        rows = self._select(thread_id, "sandbox_type,cwd,model,queue_mode,observation_provider,agent")
+        rows = self._select(thread_id, "sandbox_type,cwd,model,queue_mode,observation_provider,agent,workspace_id")
         if not rows:
             return None
         sandbox_type = rows[0].get("sandbox_type")
@@ -64,6 +64,7 @@ class SupabaseThreadConfigRepo:
             "queue_mode": str(rows[0]["queue_mode"]) if rows[0].get("queue_mode") is not None else None,
             "observation_provider": str(rows[0]["observation_provider"]) if rows[0].get("observation_provider") is not None else None,
             "agent": str(rows[0]["agent"]) if rows[0].get("agent") is not None else None,
+            "workspace_id": str(rows[0]["workspace_id"]) if rows[0].get("workspace_id") is not None else None,
         }
 
     def lookup_metadata(self, thread_id: str) -> tuple[str, str | None] | None:
