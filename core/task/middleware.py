@@ -395,7 +395,13 @@ The agent will work independently and return results when complete.""",
         else:
             content = result.result or "Task completed."
 
-        return ToolMessage(content=content, tool_call_id=tool_id)
+        metadata: dict[str, str] = {}
+        if result.task_id:
+            metadata["task_id"] = result.task_id
+        if result.thread_id:
+            metadata["subagent_thread_id"] = result.thread_id
+
+        return ToolMessage(content=content, tool_call_id=tool_id, metadata=metadata)
 
     def set_parent_middleware(self, middleware: list[Any]) -> None:
         """Set parent middleware after initialization."""

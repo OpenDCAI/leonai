@@ -95,6 +95,18 @@ function handleTool(msg: BackendMessage, _i: number, state: MapState): void {
   if (seg) {
     seg.step.result = extractTextContent(msg.content);
     seg.step.status = "done";
+
+    // Restore subagent_stream from persisted metadata (history replay path)
+    const threadId = msg.metadata?.subagent_thread_id as string | undefined;
+    if (threadId && !seg.step.subagent_stream) {
+      seg.step.subagent_stream = {
+        task_id: (msg.metadata?.task_id as string) || "",
+        thread_id: threadId,
+        text: "",
+        tool_calls: [],
+        status: "completed",
+      };
+    }
   }
 }
 

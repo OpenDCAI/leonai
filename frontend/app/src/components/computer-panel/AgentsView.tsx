@@ -6,13 +6,6 @@ import { parseAgentArgs } from "./utils";
 
 type SubagentStream = NonNullable<ToolStep["subagent_stream"]>;
 
-/** Extract task_id from subagent_stream or result text */
-function extractTaskId(step: ToolStep): string | null {
-  if (step.subagent_stream?.task_id) return step.subagent_stream.task_id;
-  const match = step.result?.match(/Task\s+([a-f0-9]{8})/i);
-  if (match) return match[1];
-  return null;
-}
 
 interface AgentsViewProps {
   steps: ToolStep[];
@@ -28,8 +21,7 @@ export function AgentsView({ steps, focusedStepId, onFocusStep }: AgentsViewProp
 
   const focused = steps.find((s) => s.id === focusedStepId) ?? null;
   const stream = focused?.subagent_stream;
-  const taskId = focused ? extractTaskId(focused) : null;
-  const threadId = stream?.thread_id || (taskId ? `subagent_${taskId}` : undefined);
+  const threadId = stream?.thread_id || undefined;
   const isRunning = stream?.status === "running" || focused?.status === "calling";
 
   // Load sub-agent thread conversation
