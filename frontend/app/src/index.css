@@ -112,6 +112,17 @@ button:focus-visible,
   scrollbar-color: #d4d4d4 transparent;
 }
 
+/* Touch devices — always show scrollbar (no hover available) */
+@media (hover: none) {
+  ::-webkit-scrollbar-thumb {
+    background: #d4d4d4;
+  }
+
+  * {
+    scrollbar-color: #d4d4d4 transparent;
+  }
+}
+
 /* Code font */
 .font-mono {
   font-family: "SF Mono", "Fira Code", "Fira Mono", "Roboto Mono", Menlo, Consolas, monospace;

@@ -44,7 +44,7 @@ export default function AppLayout() {
     }
     return (
       <div className="h-full w-full bg-background flex flex-col overflow-hidden">
-        <div className="flex-1 flex flex-col min-w-0">
+        <div className="flex-1 flex flex-col min-w-0 min-h-0">
           <Outlet context={{ tm, sidebarCollapsed, setSidebarCollapsed, setSessionsOpen }} />
         </div>
         <NewChatDialog open={newChatOpen} onOpenChange={setNewChatOpen} />

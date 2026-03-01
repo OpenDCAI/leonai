@@ -69,14 +69,7 @@ export default function Sidebar({
       </div>
 
       {/* Actions */}
-      <div className="px-3 pb-3 space-y-2">
-        <button
-          onClick={onNewChat}
-          className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm border border-border text-muted-foreground hover:bg-muted hover:text-foreground"
-        >
-          <Plus className="w-4 h-4" />
-          <span>发起会话</span>
-        </button>
+      <div className="px-3 pb-3">
         <button
           className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-muted-foreground/60 hover:bg-muted hover:text-foreground"
           onClick={onSearchClick}
@@ -167,7 +160,7 @@ export default function Sidebar({
               })}
               {threads.length === 0 && (
                 <p className="text-xs px-3 py-6 text-center text-muted-foreground/60">
-                  暂无对话，点击"发起会话"开始。
+                  暂无对话
                 </p>
               )}
             </>

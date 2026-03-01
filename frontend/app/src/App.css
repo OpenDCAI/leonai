@@ -1,10 +1,16 @@
 /* App-specific styles — Vercel / OpenAI light aesthetic */
 
-/* Ensure full height */
+/* Ensure full height — dvh handles mobile virtual keyboard */
 html, body, #root {
   height: 100%;
   width: 100%;
   overflow: hidden;
+}
+
+@supports (height: 100dvh) {
+  html, body, #root {
+    height: 100dvh;
+  }
 }
 
 /* Selection */
