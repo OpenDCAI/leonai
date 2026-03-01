@@ -6,7 +6,7 @@ interface NoticeBubbleProps {
   onTaskNoticeClick?: (taskId: string) => void;
 }
 
-interface ParsedNotice {
+export interface ParsedNotice {
   text: string;
   status?: "completed" | "error" | "pending";
   taskId?: string;
@@ -59,7 +59,7 @@ function normalizeStatus(raw: string): ParsedNotice["status"] {
   return "pending";
 }
 
-function parseNoticeContent(raw: string): ParsedNotice {
+export function parseNoticeContent(raw: string): ParsedNotice {
   // Task notification: show concise "Task: description 已完成"
   const taskMatch = raw.match(/<task-notification>[\s\S]*?<\/task-notification>/);
   if (taskMatch) {
