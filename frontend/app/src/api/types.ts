@@ -108,6 +108,7 @@ export interface BackendMessage {
   content: unknown;
   tool_calls?: unknown[];
   tool_call_id?: string | null;
+  metadata?: Record<string, unknown> | null;
 }
 
 export interface ToolStep {
@@ -155,7 +156,14 @@ export interface UserMessage {
   timestamp: number;
 }
 
-export type ChatEntry = UserMessage | AssistantTurn;
+export interface NoticeMessage {
+  id: string;
+  role: "notice";
+  content: string;
+  timestamp: number;
+}
+
+export type ChatEntry = UserMessage | AssistantTurn | NoticeMessage;
 
 export interface StreamStatus {
   state: { state: string; flags: Record<string, boolean> };

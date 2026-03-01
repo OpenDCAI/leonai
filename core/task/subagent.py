@@ -218,9 +218,20 @@ class SubagentRunner:
         prompt = params["Prompt"]
         description = params.get("Description", "")
 
+        # Resolve parent thread_id for background task notifications
+        parent_thread_id: str | None = None
+        try:
+            from langgraph.config import get_config
+
+            parent_thread_id = get_config().get("configurable", {}).get("thread_id")
+        except Exception:
+            pass
+
         if params.get("RunInBackground"):
             # Background execution
-            task = asyncio.create_task(self._execute_agent(agent, prompt, subagent_thread_id, max_turns, task_id))
+            task = asyncio.create_task(
+                self._execute_agent(agent, prompt, subagent_thread_id, max_turns, task_id, parent_thread_id)
+            )
             self._active_tasks[task_id] = task
             return TaskResult(
                 task_id=task_id,
@@ -441,6 +452,7 @@ class SubagentRunner:
         thread_id: str,
         max_turns: int,
         task_id: str,
+        parent_thread_id: str | None = None,
     ) -> TaskResult:
         """Execute agent and return result.
 
@@ -449,8 +461,30 @@ class SubagentRunner:
         """
         runtime = self._parent_runtime
         if runtime:
-            return await self._execute_agent_streaming(agent, prompt, thread_id, task_id, runtime)
-        return await self._execute_agent_invoke(agent, prompt, thread_id, task_id)
+            result = await self._execute_agent_streaming(agent, prompt, thread_id, task_id, runtime)
+        else:
+            result = await self._execute_agent_invoke(agent, prompt, thread_id, task_id)
+
+        # Inject completion notification into parent's steer channel
+        if parent_thread_id and result.status in ("completed", "error"):
+            self._inject_task_notification(task_id, result, parent_thread_id)
+
+        return result
+
+    def _inject_task_notification(
+        self, task_id: str, result: TaskResult, parent_thread_id: str
+    ) -> None:
+        """Inject task completion notification into parent agent's steer queue."""
+        from core.queue import format_task_notification, get_queue_manager
+
+        summary = (result.result or "")[:200] if result.status == "completed" else (result.error or "")
+        xml = format_task_notification(
+            task_id=task_id,
+            status=result.status,
+            summary=summary,
+            result=result.result,
+        )
+        get_queue_manager().inject(xml, parent_thread_id)
 
     async def _execute_agent_invoke(
         self,

@@ -1,4 +1,8 @@
-"""Steering Middleware - injects queued messages before model calls"""
+"""Steering Middleware - injects queued messages before model calls (non-preemptive)
+
+Tool calls are never skipped. All pending steer messages are drained and
+injected as HumanMessage(metadata={"source": "system"}) before the next LLM call.
+"""
 
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -27,17 +31,13 @@ from .manager import get_queue_manager
 
 
 class SteeringMiddleware(AgentMiddleware):
-    """
-    Middleware that checks for steer messages after each tool call.
+    """Non-preemptive steering: let all tool calls finish, inject before next LLM call.
 
     Flow:
-    1. After tool executes, check queue for steer messages
-    2. If steer found, skip remaining tool calls
-    3. Before next model call, inject steer message
+    1. Tool calls execute normally (no skipping)
+    2. Before next model call, drain ALL pending steer messages
+    3. Inject as HumanMessage with metadata source="system"
     """
-
-    def __init__(self):
-        self._pending_steer: str | None = None
 
     def _get_thread_id(self) -> str | None:
         try:
@@ -47,64 +47,46 @@ class SteeringMiddleware(AgentMiddleware):
         except Exception:
             return None
 
-    def _handle_tool_call(
-        self,
-        request: ToolCallRequest,
-        result: ToolMessage,
-    ) -> ToolMessage:
-        """Common logic for checking steer after tool execution"""
-        if self._pending_steer is None:
-            steer_content = get_queue_manager().pop_steer(thread_id=self._get_thread_id())
-            if steer_content:
-                self._pending_steer = steer_content
-        return result
-
     def wrap_tool_call(
         self,
         request: ToolCallRequest,
         handler: Callable[[ToolCallRequest], ToolMessage],
     ) -> ToolMessage:
-        """Execute tool and check for steer messages"""
-        if self._pending_steer is not None:
-            return ToolMessage(
-                content="Skipped due to queued user message.",
-                tool_call_id=request.tool_call.get("id", ""),
-            )
-
-        result = handler(request)
-        return self._handle_tool_call(request, result)
+        """Pure passthrough — never skip tool calls."""
+        return handler(request)
 
     async def awrap_tool_call(
         self,
         request: ToolCallRequest,
         handler: Callable[[ToolCallRequest], Awaitable[ToolMessage]],
     ) -> ToolMessage:
-        """Async version of wrap_tool_call"""
-        if self._pending_steer is not None:
-            return ToolMessage(
-                content="Skipped due to queued user message.",
-                tool_call_id=request.tool_call.get("id", ""),
-            )
-
-        result = await handler(request)
-        return self._handle_tool_call(request, result)
+        """Async pure passthrough — never skip tool calls."""
+        return await handler(request)
 
     def before_model(
         self,
         state: Any,
         runtime: Any,
     ) -> dict[str, Any] | None:
-        """Inject pending steer message before model call"""
-        if self._pending_steer is not None:
-            steer_msg = HumanMessage(content=f"[STEER] {self._pending_steer}")
-            self._pending_steer = None
-            return {"messages": [steer_msg]}
-        return None
+        """Drain all pending steer messages and inject before model call."""
+        thread_id = self._get_thread_id()
+        if not thread_id:
+            return None
+
+        items = get_queue_manager().drain_steer(thread_id)
+        if not items:
+            return None
+
+        messages = [
+            HumanMessage(content=item, metadata={"source": "system"})
+            for item in items
+        ]
+        return {"messages": messages}
 
     async def abefore_model(
         self,
         state: Any,
         runtime: Any,
     ) -> dict[str, Any] | None:
-        """Async version of before_model"""
+        """Async version of before_model."""
         return self.before_model(state, runtime)
