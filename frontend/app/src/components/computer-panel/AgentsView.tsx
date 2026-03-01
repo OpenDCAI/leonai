@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import type { ToolStep } from "../../api";
-import ChatArea from "../ChatArea";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Loader2 } from "lucide-react";
+import type { AssistantTurn, ToolStep } from "../../api";
 import { useThreadData } from "../../hooks/use-thread-data";
 import { parseAgentArgs } from "./utils";
+import type { FlowItem } from "./utils";
+import { StepsView } from "./StepsView";
 
 
 type SubagentStream = NonNullable<ToolStep["subagent_stream"]>;
@@ -17,6 +19,7 @@ interface AgentsViewProps {
 export function AgentsView({ steps, focusedStepId, onFocusStep }: AgentsViewProps) {
   const [leftWidth, setLeftWidth] = useState(280);
   const [isDragging, setIsDragging] = useState(false);
+  const [agentFocusedStepId, setAgentFocusedStepId] = useState<string | null>(null);
   const dragStartX = useRef(0);
   const dragStartWidth = useRef(0);
 
@@ -34,6 +37,22 @@ export function AgentsView({ steps, focusedStepId, onFocusStep }: AgentsViewProp
     const interval = setInterval(() => void refreshThread(), 2000);
     return () => clearInterval(interval);
   }, [threadId, isRunning, refreshThread]);
+
+  // Convert entries → FlowItem[] (include all text, unlike extractMessageFlow)
+  const flowItems = useMemo<FlowItem[]>(() => {
+    const items: FlowItem[] = [];
+    for (const entry of entries) {
+      if (entry.role !== "assistant") continue;
+      for (const seg of (entry as AssistantTurn).segments) {
+        if (seg.type === "tool") {
+          items.push({ type: "tool", step: seg.step, turnId: entry.id });
+        } else if (seg.type === "text" && seg.content.trim()) {
+          items.push({ type: "text", content: seg.content, turnId: entry.id });
+        }
+      }
+    }
+    return items;
+  }, [entries]);
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -102,12 +121,18 @@ export function AgentsView({ steps, focusedStepId, onFocusStep }: AgentsViewProp
         ) : (
           <>
             <AgentDetailHeader focused={focused} stream={stream} />
-            <ChatArea
-              entries={entries}
-              isStreaming={!!isRunning}
-              runtimeStatus={null}
-              loading={loading}
-            />
+            {loading ? (
+              <div className="h-full flex items-center justify-center">
+                <Loader2 className="w-5 h-5 text-[#a3a3a3] animate-spin" />
+              </div>
+            ) : (
+              <StepsView
+                flowItems={flowItems}
+                activities={[]}
+                focusedStepId={agentFocusedStepId}
+                onFocusStep={setAgentFocusedStepId}
+              />
+            )}
           </>
         )}
       </div>
