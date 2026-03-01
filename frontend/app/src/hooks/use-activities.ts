@@ -35,7 +35,7 @@ export function useActivities() {
         {
           id: `task-${data.task_id}`,
           type: "background_task",
-          label: `Sub-agent ${data.task_id}`,
+          label: (data.description as string) || (data.task_id as string) || "子任务",
           status: "running",
           startTime: Date.now(),
           taskId: data.task_id as string,

@@ -121,6 +121,7 @@ export interface ToolStep {
   subagent_stream?: {
     task_id: string;
     thread_id: string;
+    description?: string;
     text: string;
     tool_calls: Array<{ id: string; name: string; args: unknown }>;
     status: "running" | "completed" | "error";

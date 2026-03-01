@@ -10,22 +10,17 @@ export function getStepSummary(step: ToolStep): string {
   const args = step.args as Record<string, unknown> | null;
   if (!args) return step.name;
 
-  // Task tool: show "SubagentType: Description"
+  // Task tool: show description
   if (step.name === "Task") {
-    const subagentType = args.subagent_type as string;
     const description = args.description as string;
-    if (subagentType && description) {
-      const summary = `${subagentType}: ${description}`;
-      return summary.length > 60 ? summary.slice(0, 57) + "..." : summary;
-    }
-    if (subagentType) return subagentType;
     if (description) return description.length > 60 ? description.slice(0, 57) + "..." : description;
+    const prompt = args.prompt as string;
+    if (prompt) return prompt.length > 60 ? prompt.slice(0, 57) + "..." : prompt;
   }
 
-  // TaskOutput tool: show "TaskId"
+  // TaskOutput tool
   if (step.name === "TaskOutput") {
-    const taskId = args.task_id as string;
-    if (taskId) return `Task ${taskId}`;
+    return "查看任务输出";
   }
 
   const filePath =

@@ -126,9 +126,9 @@ export function AgentsView({ steps, focusedStepId, onFocusStep }: AgentsViewProp
 
 function AgentListItem({ step, isSelected, onClick }: { step: ToolStep; isSelected: boolean; onClick: () => void }) {
   const args = parseAgentArgs(step.args);
-  const agentType = args.subagent_type || "通用助手";
-  const prompt = args.prompt || args.description || "";
-  const promptPreview = prompt.slice(0, 80) + (prompt.length > 80 ? "..." : "");
+  const displayName = args.description || args.prompt?.slice(0, 40) || "子任务";
+  const prompt = args.prompt || "";
+  const promptPreview = args.description ? (prompt.slice(0, 80) + (prompt.length > 80 ? "..." : "")) : "";
   const ss = step.subagent_stream;
   const isRunning = step.status === "calling" && ss?.status === "running";
   const isError = step.status === "error" || ss?.status === "error";
@@ -143,7 +143,7 @@ function AgentListItem({ step, isSelected, onClick }: { step: ToolStep; isSelect
     >
       <div className="flex items-center gap-2 mb-1.5">
         <span className={`w-2 h-2 rounded-full flex-shrink-0 ${statusDot}`} />
-        <div className="text-[11px] font-semibold text-[#171717] truncate">{agentType}</div>
+        <div className="text-[11px] font-semibold text-[#171717] truncate">{displayName}</div>
       </div>
       {promptPreview && (
         <div className="text-[10px] text-[#737373] line-clamp-3 leading-relaxed">{promptPreview}</div>
@@ -170,11 +170,12 @@ function getStatusDotClass(focused: ToolStep, stream: SubagentStream | undefined
 
 function AgentDetailHeader({ focused, stream }: { focused: ToolStep; stream: SubagentStream | undefined }) {
   const args = parseAgentArgs(focused.args);
+  const displayName = stream?.description || args.description || args.prompt?.slice(0, 40) || "子任务";
   return (
     <div className="flex items-center gap-2 px-4 py-2.5 border-b border-[#e5e5e5] bg-[#fafafa] flex-shrink-0">
       <div className="flex-1">
-        <div className="text-sm font-medium text-[#171717]">{args.subagent_type || "通用助手"}</div>
-        <div className="text-[10px] text-[#737373] line-clamp-1">{args.prompt || args.description || ""}</div>
+        <div className="text-sm font-medium text-[#171717]">{displayName}</div>
+        <div className="text-[10px] text-[#737373] line-clamp-1">{args.prompt || ""}</div>
       </div>
       <span className={`w-2 h-2 rounded-full ${getStatusDotClass(focused, stream)}`} />
       <span className="text-[10px] text-[#a3a3a3]">{getStatusLabel(focused, stream)}</span>
