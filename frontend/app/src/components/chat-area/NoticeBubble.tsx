@@ -1,3 +1,4 @@
+import { CheckCircle2, XCircle, Clock } from "lucide-react";
 import type { NoticeMessage } from "../../api";
 
 interface NoticeBubbleProps {
@@ -7,48 +8,68 @@ interface NoticeBubbleProps {
 
 interface ParsedNotice {
   text: string;
+  status?: "completed" | "error" | "pending";
   taskId?: string;
 }
 
+const STATUS_ICON = {
+  completed: <CheckCircle2 className="w-3 h-3 text-emerald-500 shrink-0" />,
+  error: <XCircle className="w-3 h-3 text-red-400 shrink-0" />,
+  pending: <Clock className="w-3 h-3 text-gray-400 shrink-0" />,
+} as const;
+
 /**
- * Subtle notice for system-injected messages (steer reminders, task notifications).
- * Visually distinct from user/assistant messages — not prominent.
+ * System notice rendered as a divider line — visually distinct from user/assistant messages.
+ * Like "xxx joined the chat" in messaging apps.
  */
 export function NoticeBubble({ entry, onTaskNoticeClick }: NoticeBubbleProps) {
   const parsed = parseNoticeContent(entry.content);
 
   if (!parsed.text) return null;
 
-  const inner = (
-    <div className={`px-3 py-1 rounded-full bg-gray-100 text-gray-500 text-xs leading-relaxed max-w-lg text-center truncate ${
-      parsed.taskId ? "hover:bg-gray-200 hover:text-gray-700 transition-colors" : ""
+  const icon = parsed.status ? STATUS_ICON[parsed.status] : null;
+  const isClickable = !!parsed.taskId && !!onTaskNoticeClick;
+
+  const content = (
+    <span className={`inline-flex items-center gap-1.5 px-2.5 text-[11px] text-gray-400 ${
+      isClickable ? "hover:text-gray-600 transition-colors cursor-pointer" : ""
     }`}>
+      {icon}
       {parsed.text}
-    </div>
+    </span>
   );
 
   return (
-    <div className="flex justify-center my-1.5">
-      {parsed.taskId && onTaskNoticeClick ? (
-        <button onClick={() => onTaskNoticeClick(parsed.taskId!)} className="cursor-pointer">
-          {inner}
-        </button>
+    <div className="flex items-center gap-3 my-3 select-none">
+      <div className="flex-1 h-px bg-gray-100" />
+      {isClickable ? (
+        <button onClick={() => onTaskNoticeClick(parsed.taskId!)}>{content}</button>
       ) : (
-        inner
+        content
       )}
+      <div className="flex-1 h-px bg-gray-100" />
     </div>
   );
 }
 
+function normalizeStatus(raw: string): ParsedNotice["status"] {
+  const lower = raw.toLowerCase().trim();
+  if (lower === "completed" || lower === "done" || lower === "success") return "completed";
+  if (lower === "error" || lower === "failed") return "error";
+  return "pending";
+}
+
 function parseNoticeContent(raw: string): ParsedNotice {
-  // Task notification: show concise "description status" with link
+  // Task notification: show concise "Task: description 已完成"
   const taskMatch = raw.match(/<task-notification>[\s\S]*?<\/task-notification>/);
   if (taskMatch) {
-    const taskId = taskMatch[0].match(/<task-id>([\s\S]*?)<\/task-id>/)?.[1] ?? "";
-    const status = taskMatch[0].match(/<status>([\s\S]*?)<\/status>/)?.[1] ?? "";
-    const description = taskMatch[0].match(/<description>([\s\S]*?)<\/description>/)?.[1] ?? "";
+    const taskId = taskMatch[0].match(/<task-id>([\s\S]*?)<\/task-id>/)?.[1]?.trim() ?? "";
+    const statusRaw = taskMatch[0].match(/<status>([\s\S]*?)<\/status>/)?.[1]?.trim() ?? "";
+    const description = taskMatch[0].match(/<description>([\s\S]*?)<\/description>/)?.[1]?.trim() ?? "";
+    const status = normalizeStatus(statusRaw);
     const label = description || `Task ${taskId}`;
-    return { text: `${label} ${status}`, taskId: taskId || undefined };
+    const statusText = status === "completed" ? "已完成" : status === "error" ? "失败" : statusRaw;
+    return { text: `${label} ${statusText}`, status, taskId: taskId || undefined };
   }
 
   // Steer reminder: extract only the user's original message
