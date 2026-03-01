@@ -152,7 +152,7 @@ export default function RootLayout() {
 
   if (isMobile) {
     return (
-      <div className="flex flex-col h-screen overflow-hidden bg-background">
+      <div className="flex flex-col h-full overflow-hidden bg-background">
         {/* Main content - no top bar, pages have their own headers */}
         <main className="flex-1 overflow-hidden"><Outlet /></main>
 
