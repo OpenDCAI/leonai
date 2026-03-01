@@ -32,6 +32,8 @@ export interface StreamHandlerState {
 export interface StreamHandlerActions {
   handleSendMessage: (message: string) => Promise<void>;
   handleStopStreaming: () => Promise<void>;
+  /** Force reconnect to main SSE (e.g., after activity SSE signals new_run). */
+  triggerReconnect: () => void;
 }
 
 export function useStreamHandler(deps: StreamHandlerDeps): StreamHandlerState & StreamHandlerActions {
@@ -39,6 +41,8 @@ export function useStreamHandler(deps: StreamHandlerDeps): StreamHandlerState & 
 
   const [runtimeStatus, setRuntimeStatus] = useState<StreamStatus | null>(null);
   const [isRunning, setIsRunning] = useState(false);
+  const [reconnectKey, setReconnectKey] = useState(0);
+  const triggerReconnect = useCallback(() => setReconnectKey((k) => k + 1), []);
   const abortRef = useRef<AbortController | null>(null);
   const onUpdateRef = useRef(onUpdate);
   onUpdateRef.current = onUpdate;
@@ -129,7 +133,7 @@ export function useStreamHandler(deps: StreamHandlerDeps): StreamHandlerState & 
     setTimeout(() => abortRef.current?.abort(), 500);
   }, [threadId]);
 
-  useStreamReconnect({ threadId, loading, runStarted, refreshThreads, onUpdateRef, abortRef, setRuntimeStatus, setIsRunning, onActivityEventRef });
+  useStreamReconnect({ threadId, loading, runStarted, reconnectKey, refreshThreads, onUpdateRef, abortRef, setRuntimeStatus, setIsRunning, onActivityEventRef });
 
-  return { runtimeStatus, isRunning, handleSendMessage, handleStopStreaming };
+  return { runtimeStatus, isRunning, handleSendMessage, handleStopStreaming, triggerReconnect };
 }

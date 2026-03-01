@@ -78,7 +78,7 @@ function ChatPageInner({ threadId }: { threadId: string }) {
 
   const { activities, handleActivityEvent, cancelCommand, cancelTask } = useActivities();
 
-  const { runtimeStatus, isRunning, handleSendMessage, handleStopStreaming } =
+  const { runtimeStatus, isRunning, handleSendMessage, handleStopStreaming, triggerReconnect } =
     useStreamHandler({
       threadId,
       refreshThreads: tm.refreshThreads,
@@ -96,8 +96,10 @@ function ChatPageInner({ threadId }: { threadId: string }) {
 
   useActivitySSE(threadId, needActivitySSE, (event) => {
     if (event.type === "new_run") {
-      // Agent started a new run (e.g., task notification response)
-      // The main SSE will reconnect automatically via useStreamReconnect
+      // Background task done → agent started continuation run
+      // 1. Refresh thread to load the notification message
+      // 2. Then trigger main SSE reconnect to stream the AI response
+      void refreshThread().then(() => triggerReconnect());
       return;
     }
     handleActivityEvent(event);
