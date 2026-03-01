@@ -37,4 +37,5 @@ class TaskResult(BaseModel):
     status: str  # completed/running/error
     result: str | None = None
     error: str | None = None
+    description: str | None = None
     turns_used: int = 0

@@ -23,6 +23,7 @@ def format_task_notification(
     summary: str,
     result: str | None = None,
     usage: dict | None = None,
+    description: str | None = None,
 ) -> str:
     """Format background task completion as system-reminder XML."""
     parts = [
@@ -30,8 +31,10 @@ def format_task_notification(
         "<task-notification>",
         f"  <task-id>{task_id}</task-id>",
         f"  <status>{status}</status>",
-        f"  <summary>{summary}</summary>",
     ]
+    if description:
+        parts.append(f"  <description>{description}</description>")
+    parts.append(f"  <summary>{summary}</summary>")
     if result is not None:
         # Truncate long results to avoid flooding context
         truncated = result[:2000] + "..." if len(result) > 2000 else result
