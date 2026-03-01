@@ -134,6 +134,7 @@ async def _run_agent_to_buffer(
     app: Any,
     enable_trajectory: bool,
     buf: RunEventBuffer,
+    message_metadata: dict[str, Any] | None = None,
 ) -> None:
     """Run agent execution and write all SSE events into *buf*."""
     from backend.web.services.event_store import append_event
@@ -283,7 +284,10 @@ async def _run_agent_to_buffer(
         def continue_handler(message: str) -> None:
             """Host adapter: core says 'continue with this message'."""
             if hasattr(agent, "runtime") and agent.runtime.transition(AgentState.ACTIVE):
-                new_buf = start_agent_run(agent, thread_id, message, app)
+                new_buf = start_agent_run(
+                    agent, thread_id, message, app,
+                    message_metadata={"source": "system"},
+                )
                 # Notify frontend via activity buffer
                 try:
                     asyncio.get_running_loop().create_task(activity_buf.put({
@@ -302,8 +306,13 @@ async def _run_agent_to_buffer(
         emitted_tool_call_ids: set[str] = set()
 
         async def run_agent_stream():
+            if message_metadata:
+                from langchain_core.messages import HumanMessage
+                input_msg = HumanMessage(content=message, metadata=message_metadata)
+            else:
+                input_msg = {"role": "user", "content": message}
             async for chunk in agent.agent.astream(
-                {"messages": [{"role": "user", "content": message}]},
+                {"messages": [input_msg]},
                 config=config,
                 stream_mode=["messages", "updates"],
             ):
@@ -518,13 +527,16 @@ def start_agent_run(
     message: str,
     app: Any,
     enable_trajectory: bool = False,
+    message_metadata: dict[str, Any] | None = None,
 ) -> RunEventBuffer:
     """Create a RunEventBuffer and launch the agent producer as a background task."""
 
     buf = RunEventBuffer()
     buf.run_id = str(_uuid.uuid4())
     app.state.thread_event_buffers[thread_id] = buf
-    bg_task = asyncio.create_task(_run_agent_to_buffer(agent, thread_id, message, app, enable_trajectory, buf))
+    bg_task = asyncio.create_task(
+        _run_agent_to_buffer(agent, thread_id, message, app, enable_trajectory, buf, message_metadata)
+    )
     # Store the background task so cancel_run can still cancel it
     app.state.thread_tasks[thread_id] = bg_task
     return buf
