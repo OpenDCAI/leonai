@@ -520,7 +520,7 @@ class LeonAgent:
             return init_chat_model(model_name, **kwargs)
         except Exception as e:
             if self.verbose:
-                print(f"[LeonAgent] Failed to create extraction model: {e}, falling back to gpt-4o-mini")
+                print(f"[LeonAgent] Failed to create extraction model: {e}, extraction will be unavailable")
             return None
 
     def _build_model_kwargs(self) -> dict:

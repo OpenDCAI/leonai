@@ -217,7 +217,7 @@ class CommandMiddleware(AgentMiddleware[CommandState]):
             return f"Error starting async command: {e}"
 
         if timeout and timeout > 0:
-            await asyncio.sleep(min(timeout / 1000.0, 1.0))
+            await asyncio.sleep(min(timeout, 1.0))
 
         try:
             status = await self._executor.get_status(async_cmd.command_id)
