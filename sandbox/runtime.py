@@ -520,6 +520,62 @@ class _SubprocessPtySession:
                     if delta:
                         on_stdout_chunk(delta)
 
+    def interrupt_and_recover(self, recover_timeout: float = 3.0) -> bool:
+        """Send Ctrl+C to interrupt the current command and recover the session.
+
+        Returns True if the session is recovered and ready for new commands.
+        Returns False if the session is dead and needs to be recreated.
+        """
+        if not self.is_alive() or self._master_fd is None:
+            return False
+
+        # Step 1: Send Ctrl+C (SIGINT) to kill the foreground process
+        try:
+            os.write(self._master_fd, b"\x03\n")
+        except OSError:
+            return False
+
+        # Step 2: Drain any remaining output from the buffer
+        drain_deadline = time.monotonic() + 1.0
+        while time.monotonic() < drain_deadline:
+            readable, _, _ = select.select([self._master_fd], [], [], 0.1)
+            if not readable:
+                break
+            try:
+                chunk = os.read(self._master_fd, 65536)
+                if not chunk:
+                    return False
+            except OSError:
+                return False
+
+        # Step 3: Verify the shell is responsive with a probe command
+        probe_marker = f"__LEON_PROBE_{uuid.uuid4().hex[:8]}__"
+        probe_re = re.compile(rf"{re.escape(probe_marker)}\s+0")
+        try:
+            os.write(self._master_fd, f"printf '\\n{probe_marker} %s\\n' $?\n".encode("utf-8"))
+        except OSError:
+            return False
+
+        probe_deadline = time.monotonic() + recover_timeout
+        probe_buf = bytearray()
+        while time.monotonic() < probe_deadline:
+            wait_sec = max(0.0, min(0.1, probe_deadline - time.monotonic()))
+            readable, _, _ = select.select([self._master_fd], [], [], wait_sec)
+            if not readable:
+                continue
+            try:
+                chunk = os.read(self._master_fd, 4096)
+                if not chunk:
+                    return False
+            except OSError:
+                return False
+            probe_buf.extend(chunk)
+            if probe_re.search(probe_buf.decode("utf-8", errors="replace")):
+                return True
+
+        # Probe timed out — shell is unresponsive
+        return False
+
     def close(self) -> None:
         if self._master_fd is not None:
             try:
@@ -619,6 +675,7 @@ class LocalPersistentShellRuntime(PhysicalTerminalRuntime):
             try:
                 return await asyncio.to_thread(self._execute_once_sync, command, timeout, on_stdout_chunk)
             except TimeoutError:
+                await self._recover_after_timeout()
                 return ExecuteResult(
                     exit_code=-1,
                     stdout="",
@@ -631,6 +688,15 @@ class LocalPersistentShellRuntime(PhysicalTerminalRuntime):
                     stdout="",
                     stderr=f"Error: {e}",
                 )
+
+    async def _recover_after_timeout(self) -> None:
+        """Recover PTY session after a command timeout."""
+        if self._pty_session is None:
+            return
+        recovered = await asyncio.to_thread(self._pty_session.interrupt_and_recover)
+        if not recovered:
+            await asyncio.to_thread(self._pty_session.close)
+            self._pty_session = None
 
     async def execute(self, command: str, timeout: float | None = None) -> ExecuteResult:
         """Execute command in local shell."""
@@ -1176,6 +1242,7 @@ class DockerPtyRuntime(_RemoteRuntimeBase):
             try:
                 return await asyncio.to_thread(self._execute_once_sync, command, timeout, on_stdout_chunk)
             except TimeoutError:
+                await self._recover_after_timeout()
                 return ExecuteResult(
                     exit_code=-1, stdout="", stderr=f"Command timed out after {timeout}s", timed_out=True
                 )
@@ -1188,6 +1255,15 @@ class DockerPtyRuntime(_RemoteRuntimeBase):
                     except Exception as retry_exc:
                         return ExecuteResult(exit_code=1, stdout="", stderr=f"Error: {retry_exc}")
                 return ExecuteResult(exit_code=1, stdout="", stderr=f"Error: {exc}")
+
+    async def _recover_after_timeout(self) -> None:
+        """Recover PTY session after a command timeout."""
+        if self._pty_session is None:
+            return
+        recovered = await asyncio.to_thread(self._pty_session.interrupt_and_recover)
+        if not recovered:
+            await asyncio.to_thread(self._pty_session.close)
+            self._pty_session = None
 
     async def execute(self, command: str, timeout: float | None = None) -> ExecuteResult:
         return await self._execute_background_command(command, timeout=timeout)
