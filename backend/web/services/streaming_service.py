@@ -290,8 +290,7 @@ async def _run_agent_to_buffer(
             if not (hasattr(agent, "runtime") and agent.runtime.transition(AgentState.ACTIVE)):
                 # Could not transition -- enqueue as fallback to avoid silent message loss
                 try:
-                    from core.queue import get_queue_manager
-                    get_queue_manager().enqueue(message, thread_id)
+                    app.state.queue_manager.enqueue(message, thread_id)
                     logger.debug("continue_handler: agent not idle, enqueued message for thread %s", thread_id)
                 except Exception:
                     logger.error("continue_handler: transition failed and enqueue also failed for thread %s — message lost: %.200s", thread_id, message)
@@ -522,9 +521,7 @@ async def _run_agent_to_buffer(
         # Consume followup queue: if messages are pending, start a new run
         followup = None
         try:
-            from core.queue import get_queue_manager
-
-            qm = get_queue_manager()
+            qm = app.state.queue_manager
             followup = qm.dequeue(thread_id)
             if followup and app:
                 if hasattr(agent, "runtime") and agent.runtime.transition(AgentState.ACTIVE):
@@ -534,7 +531,7 @@ async def _run_agent_to_buffer(
             # Re-enqueue the message if it was already dequeued to prevent data loss
             if followup:
                 try:
-                    get_queue_manager().enqueue(followup, thread_id)
+                    app.state.queue_manager.enqueue(followup, thread_id)
                 except Exception:
                     logger.error("Failed to re-enqueue followup for thread %s — message lost: %.200s", thread_id, followup)
 

@@ -8,6 +8,7 @@ from fastapi import FastAPI
 
 from backend.web.services.event_buffer import RunEventBuffer
 from backend.web.services.idle_reaper import idle_reaper_loop
+from core.queue import MessageQueueManager
 from tui.config import ConfigManager
 
 
@@ -30,6 +31,7 @@ async def lifespan(app: FastAPI):
     ensure_library_dir()
 
     # Initialize app state
+    app.state.queue_manager = MessageQueueManager()
     app.state.agent_pool: dict[str, Any] = {}
     app.state.thread_sandbox: dict[str, str] = {}
     app.state.thread_cwd: dict[str, str] = {}

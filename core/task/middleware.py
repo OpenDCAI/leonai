@@ -50,6 +50,7 @@ class TaskMiddleware(AgentMiddleware):
         model_kwargs: dict[str, Any] | None = None,
         parent_middleware: list[Any] | None = None,
         checkpointer: Any = None,
+        queue_manager: Any = None,
         verbose: bool = True,
     ):
         """
@@ -62,6 +63,7 @@ class TaskMiddleware(AgentMiddleware):
             model_kwargs: Model kwargs to pass to init_chat_model (base_url, model_provider, etc.)
             parent_middleware: Parent agent's middleware stack (for tool inheritance)
             checkpointer: Checkpointer for conversation persistence
+            queue_manager: Shared MessageQueueManager instance
             verbose: Whether to output detailed logs
         """
         self.workspace_root = Path(workspace_root).resolve()
@@ -84,6 +86,7 @@ class TaskMiddleware(AgentMiddleware):
             workspace_root=self.workspace_root,
             api_key=self.api_key,
             model_kwargs=self.model_kwargs,
+            queue_manager=queue_manager,
         )
 
         if self.verbose:
