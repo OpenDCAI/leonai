@@ -185,12 +185,13 @@ def _ensure_thread_handlers(agent: Any, thread_id: str, app: Any) -> None:
                 agent.runtime.transition(AgentState.IDLE)
             return
 
-        # Notify frontend via activity buffer
+        # Notify frontend via activity buffer (persist through sink for reconnection)
+        new_run_event = {
+            "event": "new_run",
+            "data": json.dumps({"thread_id": thread_id, "run_id": new_buf.run_id}),
+        }
         try:
-            asyncio.get_running_loop().create_task(activity_buf.put({
-                "event": "new_run",
-                "data": json.dumps({"thread_id": thread_id, "run_id": new_buf.run_id}),
-            }))
+            asyncio.get_running_loop().create_task(activity_sink(new_run_event))
         except RuntimeError:
             logger.warning("continue_handler: could not notify frontend of new_run (no event loop) for thread %s", thread_id)
 
