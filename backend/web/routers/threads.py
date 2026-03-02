@@ -132,6 +132,9 @@ async def delete_thread(
         agent = app.state.agent_pool.get(pool_key)
         if agent and hasattr(agent, "runtime") and agent.runtime.current_state == AgentState.ACTIVE:
             raise HTTPException(status_code=409, detail="Cannot delete thread while run is in progress")
+        # Clear per-thread handlers before removing agent
+        if agent and hasattr(agent, "runtime") and agent.runtime:
+            agent.runtime.unbind_thread()
         try:
             await asyncio.to_thread(destroy_thread_resources_sync, thread_id, sandbox_type, app.state.agent_pool)
         except Exception as exc:
