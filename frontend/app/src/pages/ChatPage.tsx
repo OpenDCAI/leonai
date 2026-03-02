@@ -88,6 +88,7 @@ function ChatPageInner({ threadId }: { threadId: string }) {
       // Use tm.refreshThreads (sidebar list only) — NOT refreshThread (which calls
       // setEntries(history) and would wipe any in-flight streaming entries for the next run).
       refreshThreads: tm.refreshThreads,
+      refreshThread,
       onUpdate: (updater) => setEntries(updater),
       loading,
       runStarted,
