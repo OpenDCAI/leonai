@@ -102,6 +102,12 @@ function ChatPageInner({ threadId }: { threadId: string }) {
       void refreshThread().then(() => triggerReconnect());
       return;
     }
+    if (event.type === "run_done") {
+      // Continuation run finished — refresh to show results
+      // (catches runs that finished before triggerReconnect could connect)
+      void refreshThread();
+      return;
+    }
     handleActivityEvent(event);
   });
 

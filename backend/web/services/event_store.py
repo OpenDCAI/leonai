@@ -128,6 +128,10 @@ async def cleanup_old_runs(
     if len(run_ids) <= keep_latest:
         return 0
     old_ids = run_ids[keep_latest:]
+    # Preserve activity run_ids — they have per-thread lifetime, not per-run.
+    old_ids = [rid for rid in old_ids if not rid.startswith("activity_")]
+    if not old_ids:
+        return 0
     return int(await asyncio.to_thread(repo.delete_runs, thread_id, old_ids))
 
 
