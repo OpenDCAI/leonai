@@ -5,6 +5,8 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+from storage.providers.sqlite.connection import create_connection
+
 
 class SQLiteCheckpointRepo:
     """Minimal checkpoint repository for thread-level read/write cleanup."""
@@ -19,7 +21,7 @@ class SQLiteCheckpointRepo:
 
         if db_path is None:
             db_path = Path.home() / ".leon" / "leon.db"
-        self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
+        self._conn = create_connection(db_path)
 
     def close(self) -> None:
         if self._own_conn:

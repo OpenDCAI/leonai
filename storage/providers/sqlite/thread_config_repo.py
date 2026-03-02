@@ -5,6 +5,8 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+from storage.providers.sqlite.connection import create_connection
+
 
 class SQLiteThreadConfigRepo:
     """Thread config repository with minimal read/write API."""
@@ -14,7 +16,7 @@ class SQLiteThreadConfigRepo:
         if conn is not None:
             self._conn = conn
         else:
-            self._conn = sqlite3.connect(str(db_path))
+            self._conn = create_connection(db_path)
         self._ensure_table()
 
     def close(self) -> None:
