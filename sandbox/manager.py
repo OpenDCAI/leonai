@@ -152,9 +152,11 @@ class SandboxManager:
                 if not session:
                     raise RuntimeError(f"Session disappeared after resume for thread {thread_id}")
                 self._assert_lease_provider(session.lease, thread_id)
-            # Stamp bind_mounts on lease so lazy creation paths pick them up
-            if bind_mounts:
+            # @@@lease-bind-persist - stamp + persist so lazy paths and process restarts pick them up
+            if bind_mounts and session.lease.bind_mounts != bind_mounts:
                 session.lease.bind_mounts = bind_mounts
+                if hasattr(session.lease, "persist_bind_mounts"):
+                    session.lease.persist_bind_mounts()
             self._ensure_bound_instance(session.lease, bind_mounts=bind_mounts)
             return SandboxCapability(session, manager=self)
 
@@ -175,9 +177,11 @@ class SandboxManager:
                 lease = self.lease_store.create(terminal.lease_id, self.provider.name)
             self._assert_lease_provider(lease, thread_id)
 
-        # Stamp bind_mounts on lease so lazy creation paths pick them up
-        if bind_mounts:
+        # @@@lease-bind-persist - stamp + persist so lazy paths and process restarts pick them up
+        if bind_mounts and lease.bind_mounts != bind_mounts:
             lease.bind_mounts = bind_mounts
+            if hasattr(lease, "persist_bind_mounts"):
+                lease.persist_bind_mounts()
         self._ensure_bound_instance(lease, bind_mounts=bind_mounts)
 
         session_id = f"sess-{uuid.uuid4().hex[:12]}"

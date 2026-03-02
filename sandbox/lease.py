@@ -443,6 +443,16 @@ class SQLiteLease(SandboxLease):
             if should_commit:
                 target.close()
 
+    def persist_bind_mounts(self) -> None:
+        """Write bind_mounts to the lease DB row so they survive process restart."""
+        raw = json.dumps(self.bind_mounts) if self.bind_mounts else None
+        with _connect(self.db_path) as conn:
+            conn.execute(
+                "UPDATE sandbox_leases SET bind_mounts_json = ? WHERE lease_id = ?",
+                (raw, self.lease_id),
+            )
+            conn.commit()
+
     def _record_provider_error(self, message: str) -> None:
         self.last_error = message[:500]
         self.needs_refresh = True
@@ -461,6 +471,8 @@ class SQLiteLease(SandboxLease):
         self.last_error = other.last_error
         self.needs_refresh = other.needs_refresh
         self.refresh_hint_at = other.refresh_hint_at
+        if other.bind_mounts is not None:
+            self.bind_mounts = other.bind_mounts
 
     def apply(
         self,
@@ -834,6 +846,9 @@ class LeaseStore:
                 conn.execute("UPDATE sandbox_leases SET instance_status = observed_state")
                 conn.commit()
                 lease_cols = {row[1] for row in conn.execute("PRAGMA table_info(sandbox_leases)").fetchall()}
+            if "bind_mounts_json" not in lease_cols:
+                conn.execute("ALTER TABLE sandbox_leases ADD COLUMN bind_mounts_json TEXT")
+                conn.commit()
             instance_cols = {row[1] for row in conn.execute("PRAGMA table_info(sandbox_instances)").fetchall()}
             event_cols = {row[1] for row in conn.execute("PRAGMA table_info(lease_events)").fetchall()}
 
@@ -903,7 +918,8 @@ class LeaseStore:
                        last_error,
                        needs_refresh,
                        refresh_hint_at,
-                       status
+                       status,
+                       bind_mounts_json
                 FROM sandbox_leases
                 WHERE lease_id = ?
                 """,
@@ -923,7 +939,8 @@ class LeaseStore:
                     created_at=datetime.fromisoformat(created_raw),
                 )
 
-            return SQLiteLease(
+            bind_mounts_raw = row["bind_mounts_json"]
+            lease = SQLiteLease(
                 lease_id=row["lease_id"],
                 provider_name=row["provider_name"],
                 current_instance=instance,
@@ -938,6 +955,8 @@ class LeaseStore:
                 needs_refresh=bool(row["needs_refresh"]),
                 refresh_hint_at=datetime.fromisoformat(row["refresh_hint_at"]) if row["refresh_hint_at"] else None,
             )
+            lease.bind_mounts = json.loads(bind_mounts_raw) if bind_mounts_raw else None
+            return lease
 
     def create(self, lease_id: str, provider_name: str) -> SandboxLease:
         now = datetime.now().isoformat()
