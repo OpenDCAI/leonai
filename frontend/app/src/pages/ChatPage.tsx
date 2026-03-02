@@ -86,6 +86,7 @@ function ChatPageInner({ threadId }: { threadId: string }) {
     useStreamHandler({
       threadId,
       refreshThreads: tm.refreshThreads,
+      refreshThread,
       onUpdate: (updater) => setEntries(updater),
       loading,
       runStarted,
