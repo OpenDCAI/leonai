@@ -13,6 +13,7 @@ export interface SubAgent {
   desc: string;
   tools: CrudItem[];
   system_prompt: string;
+  builtin?: boolean;
 }
 
 export interface RuleItem {
