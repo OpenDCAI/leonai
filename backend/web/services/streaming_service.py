@@ -516,6 +516,11 @@ async def _run_agent_to_buffer(
         traceback.print_exc()
         await emit({"event": "error", "data": json.dumps({"error": str(e)}, ensure_ascii=False)})
     finally:
+        # Notify activity channel that this run finished (so frontend can refresh)
+        if hasattr(agent, "runtime"):
+            agent.runtime.emit_activity_event(
+                {"event": "run_done", "data": json.dumps({"thread_id": thread_id, "run_id": run_id})}
+            )
         # Detach per-run event callback (per-thread handlers survive across runs)
         if hasattr(agent, "runtime"):
             agent.runtime.set_event_callback(None)

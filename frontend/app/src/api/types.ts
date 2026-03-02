@@ -4,7 +4,7 @@ export const STREAM_EVENT_TYPES = [
   "subagent_task_start", "subagent_task_text", "subagent_task_tool_call",
   "subagent_task_tool_result", "subagent_task_done", "subagent_task_error",
   "background_task_start", "background_task_text", "background_task_done", "background_task_error",
-  "command_progress", "new_run",
+  "command_progress", "new_run", "run_done",
 ] as const;
 
 export type StreamEventType = (typeof STREAM_EVENT_TYPES)[number];
