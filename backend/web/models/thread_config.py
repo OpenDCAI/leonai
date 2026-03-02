@@ -1,6 +1,6 @@
 """Per-thread persistent config schema (L2 in the L1/L2/L3 config hierarchy)."""
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ThreadConfig(BaseModel):
@@ -12,4 +12,4 @@ class ThreadConfig(BaseModel):
     queue_mode: str = "steer"  # Deprecated: kept for SQLite schema compat, not read/written
     observation_provider: str | None = None  # "langfuse" | "langsmith" | None
     agent: str | None = None  # Member name for this thread
-    workspace_id: str | None = None
+    bind_mounts: list[dict] = Field(default_factory=list)  # list of MountSpec dicts
