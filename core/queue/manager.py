@@ -45,6 +45,7 @@ class MessageQueueManager:
     def _conn(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self._db_path)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA busy_timeout=5000")
         return conn
 
     # ------------------------------------------------------------------
@@ -173,6 +174,7 @@ _queue_manager: MessageQueueManager | None = None
 _manager_lock = threading.Lock()
 
 
+# TODO: replace global singleton with dependency injection (inject via app.state or constructor)
 def get_queue_manager() -> MessageQueueManager:
     """Get the global MessageQueueManager singleton."""
     global _queue_manager

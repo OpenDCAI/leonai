@@ -499,6 +499,8 @@ async def _run_agent_to_buffer(
         # Detach event callback to avoid leaking references
         if hasattr(agent, "runtime"):
             agent.runtime.set_event_callback(None)
+            agent.runtime.set_activity_sink(None)
+            agent.runtime.set_continue_handler(None)
         # Flush observation handler
         if obs_handler is not None:
             try:

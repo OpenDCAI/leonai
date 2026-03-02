@@ -175,9 +175,8 @@ class WebMiddleware(AgentMiddleware):
         try:
             model = self._extraction_model
             if model is None:
-                from langchain.chat_models import init_chat_model
-
-                model = init_chat_model("gpt-4o-mini", model_provider="openai")
+                preview = content[:5000] if len(content) > 5000 else content
+                return f"AI extraction unavailable. Configure an extraction model (e.g. leon:mini) in settings. Raw content:\n\n{preview}"
 
             extraction_prompt = (
                 f"You are extracting information from a web page.\n"

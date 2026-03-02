@@ -67,9 +67,13 @@ class MarkdownifyFetcher(BaseFetcher):
         try:
             try:
                 response = await self._do_fetch(url, verify=True)
-            except httpx.ConnectError:
-                # SSL cert verification may fail; retry without verify
-                response = await self._do_fetch(url, verify=False)
+            except httpx.ConnectError as e:
+                # Only retry without SSL verify for certificate-related errors
+                cause = str(e.__cause__) if e.__cause__ else str(e)
+                if "ssl" in cause.lower() or "certificate" in cause.lower():
+                    response = await self._do_fetch(url, verify=False)
+                else:
+                    raise
 
             content_type = response.headers.get("Content-Type", "")
 

@@ -4,8 +4,11 @@ Tool calls are never skipped. All pending steer messages are drained and
 injected as HumanMessage(metadata={"source": "system"}) before the next LLM call.
 """
 
+import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from langchain_core.messages import HumanMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
@@ -65,6 +68,7 @@ class SteeringMiddleware(AgentMiddleware):
         """Drain all pending steer messages and inject before model call."""
         thread_id = (config or {}).get("configurable", {}).get("thread_id")
         if not thread_id:
+            logger.debug("SteeringMiddleware: no thread_id in config, skipping steer injection")
             return None
 
         items = get_queue_manager().drain_steer(thread_id)

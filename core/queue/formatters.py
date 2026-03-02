@@ -4,6 +4,8 @@ Matches Claude Code's system-reminder convention so the LLM treats
 injected content as authoritative system instructions.
 """
 
+import json
+
 
 def format_steer_reminder(content: str) -> str:
     """Format user steer message as system-reminder XML."""
@@ -40,7 +42,7 @@ def format_task_notification(
         truncated = result[:2000] + "..." if len(result) > 2000 else result
         parts.append(f"  <result>{truncated}</result>")
     if usage:
-        parts.append(f"  <usage>{usage}</usage>")
+        parts.append(f"  <usage>{json.dumps(usage)}</usage>")
     parts.append("</task-notification>")
     parts.append("</system-reminder>")
     return "\n".join(parts)
