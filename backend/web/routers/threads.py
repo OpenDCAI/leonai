@@ -19,7 +19,6 @@ from backend.web.models.requests import (
 )
 from backend.web.services.agent_pool import get_or_create_agent, resolve_thread_sandbox
 from backend.web.services.event_buffer import ThreadEventBuffer
-from backend.web.services.file_channel_service import cleanup_thread_file_channel, ensure_thread_file_channel
 from backend.web.services.sandbox_service import destroy_thread_resources_sync, init_providers_and_managers
 from backend.web.services.streaming_service import (
     get_or_create_thread_buffer,
@@ -130,13 +129,10 @@ async def create_thread(
     capability_error = await _validate_mount_capability_gate(sandbox_type, requested_mounts)
     if capability_error is not None:
         return capability_error
-    # @@@bind-mounts-validated-only - bind_mounts here are checked against provider capability but not yet applied
-    # per-thread; actual mounts come from the provider's static config. Per-thread mount application is deferred.
 
     thread_id = str(uuid.uuid4())
     cwd = payload.cwd if payload else None
     agent_name = payload.agent if payload else None
-    workspace_id = payload.workspace_id if payload else None
 
     app.state.thread_sandbox[thread_id] = sandbox_type
     if cwd:
@@ -145,23 +141,22 @@ async def create_thread(
     from backend.web.utils.helpers import get_active_observation_provider, init_thread_config, save_thread_config
 
     init_thread_config(thread_id, sandbox_type, cwd)
-    await asyncio.to_thread(ensure_thread_file_channel, thread_id, workspace_id=workspace_id)
 
     model = payload.model if payload else None
     obs_provider = get_active_observation_provider()
-    updates = {}
+    updates: dict = {}
     if model:
         updates["model"] = model
     if obs_provider:
         updates["observation_provider"] = obs_provider
     if agent_name:
         updates["agent"] = agent_name
-    if workspace_id:
-        updates["workspace_id"] = workspace_id
+    if requested_mounts:
+        updates["bind_mounts"] = requested_mounts
     if updates:
         save_thread_config(thread_id, **updates)
 
-    return {"thread_id": thread_id, "sandbox": sandbox_type, "agent": agent_name, "workspace_id": workspace_id}
+    return {"thread_id": thread_id, "sandbox": sandbox_type, "agent": agent_name}
 
 
 @router.get("")
@@ -223,7 +218,6 @@ async def delete_thread(
             await asyncio.to_thread(destroy_thread_resources_sync, thread_id, sandbox_type, app.state.agent_pool)
         except Exception as exc:
             logger.warning("Failed to destroy sandbox resources for thread %s: %s", thread_id, exc)
-        await asyncio.to_thread(cleanup_thread_file_channel, thread_id)
         await asyncio.to_thread(delete_thread_in_db, thread_id)
 
     # Clean up thread-specific state

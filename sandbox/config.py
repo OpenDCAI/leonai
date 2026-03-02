@@ -46,7 +46,6 @@ class DockerConfig(BaseModel):
     image: str = "python:3.12-slim"
     mount_path: str = "/workspace"
     cwd: str = "/workspace"
-    bind_mounts: list[MountSpec] = Field(default_factory=list)
 
 
 class E2BConfig(BaseModel):
@@ -61,7 +60,6 @@ class DaytonaConfig(BaseModel):
     api_url: str = "https://app.daytona.io/api"
     target: str = "local"
     cwd: str = "/home/daytona"
-    bind_mounts: list[MountSpec] = Field(default_factory=list)
 
 
 class SandboxConfig(BaseModel):

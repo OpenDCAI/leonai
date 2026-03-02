@@ -60,7 +60,7 @@ class AgentBayProvider(SandboxProvider):
         self.image_id = image_id
         self._sessions: dict[str, Any] = {}
 
-    def create_session(self, context_id: str | None = None) -> SessionInfo:
+    def create_session(self, context_id: str | None = None, bind_mounts: list | None = None) -> SessionInfo:
         from agentbay import ContextSync, CreateSessionParams
 
         params = CreateSessionParams()
