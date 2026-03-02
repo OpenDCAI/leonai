@@ -158,10 +158,26 @@ class AgentRuntime:
         """Host registers: when core needs to continue, call this with the message."""
         self._continue_handler = handler
 
-    def request_continue(self, message: str) -> None:
-        """Core calls: I need the host to start a new run with this message."""
+    def bind_thread(self, activity_sink: Callable[[dict], Any], continue_handler: Callable[[str], None]) -> None:
+        """Set per-thread handlers. Idempotent — safe to call on every run."""
+        self._activity_sink = activity_sink
+        self._continue_handler = continue_handler
+
+    def unbind_thread(self) -> None:
+        """Clear per-thread handlers on thread deletion."""
+        self._activity_sink = None
+        self._continue_handler = None
+
+    def request_continue(self, message: str) -> bool:
+        """Core calls: I need the host to start a new run with this message.
+
+        Returns True if handler was invoked, False if no handler is set.
+        """
         if self._continue_handler:
             self._continue_handler(message)
+            return True
+        logger.warning("request_continue called but no continue_handler is set — message may be lost")
+        return False
 
     def _dispatch_to_sink(self, event: dict[str, Any]) -> None:
         """Fire-and-forget dispatch to persistent activity sink."""
