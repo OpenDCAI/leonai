@@ -8,6 +8,8 @@ import threading
 from pathlib import Path
 from typing import Any
 
+from storage.providers.sqlite.connection import create_connection
+
 
 class SQLiteRunEventRepo:
     """Minimal run event repository with parameterized SQL operations.
@@ -24,9 +26,7 @@ class SQLiteRunEventRepo:
         else:
             if db_path is None:
                 db_path = Path.home() / ".leon" / "leon.db"
-            self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
-            self._conn.execute("PRAGMA journal_mode=WAL")
-            self._conn.execute("PRAGMA busy_timeout=30000")
+            self._conn = create_connection(db_path)
         self._ensure_table()
 
     def close(self) -> None:

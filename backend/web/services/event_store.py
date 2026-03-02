@@ -2,7 +2,6 @@
 
 import asyncio
 import json
-import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -27,12 +26,7 @@ def init_event_store() -> None:
     if provider != "sqlite":
         return
 
-    _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(_DB_PATH))
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA synchronous=NORMAL")
-    conn.close()
-    # @@@sqlite-init-via-provider - create run_events schema through sqlite provider construction instead of ad-hoc SQL path.
+    # Connection factory in RunEventRepo already guarantees WAL + PRAGMA settings.
     repo = container.run_event_repo()
     repo.close()
 

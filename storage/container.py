@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import importlib
-import sqlite3
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Literal
@@ -193,10 +192,7 @@ class StorageContainer:
 
     def _sqlite_summary_repo(self):
         from storage.providers.sqlite.summary_repo import SQLiteSummaryRepo
-        return SQLiteSummaryRepo(
-            db_path=self._main_db,
-            connect_fn=lambda p: sqlite3.connect(str(p)),
-        )
+        return SQLiteSummaryRepo(db_path=self._main_db)
 
     def _sqlite_eval_repo(self):
         from storage.providers.sqlite.eval_repo import SQLiteEvalRepo

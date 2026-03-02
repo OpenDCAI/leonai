@@ -1003,12 +1003,14 @@ class LeonAgent:
 
     async def _init_checkpointer(self):
         """Initialize async checkpointer for conversation persistence"""
+        from storage.providers.sqlite.connection import WAL_MODE, BUSY_TIMEOUT_MS, SYNCHRONOUS
+
         db_path = self.db_path
         db_path.parent.mkdir(parents=True, exist_ok=True)
         conn = await aiosqlite.connect(str(db_path))
-        # @@@ WAL mode allows concurrent reads/writes from sandbox manager
-        await conn.execute("PRAGMA journal_mode=WAL")
-        await conn.execute("PRAGMA busy_timeout=30000")
+        await conn.execute(f"PRAGMA journal_mode={WAL_MODE}")
+        await conn.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
+        await conn.execute(f"PRAGMA synchronous={SYNCHRONOUS}")
         self.checkpointer = AsyncSqliteSaver(conn)
         await self.checkpointer.setup()
         return conn
