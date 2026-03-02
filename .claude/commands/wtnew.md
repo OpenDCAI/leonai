@@ -50,7 +50,7 @@ git worktree add "$HOME/worktrees/$PROJECT_NAME--<目录名>" -b $ARGUMENTS orig
 
 端口 8001/5173 保留给 main，worktree 从 offset=1 开始。
 
-分配逻辑（**必须严格按以下脚本执行，不要自行简化**）：
+分配逻辑（**必须严格按以下脚本执行，不要自行简化，不要用 `&&` 把 while 和 for 串成一条命令**）：
 
 ```bash
 # 用 git worktree list 获取所有 worktree 路径，逐个读取已声明端口
@@ -58,10 +58,11 @@ MAIN_REPO=$(git worktree list | head -1 | awk '{print $1}')
 declared_ports=""
 while read -r wt_path _rest; do
   [ "$wt_path" = "$MAIN_REPO" ] && continue
-  bp=$(git -C "$wt_path" config --worktree --get worktree.ports.backend 2>/dev/null)
-  fp=$(git -C "$wt_path" config --worktree --get worktree.ports.frontend 2>/dev/null)
+  bp=$(git -C "$wt_path" config --worktree --get worktree.ports.backend 2>/dev/null) || true
+  fp=$(git -C "$wt_path" config --worktree --get worktree.ports.frontend 2>/dev/null) || true
   [ -n "$bp" ] && declared_ports="$declared_ports $bp"
   [ -n "$fp" ] && declared_ports="$declared_ports $fp"
+  true  # 确保循环退出码为 0，避免 && 链断裂
 done < <(git worktree list | tail -n +2)
 echo "已声明端口: $declared_ports"
 
