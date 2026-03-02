@@ -450,6 +450,8 @@ def _write_sub_agents(member_dir: Path, agents: list[dict[str, Any]]) -> None:
     for item in agents:
         if not (isinstance(item, dict) and item.get("name")):
             continue
+        if item.get("builtin"):
+            continue
         desc = item.get("desc", "")
         if not desc:
             desc = get_library_agent_desc(item["name"])
