@@ -49,7 +49,7 @@ class TaskMiddleware(AgentMiddleware):
         api_key: str | None = None,
         model_kwargs: dict[str, Any] | None = None,
         parent_middleware: list[Any] | None = None,
-        checkpointer: Any = None,
+        db_path: Path | None = None,
         queue_manager: Any = None,
         verbose: bool = True,
     ):
@@ -62,7 +62,7 @@ class TaskMiddleware(AgentMiddleware):
             api_key: API key for sub-agents
             model_kwargs: Model kwargs to pass to init_chat_model (base_url, model_provider, etc.)
             parent_middleware: Parent agent's middleware stack (for tool inheritance)
-            checkpointer: Checkpointer for conversation persistence
+            db_path: Path to SQLite DB for per-task checkpointer connections
             queue_manager: Shared MessageQueueManager instance
             verbose: Whether to output detailed logs
         """
@@ -71,7 +71,7 @@ class TaskMiddleware(AgentMiddleware):
         self.api_key = api_key or os.getenv("OPENAI_API_KEY") or os.getenv("ANTHROPIC_API_KEY")
         self.model_kwargs = model_kwargs or {}
         self.parent_middleware = parent_middleware or []
-        self.checkpointer = checkpointer
+        self.db_path = db_path
         self.verbose = verbose
         self.agent = None  # Will be set by parent agent
 
@@ -87,6 +87,7 @@ class TaskMiddleware(AgentMiddleware):
             api_key=self.api_key,
             model_kwargs=self.model_kwargs,
             queue_manager=queue_manager,
+            db_path=db_path,
         )
 
         if self.verbose:
@@ -296,7 +297,6 @@ The agent will work independently and return results when complete.""",
             return await self.runner.run(
                 params=params,
                 all_middleware=self.parent_middleware,
-                checkpointer=self.checkpointer,
                 parent_tool_call_id=tool_id,
                 parent_thread_id=parent_thread_id,
             )
@@ -313,7 +313,6 @@ The agent will work independently and return results when complete.""",
         async for event in self.runner.run_streaming(
             params=params,
             all_middleware=self.parent_middleware,
-            checkpointer=self.checkpointer,
         ):
             # Extract task_id and thread_id from task_start
             if event["event"] == "task_start":
@@ -423,9 +422,10 @@ The agent will work independently and return results when complete.""",
         """Set parent middleware after initialization."""
         self.parent_middleware = middleware
 
-    def set_checkpointer(self, checkpointer: Any) -> None:
-        """Set checkpointer after initialization."""
-        self.checkpointer = checkpointer
+    def set_db_path(self, db_path: Path) -> None:
+        """Set database path for per-task checkpointer connections."""
+        self.db_path = db_path
+        self.runner.db_path = db_path
 
     def set_agent(self, agent: Any) -> None:
         """Set parent agent reference for runtime access."""
@@ -438,5 +438,4 @@ The agent will work independently and return results when complete.""",
         return self.runner.run_streaming(
             params=params,
             all_middleware=self.parent_middleware,
-            checkpointer=self.checkpointer,
         )

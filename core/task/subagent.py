@@ -42,6 +42,7 @@ class SubagentRunner:
         api_key: str,
         model_kwargs: dict[str, Any] | None = None,
         queue_manager: Any = None,
+        db_path: Path | None = None,
     ):
         self.agents = agents
         self.parent_model = parent_model
@@ -52,10 +53,34 @@ class SubagentRunner:
         self._task_results: dict[str, TaskResult] = {}
         self._parent_runtime: Any = None
         self._queue_manager = queue_manager
+        self.db_path = db_path
 
     def set_parent_runtime(self, runtime: Any) -> None:
         """Set parent runtime for background task event emission."""
         self._parent_runtime = runtime
+
+    async def _create_task_checkpointer(self) -> tuple[Any, Any]:
+        """Create an independent checkpointer connection for a sub-agent task.
+
+        Each sub-agent gets its own aiosqlite connection to the same DB file,
+        avoiding 'database is locked' when multiple sub-agents write concurrently.
+        WAL mode + busy_timeout ensure safe concurrent access.
+
+        Returns:
+            (checkpointer, conn) — caller must close conn when done.
+        """
+        import aiosqlite
+        from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+
+        if not self.db_path:
+            return None, None
+
+        conn = await aiosqlite.connect(str(self.db_path))
+        await conn.execute("PRAGMA journal_mode=WAL")
+        await conn.execute("PRAGMA busy_timeout=30000")
+        checkpointer = AsyncSqliteSaver(conn)
+        await checkpointer.setup()
+        return checkpointer, conn
 
     def _build_subagent_middleware(self, config: AgentConfig, all_middleware: list[Any]) -> list[Any]:
         """Build middleware stack for subagent based on allowed tools."""
@@ -157,7 +182,6 @@ class SubagentRunner:
         self,
         params: TaskParams,
         all_middleware: list[Any],
-        checkpointer: Any,
         parent_tool_call_id: str | None = None,
         parent_thread_id: str | None = None,
     ) -> TaskResult:
@@ -203,6 +227,9 @@ class SubagentRunner:
         middleware_has_tools = any(getattr(m, "tools", None) for m in middleware)
         tools = [] if middleware_has_tools else [_placeholder_tool]
 
+        # Create per-task checkpointer (independent connection)
+        checkpointer, task_conn = await self._create_task_checkpointer()
+
         try:
             agent = create_agent(
                 model=model,
@@ -212,6 +239,8 @@ class SubagentRunner:
                 checkpointer=checkpointer,
             )
         except Exception as e:
+            if task_conn:
+                await task_conn.close()
             return TaskResult(
                 task_id=task_id,
                 status="error",
@@ -223,10 +252,15 @@ class SubagentRunner:
         description = params.get("Description", "")
 
         if params.get("RunInBackground"):
-            # Background execution
-            task = asyncio.create_task(
-                self._execute_agent(agent, prompt, subagent_thread_id, max_turns, task_id, parent_thread_id, description, parent_tool_call_id)
-            )
+            # Background execution — wrap in task that closes conn on completion
+            async def _run_and_cleanup():
+                try:
+                    return await self._execute_agent(agent, prompt, subagent_thread_id, max_turns, task_id, parent_thread_id, description, parent_tool_call_id)
+                finally:
+                    if task_conn:
+                        await task_conn.close()
+
+            task = asyncio.create_task(_run_and_cleanup())
             self._active_tasks[task_id] = task
             return TaskResult(
                 task_id=task_id,
@@ -236,14 +270,17 @@ class SubagentRunner:
                 result=f"Task started in background. Use TaskOutput with TaskId='{task_id}' to get results.",
             )
         else:
-            # Synchronous execution
-            return await self._execute_agent(agent, prompt, subagent_thread_id, max_turns, task_id, description=description)
+            # Synchronous execution — close conn in finally
+            try:
+                return await self._execute_agent(agent, prompt, subagent_thread_id, max_turns, task_id, description=description)
+            finally:
+                if task_conn:
+                    await task_conn.close()
 
     async def run_streaming(
         self,
         params: TaskParams,
         all_middleware: list[Any],
-        checkpointer: Any,
     ) -> AsyncGenerator[dict[str, Any], None]:
         """Run a subagent task with streaming output."""
         task_id = str(uuid.uuid4())[:8]
@@ -304,6 +341,9 @@ class SubagentRunner:
         middleware_has_tools = any(getattr(m, "tools", None) for m in middleware)
         tools = [] if middleware_has_tools else [_placeholder_tool]
 
+        # Create per-task checkpointer (independent connection)
+        checkpointer, task_conn = await self._create_task_checkpointer()
+
         try:
             agent = create_agent(
                 model=model,
@@ -313,6 +353,8 @@ class SubagentRunner:
                 checkpointer=checkpointer,
             )
         except Exception as e:
+            if task_conn:
+                await task_conn.close()
             yield {
                 "event": "task_error",
                 "data": json.dumps({"task_id": task_id, "error": f"Failed to create subagent: {e}"}),
@@ -431,6 +473,10 @@ class SubagentRunner:
                 "event": "task_error",
                 "data": json.dumps({"task_id": task_id, "error": str(e)}),
             }
+
+        finally:
+            if task_conn:
+                await task_conn.close()
 
     def _extract_text_content(self, raw_content: Any) -> str:
         """Extract text content from message content."""

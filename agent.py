@@ -203,7 +203,7 @@ class LeonAgent:
         if hasattr(self, "_task_middleware"):
             self._task_middleware.set_parent_middleware(middleware)
             if not self._needs_async_init:
-                self._task_middleware.set_checkpointer(self.checkpointer)
+                self._task_middleware.set_db_path(self.db_path)
 
         # Ensure ToolNode is created (middleware tools need at least one BaseTool)
         if not mcp_tools and not self._has_middleware_tools(middleware):
@@ -269,7 +269,7 @@ class LeonAgent:
 
         # Update TaskMiddleware
         if hasattr(self, "_task_middleware"):
-            self._task_middleware.set_checkpointer(self.checkpointer)
+            self._task_middleware.set_db_path(self.db_path)
 
         # Mark as initialized
         self._needs_async_init = False
