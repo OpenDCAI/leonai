@@ -359,7 +359,7 @@ class SearchMiddleware(AgentMiddleware):
                 "type": "function",
                 "function": {
                     "name": self.TOOL_GREP,
-                    "description": "Search file contents using regex (powered by ripgrep).",
+                    "description": "Search file contents using regex patterns. Use this instead of running grep/rg via run_command.",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -381,19 +381,19 @@ class SearchMiddleware(AgentMiddleware):
                             },
                             "case_insensitive": {
                                 "type": "boolean",
-                                "description": "Case insensitive search (rg -i)",
+                                "description": "Case insensitive search",
                             },
                             "after_context": {
                                 "type": "integer",
-                                "description": "Lines after match (rg -A)",
+                                "description": "Lines to show after each match",
                             },
                             "before_context": {
                                 "type": "integer",
-                                "description": "Lines before match (rg -B)",
+                                "description": "Lines to show before each match",
                             },
                             "context": {
                                 "type": "integer",
-                                "description": "Context lines before and after (rg -C)",
+                                "description": "Context lines before and after each match",
                             },
                             "output_mode": {
                                 "type": "string",
@@ -410,7 +410,7 @@ class SearchMiddleware(AgentMiddleware):
                             },
                             "multiline": {
                                 "type": "boolean",
-                                "description": "Pattern can span multiple lines (rg -U)",
+                                "description": "Allow pattern to span multiple lines",
                             },
                         },
                         "required": ["pattern"],

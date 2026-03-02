@@ -1074,6 +1074,13 @@ class LeonAgent:
 3. **Available Tools**: You have tools for file operations (read_file, write_file, edit_file, list_dir) and command execution (run_command).
 
 4. **Security**: The sandbox is isolated. You can install packages, run any commands, and modify files freely within the sandbox.
+
+5. **Use Dedicated Tools Instead of Shell Commands**: Do NOT use `run_command` for tasks that have dedicated tools:
+   - File search → use `Grep` (NOT `rg`, `grep`, or `find` via run_command)
+   - File listing → use `Glob` (NOT `find` or `ls` via run_command)
+   - File reading → use `read_file` (NOT `cat`, `head`, `tail` via run_command)
+   - File editing → use `edit_file` (NOT `sed` or `awk` via run_command)
+   - Reserve `run_command` for: git, package managers, build tools, tests, and other system operations.
 """
 
     def _build_local_prompt(self, os_name: str, shell_name: str) -> str:
@@ -1098,6 +1105,13 @@ class LeonAgent:
 4. **Security**: Dangerous commands are blocked. All operations are logged.
 
 5. **Tool Priority**: Tools starting with `mcp__` are external MCP integrations. When a built-in tool and an MCP tool have the same functionality, use the built-in tool.
+
+6. **Use Dedicated Tools Instead of Shell Commands**: Do NOT use `run_command` for tasks that have dedicated tools:
+   - File search → use `Grep` (NOT `rg`, `grep`, or `find` via run_command)
+   - File listing → use `Glob` (NOT `find` or `ls` via run_command)
+   - File reading → use `read_file` (NOT `cat`, `head`, `tail` via run_command)
+   - File editing → use `edit_file` (NOT `sed` or `awk` via run_command)
+   - Reserve `run_command` for: git, package managers, build tools, tests, and other system operations.
 """
 
     def _build_common_prompt_sections(self) -> str:
