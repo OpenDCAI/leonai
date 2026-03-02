@@ -12,11 +12,18 @@ from sandbox.remote import RemoteSandbox
 class DockerSandbox(RemoteSandbox):
     def __init__(self, config: SandboxConfig, db_path: Path | None = None) -> None:
         dc = config.docker
-        provider = DockerProvider(image=dc.image, mount_path=dc.mount_path, provider_name=config.name)
+        default_cwd = dc.cwd
+        provider = DockerProvider(
+            image=dc.image,
+            mount_path=dc.mount_path,
+            default_cwd=default_cwd,
+            bind_mounts=[mount.model_dump() for mount in dc.bind_mounts],
+            provider_name=config.name,
+        )
         super().__init__(
             provider=provider,
             config=config,
-            default_cwd=dc.mount_path,
+            default_cwd=default_cwd,
             db_path=db_path,
         )
         print(f"[DockerSandbox] Initialized (image={dc.image})")
@@ -27,7 +34,7 @@ class DockerSandbox(RemoteSandbox):
 
     @property
     def working_dir(self) -> str:
-        return self._config.docker.mount_path
+        return self._config.docker.cwd
 
     @property
     def env_label(self) -> str:

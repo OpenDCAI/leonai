@@ -26,7 +26,8 @@ const PROVIDER_FIELDS: Record<string, FieldDef[]> = {
   ],
   docker: [
     { key: "image", label: "Image", type: "text", placeholder: "python:3.12-slim", nested: "docker" },
-    { key: "mount_path", label: "Mount Path", type: "text", placeholder: "/workspace", nested: "docker" },
+    { key: "cwd", label: "Working Dir", type: "text", placeholder: "/workspace", nested: "docker" },
+    { key: "mount_path", label: "Context Mount", type: "text", placeholder: "/workspace", nested: "docker" },
   ],
   e2b: [
     { key: "api_key", label: "API Key", type: "password", nested: "e2b" },

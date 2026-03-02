@@ -6,6 +6,24 @@ from typing import Any
 
 
 @dataclass(frozen=True)
+class MountCapability:
+    """Mount behavior capability shared across providers."""
+
+    supports_mount: bool = False
+    supports_copy: bool = False
+    supports_read_only: bool = False
+    mode_handlers: dict[str, bool] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "supports_mount": self.supports_mount,
+            "supports_copy": self.supports_copy,
+            "supports_read_only": self.supports_read_only,
+            "mode_handlers": dict(self.mode_handlers or {}),
+        }
+
+
+@dataclass(frozen=True)
 class ProviderCapability:
     """Declared lifecycle capability of a provider implementation."""
 
@@ -17,6 +35,7 @@ class ProviderCapability:
     eager_instance_binding: bool = False
     inspect_visible: bool = True
     runtime_kind: str = "remote"
+    mount: MountCapability = field(default_factory=MountCapability)
 
 
 @dataclass

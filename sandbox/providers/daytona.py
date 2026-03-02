@@ -9,9 +9,31 @@ Important: runtime semantics remain PTY-backed (`daytona_pty`) for both SaaS and
 from __future__ import annotations
 
 import os
+import shlex
+import time
+import uuid
+from pathlib import Path
 from typing import Any
 
-from sandbox.provider import Metrics, ProviderCapability, ProviderExecResult, SandboxProvider, SessionInfo
+import httpx
+
+from sandbox.config import MountSpec
+from sandbox.provider import (
+    Metrics,
+    MountCapability,
+    ProviderCapability,
+    ProviderExecResult,
+    SandboxProvider,
+    SessionInfo,
+)
+
+
+def _daytona_state_to_status(state: str) -> str:
+    if state == "started":
+        return "running"
+    if state == "stopped":
+        return "paused"
+    return "unknown"
 
 
 class DaytonaProvider(SandboxProvider):
@@ -26,6 +48,12 @@ class DaytonaProvider(SandboxProvider):
             can_destroy=True,
             supports_webhook=True,
             runtime_kind="daytona_pty",
+            mount=MountCapability(
+                supports_mount=True,
+                supports_copy=True,
+                supports_read_only=True,
+                mode_handlers={"mount": True, "copy": True},
+            ),
         )
 
     def __init__(
@@ -34,6 +62,7 @@ class DaytonaProvider(SandboxProvider):
         api_url: str = "https://app.daytona.io/api",
         target: str = "local",
         default_cwd: str = "/home/daytona",
+        bind_mounts: list[MountSpec] | None = None,
         provider_name: str | None = None,
     ):
         from daytona_sdk import Daytona
@@ -44,6 +73,9 @@ class DaytonaProvider(SandboxProvider):
         self.api_url = api_url
         self.target = target
         self.default_cwd = default_cwd
+        self.bind_mounts: list[MountSpec] = [
+            MountSpec.model_validate(m) if isinstance(m, dict) else m for m in (bind_mounts or [])
+        ]
 
         os.environ["DAYTONA_API_KEY"] = api_key
         os.environ["DAYTONA_API_URL"] = api_url
@@ -55,8 +87,26 @@ class DaytonaProvider(SandboxProvider):
     def create_session(self, context_id: str | None = None) -> SessionInfo:
         from daytona_sdk import CreateSandboxFromSnapshotParams
 
-        params = CreateSandboxFromSnapshotParams(auto_stop_interval=0)
-        sb = self.client.create(params)
+        mount_mounts: list[MountSpec] = []
+        copy_mounts: list[tuple[str, str]] = []
+        for mount in self.bind_mounts:
+            if mount.mode == "copy":
+                copy_mounts.append((mount.source, mount.target))
+            else:
+                mount_mounts.append(mount)
+
+        if mount_mounts:
+            # @@@daytona-bindmount-http-create - SDK currently lacks bind_mounts field, so self-host bind mounts use direct API create.
+            sandbox_id = self._create_via_http(bind_mounts=mount_mounts)
+            self._wait_until_started(sandbox_id)
+            sb = self.client.find_one(sandbox_id)
+        else:
+            params = CreateSandboxFromSnapshotParams(auto_stop_interval=0)
+            sb = self.client.create(params)
+
+        for source, target in copy_mounts:
+            self._copy_host_path_into_sandbox(sb, source=source, target=target)
+
         self._sandboxes[sb.id] = sb
         return SessionInfo(session_id=sb.id, provider=self.name, status="running")
 
@@ -80,12 +130,7 @@ class DaytonaProvider(SandboxProvider):
         # @@@status-refresh - Always refetch sandbox before reading state to avoid stale cached status.
         sb = self.client.find_one(session_id)
         self._sandboxes[session_id] = sb
-        state = sb.state.value
-        if state == "started":
-            return "running"
-        if state == "stopped":
-            return "paused"
-        return "unknown"
+        return _daytona_state_to_status(sb.state.value)
 
     # ==================== Execution ====================
 
@@ -129,17 +174,10 @@ class DaytonaProvider(SandboxProvider):
 
     def list_provider_sessions(self) -> list[SessionInfo]:
         result = self.client.list()
-        sessions: list[SessionInfo] = []
-        for sb in result.items:
-            state = sb.state.value
-            if state == "started":
-                status = "running"
-            elif state == "stopped":
-                status = "paused"
-            else:
-                status = "unknown"
-            sessions.append(SessionInfo(session_id=sb.id, provider=self.name, status=status))
-        return sessions
+        return [
+            SessionInfo(session_id=sb.id, provider=self.name, status=_daytona_state_to_status(sb.state.value))
+            for sb in result.items
+        ]
 
     # ==================== Inspection ====================
 
@@ -156,3 +194,75 @@ class DaytonaProvider(SandboxProvider):
     def get_runtime_sandbox(self, session_id: str):
         """Expose native SDK sandbox for runtime-level persistent terminal handling."""
         return self._get_sandbox(session_id)
+
+    def _api_auth_headers(self) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
+
+    def _create_via_http(self, bind_mounts: list[MountSpec]) -> str:
+        normalized_mounts: list[dict[str, Any]] = []
+        for mount in bind_mounts:
+            if mount.mode != "mount":
+                continue
+            normalized_mounts.append({"hostPath": mount.source, "mountPath": mount.target, "readOnly": mount.read_only})
+        payload = {
+            "name": f"leon-{uuid.uuid4().hex[:12]}",
+            "autoStopInterval": 0,
+            "bindMounts": normalized_mounts,
+        }
+        with httpx.Client(timeout=30.0) as client:
+            response = client.post(f"{self.api_url.rstrip('/')}/sandbox", headers=self._api_auth_headers(), json=payload)
+        if response.status_code != 200:
+            raise RuntimeError(f"Daytona create sandbox failed ({response.status_code}): {response.text}")
+        sandbox_id = response.json().get("id")
+        if not sandbox_id:
+            raise RuntimeError(f"Daytona create sandbox response missing id: {response.text}")
+        return str(sandbox_id)
+
+    def _copy_host_path_into_sandbox(self, sb: Any, *, source: str, target: str) -> None:
+        source_path = Path(source)
+        if not source_path.exists():
+            raise RuntimeError(f"Copy source path does not exist: {source}")
+
+        self._mkdir_in_sandbox(sb, target if source_path.is_dir() else str(Path(target).parent))
+
+        if source_path.is_file():
+            sb.fs.upload_file(source_path.read_bytes(), target)
+            return
+        if source_path.is_dir():
+            for local_path in source_path.rglob("*"):
+                if local_path.is_dir():
+                    rel_dir = local_path.relative_to(source_path)
+                    self._mkdir_in_sandbox(sb, str(Path(target) / rel_dir))
+                    continue
+                if local_path.is_file():
+                    remote_file = str(Path(target) / local_path.relative_to(source_path))
+                    self._mkdir_in_sandbox(sb, str(Path(remote_file).parent))
+                    sb.fs.upload_file(local_path.read_bytes(), remote_file)
+                    continue
+                raise RuntimeError(f"Unsupported copy source path type: {local_path}")
+            return
+        raise RuntimeError(f"Unsupported copy source path type: {source}")
+
+    def _mkdir_in_sandbox(self, sb: Any, path: str) -> None:
+        quoted = shlex.quote(path)
+        result = sb.process.exec(f"mkdir -p {quoted}", cwd=self.default_cwd, timeout=30)
+        if int(result.exit_code or 0) != 0:
+            raise RuntimeError(f"Failed to create directory in sandbox: {path}; stderr={result.result!r}")
+
+    def _wait_until_started(self, sandbox_id: str, timeout_seconds: int = 120) -> None:
+        deadline = time.time() + timeout_seconds
+        with httpx.Client(timeout=15.0) as client:
+            while time.time() < deadline:
+                response = client.get(f"{self.api_url.rstrip('/')}/sandbox/{sandbox_id}", headers=self._api_auth_headers())
+                if response.status_code != 200:
+                    raise RuntimeError(
+                        f"Daytona get sandbox failed while waiting for started ({response.status_code}): {response.text}"
+                    )
+                body = response.json()
+                state = str(body.get("state") or "")
+                if state == "started":
+                    return
+                if state in {"destroyed", "destroying", "error", "failed"}:
+                    raise RuntimeError(f"Daytona sandbox entered bad state '{state}': {response.text}")
+                time.sleep(2)
+        raise RuntimeError(f"Timed out waiting for Daytona sandbox {sandbox_id} to reach started state")
