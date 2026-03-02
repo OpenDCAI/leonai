@@ -1025,16 +1025,7 @@ class LeonAgent:
         if hasattr(self, "_agent_override") and self._agent_override:
             return self._agent_override.system_prompt
 
-        import platform
-
-        os_name = platform.system()
-        shell_name = os.environ.get("SHELL", "/bin/bash").split("/")[-1]
-
-        if self._sandbox.name != "local":
-            prompt = self._build_sandbox_prompt()
-        else:
-            prompt = self._build_local_prompt(os_name, shell_name)
-
+        prompt = self._build_base_prompt()
         prompt += self._build_common_prompt_sections()
 
         if self.allowed_file_extensions:
@@ -1042,76 +1033,81 @@ class LeonAgent:
 
         return prompt
 
-    def _build_sandbox_prompt(self) -> str:
-        """Build system prompt for sandbox mode."""
-        env_label = self._sandbox.env_label
-        working_dir = self._sandbox.working_dir
-
-        if self._sandbox.name == "docker":
-            mode_label = "Sandbox (isolated local container)"
-            location_rule = (
-                "All file and command operations run in a local Docker container, NOT on the user's host filesystem."
-            )
-        else:
-            mode_label = "Sandbox (isolated cloud environment)"
-            location_rule = "All file and command operations run in a remote sandbox, NOT on the user's local machine."
-
-        return f"""You are a highly capable AI assistant with access to a sandbox environment.
-
-**Context:**
-- Environment: {env_label}
+    def _build_context_section(self) -> str:
+        """Build the context section based on sandbox mode."""
+        if self._sandbox.name != "local":
+            env_label = self._sandbox.env_label
+            working_dir = self._sandbox.working_dir
+            if self._sandbox.name == "docker":
+                mode_label = "Sandbox (isolated local container)"
+            else:
+                mode_label = "Sandbox (isolated cloud environment)"
+            return f"""- Environment: {env_label}
 - Working Directory: {working_dir}
-- Mode: {mode_label}
+- Mode: {mode_label}"""
+        else:
+            import platform
+            os_name = platform.system()
+            shell_name = os.environ.get("SHELL", "/bin/bash").split("/")[-1]
+            return f"""- Workspace: `{self.workspace_root}`
+- OS: {os_name}
+- Shell: {shell_name}
+- Mode: Local"""
 
-**Important Rules:**
+    def _build_rules_section(self) -> str:
+        """Build shared rules section for all modes."""
+        is_sandbox = self._sandbox.name != "local"
+        working_dir = self._sandbox.working_dir if is_sandbox else self.workspace_root
 
-1. **Sandbox Environment**: {location_rule} The sandbox is an isolated Linux environment.
+        rules = []
 
-2. **Absolute Paths**: All file paths must be absolute paths.
-   - ✅ Correct: `{working_dir}/project/test.py` or `/tmp/output.txt`
-   - ❌ Wrong: `test.py` or `./test.py`
+        # Rule 1: Environment-specific
+        if is_sandbox:
+            if self._sandbox.name == "docker":
+                location_rule = "All file and command operations run in a local Docker container, NOT on the user's host filesystem."
+            else:
+                location_rule = "All file and command operations run in a remote sandbox, NOT on the user's local machine."
+            rules.append(f"1. **Sandbox Environment**: {location_rule} The sandbox is an isolated Linux environment.")
+        else:
+            rules.append("1. **Workspace**: File operations are restricted to: " + str(self.workspace_root))
 
-3. **Available Tools**: You have tools for file operations (read_file, write_file, edit_file, list_dir) and command execution (run_command).
+        # Rule 2: Absolute paths
+        rules.append(f"""2. **Absolute Paths**: All file paths must be absolute paths.
+   - ✅ Correct: `{working_dir}/project/test.py`
+   - ❌ Wrong: `test.py` or `./test.py`""")
 
-4. **Security**: The sandbox is isolated. You can install packages, run any commands, and modify files freely within the sandbox.
+        # Rule 3: Security
+        if is_sandbox:
+            rules.append("3. **Security**: The sandbox is isolated. You can install packages, run any commands, and modify files freely.")
+        else:
+            rules.append("3. **Security**: Dangerous commands are blocked. All operations are logged.")
 
-5. **Use Dedicated Tools Instead of Shell Commands**: Do NOT use `run_command` for tasks that have dedicated tools:
+        # Rule 4: Tool priority
+        rules.append("""4. **Tool Priority**: When a built-in tool and an MCP tool (`mcp__*`) have the same functionality, use the built-in tool.""")
+
+        # Rule 5: Dedicated tools over shell
+        rules.append("""5. **Use Dedicated Tools Instead of Shell Commands**: Do NOT use `run_command` for tasks that have dedicated tools:
    - File search → use `Grep` (NOT `rg`, `grep`, or `find` via run_command)
    - File listing → use `Glob` (NOT `find` or `ls` via run_command)
    - File reading → use `read_file` (NOT `cat`, `head`, `tail` via run_command)
    - File editing → use `edit_file` (NOT `sed` or `awk` via run_command)
-   - Reserve `run_command` for: git, package managers, build tools, tests, and other system operations.
-"""
+   - Reserve `run_command` for: git, package managers, build tools, tests, and other system operations.""")
 
-    def _build_local_prompt(self, os_name: str, shell_name: str) -> str:
-        """Build system prompt for local mode."""
+        return "\n\n".join(rules)
+
+    def _build_base_prompt(self) -> str:
+        """Build the base system prompt (context + rules), shared by all modes."""
+        context = self._build_context_section()
+        rules = self._build_rules_section()
+
         return f"""You are a highly capable AI assistant with access to file and system tools.
 
 **Context:**
-- Workspace: `{self.workspace_root}`
-- OS: {os_name}
-- Shell: {shell_name}
+{context}
 
 **Important Rules:**
 
-1. **Use Available Tools**: You have access to tools for file operations, search, web access, and command execution. Always use these tools when the user requests file or system operations.
-
-2. **Absolute Paths**: All file paths must be absolute paths starting from root (/).
-   - ✅ Correct: `/home/user/workspace/test.py`
-   - ❌ Wrong: `test.py` or `./test.py`
-
-3. **Workspace**: File operations are restricted to: {self.workspace_root}
-
-4. **Security**: Dangerous commands are blocked. All operations are logged.
-
-5. **Tool Priority**: Tools starting with `mcp__` are external MCP integrations. When a built-in tool and an MCP tool have the same functionality, use the built-in tool.
-
-6. **Use Dedicated Tools Instead of Shell Commands**: Do NOT use `run_command` for tasks that have dedicated tools:
-   - File search → use `Grep` (NOT `rg`, `grep`, or `find` via run_command)
-   - File listing → use `Glob` (NOT `find` or `ls` via run_command)
-   - File reading → use `read_file` (NOT `cat`, `head`, `tail` via run_command)
-   - File editing → use `edit_file` (NOT `sed` or `awk` via run_command)
-   - Reserve `run_command` for: git, package managers, build tools, tests, and other system operations.
+{rules}
 """
 
     def _build_common_prompt_sections(self) -> str:
