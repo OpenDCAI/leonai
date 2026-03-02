@@ -4,7 +4,7 @@ Agent/bundle types are defined in config.types and re-exported here
 for backward compatibility.
 """
 
-from typing import NotRequired, TypedDict
+from typing import Literal, NotRequired, TypedDict
 
 from pydantic import BaseModel
 
@@ -34,7 +34,7 @@ class TaskResult(BaseModel):
 
     task_id: str
     thread_id: str | None = None
-    status: str  # completed/running/error
+    status: Literal["completed", "running", "error", "timeout"]
     result: str | None = None
     error: str | None = None
     description: str | None = None

@@ -2,8 +2,11 @@
 
 import asyncio
 import json
+import logging
 from collections.abc import Callable
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from .context_monitor import ContextMonitor
 from .state_monitor import AgentFlags, AgentState, StateMonitor
@@ -166,9 +169,18 @@ class AgentRuntime:
             return
         try:
             loop = asyncio.get_running_loop()
-            loop.create_task(self._activity_sink(event))
+            task = loop.create_task(self._activity_sink(event))
+            task.add_done_callback(self._handle_sink_error)
         except RuntimeError:
             pass  # No event loop running (e.g., during shutdown)
+
+    @staticmethod
+    def _handle_sink_error(task: asyncio.Task) -> None:
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc:
+            logger.error("Activity sink failed: %s", exc)
 
     def emit_activity_event(self, event: dict[str, Any]) -> None:
         """Emit activity event (command progress, background task, etc)."""
