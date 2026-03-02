@@ -10,7 +10,7 @@ import { CheckCircle2, XCircle, Clock } from "lucide-react";
 
 /** Tools whose results are self-contained content that the AI often echoes verbatim. */
 const CONTENT_HEAVY_TOOLS = new Set([
-  "WebFetch", "web_search", "WebSearch", "read_url_content",
+  "WebFetch", "web_search", "WebSearch", "Fetch",
   "load_skill",
   "Task",
 ]);

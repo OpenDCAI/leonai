@@ -287,19 +287,35 @@ async def _run_agent_to_buffer(
         # Continue handler: when core needs a new run (e.g., background task done, agent IDLE)
         def continue_handler(message: str) -> None:
             """Host adapter: core says 'continue with this message'."""
-            if hasattr(agent, "runtime") and agent.runtime.transition(AgentState.ACTIVE):
+            if not (hasattr(agent, "runtime") and agent.runtime.transition(AgentState.ACTIVE)):
+                # Could not transition -- enqueue as fallback to avoid silent message loss
+                try:
+                    from core.queue import get_queue_manager
+                    get_queue_manager().enqueue(message, thread_id)
+                    logger.debug("continue_handler: agent not idle, enqueued message for thread %s", thread_id)
+                except Exception:
+                    logger.error("continue_handler: transition failed and enqueue also failed for thread %s — message lost: %.200s", thread_id, message)
+                return
+
+            try:
                 new_buf = start_agent_run(
                     agent, thread_id, message, app,
                     message_metadata={"source": "system"},
                 )
-                # Notify frontend via activity buffer
-                try:
-                    asyncio.get_running_loop().create_task(activity_buf.put({
-                        "event": "new_run",
-                        "data": json.dumps({"thread_id": thread_id, "run_id": new_buf.run_id}),
-                    }))
-                except RuntimeError:
-                    pass  # No event loop (shutdown)
+            except Exception:
+                logger.error("continue_handler: failed to start new run for thread %s", thread_id, exc_info=True)
+                if hasattr(agent, "runtime"):
+                    agent.runtime.transition(AgentState.IDLE)
+                return
+
+            # Notify frontend via activity buffer
+            try:
+                asyncio.get_running_loop().create_task(activity_buf.put({
+                    "event": "new_run",
+                    "data": json.dumps({"thread_id": thread_id, "run_id": new_buf.run_id}),
+                }))
+            except RuntimeError:
+                logger.warning("continue_handler: could not notify frontend of new_run (no event loop) for thread %s", thread_id)
 
         if hasattr(agent, "runtime"):
             agent.runtime.set_continue_handler(continue_handler)

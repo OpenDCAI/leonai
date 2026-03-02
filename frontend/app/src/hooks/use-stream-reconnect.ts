@@ -43,6 +43,9 @@ export function useStreamReconnect(deps: ReconnectDeps) {
   const runStartedRef = useRef(runStarted);
   runStartedRef.current = runStarted;
 
+  const refreshThreadsRef = useRef(refreshThreads);
+  refreshThreadsRef.current = refreshThreads;
+
   const setTurnStreaming = (turnId: string, streaming: boolean) => {
     onUpdateRef.current((prev) =>
       prev.map((e) => e.id === turnId && e.role === "assistant" ? { ...e, streaming } as AssistantTurn : e),
@@ -84,10 +87,10 @@ export function useStreamReconnect(deps: ReconnectDeps) {
       } finally {
         setIsRunning(false);
         setTurnStreaming(resolved.turnId, false);
-        void refreshThreads();
+        void refreshThreadsRef.current();
       }
     })();
 
     return () => { ac.abort(); };
-  }, [threadId, loading, refreshThreads, deps.reconnectKey]);
+  }, [threadId, loading, deps.reconnectKey]);
 }

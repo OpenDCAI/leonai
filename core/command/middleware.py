@@ -225,8 +225,10 @@ class CommandMiddleware(AgentMiddleware[CommandState]):
                 result = await self._executor.wait_for(async_cmd.command_id)
                 if result:
                     return result.to_tool_result()
+        except (asyncio.TimeoutError, OSError) as e:
+            logger.debug("Status check failed for %s (command may still be running): %s", async_cmd.command_id, e)
         except Exception:
-            pass  # Non-fatal: command may still be running
+            logger.warning("Unexpected error checking status for command %s", async_cmd.command_id, exc_info=True)
 
         # Start background monitoring for progress events
         runtime = getattr(self._agent, "runtime", None) if self._agent else None
