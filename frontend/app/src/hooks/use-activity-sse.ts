@@ -17,7 +17,7 @@ export function useActivitySSE(
     if (!threadId || !enabled) return;
 
     const controller = new AbortController();
-    streamActivityEvents(threadId, (ev) => onEventRef.current(ev), controller.signal).catch(() => {});
+    streamActivityEvents(threadId, (ev) => onEventRef.current(ev), controller.signal).catch((err) => console.warn("[useActivitySSE] stream ended:", err));
 
     return () => controller.abort();
   }, [threadId, enabled]);

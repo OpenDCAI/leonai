@@ -129,3 +129,8 @@ button, input, textarea {
 .tool-card-calling {
   animation: pulse-border 2s ease-in-out infinite;
 }
+
+*:focus-visible {
+  outline: 2px solid #171717;
+  outline-offset: 2px;
+}

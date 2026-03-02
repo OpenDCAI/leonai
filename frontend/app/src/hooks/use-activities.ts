@@ -1,10 +1,6 @@
 import { useCallback, useState } from "react";
 import type { Activity } from "../api";
-
-interface StreamEvent {
-  type: string;
-  data?: unknown;
-}
+import type { StreamEvent } from "../api/types";
 
 export function useActivities() {
   const [activities, setActivities] = useState<Activity[]>([]);

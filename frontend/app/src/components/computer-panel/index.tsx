@@ -91,7 +91,7 @@ export default function ComputerPanel({
             steps={agentSteps}
             focusedStepId={focusedAgentStepId}
             onFocusStep={(id) => onFocusAgent?.(id)}
-            isMainStreamDone={!isStreaming}
+
           />
         )}
 
