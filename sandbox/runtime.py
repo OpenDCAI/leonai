@@ -523,6 +523,9 @@ class _SubprocessPtySession:
     def interrupt_and_recover(self, recover_timeout: float = 3.0) -> bool:
         """Send Ctrl+C to interrupt the current command and recover the session.
 
+        Blocks for up to 1s (drain) + recover_timeout (default 3s) = ~4s worst case.
+        Called inside _session_lock, so other commands wait during recovery.
+
         Returns True if the session is recovered and ready for new commands.
         Returns False if the session is dead and needs to be recreated.
         """
@@ -535,12 +538,14 @@ class _SubprocessPtySession:
         except OSError:
             return False
 
-        # Step 2: Drain any remaining output from the buffer
+        # Step 2: Drain remaining output until deadline (not just first quiet gap,
+        # because bursty processes like rg may have short pauses between output chunks)
         drain_deadline = time.monotonic() + 1.0
         while time.monotonic() < drain_deadline:
-            readable, _, _ = select.select([self._master_fd], [], [], 0.1)
+            remaining = max(0.0, drain_deadline - time.monotonic())
+            readable, _, _ = select.select([self._master_fd], [], [], min(0.1, remaining))
             if not readable:
-                break
+                continue
             try:
                 chunk = os.read(self._master_fd, 65536)
                 if not chunk:
@@ -548,11 +553,12 @@ class _SubprocessPtySession:
             except OSError:
                 return False
 
-        # Step 3: Verify the shell is responsive with a probe command
+        # Step 3: Verify the shell is responsive with a probe command.
+        # Use `true &&` to reset $? to 0 (SIGINT leaves $?=130).
         probe_marker = f"__LEON_PROBE_{uuid.uuid4().hex[:8]}__"
         probe_re = re.compile(rf"{re.escape(probe_marker)}\s+0")
         try:
-            os.write(self._master_fd, f"printf '\\n{probe_marker} %s\\n' $?\n".encode("utf-8"))
+            os.write(self._master_fd, f"true && printf '\\n{probe_marker} %s\\n' $?\n".encode("utf-8"))
         except OSError:
             return False
 
