@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
   ArrowLeft, Bot, FileText, Wrench, Plug, Zap, Users, BookOpen,
-  Play, Tag, Save, Plus, Trash2, Search, X, Check,
+  Play, Tag, Save, Plus, Trash2, Search, X, Check, Lock,
 } from "lucide-react";
 import TestPanel from "@/components/TestPanel";
 import PublishDialog from "@/components/PublishDialog";
@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { useAppStore } from "@/store/app-store";
-import type { CrudItem, RuleItem, ResourceItem } from "@/store/types";
+import type { CrudItem, RuleItem, ResourceItem, SubAgent } from "@/store/types";
 
 // ==================== Types ====================
 
@@ -428,11 +428,15 @@ function SubAgentsPanel({ agents, onSave, onAdd, onDelete }: {
   onAdd: () => void;
   onDelete: (name: string) => void;
 }) {
+  const builtinAgents = useMemo(() => agents.filter(a => a.builtin), [agents]);
+  const customAgents = useMemo(() => agents.filter(a => !a.builtin), [agents]);
+
   const [selected, setSelected] = useState<string | null>(agents[0]?.name ?? null);
   const [draft, setDraft] = useState<SubAgent | null>(null);
   const [saving, setSaving] = useState(false);
 
   const current = agents.find(a => a.name === selected);
+  const isBuiltin = current?.builtin;
 
   useEffect(() => {
     if (current) {
@@ -443,15 +447,15 @@ function SubAgentsPanel({ agents, onSave, onAdd, onDelete }: {
   }, [current]);
 
   const dirty = useMemo(() => {
-    if (!current || !draft) return false;
+    if (!current || !draft || isBuiltin) return false;
     if (draft.desc !== current.desc) return true;
     if (draft.system_prompt !== current.system_prompt) return true;
     if (draft.tools.length !== current.tools.length) return true;
     return draft.tools.some((t, i) => t.enabled !== current.tools[i]?.enabled);
-  }, [current, draft]);
+  }, [current, draft, isBuiltin]);
 
   const save = async () => {
-    if (!draft || !selected) return;
+    if (!draft || !selected || isBuiltin) return;
     setSaving(true);
     try {
       const updated = agents.map(a => a.name === selected ? draft : a);
@@ -462,85 +466,138 @@ function SubAgentsPanel({ agents, onSave, onAdd, onDelete }: {
   };
 
   const handleToolToggle = (toolName: string, enabled: boolean) => {
-    if (!draft) return;
+    if (!draft || isBuiltin) return;
     setDraft({ ...draft, tools: draft.tools.map(t => t.name === toolName ? { ...t, enabled } : t) });
   };
 
+  const enabledToolCount = (a: SubAgent) => a.tools.filter(t => t.enabled).length;
+
   return (
     <div className="h-full flex">
-      {/* Agent list */}
-      <div className="w-48 shrink-0 border-r flex flex-col">
+      {/* Sidebar */}
+      <div className="w-52 shrink-0 border-r flex flex-col">
         <div className="flex items-center justify-between px-3 py-2 border-b">
           <span className="text-xs font-medium text-muted-foreground">Sub-Agents</span>
-          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={onAdd}>
+          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={onAdd} title="添加 Agent">
             <Plus className="h-3.5 w-3.5" />
           </Button>
         </div>
-        <div className="flex-1 overflow-auto py-1">
-          {agents.map(a => (
-            <button
-              key={a.name}
-              onClick={() => setSelected(a.name)}
-              className={`w-full flex items-center gap-2 px-3 py-1.5 text-xs group ${
-                selected === a.name ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted"
-              }`}
-            >
-              <Bot className="h-3 w-3 shrink-0" />
-              <span className="truncate flex-1 text-left">{a.name}</span>
-              <span
-                className="opacity-0 group-hover:opacity-100 shrink-0 text-muted-foreground hover:text-destructive transition-opacity"
-                onClick={e => { e.stopPropagation(); onDelete(a.name); setSelected(agents.find(x => x.name !== a.name)?.name ?? null); }}
-              >
-                <X className="h-3 w-3" />
-              </span>
-            </button>
-          ))}
+        <div className="flex-1 overflow-auto">
+          {/* Builtin agents section */}
+          {builtinAgents.length > 0 && (
+            <div className="py-1">
+              <p className="px-3 py-1 text-[10px] font-medium text-muted-foreground uppercase tracking-wider">内置</p>
+              {builtinAgents.map(a => (
+                <button
+                  key={a.name}
+                  onClick={() => setSelected(a.name)}
+                  className={`w-full flex items-center gap-2 px-3 py-1.5 text-xs transition-colors ${
+                    selected === a.name
+                      ? "bg-primary/10 text-primary"
+                      : "text-muted-foreground hover:bg-muted/50"
+                  }`}
+                >
+                  <Lock className="h-3 w-3 shrink-0 opacity-40" />
+                  <span className="truncate flex-1 text-left">{a.name}</span>
+                  <span className="text-[10px] opacity-40">{enabledToolCount(a)}/{a.tools.length}</span>
+                </button>
+              ))}
+            </div>
+          )}
+          {/* Custom agents section */}
+          {(customAgents.length > 0 || builtinAgents.length > 0) && (
+            <div className="py-1">
+              {builtinAgents.length > 0 && (
+                <p className="px-3 py-1 text-[10px] font-medium text-muted-foreground uppercase tracking-wider">自定义</p>
+              )}
+              {customAgents.length === 0 ? (
+                <p className="px-3 py-2 text-[10px] text-muted-foreground/60">点击 + 添加</p>
+              ) : (
+                customAgents.map(a => (
+                  <button
+                    key={a.name}
+                    onClick={() => setSelected(a.name)}
+                    className={`w-full flex items-center gap-2 px-3 py-1.5 text-xs group transition-colors ${
+                      selected === a.name
+                        ? "bg-primary/10 text-primary"
+                        : "text-muted-foreground hover:bg-muted/50"
+                    }`}
+                  >
+                    <Bot className="h-3 w-3 shrink-0" />
+                    <span className="truncate flex-1 text-left">{a.name}</span>
+                    <span
+                      className="opacity-0 group-hover:opacity-100 shrink-0 text-muted-foreground hover:text-destructive transition-opacity"
+                      onClick={e => { e.stopPropagation(); onDelete(a.name); setSelected(agents.find(x => x.name !== a.name)?.name ?? null); }}
+                    >
+                      <X className="h-3 w-3" />
+                    </span>
+                  </button>
+                ))
+              )}
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Config panel */}
+      {/* Detail panel */}
       <div className="flex-1 flex flex-col min-w-0 overflow-auto">
         {draft ? (
           <div className="flex flex-col gap-4 p-4">
-            {/* Header + save */}
+            {/* Header */}
             <div className="flex items-center gap-2">
+              {isBuiltin ? <Lock className="h-4 w-4 text-muted-foreground" /> : <Bot className="h-4 w-4 text-muted-foreground" />}
               <span className="text-sm font-medium">{draft.name}</span>
+              {isBuiltin && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">只读</span>
+              )}
               <div className="flex-1" />
-              <Button size="sm" className="h-7" disabled={!dirty || saving} onClick={save}>
-                <Save className="h-3.5 w-3.5 mr-1" /> {saving ? "..." : "保存"}
-              </Button>
+              {!isBuiltin && (
+                <Button size="sm" className="h-7" disabled={!dirty || saving} onClick={save}>
+                  <Save className="h-3.5 w-3.5 mr-1" /> {saving ? "..." : "保存"}
+                </Button>
+              )}
             </div>
 
             {/* Description */}
             <div className="space-y-1">
               <label className="text-xs font-medium text-muted-foreground">Description</label>
-              <Input
-                value={draft.desc}
-                onChange={e => setDraft({ ...draft, desc: e.target.value })}
-                placeholder="Agent 描述..."
-                className="h-8 text-sm"
-              />
+              {isBuiltin ? (
+                <p className="text-sm text-foreground/80 px-1">{draft.desc || "—"}</p>
+              ) : (
+                <Input
+                  value={draft.desc}
+                  onChange={e => setDraft({ ...draft, desc: e.target.value })}
+                  placeholder="Agent 描述..."
+                  className="h-8 text-sm"
+                />
+              )}
             </div>
 
             {/* System Prompt */}
             <div className="space-y-1">
               <label className="text-xs font-medium text-muted-foreground">System Prompt</label>
-              <textarea
-                className="w-full h-32 rounded-md border bg-background px-3 py-2 text-sm font-mono resize-none focus:outline-none focus:ring-2 focus:ring-ring"
-                value={draft.system_prompt}
-                onChange={e => setDraft({ ...draft, system_prompt: e.target.value })}
-                placeholder="输入 System Prompt..."
-              />
+              {isBuiltin ? (
+                <pre className="w-full max-h-48 overflow-auto rounded-md border bg-muted/30 px-3 py-2 text-xs font-mono text-foreground/70 whitespace-pre-wrap">
+                  {draft.system_prompt || "—"}
+                </pre>
+              ) : (
+                <textarea
+                  className="w-full h-32 rounded-md border bg-background px-3 py-2 text-sm font-mono resize-y focus:outline-none focus:ring-2 focus:ring-ring"
+                  value={draft.system_prompt}
+                  onChange={e => setDraft({ ...draft, system_prompt: e.target.value })}
+                  placeholder="输入 System Prompt..."
+                />
+              )}
             </div>
 
             {/* Tools */}
             {draft.tools.length > 0 && (
-              <SubAgentToolsGrid items={draft.tools} onToggle={handleToolToggle} />
+              <SubAgentToolsGrid items={draft.tools} onToggle={handleToolToggle} readOnly={!!isBuiltin} />
             )}
           </div>
         ) : (
           <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">
-            {agents.length ? "选择一个 Agent" : "暂无 Agent，点击 + 添加"}
+            选择一个 Agent 查看详情
           </div>
         )}
       </div>
@@ -550,7 +607,11 @@ function SubAgentsPanel({ agents, onSave, onAdd, onDelete }: {
 
 // ==================== SubAgentToolsGrid (compact) ====================
 
-function SubAgentToolsGrid({ items, onToggle }: { items: CrudItem[]; onToggle: (name: string, enabled: boolean) => void }) {
+function SubAgentToolsGrid({ items, onToggle, readOnly = false }: {
+  items: CrudItem[];
+  onToggle: (name: string, enabled: boolean) => void;
+  readOnly?: boolean;
+}) {
   const [filter, setFilter] = useState("");
   const groups = useMemo(() => {
     const map: Record<string, CrudItem[]> = {};
@@ -580,10 +641,10 @@ function SubAgentToolsGrid({ items, onToggle }: { items: CrudItem[]; onToggle: (
           <p className="text-[10px] font-medium text-muted-foreground uppercase mb-1">{group}</p>
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-1.5">
             {tools.map(t => (
-              <div key={t.name} className="flex items-center gap-1.5 rounded border px-2 py-1.5 text-xs">
+              <div key={t.name} className={`flex items-center gap-1.5 rounded border px-2 py-1.5 text-xs ${readOnly ? "opacity-60" : ""}`}>
                 <Wrench className="h-3 w-3 text-muted-foreground shrink-0" />
                 <span className="truncate flex-1" title={t.desc}>{t.name}</span>
-                <Switch checked={t.enabled} onCheckedChange={v => onToggle(t.name, v)} />
+                <Switch checked={t.enabled} onCheckedChange={v => onToggle(t.name, v)} disabled={readOnly} />
               </div>
             ))}
           </div>
