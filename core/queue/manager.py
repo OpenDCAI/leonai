@@ -164,29 +164,3 @@ class MessageQueueManager:
             ).fetchone()
             followup_size = row["cnt"] if row else 0
         return {"steer": steer_size, "followup": followup_size}
-
-
-# ---------------------------------------------------------------------------
-# Global singleton
-# ---------------------------------------------------------------------------
-
-_queue_manager: MessageQueueManager | None = None
-_manager_lock = threading.Lock()
-
-
-# TODO: replace global singleton with dependency injection (inject via app.state or constructor)
-def get_queue_manager() -> MessageQueueManager:
-    """Get the global MessageQueueManager singleton."""
-    global _queue_manager
-    if _queue_manager is None:
-        with _manager_lock:
-            if _queue_manager is None:
-                _queue_manager = MessageQueueManager()
-    return _queue_manager
-
-
-def reset_queue_manager() -> None:
-    """Reset the global manager (for testing)."""
-    global _queue_manager
-    with _manager_lock:
-        _queue_manager = None

@@ -31,7 +31,7 @@ except ImportError:
     ModelCallResult = Any
     ToolCallRequest = Any
 
-from .manager import get_queue_manager
+from .manager import MessageQueueManager
 
 
 class SteeringMiddleware(AgentMiddleware):
@@ -42,6 +42,9 @@ class SteeringMiddleware(AgentMiddleware):
     2. Before next model call, drain ALL pending steer messages
     3. Inject as HumanMessage with metadata source="system"
     """
+
+    def __init__(self, queue_manager: MessageQueueManager) -> None:
+        self._queue_manager = queue_manager
 
     def wrap_tool_call(
         self,
@@ -71,7 +74,7 @@ class SteeringMiddleware(AgentMiddleware):
             logger.debug("SteeringMiddleware: no thread_id in config, skipping steer injection")
             return None
 
-        items = get_queue_manager().drain_steer(thread_id)
+        items = self._queue_manager.drain_steer(thread_id)
         if not items:
             return None
 

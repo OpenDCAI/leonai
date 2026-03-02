@@ -53,7 +53,7 @@ from core.memory import MemoryMiddleware
 from core.model_params import normalize_model_kwargs
 from core.monitor import MonitorMiddleware, apply_usage_patches
 from core.prompt_caching import PromptCachingMiddleware
-from core.queue import SteeringMiddleware
+from core.queue import MessageQueueManager, SteeringMiddleware
 from core.search import SearchMiddleware
 from core.skills import SkillsMiddleware
 from storage.container import StorageContainer
@@ -101,6 +101,7 @@ class LeonAgent:
         jina_api_key: str | None = None,
         sandbox: Any = None,
         storage_container: StorageContainer | None = None,
+        queue_manager: MessageQueueManager | None = None,
         verbose: bool = False,
     ):
         """
@@ -117,9 +118,11 @@ class LeonAgent:
             enable_audit_log: Whether to enable audit logging
             enable_web_tools: Whether to enable web search and content fetching tools
             sandbox: Sandbox instance, name string, or None for local
+            queue_manager: Shared MessageQueueManager instance (created if not provided)
             verbose: Whether to output detailed logs (default False)
         """
         self.verbose = verbose
+        self.queue_manager = queue_manager or MessageQueueManager()
 
         # New config system mode
         self.config, self.models_config = self._load_config(
@@ -731,7 +734,7 @@ class LeonAgent:
         cmd_executor = self._sandbox.shell()
 
         # 0. Steering (highest priority)
-        middleware.append(SteeringMiddleware())
+        middleware.append(SteeringMiddleware(queue_manager=self.queue_manager))
 
         # 1. Memory (context pruning + compaction)
         memory_enabled = self.config.memory.pruning.enabled or self.config.memory.compaction.enabled
@@ -771,6 +774,7 @@ class LeonAgent:
             parent_model=self.model_name,
             api_key=self.api_key,
             model_kwargs=self._build_model_kwargs(),
+            queue_manager=self.queue_manager,
             verbose=self.verbose,
         )
         middleware.append(self._task_middleware)

@@ -1,7 +1,7 @@
 """Queue middleware for message routing during agent execution."""
 
 from .formatters import format_steer_reminder, format_task_notification
-from .manager import MessageQueueManager, get_queue_manager, reset_queue_manager
+from .manager import MessageQueueManager
 from .middleware import SteeringMiddleware
 
 __all__ = [
@@ -9,6 +9,4 @@ __all__ = [
     "SteeringMiddleware",
     "format_steer_reminder",
     "format_task_notification",
-    "get_queue_manager",
-    "reset_queue_manager",
 ]

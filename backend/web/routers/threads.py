@@ -35,7 +35,7 @@ from backend.web.utils.serializers import serialize_message
 
 logger = logging.getLogger(__name__)
 from core.monitor import AgentState
-from core.queue import format_steer_reminder, get_queue_manager
+from core.queue import format_steer_reminder
 from sandbox.thread_context import set_current_thread_id
 
 router = APIRouter(prefix="/api/threads", tags=["threads"])
@@ -143,7 +143,7 @@ async def delete_thread(
     app.state.thread_cwd.pop(thread_id, None)
     activity_buffers = getattr(app.state, "activity_buffers", {})
     activity_buffers.pop(thread_id, None)
-    get_queue_manager().clear_all(thread_id)
+    app.state.queue_manager.clear_all(thread_id)
 
     # Remove per-thread Agent from pool
     app.state.agent_pool.pop(pool_key, None)
@@ -167,8 +167,9 @@ async def send_message(
     sandbox_type = resolve_thread_sandbox(app, thread_id)
     agent = await get_or_create_agent(app, sandbox_type, thread_id=thread_id)
 
+    qm = app.state.queue_manager
     if hasattr(agent, "runtime") and agent.runtime.current_state == AgentState.ACTIVE:
-        get_queue_manager().inject(format_steer_reminder(payload.message), thread_id)
+        qm.inject(format_steer_reminder(payload.message), thread_id)
         return {"status": "injected", "routing": "steer", "thread_id": thread_id}
 
     # Agent is IDLE — start new run (both transition and run start must be atomic)
@@ -177,25 +178,32 @@ async def send_message(
     async with lock:
         if hasattr(agent, "runtime") and not agent.runtime.transition(AgentState.ACTIVE):
             # Race: became active between check and lock
-            get_queue_manager().inject(format_steer_reminder(payload.message), thread_id)
+            qm.inject(format_steer_reminder(payload.message), thread_id)
             return {"status": "injected", "routing": "steer", "thread_id": thread_id}
         buf = start_agent_run(agent, thread_id, payload.message, app)
     return {"status": "started", "routing": "direct", "run_id": buf.run_id, "thread_id": thread_id}
 
 
 @router.post("/{thread_id}/queue")
-async def queue_message(thread_id: str, payload: SendMessageRequest) -> dict[str, Any]:
+async def queue_message(
+    thread_id: str,
+    payload: SendMessageRequest,
+    app: Annotated[Any, Depends(get_app)] = None,
+) -> dict[str, Any]:
     """Enqueue a followup message. Will be consumed when agent reaches IDLE."""
     if not payload.message.strip():
         raise HTTPException(status_code=400, detail="message cannot be empty")
-    get_queue_manager().enqueue(payload.message, thread_id)
+    app.state.queue_manager.enqueue(payload.message, thread_id)
     return {"status": "queued", "thread_id": thread_id}
 
 
 @router.get("/{thread_id}/queue")
-async def get_queue(thread_id: str) -> dict[str, Any]:
+async def get_queue(
+    thread_id: str,
+    app: Annotated[Any, Depends(get_app)] = None,
+) -> dict[str, Any]:
     """List pending followup messages in the queue."""
-    messages = get_queue_manager().list_queue(thread_id)
+    messages = app.state.queue_manager.list_queue(thread_id)
     return {"messages": messages, "thread_id": thread_id}
 
 

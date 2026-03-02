@@ -6,16 +6,8 @@ import threading
 
 import pytest
 
-from core.queue import MessageQueueManager, get_queue_manager, reset_queue_manager
+from core.queue import MessageQueueManager
 from core.queue.formatters import format_steer_reminder, format_task_notification
-
-
-@pytest.fixture(autouse=True)
-def _reset_queue():
-    """Reset the global queue manager before each test."""
-    reset_queue_manager()
-    yield
-    reset_queue_manager()
 
 
 @pytest.fixture()
@@ -208,52 +200,34 @@ class TestClearAll:
 
 
 # ---------------------------------------------------------------------------
-# 4. Global singleton
-# ---------------------------------------------------------------------------
-
-
-class TestGlobalSingleton:
-    def test_get_queue_manager_returns_same_instance(self):
-        mgr1 = get_queue_manager()
-        mgr2 = get_queue_manager()
-        assert mgr1 is mgr2
-
-    def test_reset_creates_new_instance(self):
-        mgr1 = get_queue_manager()
-        reset_queue_manager()
-        mgr2 = get_queue_manager()
-        assert mgr1 is not mgr2
-
-
-# ---------------------------------------------------------------------------
-# 5. SteeringMiddleware integration — non-preemptive behavior
+# 4. SteeringMiddleware integration — non-preemptive behavior
 # ---------------------------------------------------------------------------
 
 
 class TestSteeringMiddlewareIntegration:
     """Verify SteeringMiddleware reads from inject channel via drain_steer."""
 
-    def test_middleware_consumes_injected_steer(self):
+    def test_middleware_consumes_injected_steer(self, tmp_db):
         from core.queue.middleware import SteeringMiddleware
 
-        mgr = get_queue_manager()
-        middleware = SteeringMiddleware()
+        mgr = MessageQueueManager(db_path=tmp_db)
+        middleware = SteeringMiddleware(queue_manager=mgr)
 
         thread_id = "test-middleware"
         mgr.inject("change direction", thread_id=thread_id)
 
-        # Middleware should be able to detect pending steer via the global manager
+        # Middleware should be able to detect pending steer via the shared manager
         assert mgr.has_steer(thread_id)
-        # drain_steer is what middleware now calls internally
+        # drain_steer is what middleware calls internally
         items = mgr.drain_steer(thread_id)
         assert items == ["change direction"]
         assert not mgr.has_steer(thread_id)
 
-    def test_middleware_drains_multiple(self):
+    def test_middleware_drains_multiple(self, tmp_db):
         """Middleware drains all pending steers at once."""
         from core.queue.middleware import SteeringMiddleware
 
-        mgr = get_queue_manager()
+        mgr = MessageQueueManager(db_path=tmp_db)
 
         thread_id = "test-multi"
         mgr.inject("first", thread_id=thread_id)
@@ -263,16 +237,16 @@ class TestSteeringMiddlewareIntegration:
         assert items == ["first", "second"]
         assert mgr.drain_steer(thread_id) == []
 
-    def test_tool_calls_never_skipped(self):
+    def test_tool_calls_never_skipped(self, tmp_db):
         """Verify wrap_tool_call is a pure passthrough (non-preemptive)."""
         from unittest.mock import MagicMock
 
         from core.queue.middleware import SteeringMiddleware
 
-        middleware = SteeringMiddleware()
+        mgr = MessageQueueManager(db_path=tmp_db)
+        middleware = SteeringMiddleware(queue_manager=mgr)
 
         # Inject steer to simulate mid-execution message
-        mgr = get_queue_manager()
         mgr.inject("urgent message", thread_id="test-no-skip")
 
         # Create mock tool call request and handler

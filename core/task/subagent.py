@@ -41,6 +41,7 @@ class SubagentRunner:
         workspace_root: Path,
         api_key: str,
         model_kwargs: dict[str, Any] | None = None,
+        queue_manager: Any = None,
     ):
         self.agents = agents
         self.parent_model = parent_model
@@ -50,6 +51,7 @@ class SubagentRunner:
         self._active_tasks: dict[str, asyncio.Task] = {}
         self._task_results: dict[str, TaskResult] = {}
         self._parent_runtime: Any = None
+        self._queue_manager = queue_manager
 
     def set_parent_runtime(self, runtime: Any) -> None:
         """Set parent runtime for background task event emission."""
@@ -494,7 +496,7 @@ class SubagentRunner:
         - Parent running → inject (steer buffer, drained in before_model)
         - Parent idle → enqueue (persistent queue, consumed by IDLE callback)
         """
-        from core.queue import format_task_notification, get_queue_manager
+        from core.queue import format_task_notification
 
         summary = (result.result or "")[:200] if result.status == "completed" else (result.error or "")
         xml = format_task_notification(
@@ -504,7 +506,7 @@ class SubagentRunner:
             result=result.result,
             description=result.description,
         )
-        qm = get_queue_manager()
+        qm = self._queue_manager
         parent_running = getattr(self._parent_runtime, "is_running", lambda: False)()
         if parent_running:
             qm.inject(xml, parent_thread_id)
