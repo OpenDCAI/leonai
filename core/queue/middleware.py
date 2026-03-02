@@ -8,6 +8,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from langchain_core.messages import HumanMessage, ToolMessage
+from langchain_core.runnables import RunnableConfig
 
 try:
     from langchain.agents.middleware.types import (
@@ -39,14 +40,6 @@ class SteeringMiddleware(AgentMiddleware):
     3. Inject as HumanMessage with metadata source="system"
     """
 
-    def _get_thread_id(self) -> str | None:
-        try:
-            from langgraph.config import get_config
-
-            return get_config().get("configurable", {}).get("thread_id")
-        except Exception:
-            return None
-
     def wrap_tool_call(
         self,
         request: ToolCallRequest,
@@ -67,9 +60,10 @@ class SteeringMiddleware(AgentMiddleware):
         self,
         state: Any,
         runtime: Any,
+        config: RunnableConfig | None = None,
     ) -> dict[str, Any] | None:
         """Drain all pending steer messages and inject before model call."""
-        thread_id = self._get_thread_id()
+        thread_id = (config or {}).get("configurable", {}).get("thread_id")
         if not thread_id:
             return None
 
@@ -87,6 +81,7 @@ class SteeringMiddleware(AgentMiddleware):
         self,
         state: Any,
         runtime: Any,
+        config: RunnableConfig | None = None,
     ) -> dict[str, Any] | None:
         """Async version of before_model."""
-        return self.before_model(state, runtime)
+        return self.before_model(state, runtime, config)

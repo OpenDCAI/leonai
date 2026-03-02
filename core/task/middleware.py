@@ -219,6 +219,8 @@ The agent will work independently and return results when complete.""",
         if tool_name not in (self.TOOL_TASK, self.TOOL_TASK_OUTPUT):
             return handler(request)
 
+        parent_thread_id = request.runtime.config.get("configurable", {}).get("thread_id")
+
         # Run async handler in sync context
         import asyncio
 
@@ -228,7 +230,7 @@ The agent will work independently and return results when complete.""",
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
 
-        return loop.run_until_complete(self._handle_tool_call(tool_call))
+        return loop.run_until_complete(self._handle_tool_call(tool_call, parent_thread_id))
 
     async def awrap_tool_call(
         self,
@@ -242,16 +244,17 @@ The agent will work independently and return results when complete.""",
         if tool_name not in (self.TOOL_TASK, self.TOOL_TASK_OUTPUT):
             return await handler(request)
 
-        return await self._handle_tool_call(tool_call)
+        parent_thread_id = request.runtime.config.get("configurable", {}).get("thread_id")
+        return await self._handle_tool_call(tool_call, parent_thread_id)
 
-    async def _handle_tool_call(self, tool_call: dict) -> ToolMessage:
+    async def _handle_tool_call(self, tool_call: dict, parent_thread_id: str | None = None) -> ToolMessage:
         """Handle task or task_status tool call."""
         tool_name = tool_call.get("name")
         tool_id = tool_call.get("id", "")
         args = tool_call.get("args", {})
 
         if tool_name == self.TOOL_TASK:
-            result = await self._handle_task(args, tool_id)
+            result = await self._handle_task(args, tool_id, parent_thread_id)
         elif tool_name == self.TOOL_TASK_OUTPUT:
             result = await self._handle_task_output(args)
         else:
@@ -263,7 +266,7 @@ The agent will work independently and return results when complete.""",
 
         return self._make_tool_message(result, tool_id)
 
-    async def _handle_task(self, args: dict, tool_id: str) -> TaskResult:
+    async def _handle_task(self, args: dict, tool_id: str, parent_thread_id: str | None = None) -> TaskResult:
         """Handle task tool call.
 
         - Background mode: start an async task and return immediately (TaskOutput polls).
@@ -292,6 +295,7 @@ The agent will work independently and return results when complete.""",
                 all_middleware=self.parent_middleware,
                 checkpointer=self.checkpointer,
                 parent_tool_call_id=tool_id,
+                parent_thread_id=parent_thread_id,
             )
 
         # Foreground: use streaming mode to capture sub-agent events

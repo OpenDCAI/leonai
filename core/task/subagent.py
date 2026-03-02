@@ -157,6 +157,7 @@ class SubagentRunner:
         all_middleware: list[Any],
         checkpointer: Any,
         parent_tool_call_id: str | None = None,
+        parent_thread_id: str | None = None,
     ) -> TaskResult:
         """Run a subagent task."""
         task_id = str(uuid.uuid4())[:8]
@@ -218,15 +219,6 @@ class SubagentRunner:
         # Execute
         prompt = params["Prompt"]
         description = params.get("Description", "")
-
-        # Resolve parent thread_id for background task notifications
-        parent_thread_id: str | None = None
-        try:
-            from langgraph.config import get_config
-
-            parent_thread_id = get_config().get("configurable", {}).get("thread_id")
-        except Exception:
-            pass
 
         if params.get("RunInBackground"):
             # Background execution
