@@ -14,10 +14,9 @@ interface AgentsViewProps {
   steps: ToolStep[];
   focusedStepId: string | null;
   onFocusStep: (id: string | null) => void;
-  isMainStreamDone?: boolean;
 }
 
-export function AgentsView({ steps, focusedStepId, onFocusStep, isMainStreamDone = false }: AgentsViewProps) {
+export function AgentsView({ steps, focusedStepId, onFocusStep }: AgentsViewProps) {
   const [leftWidth, setLeftWidth] = useState(280);
   const [isDragging, setIsDragging] = useState(false);
   const [agentFocusedStepId, setAgentFocusedStepId] = useState<string | null>(null);

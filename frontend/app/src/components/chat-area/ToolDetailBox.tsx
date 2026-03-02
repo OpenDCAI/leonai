@@ -45,10 +45,13 @@ export const ToolDetailBox = memo(function ToolDetailBox({
 
   return (
     <div
+      role="button"
+      tabIndex={0}
       className={`rounded-lg border bg-[#fafafa] cursor-pointer transition-colors ${
         hasRunning ? "detail-box-glow" : "border-[#e5e5e5] hover:border-[#d4d4d4]"
       }`}
       onClick={() => firstStepId && onFocusStep?.(firstStepId)}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); firstStepId && onFocusStep?.(firstStepId); } }}
       title="点击查看详情"
     >
       <div

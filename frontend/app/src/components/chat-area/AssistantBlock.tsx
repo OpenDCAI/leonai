@@ -2,11 +2,10 @@ import { memo } from "react";
 import type { AssistantTurn, NoticeSegment, StreamStatus, ToolSegment, TurnSegment } from "../../api";
 import MarkdownContent from "../MarkdownContent";
 import { CopyButton } from "./CopyButton";
-import { parseNoticeContent, type ParsedNotice } from "./NoticeBubble";
+import { parseNoticeContent, STATUS_ICON, type ParsedNotice } from "./NoticeBubble";
 import { ThinkingIndicator } from "./ThinkingIndicator";
 import { ToolDetailBox } from "./ToolDetailBox";
 import { formatTime } from "./utils";
-import { CheckCircle2, XCircle, Clock } from "lucide-react";
 
 /** Tools whose results are self-contained content that the AI often echoes verbatim. */
 const CONTENT_HEAVY_TOOLS = new Set([
@@ -57,12 +56,6 @@ function splitPhases(segments: TurnSegment[]): Phase[] {
 }
 
 // --- Notice divider (inline within assistant block) ---
-
-const STATUS_ICON: Record<NonNullable<ParsedNotice["status"]>, React.ReactNode> = {
-  completed: <CheckCircle2 className="w-3 h-3 text-emerald-500 shrink-0" />,
-  error: <XCircle className="w-3 h-3 text-red-400 shrink-0" />,
-  pending: <Clock className="w-3 h-3 text-gray-400 shrink-0" />,
-};
 
 function NoticeDivider({ content }: { content: string }) {
   const parsed = parseNoticeContent(content);
@@ -162,9 +155,9 @@ export const AssistantBlock = memo(function AssistantBlock({ entry, isStreamingT
           /* Phase-based rendering: split at notice boundaries */
           splitPhases(entry.segments).map((phase, i) =>
             phase.kind === "notice"
-              ? <NoticeDivider key={i} content={phase.content} />
+              ? <NoticeDivider key={`notice-${i}-${phase.content.slice(0, 32)}`} content={phase.content} />
               : <ContentPhaseBlock
-                  key={i}
+                  key={phase.segments[0]?.type === "tool" ? `tool-${(phase.segments[0] as ToolSegment).step.id}` : `content-${i}`}
                   segments={phase.segments}
                   isStreaming={!!isStreamingThis}
                   runtimeStatus={runtimeStatus}

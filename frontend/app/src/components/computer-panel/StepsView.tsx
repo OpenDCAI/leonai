@@ -1,5 +1,5 @@
 import { CheckCircle2, ChevronDown, ChevronRight, Loader2, Square, XCircle } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Activity, ToolStep } from "../../api";
 import { DEFAULT_BADGE, TOOL_BADGE_STYLES } from "../chat-area/constants";
 import { getStepSummary } from "../chat-area/utils";
@@ -38,9 +38,12 @@ export function StepsView({
   const scrollRef = useRef<HTMLDivElement>(null);
   const isAtBottomRef = useRef(true);
 
-  const visibleActivities = activities.filter(
-    (a) => a.status === "running" || Date.now() - a.startTime < ACTIVITY_VISIBLE_AFTER_DONE_MS,
-  );
+  const visibleActivities = useMemo(() => {
+    const now = Date.now();
+    return activities.filter(
+      (a) => a.status === "running" || now - a.startTime < ACTIVITY_VISIBLE_AFTER_DONE_MS,
+    );
+  }, [activities]);
 
   // Track user scroll position: only auto-scroll if user is near bottom
   const handleScroll = useCallback(() => {
@@ -113,14 +116,11 @@ function ToolFlowLine({
   isFocused: boolean;
   onFocus: () => void;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const [userExpanded, setUserExpanded] = useState(false);
+  const expanded = isFocused || userExpanded;
   const badge = TOOL_BADGE_STYLES[step.name] ?? { ...DEFAULT_BADGE, label: step.name };
   const Renderer = getToolRenderer(step);
   const preview = getResultPreview(step);
-
-  useEffect(() => {
-    if (isFocused) setExpanded(true);
-  }, [isFocused]);
 
   return (
     <div
@@ -130,7 +130,7 @@ function ToolFlowLine({
       {/* Row: status icon + badge + summary + chevron */}
       <div
         className="flex items-center gap-1.5 cursor-pointer py-0.5"
-        onClick={() => { setExpanded((v) => !v); onFocus(); }}
+        onClick={() => { setUserExpanded((v) => !v); onFocus(); }}
       >
         <StatusIcon status={step.status} />
         <span

@@ -12,7 +12,7 @@ export interface ParsedNotice {
   taskId?: string;
 }
 
-const STATUS_ICON = {
+export const STATUS_ICON = {
   completed: <CheckCircle2 className="w-3 h-3 text-emerald-500 shrink-0" />,
   error: <XCircle className="w-3 h-3 text-red-400 shrink-0" />,
   pending: <Clock className="w-3 h-3 text-gray-400 shrink-0" />,
