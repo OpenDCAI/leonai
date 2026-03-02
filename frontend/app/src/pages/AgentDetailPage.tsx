@@ -446,6 +446,7 @@ function SubAgentsPanel({ agents, onSave, onAdd, onDelete }: {
     if (!current || !draft) return false;
     if (draft.desc !== current.desc) return true;
     if (draft.system_prompt !== current.system_prompt) return true;
+    if (draft.tools.length !== current.tools.length) return true;
     return draft.tools.some((t, i) => t.enabled !== current.tools[i]?.enabled);
   }, [current, draft]);
 
@@ -486,17 +487,12 @@ function SubAgentsPanel({ agents, onSave, onAdd, onDelete }: {
             >
               <Bot className="h-3 w-3 shrink-0" />
               <span className="truncate flex-1 text-left">{a.name}</span>
-              {a.builtin && (
-                <span className="text-[10px] px-1 rounded bg-muted text-muted-foreground shrink-0">内置</span>
-              )}
-              {!a.builtin && (
-                <span
-                  className="opacity-0 group-hover:opacity-100 shrink-0 text-muted-foreground hover:text-destructive transition-opacity"
-                  onClick={e => { e.stopPropagation(); onDelete(a.name); setSelected(agents.find(x => x.name !== a.name)?.name ?? null); }}
-                >
-                  <X className="h-3 w-3" />
-                </span>
-              )}
+              <span
+                className="opacity-0 group-hover:opacity-100 shrink-0 text-muted-foreground hover:text-destructive transition-opacity"
+                onClick={e => { e.stopPropagation(); onDelete(a.name); setSelected(agents.find(x => x.name !== a.name)?.name ?? null); }}
+              >
+                <X className="h-3 w-3" />
+              </span>
             </button>
           ))}
         </div>
@@ -509,9 +505,6 @@ function SubAgentsPanel({ agents, onSave, onAdd, onDelete }: {
             {/* Header + save */}
             <div className="flex items-center gap-2">
               <span className="text-sm font-medium">{draft.name}</span>
-              {draft.builtin && (
-                <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">内置</span>
-              )}
               <div className="flex-1" />
               <Button size="sm" className="h-7" disabled={!dirty || saving} onClick={save}>
                 <Save className="h-3.5 w-3.5 mr-1" /> {saving ? "..." : "保存"}

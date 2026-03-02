@@ -198,9 +198,11 @@ def _member_to_dict(member_dir: Path) -> dict[str, Any] | None:
     # Convert rules to list of {name, content}
     rules_list = bundle.rules
 
-    # Convert sub-agents — expand tools to full CrudItem list
+    # Convert sub-agents — only non-builtin (editable) ones
     sub_agents_list = []
     for a in bundle.agents:
+        if a.source_dir is not None and a.source_dir.resolve() == _SYSTEM_AGENTS_DIR:
+            continue
         is_all = a.tools == ["*"]
         agent_tools = [
             {
@@ -216,7 +218,6 @@ def _member_to_dict(member_dir: Path) -> dict[str, Any] | None:
             "desc": a.description,
             "tools": agent_tools,
             "system_prompt": a.system_prompt,
-            "builtin": a.source_dir is not None and a.source_dir.resolve() == _SYSTEM_AGENTS_DIR,
         })
 
     # Convert MCP servers
@@ -257,23 +258,6 @@ def _leon_builtin() -> dict[str, Any]:
     """Build Leon builtin member dict with full tool catalog."""
     catalog = _load_tools_catalog()
     tools = [{"name": k, "enabled": True, "desc": v.get("desc", ""), "group": v.get("group", "")} for k, v in catalog.items()]
-    # Load built-in sub-agents
-    loader = AgentLoader()
-    builtin_agents = []
-    agents_dir = _SYSTEM_AGENTS_DIR
-    if agents_dir.is_dir():
-        for md in sorted(agents_dir.glob("*.md")):
-            ac = loader.parse_agent_file(md)
-            if ac:
-                is_all = ac.tools == ["*"]
-                agent_tools = [
-                    {"name": k, "enabled": is_all or k in ac.tools, "desc": v.get("desc", ""), "group": v.get("group", "")}
-                    for k, v in catalog.items()
-                ]
-                builtin_agents.append({
-                    "name": ac.name, "desc": ac.description,
-                    "tools": agent_tools, "system_prompt": ac.system_prompt, "builtin": True,
-                })
 
     return {
         "id": "__leon__",
@@ -281,7 +265,7 @@ def _leon_builtin() -> dict[str, Any]:
         "description": "通用数字成员，随时准备为你工作",
         "status": "active",
         "version": "1.0.0",
-        "config": {"prompt": "", "rules": [], "tools": tools, "mcps": [], "skills": [], "subAgents": builtin_agents},
+        "config": {"prompt": "", "rules": [], "tools": tools, "mcps": [], "skills": [], "subAgents": []},
         "created_at": 0,
         "updated_at": 0,
         "builtin": True,
