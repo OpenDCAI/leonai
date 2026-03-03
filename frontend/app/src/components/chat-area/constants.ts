@@ -19,6 +19,7 @@ export const TOOL_BADGE_STYLES: Record<string, { bg: string; text: string; label
   web_search: { bg: "bg-cyan-50", text: "text-cyan-600", label: "Web" },
   WebSearch: { bg: "bg-cyan-50", text: "text-cyan-600", label: "Web" },
   Task: { bg: "bg-violet-50", text: "text-violet-600", label: "Task" },
+  TaskOutput: { bg: "bg-violet-50", text: "text-violet-600", label: "TaskOutput" },
   TaskCreate: { bg: "bg-violet-50", text: "text-violet-600", label: "Task" },
   TaskUpdate: { bg: "bg-violet-50", text: "text-violet-600", label: "Task" },
   TaskList: { bg: "bg-violet-50", text: "text-violet-600", label: "Task" },
