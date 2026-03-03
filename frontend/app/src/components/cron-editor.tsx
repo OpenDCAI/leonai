@@ -4,7 +4,7 @@ import type { CronJob, Priority } from "@/store/types";
 
 // ── Types ──────────────────────────────────────────────────
 
-type Frequency = "daily" | "weekdays" | "weekly" | "monthly" | "custom";
+type Frequency = "interval" | "daily" | "weekdays" | "weekly" | "monthly";
 
 interface ScheduleState {
   frequency: Frequency;
@@ -12,7 +12,7 @@ interface ScheduleState {
   minute: number;
   weekdays: number[];   // 0=Sun ... 6=Sat
   monthDay: number;     // 1-31
-  customExpr: string;
+  intervalValue: number; // for "every N hours"
 }
 
 interface TaskTemplate {
@@ -25,6 +25,8 @@ interface TaskTemplate {
 // ── Constants ──────────────────────────────────────────────
 
 const WEEK_LABELS = ["日", "一", "二", "三", "四", "五", "六"];
+
+const INTERVAL_OPTIONS = [1, 2, 3, 4, 6, 8, 12];
 
 const CATEGORIES = [
   { id: "code-review", label: "代码审查", color: "bg-blue-500" },
@@ -42,50 +44,62 @@ const PRIORITY_OPTIONS: { value: Priority; label: string; className: string }[] 
   { value: "low", label: "低", className: "bg-muted text-muted-foreground border-border" },
 ];
 
+const FREQ_OPTIONS: { value: Frequency; label: string }[] = [
+  { value: "interval", label: "每隔" },
+  { value: "daily", label: "每天" },
+  { value: "weekdays", label: "工作日" },
+  { value: "weekly", label: "每周" },
+  { value: "monthly", label: "每月" },
+];
+
 // ── Helpers ────────────────────────────────────────────────
 
 function parseSchedule(expr: string): ScheduleState {
   const parts = expr.split(" ");
-  if (parts.length !== 5) return { frequency: "custom", hour: 9, minute: 0, weekdays: [1], monthDay: 1, customExpr: expr };
+  const defaults: ScheduleState = { frequency: "daily", hour: 9, minute: 0, weekdays: [1], monthDay: 1, intervalValue: 2 };
+  if (parts.length !== 5) return defaults;
 
   const [min, hour, dom, , dow] = parts;
+
+  // interval: 0 */2 * * *
+  if (hour.startsWith("*/") && dom === "*" && dow === "*") {
+    return { ...defaults, frequency: "interval", intervalValue: parseInt(hour.slice(2)) || 2, minute: parseInt(min) || 0 };
+  }
+
   const h = parseInt(hour) || 9;
   const m = parseInt(min) || 0;
 
-  // daily: 0 9 * * *
-  if (dom === "*" && dow === "*") return { frequency: "daily", hour: h, minute: m, weekdays: [1], monthDay: 1, customExpr: expr };
   // weekdays: 0 9 * * 1-5
-  if (dom === "*" && dow === "1-5") return { frequency: "weekdays", hour: h, minute: m, weekdays: [1, 2, 3, 4, 5], monthDay: 1, customExpr: expr };
+  if (dom === "*" && dow === "1-5") return { ...defaults, frequency: "weekdays", hour: h, minute: m };
   // weekly: 0 9 * * 1,3,5
   if (dom === "*" && dow !== "*") {
     const days = dow.split(",").map(Number).filter((n) => !isNaN(n));
-    return { frequency: "weekly", hour: h, minute: m, weekdays: days.length ? days : [1], monthDay: 1, customExpr: expr };
+    return { ...defaults, frequency: "weekly", hour: h, minute: m, weekdays: days.length ? days : [1] };
   }
   // monthly: 0 9 1 * *
-  if (dom !== "*" && dow === "*") return { frequency: "monthly", hour: h, minute: m, weekdays: [1], monthDay: parseInt(dom) || 1, customExpr: expr };
-
-  return { frequency: "custom", hour: h, minute: m, weekdays: [1], monthDay: 1, customExpr: expr };
+  if (dom !== "*" && dow === "*") return { ...defaults, frequency: "monthly", hour: h, minute: m, monthDay: parseInt(dom) || 1 };
+  // daily: 0 9 * * *  (or any other * * pattern)
+  return { ...defaults, frequency: "daily", hour: h, minute: m };
 }
 
 function buildCron(s: ScheduleState): string {
-  if (s.frequency === "custom") return s.customExpr;
-  const time = `${s.minute} ${s.hour}`;
   switch (s.frequency) {
-    case "daily": return `${time} * * *`;
-    case "weekdays": return `${time} * * 1-5`;
-    case "weekly": return `${time} * * ${s.weekdays.sort().join(",")}`;
-    case "monthly": return `${time} ${s.monthDay} * *`;
+    case "interval": return `${s.minute} */${s.intervalValue} * * *`;
+    case "daily": return `${s.minute} ${s.hour} * * *`;
+    case "weekdays": return `${s.minute} ${s.hour} * * 1-5`;
+    case "weekly": return `${s.minute} ${s.hour} * * ${[...s.weekdays].sort().join(",")}`;
+    case "monthly": return `${s.minute} ${s.hour} ${s.monthDay} * *`;
   }
 }
 
 function scheduleToHuman(s: ScheduleState): string {
   const t = `${String(s.hour).padStart(2, "0")}:${String(s.minute).padStart(2, "0")}`;
   switch (s.frequency) {
+    case "interval": return `每 ${s.intervalValue} 小时`;
     case "daily": return `每天 ${t}`;
     case "weekdays": return `工作日 ${t}`;
     case "weekly": return `每周${s.weekdays.map((d) => WEEK_LABELS[d]).join("、")} ${t}`;
     case "monthly": return `每月 ${s.monthDay} 日 ${t}`;
-    case "custom": return s.customExpr;
   }
 }
 
@@ -106,16 +120,6 @@ function parseTaskTemplate(json: string): TaskTemplate {
 function buildTaskTemplate(t: TaskTemplate): string {
   return JSON.stringify({ title: t.title, description: t.description, priority: t.priority, category: t.category });
 }
-
-// ── Frequency selector ─────────────────────────────────────
-
-const FREQ_OPTIONS: { value: Frequency; label: string }[] = [
-  { value: "daily", label: "每天" },
-  { value: "weekdays", label: "工作日" },
-  { value: "weekly", label: "每周" },
-  { value: "monthly", label: "每月" },
-  { value: "custom", label: "自定义" },
-];
 
 // ── Component ──────────────────────────────────────────────
 
@@ -157,9 +161,11 @@ export default function CronEditor({ cronForm, isMobile, onUpdate, onSave, onClo
     setSchedule((s) => {
       const has = s.weekdays.includes(day);
       const next = has ? s.weekdays.filter((d) => d !== day) : [...s.weekdays, day];
-      return { ...s, weekdays: next.length ? next : [day] }; // prevent empty
+      return { ...s, weekdays: next.length ? next : [day] };
     });
   };
+
+  const needsTimePicker = schedule.frequency !== "interval";
 
   // ── Render ─────────────────────────────────────────────
 
@@ -200,15 +206,16 @@ export default function CronEditor({ cronForm, isMobile, onUpdate, onSave, onClo
 
         <div className="mx-5 border-t border-border" />
 
-        {/* ── Section 2: Schedule (Apple style) ── */}
+        {/* ── Section 2: Schedule ── */}
         <div className="px-5 py-4 space-y-4">
           <div className="flex items-center justify-between">
             <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">调度</span>
             <span className="text-xs text-primary font-medium">{humanSchedule}</span>
           </div>
 
-          {/* Sentence builder: 频率选择 */}
+          {/* Sentence builder */}
           <div className="flex items-center gap-2 flex-wrap">
+            {/* Frequency dropdown */}
             <div className="relative">
               <button
                 onClick={() => setFreqOpen(!freqOpen)}
@@ -234,10 +241,26 @@ export default function CronEditor({ cronForm, isMobile, onUpdate, onSave, onClo
               )}
             </div>
 
-            {schedule.frequency !== "custom" && (
+            {/* Interval: "每隔 [N] 小时 执行" */}
+            {schedule.frequency === "interval" && (
+              <>
+                <select
+                  value={schedule.intervalValue}
+                  onChange={(e) => updateSchedule({ intervalValue: parseInt(e.target.value) })}
+                  className="appearance-none px-2.5 py-2 rounded-xl bg-muted/60 border border-border text-sm font-medium text-foreground outline-none focus:border-primary/40 transition-colors cursor-pointer"
+                >
+                  {INTERVAL_OPTIONS.map((n) => (
+                    <option key={n} value={n}>{n}</option>
+                  ))}
+                </select>
+                <span className="text-sm text-muted-foreground">小时执行</span>
+              </>
+            )}
+
+            {/* Fixed time: "的 HH:MM 执行" */}
+            {needsTimePicker && (
               <>
                 <span className="text-sm text-muted-foreground">的</span>
-                {/* Time picker */}
                 <div className="flex items-center gap-1">
                   <select
                     value={schedule.hour}
@@ -304,49 +327,28 @@ export default function CronEditor({ cronForm, isMobile, onUpdate, onSave, onClo
               </div>
             </div>
           )}
-
-          {/* Custom: raw expression */}
-          {schedule.frequency === "custom" && (
-            <div className="space-y-1.5">
-              <input
-                value={schedule.customExpr}
-                onChange={(e) => updateSchedule({ customExpr: e.target.value })}
-                placeholder="0 9 * * *"
-                className="w-full px-3 py-2 rounded-xl bg-muted/60 border border-border text-sm text-foreground font-mono outline-none focus:border-primary/40 transition-colors"
-              />
-              <p className="text-[11px] text-muted-foreground">
-                格式：分 时 日 月 星期（例：<code className="text-foreground/70">0 9 * * 1-5</code> = 工作日 09:00）
-              </p>
-            </div>
-          )}
         </div>
 
         <div className="mx-5 border-t border-border" />
 
-        {/* ── Section 3: Task preview (what gets created) ── */}
+        {/* ── Section 3: Task preview ── */}
         <div className="px-5 py-4 space-y-4">
           <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">到时候创建的任务</span>
 
-          {/* Task title */}
-          <div className="space-y-1.5">
-            <input
-              value={template.title}
-              onChange={(e) => updateTemplate({ title: e.target.value })}
-              placeholder="任务标题"
-              className="w-full px-3.5 py-2.5 rounded-xl bg-card border border-border text-sm font-medium text-foreground outline-none focus:border-primary/40 transition-colors placeholder:text-muted-foreground/50"
-            />
-          </div>
+          <input
+            value={template.title}
+            onChange={(e) => updateTemplate({ title: e.target.value })}
+            placeholder="任务标题"
+            className="w-full px-3.5 py-2.5 rounded-xl bg-card border border-border text-sm font-medium text-foreground outline-none focus:border-primary/40 transition-colors placeholder:text-muted-foreground/50"
+          />
 
-          {/* Task description */}
-          <div className="space-y-1.5">
-            <textarea
-              value={template.description}
-              onChange={(e) => updateTemplate({ description: e.target.value })}
-              placeholder="任务描述（可选）"
-              rows={2}
-              className="w-full px-3.5 py-2.5 rounded-xl bg-card border border-border text-sm text-foreground outline-none focus:border-primary/40 transition-colors resize-none placeholder:text-muted-foreground/50 leading-relaxed"
-            />
-          </div>
+          <textarea
+            value={template.description}
+            onChange={(e) => updateTemplate({ description: e.target.value })}
+            placeholder="任务描述（可选）"
+            rows={2}
+            className="w-full px-3.5 py-2.5 rounded-xl bg-card border border-border text-sm text-foreground outline-none focus:border-primary/40 transition-colors resize-none placeholder:text-muted-foreground/50 leading-relaxed"
+          />
 
           {/* Category tags */}
           <div className="space-y-2">
@@ -396,7 +398,6 @@ export default function CronEditor({ cronForm, isMobile, onUpdate, onSave, onClo
 
         {/* ── Section 4: Toggle + Danger ── */}
         <div className="px-5 py-4 space-y-4">
-          {/* Enabled toggle */}
           <div className="flex items-center justify-between">
             <span className="text-sm text-foreground font-medium">启用调度</span>
             <button
@@ -407,7 +408,6 @@ export default function CronEditor({ cronForm, isMobile, onUpdate, onSave, onClo
             </button>
           </div>
 
-          {/* Delete */}
           <button
             onClick={onDelete}
             className="w-full px-3 py-2.5 rounded-xl text-destructive text-xs font-medium hover:bg-destructive/5 transition-colors"
