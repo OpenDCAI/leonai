@@ -12,6 +12,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from storage.providers.sqlite.kernel import connect_sqlite
+
 from sandbox.message_queue import Message, MessageQueue
 
 DEFAULT_DB_PATH = Path.home() / ".leon" / "leon.db"
@@ -26,8 +28,7 @@ class SQLiteMessageQueue(MessageQueue):
     def _init_db(self) -> sqlite3.Connection:
         if isinstance(self.db_path, Path):
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(self.db_path, timeout=10, check_same_thread=False)
-        conn.execute("PRAGMA journal_mode=WAL")
+        conn = connect_sqlite(self.db_path, timeout_ms=10_000, check_same_thread=False)
         conn.execute("""
             CREATE TABLE IF NOT EXISTS message_queue (
                 id TEXT PRIMARY KEY,

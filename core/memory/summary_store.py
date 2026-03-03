@@ -23,6 +23,7 @@ from typing import Any
 
 from sandbox.db import DEFAULT_DB_PATH
 from storage.contracts import SummaryRepo, SummaryRow
+from storage.providers.sqlite.kernel import connect_sqlite
 
 from storage.providers.sqlite.summary_repo import SQLiteSummaryRepo
 
@@ -31,9 +32,7 @@ logger = logging.getLogger(__name__)
 
 def _connect(db_path: Path) -> sqlite3.Connection:
     """Create SQLite connection with proper timeout settings."""
-    conn = sqlite3.connect(str(db_path), timeout=30)
-    conn.execute("PRAGMA busy_timeout=30000")
-    return conn
+    return connect_sqlite(db_path)
 
 
 @dataclass

@@ -20,6 +20,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from storage.providers.sqlite.kernel import connect_sqlite
+
 from sandbox.db import DEFAULT_DB_PATH
 from sandbox.lifecycle import (
     LeaseInstanceState,
@@ -69,9 +71,7 @@ REQUIRED_EVENT_COLUMNS = {
 
 
 def _connect(db_path: Path) -> sqlite3.Connection:
-    conn = sqlite3.connect(str(db_path), timeout=30)
-    conn.execute("PRAGMA busy_timeout=30000")
-    return conn
+    return connect_sqlite(db_path)
 
 
 @dataclass
@@ -295,9 +295,12 @@ class SQLiteLease(SandboxLease):
         payload: dict[str, Any],
         error: str | None,
         event_id: str,
+        conn: sqlite3.Connection | None = None,
     ) -> None:
-        with _connect(self.db_path) as conn:
-            conn.execute(
+        should_commit = conn is None
+        target = conn or _connect(self.db_path)
+        try:
+            target.execute(
                 """
                 INSERT INTO lease_events (event_id, lease_id, event_type, source, payload_json, error, created_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -312,11 +315,18 @@ class SQLiteLease(SandboxLease):
                     datetime.now().isoformat(),
                 ),
             )
-            conn.commit()
+            if should_commit:
+                target.commit()
+        finally:
+            if should_commit:
+                target.close()
 
-    def _persist_snapshot(self) -> None:
-        with _connect(self.db_path) as conn:
-            conn.execute(
+    def _persist_snapshot(self, conn: sqlite3.Connection | None = None) -> bool:
+        should_commit = conn is None
+        target = conn or _connect(self.db_path)
+        detached_instance = self._detached_instance
+        try:
+            target.execute(
                 """
                 UPDATE sandbox_leases
                 SET current_instance_id = ?,
@@ -351,7 +361,7 @@ class SQLiteLease(SandboxLease):
             )
 
             if self._current_instance:
-                conn.execute(
+                target.execute(
                     """
                     INSERT INTO sandbox_instances (instance_id, lease_id, provider_session_id, status, created_at, last_seen_at)
                     VALUES (?, ?, ?, ?, ?, ?)
@@ -370,8 +380,8 @@ class SQLiteLease(SandboxLease):
                     ),
                 )
 
-            if self._detached_instance:
-                conn.execute(
+            if detached_instance:
+                target.execute(
                     """
                     UPDATE sandbox_instances
                     SET status = ?, last_seen_at = ?
@@ -380,16 +390,23 @@ class SQLiteLease(SandboxLease):
                     (
                         "stopped",
                         datetime.now().isoformat(),
-                        self._detached_instance.instance_id,
+                        detached_instance.instance_id,
                     ),
                 )
-                self._detached_instance = None
+            if should_commit:
+                target.commit()
+                if detached_instance:
+                    self._detached_instance = None
+            return detached_instance is not None
+        finally:
+            if should_commit:
+                target.close()
 
-            conn.commit()
-
-    def _persist_lease_metadata(self) -> None:
-        with _connect(self.db_path) as conn:
-            conn.execute(
+    def _persist_lease_metadata(self, conn: sqlite3.Connection | None = None) -> None:
+        should_commit = conn is None
+        target = conn or _connect(self.db_path)
+        try:
+            target.execute(
                 """
                 UPDATE sandbox_leases
                 SET desired_state = ?,
@@ -418,7 +435,11 @@ class SQLiteLease(SandboxLease):
                     self.lease_id,
                 ),
             )
-            conn.commit()
+            if should_commit:
+                target.commit()
+        finally:
+            if should_commit:
+                target.close()
 
     def _record_provider_error(self, message: str) -> None:
         self.last_error = message[:500]
@@ -457,7 +478,6 @@ class SQLiteLease(SandboxLease):
                 if isinstance(latest, SQLiteLease):
                     self._sync_from(latest)
             now = datetime.now()
-            error: str | None = None
 
             try:
                 if event_type == "intent.pause":
@@ -545,7 +565,19 @@ class SQLiteLease(SandboxLease):
 
                 self.observed_at = now
                 self.version += 1
-                self._persist_snapshot()
+                with _connect(self.db_path) as conn:
+                    detached_persisted = self._persist_snapshot(conn=conn)
+                    self._append_event(
+                        event_type=event_type,
+                        source=source,
+                        payload=payload,
+                        error=None,
+                        event_id=eid,
+                        conn=conn,
+                    )
+                    conn.commit()
+                if detached_persisted:
+                    self._detached_instance = None
 
             except Exception as exc:
                 error = str(exc)
@@ -554,23 +586,19 @@ class SQLiteLease(SandboxLease):
                 self.refresh_hint_at = datetime.now()
                 self.observed_at = datetime.now()
                 self.version += 1
-                self._persist_lease_metadata()
-                self._append_event(
-                    event_type=event_type,
-                    source=source,
-                    payload=payload,
-                    error=error,
-                    event_id=eid,
-                )
+                with _connect(self.db_path) as conn:
+                    self._persist_lease_metadata(conn=conn)
+                    self._append_event(
+                        event_type=event_type,
+                        source=source,
+                        payload=payload,
+                        error=error,
+                        event_id=eid,
+                        conn=conn,
+                    )
+                    conn.commit()
                 raise
 
-            self._append_event(
-                event_type=event_type,
-                source=source,
-                payload=payload,
-                error=error,
-                event_id=eid,
-            )
             return self._snapshot()
 
     def ensure_active_instance(self, provider: SandboxProvider) -> SandboxInstance:

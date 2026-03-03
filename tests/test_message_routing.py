@@ -1,6 +1,7 @@
 """Tests for unified message queue: enqueue/dequeue/drain_all + wake handlers."""
 
 import threading
+from pathlib import Path
 
 import pytest
 
@@ -12,6 +13,23 @@ from core.queue.formatters import format_steer_reminder, format_task_notificatio
 def tmp_db(tmp_path):
     """Provide a temporary SQLite database path."""
     return str(tmp_path / "test.db")
+
+
+class TestQueueDatabaseIsolation:
+    def test_default_queue_path_uses_dedicated_queue_db(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("LEON_DB_PATH", str(tmp_path / "leon.db"))
+        monkeypatch.delenv("LEON_QUEUE_DB_PATH", raising=False)
+
+        mgr = MessageQueueManager()
+        expected = tmp_path / "queue.db"
+        assert Path(mgr._db_path) == expected
+
+    def test_queue_path_honors_leon_queue_db_path(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("LEON_DB_PATH", str(tmp_path / "leon.db"))
+        monkeypatch.setenv("LEON_QUEUE_DB_PATH", str(tmp_path / "custom-queue.db"))
+
+        mgr = MessageQueueManager()
+        assert Path(mgr._db_path) == (tmp_path / "custom-queue.db")
 
 
 # ---------------------------------------------------------------------------
@@ -48,6 +66,37 @@ class TestEnqueueDequeue:
     def test_dequeue_empty(self, tmp_db):
         mgr = MessageQueueManager(db_path=tmp_db)
         assert mgr.dequeue("nonexistent") is None
+
+    def test_dequeue_empty_does_not_issue_delete(self, tmp_db):
+        mgr = MessageQueueManager(db_path=tmp_db)
+
+        class _FakeCursor:
+            def fetchone(self):
+                return None
+
+        class _FakeConn:
+            def __init__(self):
+                self.seen_sql: list[str] = []
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def execute(self, sql, params=()):
+                self.seen_sql.append(str(sql))
+                if "DELETE FROM message_queue" in str(sql):
+                    raise AssertionError("DELETE should not be executed for empty queue dequeue")
+                return _FakeCursor()
+
+            def commit(self):
+                raise AssertionError("commit should not be called for empty queue dequeue")
+
+        fake_conn = _FakeConn()
+        mgr._conn = lambda: fake_conn  # type: ignore[method-assign]
+        assert mgr.dequeue("t-empty") is None
+        assert any("SELECT 1 FROM message_queue" in sql for sql in fake_conn.seen_sql)
 
     def test_peek_does_not_consume(self, tmp_db):
         mgr = MessageQueueManager(db_path=tmp_db)
@@ -133,6 +182,40 @@ class TestDrainAll:
     def test_drain_empty_returns_empty_list(self, tmp_db):
         mgr = MessageQueueManager(db_path=tmp_db)
         assert mgr.drain_all("nonexistent") == []
+
+    def test_drain_empty_does_not_issue_delete(self, tmp_db):
+        mgr = MessageQueueManager(db_path=tmp_db)
+
+        class _FakeCursor:
+            def fetchone(self):
+                return None
+
+            def fetchall(self):
+                return []
+
+        class _FakeConn:
+            def __init__(self):
+                self.seen_sql: list[str] = []
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def execute(self, sql, params=()):
+                self.seen_sql.append(str(sql))
+                if "DELETE FROM message_queue" in str(sql):
+                    raise AssertionError("DELETE should not be executed for empty queue drain")
+                return _FakeCursor()
+
+            def commit(self):
+                raise AssertionError("commit should not be called for empty queue drain")
+
+        fake_conn = _FakeConn()
+        mgr._conn = lambda: fake_conn  # type: ignore[method-assign]
+        assert mgr.drain_all("t-empty") == []
+        assert any("SELECT 1 FROM message_queue" in sql for sql in fake_conn.seen_sql)
 
     def test_drain_thread_isolation(self, tmp_db):
         mgr = MessageQueueManager(db_path=tmp_db)

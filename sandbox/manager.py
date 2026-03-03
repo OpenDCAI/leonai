@@ -10,6 +10,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from storage.providers.sqlite.kernel import connect_sqlite
+
 from sandbox.capability import SandboxCapability
 from sandbox.chat_session import ChatSessionManager, ChatSessionPolicy
 from sandbox.db import DEFAULT_DB_PATH
@@ -19,13 +21,11 @@ from sandbox.terminal import TerminalState, TerminalStore
 
 
 def lookup_sandbox_for_thread(thread_id: str, db_path: Path | None = None) -> str | None:
-    import sqlite3
-
     target_db = db_path or DEFAULT_DB_PATH
     if not target_db.exists():
         return None
 
-    with sqlite3.connect(str(target_db), timeout=5) as conn:
+    with connect_sqlite(target_db, timeout_ms=5_000) as conn:
         existing = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
         if "abstract_terminals" not in existing or "sandbox_leases" not in existing:
             return None
@@ -250,8 +250,7 @@ class SandboxManager:
                 return False
             if not self.db_path.exists():
                 return False
-            with sqlite3.connect(str(self.db_path), timeout=30) as conn:
-                conn.execute("PRAGMA busy_timeout=30000")
+            with connect_sqlite(self.db_path) as conn:
                 if not _db_has_table(conn, "terminal_commands"):
                     return False
                 row = conn.execute(
@@ -275,8 +274,7 @@ class SandboxManager:
                 return False
             if not self.db_path.exists():
                 return False
-            with sqlite3.connect(str(self.db_path), timeout=30) as conn:
-                conn.execute("PRAGMA busy_timeout=30000")
+            with connect_sqlite(self.db_path) as conn:
                 if not _db_has_table(conn, "terminal_commands"):
                     return False
                 if not _db_has_table(conn, "abstract_terminals"):

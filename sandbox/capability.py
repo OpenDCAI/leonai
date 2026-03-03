@@ -13,6 +13,8 @@ import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from storage.providers.sqlite.kernel import connect_sqlite
+
 from sandbox.interfaces.executor import BaseExecutor
 from sandbox.interfaces.filesystem import FileSystemBackend
 
@@ -114,8 +116,7 @@ class _CommandWrapper(BaseExecutor):
     def _lookup_command_terminal_id(self, command_id: str) -> str | None:
         if self._db_path is None:
             return None
-        with sqlite3.connect(str(self._db_path), timeout=30) as conn:
-            conn.execute("PRAGMA busy_timeout=30000")
+        with connect_sqlite(self._db_path) as conn:
             row = conn.execute(
                 """
                 SELECT tc.terminal_id

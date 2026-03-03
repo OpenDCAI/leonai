@@ -8,13 +8,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from storage.providers.sqlite.kernel import connect_sqlite
+
 from sandbox.db import DEFAULT_DB_PATH
 
 
 def _connect(db_path: Path) -> sqlite3.Connection:
-    conn = sqlite3.connect(str(db_path), timeout=30)
-    conn.execute("PRAGMA busy_timeout=30000")
-    return conn
+    return connect_sqlite(db_path)
 
 
 class ProviderEventStore:
