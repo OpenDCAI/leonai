@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useAppStore } from "@/store/app-store";
 import type { Task, TaskStatus, Priority, CronJob } from "@/store/types";
+import CronEditor from "@/components/cron-editor";
 
 const statusConfig: Record<TaskStatus, { label: string; icon: typeof Circle; color: string }> = {
   pending: { label: "等待中", icon: Circle, color: "text-muted-foreground" },
@@ -40,13 +41,16 @@ type ActiveTab = "tasks" | "cron";
 function cronToHuman(expr: string): string {
   const parts = expr.split(" ");
   if (parts.length !== 5) return expr;
-  const [min, hour, dom, mon, dow] = parts;
-  if (min === "0" && hour !== "*" && dom === "*" && mon === "*" && dow === "*")
-    return `每天 ${hour}:00`;
-  if (min !== "*" && hour !== "*" && dom === "*" && mon === "*" && dow === "*")
-    return `每天 ${hour}:${min.padStart(2, "0")}`;
-  if (dom === "*" && mon === "*" && dow !== "*")
-    return `每周${["日","一","二","三","四","五","六"][parseInt(dow)] || dow} ${hour}:${min.padStart(2, "0")}`;
+  const [min, hour, dom, , dow] = parts;
+  if (dow === "1-5" && dom === "*") return `工作日 ${hour}:${min.padStart(2, "0")}`;
+  if (min === "0" && hour !== "*" && dom === "*" && dow === "*") return `每天 ${hour}:00`;
+  if (hour !== "*" && dom === "*" && dow === "*") return `每天 ${hour}:${min.padStart(2, "0")}`;
+  if (dom === "*" && dow !== "*") {
+    const labels = ["日","一","二","三","四","五","六"];
+    const days = dow.split(",").map((d: string) => labels[parseInt(d)] || d).join("、");
+    return `每周${days} ${hour}:${min.padStart(2, "0")}`;
+  }
+  if (dom !== "*" && dow === "*") return `每月 ${dom} 日 ${hour}:${min.padStart(2, "0")}`;
   return expr;
 }
 
@@ -435,88 +439,16 @@ export default function Tasks() {
     </div>
   );
 
-  // Cron edit panel
+  // Cron edit panel (Apple-style)
   const cronEditPanel = cronForm && (
-    <div className={`${isMobile ? "fixed inset-0 z-50 flex" : "w-[360px] shrink-0 border-l border-border"} bg-background flex flex-col`}>
-      {isMobile && <div className="fixed inset-0 bg-black/50 -z-10" onClick={closeCronEdit} />}
-      <div className="h-14 flex items-center justify-between px-4 border-b border-border shrink-0">
-        <h3 className="text-sm font-semibold text-foreground">编辑定时任务</h3>
-        <div className="flex items-center gap-1">
-          <button onClick={saveCronEdit} className="px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-xs font-medium hover:opacity-90 transition-opacity">
-            保存
-          </button>
-          <button onClick={closeCronEdit} className="p-1.5 rounded-md hover:bg-muted transition-colors">
-            <X className="w-4 h-4 text-muted-foreground" />
-          </button>
-        </div>
-      </div>
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {/* Name */}
-        <div>
-          <label className="text-[11px] text-muted-foreground uppercase tracking-wider font-medium mb-1.5 block">名称</label>
-          <input
-            value={cronForm.name}
-            onChange={(e) => setCronForm({ ...cronForm, name: e.target.value })}
-            className="w-full px-3 py-2 rounded-lg bg-card border border-border text-sm text-foreground outline-none focus:border-primary/40 transition-colors"
-          />
-        </div>
-        {/* Description */}
-        <div>
-          <label className="text-[11px] text-muted-foreground uppercase tracking-wider font-medium mb-1.5 block">描述</label>
-          <textarea
-            value={cronForm.description}
-            onChange={(e) => setCronForm({ ...cronForm, description: e.target.value })}
-            rows={3}
-            className="w-full px-3 py-2 rounded-lg bg-card border border-border text-sm text-foreground outline-none focus:border-primary/40 transition-colors resize-none"
-          />
-        </div>
-        {/* Cron expression */}
-        <div>
-          <label className="text-[11px] text-muted-foreground uppercase tracking-wider font-medium mb-1.5 block">
-            <Timer className="w-3 h-3 inline mr-1" />Cron 表达式
-          </label>
-          <input
-            value={cronForm.cron_expression}
-            onChange={(e) => setCronForm({ ...cronForm, cron_expression: e.target.value })}
-            placeholder="0 9 * * *"
-            className="w-full px-3 py-2 rounded-lg bg-card border border-border text-sm text-foreground font-mono outline-none focus:border-primary/40 transition-colors"
-          />
-          {cronForm.cron_expression && (
-            <p className="text-[11px] text-muted-foreground mt-1">{cronToHuman(cronForm.cron_expression)}</p>
-          )}
-        </div>
-        {/* Task template */}
-        <div>
-          <label className="text-[11px] text-muted-foreground uppercase tracking-wider font-medium mb-1.5 block">任务模板 (JSON)</label>
-          <textarea
-            value={cronForm.task_template}
-            onChange={(e) => setCronForm({ ...cronForm, task_template: e.target.value })}
-            rows={5}
-            placeholder='{"title": "日报", "priority": "medium"}'
-            className="w-full px-3 py-2 rounded-lg bg-card border border-border text-sm text-foreground font-mono outline-none focus:border-primary/40 transition-colors resize-none"
-          />
-        </div>
-        {/* Enabled toggle */}
-        <div className="flex items-center justify-between">
-          <label className="text-[11px] text-muted-foreground uppercase tracking-wider font-medium">启用</label>
-          <button
-            onClick={() => setCronForm({ ...cronForm, enabled: cronForm.enabled ? 0 : 1 })}
-            className={`relative w-9 h-5 rounded-full transition-colors ${cronForm.enabled ? "bg-primary" : "bg-muted"}`}
-          >
-            <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${cronForm.enabled ? "left-[18px]" : "left-0.5"}`} />
-          </button>
-        </div>
-        {/* Danger zone */}
-        <div className="pt-4 border-t border-border">
-          <button
-            onClick={() => setDeleteCronConfirmId(cronForm.id)}
-            className="w-full px-3 py-2 rounded-lg border border-destructive/20 text-destructive text-xs font-medium hover:bg-destructive/5 transition-colors"
-          >
-            删除定时任务
-          </button>
-        </div>
-      </div>
-    </div>
+    <CronEditor
+      cronForm={cronForm}
+      isMobile={isMobile}
+      onUpdate={(updated) => setCronForm(updated)}
+      onSave={saveCronEdit}
+      onClose={closeCronEdit}
+      onDelete={() => setDeleteCronConfirmId(cronForm.id)}
+    />
   );
 
   return (
@@ -888,9 +820,9 @@ export default function Tasks() {
             ) : (
               <>
                 {/* Cron table header */}
-                <div className="grid grid-cols-[1fr_140px_64px_120px_80px] gap-2 px-6 py-2 border-b border-border text-[11px] text-muted-foreground uppercase tracking-wider font-medium sticky top-0 bg-background z-10">
+                <div className="grid grid-cols-[1fr_160px_64px_120px_80px] gap-2 px-6 py-2 border-b border-border text-[11px] text-muted-foreground uppercase tracking-wider font-medium sticky top-0 bg-background z-10">
                   <span>名称</span>
-                  <span>Cron 表达式</span>
+                  <span>执行频率</span>
                   <span>状态</span>
                   <span>上次触发</span>
                   <span>操作</span>
@@ -899,7 +831,7 @@ export default function Tasks() {
                   <div
                     key={cron.id}
                     onClick={() => openCronEdit(cron)}
-                    className={`grid grid-cols-[1fr_140px_64px_120px_80px] gap-2 px-6 py-3 border-b border-border hover:bg-muted/30 transition-colors cursor-pointer items-center ${
+                    className={`grid grid-cols-[1fr_160px_64px_120px_80px] gap-2 px-6 py-3 border-b border-border hover:bg-muted/30 transition-colors cursor-pointer items-center ${
                       editingCron?.id === cron.id ? "bg-primary/[0.03]" : ""
                     }`}
                   >
@@ -910,8 +842,7 @@ export default function Tasks() {
                       )}
                     </div>
                     <div className="flex flex-col gap-0.5">
-                      <span className="text-xs font-mono text-foreground">{cron.cron_expression}</span>
-                      <span className="text-[11px] text-muted-foreground">{cronToHuman(cron.cron_expression)}</span>
+                      <span className="text-sm text-foreground">{cronToHuman(cron.cron_expression)}</span>
                     </div>
                     <span>
                       <span className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-medium ${
