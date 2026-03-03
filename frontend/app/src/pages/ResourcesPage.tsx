@@ -1,17 +1,77 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { PROVIDER_REGISTRY, deriveAllocatedResources } from "./resources/fake-data";
+import type { ProviderInfo } from "./resources/types";
+import { deriveAllocatedResources } from "./resources/fake-data";
+import { fetchResourceProviders } from "./resources/api";
 import ProviderCard from "./resources/ProviderCard";
 import ProviderDetail from "./resources/ProviderDetail";
 
 export default function ResourcesPage() {
   const isMobile = useIsMobile();
-  const [selectedId, setSelectedId] = useState<string>("local");
+  const [providers, setProviders] = useState<ProviderInfo[]>([]);
+  const [selectedId, setSelectedId] = useState<string>("");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const selected = PROVIDER_REGISTRY.find((p) => p.id === selectedId)!;
-  const activeCount = PROVIDER_REGISTRY.filter((p) => p.status === "active").length;
-  const totalSessions = PROVIDER_REGISTRY.reduce((sum, p) => sum + p.sessions.length, 0);
-  const allocatedResources = useMemo(() => deriveAllocatedResources(PROVIDER_REGISTRY), []);
+  useEffect(() => {
+    let cancelled = false;
+
+    async function load() {
+      setLoading(true);
+      setError(null);
+      try {
+        const nextProviders = await fetchResourceProviders();
+        if (cancelled) return;
+        setProviders(nextProviders);
+        setSelectedId((prev) => {
+          if (nextProviders.some((p) => p.id === prev)) return prev;
+          return nextProviders[0]?.id ?? "";
+        });
+      } catch (e) {
+        if (cancelled) return;
+        setError(e instanceof Error ? e.message : "Failed to load resources");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const selected = providers.find((p) => p.id === selectedId) ?? null;
+  const activeCount = providers.filter((p) => p.status === "active").length;
+  const totalSessions = providers.reduce((sum, p) => sum + p.sessions.length, 0);
+  const allocatedResources = useMemo(() => deriveAllocatedResources(providers), [providers]);
+
+  if (loading) {
+    return (
+      <div className="h-full flex items-center justify-center bg-background">
+        <p className="text-sm text-muted-foreground">Loading resources...</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="h-full flex items-center justify-center bg-background p-6">
+        <div className="max-w-lg rounded-xl border border-border bg-card px-5 py-4">
+          <h3 className="text-sm font-semibold text-foreground mb-2">Resource API error</h3>
+          <p className="text-xs text-muted-foreground font-mono break-all">{error}</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!selected) {
+    return (
+      <div className="h-full flex items-center justify-center bg-background">
+        <p className="text-sm text-muted-foreground">No providers configured.</p>
+      </div>
+    );
+  }
 
   return (
     <div className="h-full flex flex-col bg-background">
@@ -33,8 +93,8 @@ export default function ResourcesPage() {
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6">
         {/* Provider cards */}
-        <div className={`grid gap-3 ${isMobile ? "grid-cols-2" : "grid-cols-5"}`}>
-          {PROVIDER_REGISTRY.map((p) => (
+        <div className={`grid gap-3 ${isMobile ? "grid-cols-2" : "grid-cols-3 xl:grid-cols-6"}`}>
+          {providers.map((p) => (
             <ProviderCard
               key={p.id}
               provider={p}

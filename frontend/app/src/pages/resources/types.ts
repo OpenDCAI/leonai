@@ -18,6 +18,23 @@ export interface ProviderQuota {
   limit: number;
 }
 
+export type MetricSource = "api" | "derived" | "plan" | "console" | "unknown";
+
+export interface UsageMetric {
+  used: number | null;
+  limit: number | null;
+  unit: string;
+  source: MetricSource;
+}
+
+export interface ProviderTelemetry {
+  running: UsageMetric;
+  cpu: UsageMetric;
+  memory: UsageMetric;
+  disk: UsageMetric;
+  quota?: UsageMetric;
+}
+
 export interface SessionMetrics {
   cpu: number;
   memory: number;
@@ -47,6 +64,8 @@ export interface ProviderInfo {
   unavailableReason?: string;
   capabilities: ProviderCapabilities;
   quota?: ProviderQuota;
+  telemetry: ProviderTelemetry;
+  consoleUrl?: string;
   latencyMs?: number;
   sessions: ResourceSession[];
 }

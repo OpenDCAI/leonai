@@ -22,10 +22,11 @@ interface ProviderCardProps {
 }
 
 export default function ProviderCard({ provider, selected, onSelect }: ProviderCardProps) {
-  const { status, type, name, quota, sessions } = provider;
+  const { status, type, name, sessions, telemetry } = provider;
   const isUnavailable = status === "unavailable";
   const isActive = status === "active";
   const TypeIcon = typeIcon[type];
+  const primaryMetric = telemetry.quota ?? telemetry.cpu;
 
   const runningSessions = sessions.filter((s) => s.status === "running");
 
@@ -78,18 +79,31 @@ export default function ProviderCard({ provider, selected, onSelect }: ProviderC
             <p className="text-xs text-muted-foreground">未就绪</p>
             <p className="text-[10px] text-muted-foreground/60 mt-0.5">需要 Docker</p>
           </div>
-        ) : quota ? (
+        ) : primaryMetric.used != null && primaryMetric.limit != null ? (
           <div className="text-center">
-            <QuotaRing used={quota.used} limit={quota.limit} />
-            <p className="text-[10px] text-muted-foreground mt-1">配额使用</p>
+            <QuotaRing used={primaryMetric.used} limit={primaryMetric.limit} />
+            <p className="text-[10px] text-muted-foreground mt-1">
+              {telemetry.quota ? "配额使用" : "CPU 使用"}
+            </p>
           </div>
         ) : (
           <div className="text-center">
-            <span className="text-lg font-mono text-muted-foreground">-</span>
-            <p className="text-[10px] text-muted-foreground">就绪</p>
+            <span className="text-sm font-mono text-muted-foreground">
+              {telemetry.running.used}
+              {telemetry.running.limit != null ? `/${telemetry.running.limit}` : ""}
+            </span>
+            <p className="text-[10px] text-muted-foreground">运行数</p>
           </div>
         )}
       </div>
+
+      {!isUnavailable && (
+        <div className="mb-2">
+          <span className="inline-flex rounded border border-border px-1.5 py-0.5 text-[9px] font-mono uppercase text-muted-foreground">
+            src:{primaryMetric.source}
+          </span>
+        </div>
+      )}
 
       {/* Capability icons */}
       <CapabilityStrip capabilities={provider.capabilities} />
