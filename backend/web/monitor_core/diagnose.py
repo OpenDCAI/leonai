@@ -1,7 +1,7 @@
 """Diagnose capabilities for monitor core."""
 
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from sandbox.db import DEFAULT_DB_PATH
@@ -27,7 +27,7 @@ def runtime_health_snapshot() -> dict[str, Any]:
         provider_counts[provider] = provider_counts.get(provider, 0) + 1
 
     return {
-        "snapshot_at": datetime.utcnow().isoformat() + "Z",
+        "snapshot_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "db": {"path": str(DEFAULT_DB_PATH), "exists": db_exists, "counts": tables},
         "sessions": {
             "total": len(sessions),

@@ -18,13 +18,15 @@ export interface ProviderQuota {
   limit: number;
 }
 
-export type MetricSource = "api" | "derived" | "plan" | "console" | "unknown";
+export type MetricSource = "api" | "sandbox_db" | "derived" | "plan" | "console" | "unknown";
+export type MetricFreshness = "live" | "cached" | "stale";
 
 export interface UsageMetric {
   used: number | null;
   limit: number | null;
   unit: string;
   source: MetricSource;
+  freshness?: MetricFreshness;
 }
 
 export interface ProviderTelemetry {
@@ -62,6 +64,10 @@ export interface ProviderInfo {
   type: ProviderType;
   status: ProviderStatus;
   unavailableReason?: string;
+  error?: {
+    code: string;
+    message: string;
+  } | null;
   capabilities: ProviderCapabilities;
   quota?: ProviderQuota;
   telemetry: ProviderTelemetry;

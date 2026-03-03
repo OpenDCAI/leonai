@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from dataclasses import dataclass
 from typing import Any
 
 from backend.web.core.config import SANDBOXES_DIR
 from backend.web.services.sandbox_service import available_sandbox_types
-from sandbox.config import SandboxConfig
+from sandbox.db import DEFAULT_DB_PATH
 
-from .control import list_sessions
 
 
 @dataclass(frozen=True)
@@ -100,16 +100,23 @@ PROVIDER_CATALOG: dict[str, ProviderCatalogEntry] = {
 }
 
 
-def _read_provider_name(config_name: str) -> str:
+def _read_config_payload(config_name: str) -> dict[str, Any]:
     if config_name == "local":
-        return "local"
+        return {"provider": "local"}
     config_path = SANDBOXES_DIR / f"{config_name}.json"
     if not config_path.exists():
         raise FileNotFoundError(f"Sandbox config not found: {config_path}")
     payload = json.loads(config_path.read_text())
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"Sandbox config is not a JSON object: {config_path}")
+    return payload
+
+
+def _read_provider_name(config_name: str) -> str:
+    payload = _read_config_payload(config_name)
     provider = str(payload.get("provider") or "").strip()
     if not provider:
-        raise RuntimeError(f"Sandbox config missing provider: {config_path}")
+        raise RuntimeError(f"Sandbox config missing provider: {config_name}")
     return provider
 
 
@@ -118,9 +125,10 @@ def _resolve_type(provider_name: str, config_name: str) -> str:
         entry = PROVIDER_CATALOG.get(provider_name)
         return entry.provider_type if entry else "container"
 
-    config = SandboxConfig.load(config_name)
     # @@@daytona-target-kind - one provider type maps to cloud/self-host via config target.
-    target = (config.daytona.target or "").strip().lower()
+    payload = _read_config_payload(config_name)
+    daytona = payload.get("daytona") if isinstance(payload.get("daytona"), dict) else {}
+    target = str(daytona.get("target") or "").strip().lower()
     return "cloud" if target == "cloud" else "container"
 
 
@@ -130,10 +138,12 @@ def _resolve_console_url(provider_name: str, config_name: str) -> str | None:
     if provider_name == "e2b":
         return "https://e2b.dev"
     if provider_name == "daytona":
-        config = SandboxConfig.load(config_name)
-        if (config.daytona.target or "").strip().lower() == "cloud":
+        payload = _read_config_payload(config_name)
+        daytona = payload.get("daytona") if isinstance(payload.get("daytona"), dict) else {}
+        target = str(daytona.get("target") or "").strip().lower()
+        if target == "cloud":
             return "https://app.daytona.io"
-        api_url = (config.daytona.api_url or "").strip().rstrip("/")
+        api_url = str(daytona.get("api_url") or "").strip().rstrip("/")
         return api_url[:-4] if api_url.endswith("/api") else api_url
     return None
 
@@ -153,8 +163,66 @@ def _to_session_status(raw_status: str | None) -> str:
     return "running"
 
 
+def _metric(used: float | int | None, limit: float | int | None, unit: str, source: str, freshness: str) -> dict[str, Any]:
+    return {
+        "used": used,
+        "limit": limit,
+        "unit": unit,
+        "source": source,
+        "freshness": freshness,
+    }
+
+
+def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name = ? LIMIT 1",
+        (table_name,),
+    ).fetchone()
+    return row is not None
+
+
+def _list_sessions_fast() -> list[dict[str, Any]]:
+    if not DEFAULT_DB_PATH.exists():
+        return []
+
+    with sqlite3.connect(str(DEFAULT_DB_PATH), timeout=5) as conn:
+        conn.row_factory = sqlite3.Row
+        if not _table_exists(conn, "chat_sessions"):
+            return []
+        if not _table_exists(conn, "sandbox_leases"):
+            return []
+
+        rows = conn.execute(
+            """
+            SELECT
+                cs.chat_session_id AS session_id,
+                cs.thread_id AS thread_id,
+                cs.status AS status,
+                cs.started_at AS created_at,
+                sl.provider_name AS provider
+            FROM chat_sessions cs
+            LEFT JOIN sandbox_leases sl ON cs.lease_id = sl.lease_id
+            ORDER BY cs.started_at DESC
+            """
+        ).fetchall()
+
+    sessions: list[dict[str, Any]] = []
+    for row in rows:
+        sessions.append(
+            {
+                "provider": row["provider"] or "local",
+                "session_id": row["session_id"],
+                "thread_id": row["thread_id"],
+                "status": row["status"],
+                "created_at": row["created_at"],
+            }
+        )
+    return sessions
+
+
 def list_resource_providers() -> dict[str, Any]:
-    sessions = list_sessions()
+    # @@@overview-fast-path - avoid provider-network calls; overview uses DB session snapshot.
+    sessions = _list_sessions_fast()
     grouped_sessions: dict[str, list[dict[str, Any]]] = {}
     for session in sessions:
         # @@@provider-instance-identity - session.provider is config-instance name (not provider kind).
@@ -197,12 +265,17 @@ def list_resource_providers() -> dict[str, Any]:
                 "type": _resolve_type(provider_name, config_name),
                 "status": _to_resource_status(available, running_count),
                 "unavailableReason": item.get("reason"),
+                "error": (
+                    {"code": "PROVIDER_UNAVAILABLE", "message": str(item.get("reason"))}
+                    if not available and item.get("reason")
+                    else None
+                ),
                 "capabilities": catalog.capabilities,
                 "telemetry": {
-                    "running": {"used": running_count, "limit": None, "unit": "sandbox", "source": "derived"},
-                    "cpu": {"used": None, "limit": None, "unit": "cores", "source": "unknown"},
-                    "memory": {"used": None, "limit": None, "unit": "GB", "source": "unknown"},
-                    "disk": {"used": None, "limit": None, "unit": "GB", "source": "unknown"},
+                    "running": _metric(running_count, None, "sandbox", "sandbox_db", "cached"),
+                    "cpu": _metric(None, None, "cores", "unknown", "stale"),
+                    "memory": _metric(None, None, "GB", "unknown", "stale"),
+                    "disk": _metric(None, None, "GB", "unknown", "stale"),
                 },
                 "consoleUrl": _resolve_console_url(provider_name, config_name),
                 "sessions": normalized_sessions,

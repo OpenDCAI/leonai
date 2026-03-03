@@ -27,7 +27,7 @@ interface ProviderDetailProps {
 }
 
 export default function ProviderDetail({ provider, allocatedResources }: ProviderDetailProps) {
-  const { name, description, vendor, type, status, unavailableReason, telemetry } = provider;
+  const { name, description, vendor, type, status, unavailableReason, telemetry, error } = provider;
   const TypeIcon = typeIcon[type];
 
   if (status === "unavailable") {
@@ -50,6 +50,7 @@ export default function ProviderDetail({ provider, allocatedResources }: Provide
         <div className="flex flex-col items-center justify-center py-12 px-6">
           <Lock className="w-8 h-8 text-muted-foreground/40 mb-3" />
           <p className="text-sm text-muted-foreground mb-1">{unavailableReason}</p>
+          {error?.message && <p className="text-xs text-muted-foreground/70 mb-2 font-mono">{error.message}</p>}
           <p className="text-xs text-muted-foreground mb-4">前往 设置 &gt; 沙箱 配置 {name} 环境</p>
           <Link
             to="/settings"
@@ -153,6 +154,9 @@ function StatBlock({
           {metric.source}
         </span>
       </div>
+      {metric.freshness && (
+        <p className="text-[9px] text-muted-foreground/60 uppercase tracking-wider mt-1">freshness: {metric.freshness}</p>
+      )}
       {!compact && <p className="text-[10px] text-muted-foreground mt-1">{title}</p>}
     </div>
   );
