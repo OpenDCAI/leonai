@@ -2,7 +2,8 @@ import { useState, useEffect } from "react";
 import {
   Search, CheckCircle2, Circle, Clock, AlertCircle,
   ListTodo, ArrowUpDown, ChevronDown, ChevronUp, LayoutGrid, List,
-  Plus, X, Calendar, User, AlertTriangle, RefreshCw,
+  Plus, X, Calendar, User, AlertTriangle, RefreshCw, ExternalLink,
+  Play, Trash2, Timer,
 } from "lucide-react";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { toast } from "sonner";
@@ -11,7 +12,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { useAppStore } from "@/store/app-store";
-import type { Task, TaskStatus, Priority } from "@/store/types";
+import type { Task, TaskStatus, Priority, CronJob } from "@/store/types";
 
 const statusConfig: Record<TaskStatus, { label: string; icon: typeof Circle; color: string }> = {
   pending: { label: "等待中", icon: Circle, color: "text-muted-foreground" },
@@ -25,9 +26,29 @@ const priorityConfig: Record<Priority, { label: string; className: string }> = {
   medium: { label: "中", className: "bg-warning/10 text-warning" },
   low: { label: "低", className: "bg-muted text-muted-foreground" },
 };
+const sourceLabel: Record<string, string> = {
+  manual: "手动",
+  cron: "定时",
+  agent: "Agent",
+  queue: "队列",
+};
 type SortField = "title" | "priority" | "created_at" | null;
 type SortDir = "asc" | "desc";
 type ViewMode = "table" | "board";
+type ActiveTab = "tasks" | "cron";
+
+function cronToHuman(expr: string): string {
+  const parts = expr.split(" ");
+  if (parts.length !== 5) return expr;
+  const [min, hour, dom, mon, dow] = parts;
+  if (min === "0" && hour !== "*" && dom === "*" && mon === "*" && dow === "*")
+    return `每天 ${hour}:00`;
+  if (min !== "*" && hour !== "*" && dom === "*" && mon === "*" && dow === "*")
+    return `每天 ${hour}:${min.padStart(2, "0")}`;
+  if (dom === "*" && mon === "*" && dow !== "*")
+    return `每周${["日","一","二","三","四","五","六"][parseInt(dow)] || dow} ${hour}:${min.padStart(2, "0")}`;
+  return expr;
+}
 
 export default function Tasks() {
   const isMobile = useIsMobile();
@@ -40,8 +61,22 @@ export default function Tasks() {
   const storeUpdateTask = useAppStore((s) => s.updateTask);
   const storeDeleteTask = useAppStore((s) => s.deleteTask);
   const storeBulkUpdate = useAppStore((s) => s.bulkUpdateTaskStatus);
+  const cronJobs = useAppStore((s) => s.cronJobs);
+  const storeAddCronJob = useAppStore((s) => s.addCronJob);
+  const storeUpdateCronJob = useAppStore((s) => s.updateCronJob);
+  const storeDeleteCronJob = useAppStore((s) => s.deleteCronJob);
+  const storeTriggerCronJob = useAppStore((s) => s.triggerCronJob);
+
+  const fetchTasks = useAppStore((s) => s.fetchTasks);
 
   useEffect(() => { loadAll(); }, [loadAll]);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      fetchTasks();
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [fetchTasks]);
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<TaskStatus | "all">("all");
@@ -53,9 +88,15 @@ export default function Tasks() {
   const [dragOverColumn, setDragOverColumn] = useState<TaskStatus | null>(null);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<ActiveTab>("tasks");
 
   // Editing state for the panel
   const [editForm, setEditForm] = useState<Task | null>(null);
+
+  // Cron editing state
+  const [editingCron, setEditingCron] = useState<CronJob | null>(null);
+  const [cronForm, setCronForm] = useState<CronJob | null>(null);
+  const [deleteCronConfirmId, setDeleteCronConfirmId] = useState<string | null>(null);
 
   // Helper: resolve assignee name/avatar from memberList
   const getAssigneeInfo = (assigneeId: string) => {
@@ -107,6 +148,58 @@ export default function Tasks() {
       toast.error("创建失败: " + (e instanceof Error ? e.message : String(e)));
     }
   };
+  // Cron helpers
+  const openCronEdit = (cron: CronJob) => {
+    setEditingCron(cron);
+    setCronForm({ ...cron });
+  };
+
+  const closeCronEdit = () => {
+    setEditingCron(null);
+    setCronForm(null);
+  };
+
+  const saveCronEdit = async () => {
+    if (!cronForm) return;
+    try {
+      await storeUpdateCronJob(cronForm.id, cronForm);
+      setEditingCron(cronForm);
+      toast.success("定时任务已保存");
+    } catch (e: unknown) {
+      toast.error("保存失败: " + (e instanceof Error ? e.message : String(e)));
+    }
+  };
+
+  const createCronJob = async () => {
+    try {
+      const newCron = await storeAddCronJob({ name: "新定时任务", cron_expression: "0 9 * * *" });
+      openCronEdit(newCron);
+    } catch (e: unknown) {
+      toast.error("创建失败: " + (e instanceof Error ? e.message : String(e)));
+    }
+  };
+
+  const executeCronDelete = async () => {
+    if (!deleteCronConfirmId) return;
+    try {
+      await storeDeleteCronJob(deleteCronConfirmId);
+      if (editingCron?.id === deleteCronConfirmId) closeCronEdit();
+      toast.success("定时任务已删除");
+      setDeleteCronConfirmId(null);
+    } catch (e: unknown) {
+      toast.error("删除失败: " + (e instanceof Error ? e.message : String(e)));
+    }
+  };
+
+  const handleTriggerCron = async (id: string) => {
+    try {
+      await storeTriggerCronJob(id);
+      toast.success("已触发执行");
+    } catch (e: unknown) {
+      toast.error("触发失败: " + (e instanceof Error ? e.message : String(e)));
+    }
+  };
+
   let filtered = tasks.filter((t) => {
     if (statusFilter !== "all" && t.status !== statusFilter) return false;
     if (priorityFilter !== "all" && t.priority !== priorityFilter) return false;
@@ -321,6 +414,14 @@ export default function Tasks() {
           </div>
         )}
 
+        {/* Result preview */}
+        {editForm.result && (
+          <div>
+            <label className="text-[11px] text-muted-foreground uppercase tracking-wider font-medium mb-1.5 block">执行结果</label>
+            <p className="text-sm p-2 bg-muted rounded whitespace-pre-wrap">{editForm.result}</p>
+          </div>
+        )}
+
         {/* Danger zone */}
         <div className="pt-4 border-t border-border">
           <button
@@ -328,6 +429,90 @@ export default function Tasks() {
             className="w-full px-3 py-2 rounded-lg border border-destructive/20 text-destructive text-xs font-medium hover:bg-destructive/5 transition-colors"
           >
             删除任务
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  // Cron edit panel
+  const cronEditPanel = cronForm && (
+    <div className={`${isMobile ? "fixed inset-0 z-50 flex" : "w-[360px] shrink-0 border-l border-border"} bg-background flex flex-col`}>
+      {isMobile && <div className="fixed inset-0 bg-black/50 -z-10" onClick={closeCronEdit} />}
+      <div className="h-14 flex items-center justify-between px-4 border-b border-border shrink-0">
+        <h3 className="text-sm font-semibold text-foreground">编辑定时任务</h3>
+        <div className="flex items-center gap-1">
+          <button onClick={saveCronEdit} className="px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-xs font-medium hover:opacity-90 transition-opacity">
+            保存
+          </button>
+          <button onClick={closeCronEdit} className="p-1.5 rounded-md hover:bg-muted transition-colors">
+            <X className="w-4 h-4 text-muted-foreground" />
+          </button>
+        </div>
+      </div>
+      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        {/* Name */}
+        <div>
+          <label className="text-[11px] text-muted-foreground uppercase tracking-wider font-medium mb-1.5 block">名称</label>
+          <input
+            value={cronForm.name}
+            onChange={(e) => setCronForm({ ...cronForm, name: e.target.value })}
+            className="w-full px-3 py-2 rounded-lg bg-card border border-border text-sm text-foreground outline-none focus:border-primary/40 transition-colors"
+          />
+        </div>
+        {/* Description */}
+        <div>
+          <label className="text-[11px] text-muted-foreground uppercase tracking-wider font-medium mb-1.5 block">描述</label>
+          <textarea
+            value={cronForm.description}
+            onChange={(e) => setCronForm({ ...cronForm, description: e.target.value })}
+            rows={3}
+            className="w-full px-3 py-2 rounded-lg bg-card border border-border text-sm text-foreground outline-none focus:border-primary/40 transition-colors resize-none"
+          />
+        </div>
+        {/* Cron expression */}
+        <div>
+          <label className="text-[11px] text-muted-foreground uppercase tracking-wider font-medium mb-1.5 block">
+            <Timer className="w-3 h-3 inline mr-1" />Cron 表达式
+          </label>
+          <input
+            value={cronForm.cron_expression}
+            onChange={(e) => setCronForm({ ...cronForm, cron_expression: e.target.value })}
+            placeholder="0 9 * * *"
+            className="w-full px-3 py-2 rounded-lg bg-card border border-border text-sm text-foreground font-mono outline-none focus:border-primary/40 transition-colors"
+          />
+          {cronForm.cron_expression && (
+            <p className="text-[11px] text-muted-foreground mt-1">{cronToHuman(cronForm.cron_expression)}</p>
+          )}
+        </div>
+        {/* Task template */}
+        <div>
+          <label className="text-[11px] text-muted-foreground uppercase tracking-wider font-medium mb-1.5 block">任务模板 (JSON)</label>
+          <textarea
+            value={cronForm.task_template}
+            onChange={(e) => setCronForm({ ...cronForm, task_template: e.target.value })}
+            rows={5}
+            placeholder='{"title": "日报", "priority": "medium"}'
+            className="w-full px-3 py-2 rounded-lg bg-card border border-border text-sm text-foreground font-mono outline-none focus:border-primary/40 transition-colors resize-none"
+          />
+        </div>
+        {/* Enabled toggle */}
+        <div className="flex items-center justify-between">
+          <label className="text-[11px] text-muted-foreground uppercase tracking-wider font-medium">启用</label>
+          <button
+            onClick={() => setCronForm({ ...cronForm, enabled: cronForm.enabled ? 0 : 1 })}
+            className={`relative w-9 h-5 rounded-full transition-colors ${cronForm.enabled ? "bg-primary" : "bg-muted"}`}
+          >
+            <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${cronForm.enabled ? "left-[18px]" : "left-0.5"}`} />
+          </button>
+        </div>
+        {/* Danger zone */}
+        <div className="pt-4 border-t border-border">
+          <button
+            onClick={() => setDeleteCronConfirmId(cronForm.id)}
+            className="w-full px-3 py-2 rounded-lg border border-destructive/20 text-destructive text-xs font-medium hover:bg-destructive/5 transition-colors"
+          >
+            删除定时任务
           </button>
         </div>
       </div>
@@ -342,31 +527,55 @@ export default function Tasks() {
         <div className={`h-14 flex items-center justify-between ${isMobile ? "px-3" : "px-6"} border-b border-border shrink-0`}>
           <div className="flex items-center gap-3">
             <h2 className="text-sm font-semibold text-foreground">任务</h2>
-            <span className="text-xs text-muted-foreground font-mono">{tasks.length}</span>
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            <div className="flex items-center border border-border rounded-md overflow-hidden">
+            <div className="flex items-center gap-1 bg-muted rounded-lg p-0.5">
               <button
-                onClick={() => setViewMode("table")}
-                className={`p-1.5 transition-colors ${viewMode === "table" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground"}`}
-                title="表格视图"
+                className={`px-3 py-1 rounded text-sm ${activeTab === "tasks" ? "bg-background shadow-sm" : "text-muted-foreground"}`}
+                onClick={() => setActiveTab("tasks")}
               >
-                <List className="w-3.5 h-3.5" />
+                任务看板
               </button>
               <button
-                onClick={() => setViewMode("board")}
-                className={`p-1.5 transition-colors ${viewMode === "board" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground"}`}
-                title="看板视图"
+                className={`px-3 py-1 rounded text-sm ${activeTab === "cron" ? "bg-background shadow-sm" : "text-muted-foreground"}`}
+                onClick={() => setActiveTab("cron")}
               >
-                <LayoutGrid className="w-3.5 h-3.5" />
+                定时任务
               </button>
             </div>
-            <button onClick={createTask} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition-opacity">
-              <Plus className="w-4 h-4" />
-              <span className="hidden md:inline">新建任务</span>
-            </button>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            {activeTab === "tasks" ? (
+              <>
+                <div className="flex items-center border border-border rounded-md overflow-hidden">
+                  <button
+                    onClick={() => setViewMode("table")}
+                    className={`p-1.5 transition-colors ${viewMode === "table" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground"}`}
+                    title="表格视图"
+                  >
+                    <List className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={() => setViewMode("board")}
+                    className={`p-1.5 transition-colors ${viewMode === "board" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground"}`}
+                    title="看板视图"
+                  >
+                    <LayoutGrid className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                <button onClick={createTask} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition-opacity">
+                  <Plus className="w-4 h-4" />
+                  <span className="hidden md:inline">新建任务</span>
+                </button>
+              </>
+            ) : (
+              <button onClick={createCronJob} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition-opacity">
+                <Plus className="w-4 h-4" />
+                <span className="hidden md:inline">新建定时任务</span>
+              </button>
+            )}
           </div>
         </div>
+        {/* Filters (tasks tab only) */}
+        {activeTab === "tasks" && (<>
         {/* Filters */}
         <div className={`flex items-center gap-2 px-4 md:px-6 py-2.5 border-b border-border overflow-x-auto shrink-0`}>
           <div className="flex items-center gap-1">
@@ -476,7 +685,14 @@ export default function Tasks() {
                               editingTask?.id === task.id ? "border-primary/40 shadow-sm" : "border-border hover:border-primary/30"
                             }`}
                           >
-                            <p className="text-sm font-medium text-foreground mb-2 leading-snug">{task.title}</p>
+                            <div className="flex items-center gap-1 mb-2">
+                              <p className="text-sm font-medium text-foreground leading-snug">{task.title}</p>
+                              {task.source && task.source !== "manual" && (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary shrink-0">
+                                  {sourceLabel[task.source] || task.source}
+                                </span>
+                              )}
+                            </div>
                             <div className="flex items-center justify-between">
                               <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${priority.className}`}>
                                 {priority.label}
@@ -603,7 +819,21 @@ export default function Tasks() {
                         <input type="checkbox" aria-label={`选择任务: ${task.title}`} checked={selectedRows.has(task.id)} onChange={() => toggleSelectRow(task.id)} className="w-3.5 h-3.5 accent-primary rounded" />
                       </span>
                       <StatusIcon className={`w-4 h-4 ${status.color}`} />
-                      <span className="text-sm font-medium text-foreground truncate">{task.title}</span>
+                      <span className="text-sm font-medium text-foreground truncate flex items-center gap-1">
+                        {task.title}
+                        {task.source && task.source !== "manual" && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary ml-1 shrink-0">
+                            {sourceLabel[task.source] || task.source}
+                          </span>
+                        )}
+                        {task.thread_id && (
+                          <a href={`/chat/${task.thread_id}`}
+                             className="text-muted-foreground hover:text-primary ml-1 shrink-0"
+                             onClick={(e) => e.stopPropagation()}>
+                            <ExternalLink className="w-3.5 h-3.5" />
+                          </a>
+                        )}
+                      </span>
                       <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium w-fit ${priority.className}`}>{priority.label}</span>
                       <div className="flex items-center gap-2">
                         {task.assignee_id ? (() => { const { name, avatar } = getAssigneeInfo(task.assignee_id); return name ? (
