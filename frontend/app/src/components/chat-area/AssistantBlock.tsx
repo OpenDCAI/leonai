@@ -11,7 +11,7 @@ import { formatTime } from "./utils";
 const CONTENT_HEAVY_TOOLS = new Set([
   "WebFetch", "web_search", "WebSearch", "Fetch",
   "load_skill",
-  "Task",
+  "Task", "TaskOutput",
 ]);
 
 /** Check if text substantially duplicates a content-heavy tool's result. */
@@ -76,19 +76,24 @@ function NoticeDivider({ content }: { content: string }) {
 // --- Content phase rendering (tools + final text) ---
 
 function ContentPhaseBlock({
-  segments, isStreaming, runtimeStatus, onFocusStep, onFocusAgent,
+  segments, isStreaming, runtimeStatus, onFocusStep, onFocusAgent, allTurnToolSegs,
 }: {
   segments: TurnSegment[];
   isStreaming: boolean;
   runtimeStatus?: StreamStatus | null;
   onFocusStep?: (stepId: string) => void;
   onFocusAgent?: (taskId: string) => void;
+  /** All tool segments from the entire turn, for cross-phase echo detection. */
+  allTurnToolSegs?: ToolSegment[];
 }) {
   const toolSegs = segments.filter((s) => s.type === "tool") as ToolSegment[];
   const textSegs = segments.filter((s) => s.type === "text" && s.content.trim());
   const finalText = textSegs.length > 0 ? textSegs[textSegs.length - 1] : null;
 
-  const resultEcho = !isStreaming && finalText != null && isToolResultEcho(finalText.content, toolSegs);
+  // Use all turn tool segs (not just this phase) so echo detection works across notice dividers.
+  const echoCheckSegs = allTurnToolSegs ?? toolSegs;
+  // Run echo detection even during streaming so verbatim tool-result echoes are suppressed immediately.
+  const resultEcho = finalText != null && isToolResultEcho(finalText.content, echoCheckSegs);
   const visibleText = resultEcho ? null : finalText;
 
   return (
@@ -163,6 +168,7 @@ export const AssistantBlock = memo(function AssistantBlock({ entry, isStreamingT
                   runtimeStatus={runtimeStatus}
                   onFocusStep={onFocusStep}
                   onFocusAgent={onFocusAgent}
+                  allTurnToolSegs={toolSegs}
                 />
           )
         ) : (
