@@ -768,7 +768,12 @@ class LeonAgent:
         self._todo_middleware = TodoMiddleware(verbose=self.verbose)
         middleware.append(self._todo_middleware)
 
-        # 9. Task (sub-agent orchestration)
+        # 9. TaskBoard (agent ↔ panel_tasks)
+        from core.taskboard.middleware import TaskBoardMiddleware
+        self._taskboard_middleware = TaskBoardMiddleware()
+        middleware.append(self._taskboard_middleware)
+
+        # 10. Task (sub-agent orchestration)
         self._task_middleware = TaskMiddleware(
             workspace_root=self.workspace_root,
             parent_model=self.model_name,
@@ -779,7 +784,7 @@ class LeonAgent:
         )
         middleware.append(self._task_middleware)
 
-        # 10. Monitor (last to capture all requests/responses)
+        # 11. Monitor (last to capture all requests/responses)
         context_limit = self.config.runtime.context_limit
         self._monitor_middleware = MonitorMiddleware(
             context_limit=context_limit,
@@ -788,7 +793,7 @@ class LeonAgent:
         )
         middleware.append(self._monitor_middleware)
 
-        # 11. SpillBuffer (outermost — catches all oversized tool outputs)
+        # 12. SpillBuffer (outermost — catches all oversized tool outputs)
         # Must be first in list: LangChain chains tool-call wrappers with
         # "first = outermost", so index-0 wraps every other middleware's
         # result.  Middlewares like Search short-circuit (return without
