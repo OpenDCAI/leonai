@@ -20,6 +20,7 @@ from sandbox.provider import (
     ProviderExecResult,
     SandboxProvider,
     SessionInfo,
+    build_resource_capabilities,
 )
 
 
@@ -27,26 +28,27 @@ class E2BProvider(SandboxProvider):
     """E2B cloud sandbox provider."""
 
     name = "e2b"
-    CAPABILITIES = {
-        "filesystem": True,
-        "terminal": True,
-        "metrics": False,
-        "screenshot": False,
-        "web": False,
-        "process": False,
-        "hooks": False,
-        "snapshot": True,
-    }
+    CAPABILITY = ProviderCapability(
+        can_pause=True,
+        can_resume=True,
+        can_destroy=True,
+        supports_webhook=False,
+        runtime_kind="e2b_pty",
+        resource_capabilities=build_resource_capabilities(
+            filesystem=True,
+            terminal=True,
+            metrics=False,
+            screenshot=False,
+            web=False,
+            process=False,
+            hooks=False,
+            snapshot=True,
+        ),
+    )
     WORKSPACE_ROOT = "/home/user/workspace"
 
     def get_capability(self) -> ProviderCapability:
-        return ProviderCapability(
-            can_pause=True,
-            can_resume=True,
-            can_destroy=True,
-            supports_webhook=False,
-            runtime_kind="e2b_pty",
-        )
+        return self.CAPABILITY
 
     def __init__(
         self,

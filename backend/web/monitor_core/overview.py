@@ -10,6 +10,7 @@ from typing import Any
 
 from backend.web.core.config import SANDBOXES_DIR
 from backend.web.services.sandbox_service import available_sandbox_types
+from sandbox.provider import ProviderCapability, RESOURCE_CAPABILITY_KEYS
 from sandbox.db import DEFAULT_DB_PATH
 
 
@@ -48,51 +49,36 @@ PROVIDER_CATALOG: dict[str, ProviderCatalogEntry] = {
     ),
 }
 
-CAPABILITY_KEYS = {
-    "filesystem",
-    "terminal",
-    "metrics",
-    "screenshot",
-    "web",
-    "process",
-    "hooks",
-    "snapshot",
-}
-
-
 def _declared_capabilities(provider_name: str) -> dict[str, bool]:
     if provider_name == "local":
         from sandbox.local import LocalSessionProvider
 
-        raw = getattr(LocalSessionProvider, "CAPABILITIES", None)
+        declared = getattr(LocalSessionProvider, "CAPABILITY", None)
     elif provider_name == "docker":
         from sandbox.providers.docker import DockerProvider
 
-        raw = getattr(DockerProvider, "CAPABILITIES", None)
+        declared = getattr(DockerProvider, "CAPABILITY", None)
     elif provider_name == "e2b":
         from sandbox.providers.e2b import E2BProvider
 
-        raw = getattr(E2BProvider, "CAPABILITIES", None)
+        declared = getattr(E2BProvider, "CAPABILITY", None)
     elif provider_name == "daytona":
         from sandbox.providers.daytona import DaytonaProvider
 
-        raw = getattr(DaytonaProvider, "CAPABILITIES", None)
+        declared = getattr(DaytonaProvider, "CAPABILITY", None)
     elif provider_name == "agentbay":
         from sandbox.providers.agentbay import AgentBayProvider
 
-        raw = getattr(AgentBayProvider, "CAPABILITIES", None)
+        declared = getattr(AgentBayProvider, "CAPABILITY", None)
     else:
         raise RuntimeError(f"Unsupported provider type: {provider_name}")
 
-    if not isinstance(raw, dict):
-        raise RuntimeError(f"Provider {provider_name} missing class CAPABILITIES declaration")
-
-    missing = CAPABILITY_KEYS.difference(raw.keys())
-    if missing:
-        raise RuntimeError(f"Provider {provider_name} CAPABILITIES missing keys: {sorted(missing)}")
+    if not isinstance(declared, ProviderCapability):
+        raise RuntimeError(f"Provider {provider_name} missing class CAPABILITY declaration")
 
     # @@@capability-contract-surface - monitor consumes only agreed capability keys for stable front-end shape.
-    return {key: bool(raw[key]) for key in sorted(CAPABILITY_KEYS)}
+    normalized = declared.declared_resource_capabilities()
+    return {key: normalized[key] for key in RESOURCE_CAPABILITY_KEYS}
 
 
 def _read_config_payload(config_name: str) -> dict[str, Any]:

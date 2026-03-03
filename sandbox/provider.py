@@ -2,7 +2,52 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Mapping
+
+RESOURCE_CAPABILITY_KEYS = (
+    "filesystem",
+    "terminal",
+    "metrics",
+    "screenshot",
+    "web",
+    "process",
+    "hooks",
+    "snapshot",
+)
+
+
+def normalize_resource_capabilities(raw: Mapping[str, object]) -> dict[str, bool]:
+    missing = [key for key in RESOURCE_CAPABILITY_KEYS if key not in raw]
+    extras = [key for key in raw if key not in RESOURCE_CAPABILITY_KEYS]
+    if missing or extras:
+        raise RuntimeError(f"Invalid resource capabilities; missing={missing}, extras={extras}")
+    # @@@capability-shape-contract - monitor/UI rely on fixed capability keys for stable rendering.
+    return {key: bool(raw[key]) for key in RESOURCE_CAPABILITY_KEYS}
+
+
+def build_resource_capabilities(
+    *,
+    filesystem: bool,
+    terminal: bool,
+    metrics: bool,
+    screenshot: bool,
+    web: bool,
+    process: bool,
+    hooks: bool,
+    snapshot: bool,
+) -> dict[str, bool]:
+    return normalize_resource_capabilities(
+        {
+            "filesystem": filesystem,
+            "terminal": terminal,
+            "metrics": metrics,
+            "screenshot": screenshot,
+            "web": web,
+            "process": process,
+            "hooks": hooks,
+            "snapshot": snapshot,
+        }
+    )
 
 
 @dataclass(frozen=True)
@@ -17,6 +62,10 @@ class ProviderCapability:
     eager_instance_binding: bool = False
     inspect_visible: bool = True
     runtime_kind: str = "remote"
+    resource_capabilities: dict[str, bool] = field(default_factory=dict)
+
+    def declared_resource_capabilities(self) -> dict[str, bool]:
+        return normalize_resource_capabilities(self.resource_capabilities)
 
 
 @dataclass

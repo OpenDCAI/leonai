@@ -12,6 +12,7 @@ from sandbox.provider import (
     ProviderExecResult,
     SandboxProvider,
     SessionInfo,
+    build_resource_capabilities,
 )
 
 
@@ -27,24 +28,25 @@ class AgentBayProvider(SandboxProvider):
     """
 
     name = "agentbay"
-    CAPABILITIES = {
-        "filesystem": True,
-        "terminal": True,
-        "metrics": True,
-        "screenshot": True,
-        "web": True,
-        "process": True,
-        "hooks": False,
-        "snapshot": False,
-    }
+    CAPABILITY = ProviderCapability(
+        can_pause=True,
+        can_resume=True,
+        can_destroy=True,
+        supports_webhook=False,
+        resource_capabilities=build_resource_capabilities(
+            filesystem=True,
+            terminal=True,
+            metrics=True,
+            screenshot=True,
+            web=True,
+            process=True,
+            hooks=False,
+            snapshot=False,
+        ),
+    )
 
     def get_capability(self) -> ProviderCapability:
-        return ProviderCapability(
-            can_pause=True,
-            can_resume=True,
-            can_destroy=True,
-            supports_webhook=False,
-        )
+        return self.CAPABILITY
 
     def __init__(
         self,

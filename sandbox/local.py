@@ -10,7 +10,14 @@ from typing import TYPE_CHECKING
 
 from sandbox.base import Sandbox
 from sandbox.manager import SandboxManager
-from sandbox.provider import Metrics, ProviderCapability, ProviderExecResult, SandboxProvider, SessionInfo
+from sandbox.provider import (
+    Metrics,
+    ProviderCapability,
+    ProviderExecResult,
+    SandboxProvider,
+    SessionInfo,
+    build_resource_capabilities,
+)
 from sandbox.thread_context import get_current_thread_id, set_current_thread_id
 
 if TYPE_CHECKING:
@@ -22,31 +29,32 @@ if TYPE_CHECKING:
 @dataclass
 class LocalSessionProvider(SandboxProvider):
     name: str = "local"
-    CAPABILITIES = {
-        "filesystem": True,
-        "terminal": True,
-        "metrics": False,
-        "screenshot": False,
-        "web": False,
-        "process": False,
-        "hooks": False,
-        "snapshot": False,
-    }
+    CAPABILITY = ProviderCapability(
+        can_pause=True,
+        can_resume=True,
+        can_destroy=True,
+        supports_webhook=False,
+        supports_status_probe=False,
+        eager_instance_binding=True,
+        inspect_visible=False,
+        runtime_kind="local",
+        resource_capabilities=build_resource_capabilities(
+            filesystem=True,
+            terminal=True,
+            metrics=False,
+            screenshot=False,
+            web=False,
+            process=False,
+            hooks=False,
+            snapshot=False,
+        ),
+    )
     default_cwd: str | None = None
     _session_states: dict[str, str] = field(default_factory=dict, init=False, repr=False)
     _state_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
 
     def get_capability(self) -> ProviderCapability:
-        return ProviderCapability(
-            can_pause=True,
-            can_resume=True,
-            can_destroy=True,
-            supports_webhook=False,
-            supports_status_probe=False,
-            eager_instance_binding=True,
-            inspect_visible=False,
-            runtime_kind="local",
-        )
+        return self.CAPABILITY
 
     def create_session(self, context_id: str | None = None) -> SessionInfo:
         session_id = context_id or f"local-{uuid.uuid4().hex[:12]}"

@@ -10,7 +10,14 @@ import shlex
 import subprocess
 import uuid
 
-from sandbox.provider import Metrics, ProviderCapability, ProviderExecResult, SandboxProvider, SessionInfo
+from sandbox.provider import (
+    Metrics,
+    ProviderCapability,
+    ProviderExecResult,
+    SandboxProvider,
+    SessionInfo,
+    build_resource_capabilities,
+)
 
 
 class DockerProvider(SandboxProvider):
@@ -24,25 +31,26 @@ class DockerProvider(SandboxProvider):
     """
 
     name = "docker"
-    CAPABILITIES = {
-        "filesystem": True,
-        "terminal": True,
-        "metrics": True,
-        "screenshot": False,
-        "web": False,
-        "process": False,
-        "hooks": False,
-        "snapshot": False,
-    }
+    CAPABILITY = ProviderCapability(
+        can_pause=True,
+        can_resume=True,
+        can_destroy=True,
+        supports_webhook=False,
+        runtime_kind="docker_pty",
+        resource_capabilities=build_resource_capabilities(
+            filesystem=True,
+            terminal=True,
+            metrics=True,
+            screenshot=False,
+            web=False,
+            process=False,
+            hooks=False,
+            snapshot=False,
+        ),
+    )
 
     def get_capability(self) -> ProviderCapability:
-        return ProviderCapability(
-            can_pause=True,
-            can_resume=True,
-            can_destroy=True,
-            supports_webhook=False,
-            runtime_kind="docker_pty",
-        )
+        return self.CAPABILITY
 
     def __init__(
         self,
