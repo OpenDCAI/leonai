@@ -17,7 +17,8 @@ export function extractMessageFlow(entries: ChatEntry[]): FlowItem[] {
     // Find last non-empty text index — exclude it (displayed in chat area)
     let lastTextIdx = -1;
     for (let i = segs.length - 1; i >= 0; i--) {
-      if (segs[i].type === "text" && segs[i].content.trim()) {
+      const seg = segs[i];
+      if (seg.type === "text" && seg.content.trim().length > 0) {
         lastTextIdx = i;
         break;
       }
@@ -26,7 +27,7 @@ export function extractMessageFlow(entries: ChatEntry[]): FlowItem[] {
       const seg = segs[i];
       if (seg.type === "tool") {
         items.push({ type: "tool", step: seg.step, turnId: entry.id });
-      } else if (seg.type === "text" && i !== lastTextIdx && seg.content.trim()) {
+      } else if (seg.type === "text" && i !== lastTextIdx && seg.content.trim().length > 0) {
         items.push({ type: "text", content: seg.content, turnId: entry.id });
       }
     }

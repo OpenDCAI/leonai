@@ -1,5 +1,5 @@
 import { memo } from "react";
-import type { AssistantTurn, NoticeSegment, StreamStatus, ToolSegment, TurnSegment } from "../../api";
+import type { AssistantTurn, NoticeSegment, StreamStatus, TextSegment, ToolSegment, TurnSegment } from "../../api";
 import MarkdownContent from "../MarkdownContent";
 import { CopyButton } from "./CopyButton";
 import { parseNoticeContent, STATUS_ICON } from "./NoticeBubble";
@@ -49,17 +49,21 @@ function NoticeDivider({ content }: { content: string }) {
 // --- Content phase rendering (tools + final text) ---
 
 function ContentPhaseBlock({
-  segments, isStreaming, runtimeStatus, onFocusStep, onFocusAgent,
+  segments, isStreaming, onFocusStep, onFocusAgent,
 }: {
   segments: TurnSegment[];
   isStreaming: boolean;
-  runtimeStatus?: StreamStatus | null;
   onFocusStep?: (stepId: string) => void;
   onFocusAgent?: (taskId: string) => void;
 }) {
   const toolSegs = segments.filter((s) => s.type === "tool") as ToolSegment[];
-  const textSegs = segments.filter((s) => s.type === "text" && s.content.trim());
-  const visibleText = textSegs.length > 0 ? textSegs[textSegs.length - 1] : null;
+  const textSegs = segments.filter(
+    (s): s is TextSegment => s.type === "text" && s.content.trim().length > 0,
+  );
+  const finalText = textSegs.length > 0 ? textSegs[textSegs.length - 1] : null;
+
+  const resultEcho = !isStreaming && finalText != null && isToolResultEcho(finalText.content, toolSegs);
+  const visibleText = resultEcho ? null : finalText;
 
   return (
     <>
@@ -93,12 +97,14 @@ export const AssistantBlock = memo(function AssistantBlock({ entry, isStreamingT
   const hasNotice = entry.segments.some((s) => s.type === "notice");
 
   const fullText = entry.segments
-    .filter((s) => s.type === "text")
+    .filter((s): s is TextSegment => s.type === "text")
     .map((s) => s.content)
     .join("\n");
 
   const toolSegs = entry.segments.filter((s) => s.type === "tool") as ToolSegment[];
-  const textSegs = entry.segments.filter((s) => s.type === "text" && s.content.trim());
+  const textSegs = entry.segments.filter(
+    (s): s is TextSegment => s.type === "text" && s.content.trim().length > 0,
+  );
 
   const hasVisible = toolSegs.length > 0 || textSegs.length > 0;
 
@@ -130,7 +136,6 @@ export const AssistantBlock = memo(function AssistantBlock({ entry, isStreamingT
                   key={phase.segments[0]?.type === "tool" ? `tool-${(phase.segments[0] as ToolSegment).step.id}` : `content-${i}`}
                   segments={phase.segments}
                   isStreaming={!!isStreamingThis}
-                  runtimeStatus={runtimeStatus}
                   onFocusStep={onFocusStep}
                   onFocusAgent={onFocusAgent}
                 />
@@ -140,7 +145,6 @@ export const AssistantBlock = memo(function AssistantBlock({ entry, isStreamingT
           <ContentPhaseBlock
             segments={entry.segments}
             isStreaming={!!isStreamingThis}
-            runtimeStatus={runtimeStatus}
             onFocusStep={onFocusStep}
             onFocusAgent={onFocusAgent}
           />

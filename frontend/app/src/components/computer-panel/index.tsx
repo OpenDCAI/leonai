@@ -29,7 +29,7 @@ export default function ComputerPanel({
   activities = [],
   onCancelCommand,
   onCancelTask,
-  isStreaming,
+  isStreaming: _isStreaming,
 }: ComputerPanelProps) {
   const [internalTab, setInternalTab] = useState<TabType>("terminal");
   const activeTab = controlledTab ?? internalTab;

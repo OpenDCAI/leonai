@@ -5,9 +5,9 @@ import {
   postRun,
   type AssistantTurn,
   type ChatEntry,
+  type StreamEvent,
   type StreamStatus,
 } from "../api";
-import type { StreamEvent } from "../api/types";
 import { processStreamEvent } from "./stream-event-handlers";
 import { useThreadStream } from "./use-thread-stream";
 import { makeId } from "./utils";
@@ -20,12 +20,6 @@ interface StreamHandlerDeps {
   loading: boolean;
   /** Callback for activity events (command_progress, background_task_*). */
   onActivityEvent?: (event: StreamEvent) => void;
-  /**
-   * True when navigating from a new-chat creation (postRun already called in NewChatPage).
-   * Tells useThreadStream to connect from seq=0 instead of last_seq, so we don't miss
-   * events that were emitted between postRun() and ChatPage mount.
-   */
-  runStarted?: boolean;
 }
 
 export interface StreamHandlerState {
