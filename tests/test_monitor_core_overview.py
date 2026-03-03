@@ -77,3 +77,29 @@ def test_list_resource_providers_marks_ready_when_no_running_sessions(tmp_path, 
     assert e2b["status"] == "ready"
     assert e2b["telemetry"]["running"]["used"] == 0
     assert e2b["telemetry"]["cpu"]["freshness"] == "stale"
+
+
+def test_list_resource_providers_prefers_config_console_url_override(tmp_path, monkeypatch):
+    (tmp_path / "daytona_selfhost.json").write_text(
+        json.dumps(
+            {
+                "provider": "daytona",
+                "console_url": "https://ops.example.com/daytona",
+                "daytona": {"target": "local", "api_url": "https://daytona.example.com/api"},
+            }
+        )
+    )
+
+    monkeypatch.setattr(overview, "SANDBOXES_DIR", tmp_path)
+    monkeypatch.setattr(
+        overview,
+        "available_sandbox_types",
+        lambda: [{"name": "daytona_selfhost", "available": True}],
+    )
+    monkeypatch.setattr(overview, "_list_sessions_fast", lambda: [])
+
+    payload = overview.list_resource_providers()
+    provider = payload["providers"][0]
+    assert provider["id"] == "daytona_selfhost"
+    assert provider["consoleUrl"] == "https://ops.example.com/daytona"
+    assert provider["type"] == "container"

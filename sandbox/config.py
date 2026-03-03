@@ -42,6 +42,7 @@ class SandboxConfig(BaseModel):
     provider: str = "local"
     # @@@ config-name-propagation - carries the config file stem (e.g. "daytona_selfhost") through the pipeline
     name: str = "local"
+    console_url: str | None = None
     agentbay: AgentBayConfig = Field(default_factory=AgentBayConfig)
     docker: DockerConfig = Field(default_factory=DockerConfig)
     e2b: E2BConfig = Field(default_factory=E2BConfig)
@@ -68,6 +69,8 @@ class SandboxConfig(BaseModel):
         path.parent.mkdir(parents=True, exist_ok=True)
 
         data = {"provider": self.provider, "on_exit": self.on_exit}
+        if self.console_url:
+            data["console_url"] = self.console_url
         if self.init_commands:
             data["init_commands"] = self.init_commands
         if self.provider in ("agentbay", "docker", "e2b", "daytona"):
