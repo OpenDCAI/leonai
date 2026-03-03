@@ -52,6 +52,7 @@ export interface Member {
 
 export type TaskStatus = "pending" | "running" | "completed" | "failed";
 export type Priority = "high" | "medium" | "low";
+export type TaskSource = "manual" | "cron" | "agent" | "queue";
 
 export interface Task {
   id: string;
@@ -62,6 +63,25 @@ export interface Task {
   priority: Priority;
   progress: number;
   deadline: string;
+  created_at: number;
+  // New fields
+  thread_id: string;
+  source: TaskSource;
+  cron_job_id: string;
+  result: string;
+  started_at: number;
+  completed_at: number;
+}
+
+export interface CronJob {
+  id: string;
+  name: string;
+  description: string;
+  cron_expression: string;
+  task_template: string;
+  enabled: number;
+  last_run_at: number;
+  next_run_at: number;
   created_at: number;
 }
 

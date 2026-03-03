@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import type {
   Member, Task, ResourceItem, UserProfile,
-  MemberConfig, TaskStatus,
+  MemberConfig, TaskStatus, CronJob,
 } from "./types";
 
 const API = "/api/panel";
@@ -10,6 +10,7 @@ interface AppState {
   // ── Data ──
   memberList: Member[];
   taskList: Task[];
+  cronJobs: CronJob[];
   librarySkills: ResourceItem[];
   libraryMcps: ResourceItem[];
   libraryAgents: ResourceItem[];
@@ -36,6 +37,13 @@ interface AppState {
   updateTask: (id: string, fields: Partial<Task>) => Promise<void>;
   deleteTask: (id: string) => Promise<void>;
   bulkUpdateTaskStatus: (ids: string[], status: TaskStatus) => Promise<void>;
+
+  // ── Cron Jobs ──
+  fetchCronJobs: () => Promise<void>;
+  addCronJob: (fields?: Partial<CronJob>) => Promise<CronJob>;
+  updateCronJob: (id: string, fields: Partial<CronJob>) => Promise<void>;
+  deleteCronJob: (id: string) => Promise<void>;
+  triggerCronJob: (id: string) => Promise<void>;
 
   // ── Library ──
   fetchLibrary: (type: string) => Promise<void>;
@@ -67,6 +75,7 @@ async function api<T = unknown>(path: string, opts?: RequestInit): Promise<T> {
 export const useAppStore = create<AppState>()((set, get) => ({
   memberList: [],
   taskList: [],
+  cronJobs: [],
   librarySkills: [],
   libraryMcps: [],
   libraryAgents: [],
@@ -81,6 +90,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
       await Promise.all([
         get().fetchMembers(),
         get().fetchTasks(),
+        get().fetchCronJobs(),
         get().fetchLibrary("skill"),
         get().fetchLibrary("mcp"),
         get().fetchLibrary("agent"),
@@ -185,6 +195,38 @@ export const useAppStore = create<AppState>()((set, get) => ({
           : t
       ),
     }));
+  },
+
+  // ── Cron Jobs ──
+  fetchCronJobs: async () => {
+    const data = await api<{ items: CronJob[] }>("/cron-jobs");
+    set({ cronJobs: data.items });
+  },
+
+  addCronJob: async (fields = {}) => {
+    const item = await api<CronJob>("/cron-jobs", {
+      method: "POST",
+      body: JSON.stringify(fields),
+    });
+    set((s) => ({ cronJobs: [item, ...s.cronJobs] }));
+    return item;
+  },
+
+  updateCronJob: async (id, fields) => {
+    const updated = await api<CronJob>(`/cron-jobs/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(fields),
+    });
+    set((s) => ({ cronJobs: s.cronJobs.map((x) => (x.id === id ? updated : x)) }));
+  },
+
+  deleteCronJob: async (id) => {
+    await api(`/cron-jobs/${id}`, { method: "DELETE" });
+    set((s) => ({ cronJobs: s.cronJobs.filter((x) => x.id !== id) }));
+  },
+
+  triggerCronJob: async (id) => {
+    await api(`/cron-jobs/${id}/run`, { method: "POST" });
   },
 
   // ── Library ──
