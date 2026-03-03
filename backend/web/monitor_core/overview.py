@@ -5,12 +5,12 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 from backend.web.core.config import SANDBOXES_DIR
 from backend.web.services.sandbox_service import available_sandbox_types
 from sandbox.db import DEFAULT_DB_PATH
-
 
 
 @dataclass(frozen=True)
@@ -282,4 +282,12 @@ def list_resource_providers() -> dict[str, Any]:
             }
         )
 
-    return {"providers": providers}
+    summary = {
+        "snapshot_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "total_providers": len(providers),
+        "active_providers": len([p for p in providers if p.get("status") == "active"]),
+        "unavailable_providers": len([p for p in providers if p.get("status") == "unavailable"]),
+        "running_sessions": sum(int((p.get("telemetry") or {}).get("running", {}).get("used") or 0) for p in providers),
+    }
+
+    return {"summary": summary, "providers": providers}

@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import type { ProviderCapabilities } from "./types";
-import { CAPABILITY_KEYS, CAPABILITY_LABELS } from "./fake-data";
+import { CAPABILITY_KEYS, CAPABILITY_LABELS } from "./capabilities";
 
 export const CAPABILITY_ICON_MAP: Record<string, React.ElementType> = {
   filesystem: FolderOpen,

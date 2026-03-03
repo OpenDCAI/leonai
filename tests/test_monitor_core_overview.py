@@ -37,7 +37,12 @@ def test_list_resource_providers_maps_status_and_metric_metadata(tmp_path, monke
     )
 
     payload = overview.list_resource_providers()
+    assert "summary" in payload
     assert "providers" in payload
+    assert payload["summary"]["total_providers"] == 2
+    assert payload["summary"]["active_providers"] == 1
+    assert payload["summary"]["unavailable_providers"] == 1
+    assert payload["summary"]["running_sessions"] == 1
 
     local = next(item for item in payload["providers"] if item["id"] == "local")
     assert local["status"] == "active"
@@ -64,6 +69,8 @@ def test_list_resource_providers_marks_ready_when_no_running_sessions(tmp_path, 
 
     payload = overview.list_resource_providers()
     assert len(payload["providers"]) == 1
+    assert payload["summary"]["active_providers"] == 0
+    assert payload["summary"]["running_sessions"] == 0
 
     e2b = payload["providers"][0]
     assert e2b["id"] == "e2b_test"

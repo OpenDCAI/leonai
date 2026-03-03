@@ -1,10 +1,19 @@
 import type { ProviderInfo } from "./types";
 
+interface ResourceSummary {
+  snapshot_at: string;
+  total_providers: number;
+  active_providers: number;
+  unavailable_providers: number;
+  running_sessions: number;
+}
+
 interface ResourceOverviewResponse {
+  summary: ResourceSummary;
   providers: ProviderInfo[];
 }
 
-export async function fetchResourceProviders(): Promise<ProviderInfo[]> {
+export async function fetchResourceProviders(): Promise<ResourceOverviewResponse> {
   const response = await fetch("/api/monitor/resources", {
     headers: { "Content-Type": "application/json" },
   });
@@ -15,8 +24,8 @@ export async function fetchResourceProviders(): Promise<ProviderInfo[]> {
   }
 
   const payload = (await response.json()) as ResourceOverviewResponse;
-  if (!payload || !Array.isArray(payload.providers)) {
+  if (!payload || !payload.summary || !Array.isArray(payload.providers)) {
     throw new Error("Unexpected /api/monitor/resources response shape");
   }
-  return payload.providers;
+  return payload;
 }

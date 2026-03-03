@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useIsMobile } from "@/hooks/use-mobile";
 import type { ProviderInfo } from "./resources/types";
-import { deriveAllocatedResources } from "./resources/fake-data";
+import { deriveAllocatedResources } from "./resources/allocation";
 import { fetchResourceProviders } from "./resources/api";
 import ProviderCard from "./resources/ProviderCard";
 import ProviderDetail from "./resources/ProviderDetail";
@@ -10,6 +10,10 @@ export default function ResourcesPage() {
   const isMobile = useIsMobile();
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [selectedId, setSelectedId] = useState<string>("");
+  const [summary, setSummary] = useState<{
+    active_providers: number;
+    running_sessions: number;
+  } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -20,8 +24,13 @@ export default function ResourcesPage() {
       setLoading(true);
       setError(null);
       try {
-        const nextProviders = await fetchResourceProviders();
+        const payload = await fetchResourceProviders();
+        const nextProviders = payload.providers;
         if (cancelled) return;
+        setSummary({
+          active_providers: payload.summary.active_providers,
+          running_sessions: payload.summary.running_sessions,
+        });
         setProviders(nextProviders);
         setSelectedId((prev) => {
           if (nextProviders.some((p) => p.id === prev)) return prev;
@@ -42,8 +51,8 @@ export default function ResourcesPage() {
   }, []);
 
   const selected = providers.find((p) => p.id === selectedId) ?? null;
-  const activeCount = providers.filter((p) => p.status === "active").length;
-  const totalSessions = providers.reduce((sum, p) => sum + p.sessions.length, 0);
+  const activeCount = summary?.active_providers ?? 0;
+  const totalSessions = summary?.running_sessions ?? 0;
   const allocatedResources = useMemo(() => deriveAllocatedResources(providers), [providers]);
 
   if (loading) {

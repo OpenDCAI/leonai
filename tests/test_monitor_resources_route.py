@@ -9,7 +9,10 @@ def test_monitor_resources_route_smoke():
 
     assert response.status_code == 200
     payload = response.json()
+    assert "summary" in payload
     assert "providers" in payload
+    assert "snapshot_at" in payload["summary"]
+    assert "running_sessions" in payload["summary"]
     assert isinstance(payload["providers"], list)
 
 

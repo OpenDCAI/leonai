@@ -1,6 +1,6 @@
 import { Bot } from "lucide-react";
 import type { AllocatedResource, ResourceType } from "./types";
-import { CAPABILITY_LABELS, CAPABILITY_KEYS } from "./fake-data";
+import { CAPABILITY_LABELS, CAPABILITY_KEYS } from "./capabilities";
 import { CAPABILITY_ICON_MAP } from "./CapabilityIcons";
 
 interface ResourceAllocationProps {
