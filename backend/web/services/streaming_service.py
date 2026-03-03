@@ -248,6 +248,9 @@ async def _run_agent_to_buffer(
         if hasattr(agent, "_current_model_config"):
             config["configurable"].update(agent._current_model_config)
         set_current_thread_id(thread_id)
+        # Bind thread_id to TaskBoardMiddleware so ClaimTask records the executor
+        if hasattr(agent, '_taskboard_middleware'):
+            agent._taskboard_middleware.thread_id = thread_id
         # @@@web-run-context - web runs have no TUI checkpoint; use run_id to group file ops per run.
         set_current_run_id(run_id)
 
@@ -670,6 +673,9 @@ async def _run_task_agent_to_buffer(
         from backend.web.services.agent_pool import get_or_create_agent
 
         agent = await get_or_create_agent(app, sandbox_type, thread_id=thread_id)
+        # Bind thread_id to TaskBoardMiddleware
+        if hasattr(agent, '_taskboard_middleware'):
+            agent._taskboard_middleware.thread_id = thread_id
 
         # Get TaskMiddleware from agent
         task_middleware = None
