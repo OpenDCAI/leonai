@@ -24,6 +24,16 @@ class DockerProvider(SandboxProvider):
     """
 
     name = "docker"
+    CAPABILITIES = {
+        "filesystem": True,
+        "terminal": True,
+        "metrics": True,
+        "screenshot": False,
+        "web": False,
+        "process": False,
+        "hooks": False,
+        "snapshot": False,
+    }
 
     def get_capability(self) -> ProviderCapability:
         return ProviderCapability(

@@ -18,6 +18,16 @@ class DaytonaProvider(SandboxProvider):
     """Daytona cloud sandbox provider."""
 
     name = "daytona"
+    CAPABILITIES = {
+        "filesystem": True,
+        "terminal": True,
+        "metrics": False,
+        "screenshot": False,
+        "web": False,
+        "process": False,
+        "hooks": True,
+        "snapshot": False,
+    }
 
     def get_capability(self) -> ProviderCapability:
         return ProviderCapability(

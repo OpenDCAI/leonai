@@ -27,6 +27,16 @@ class AgentBayProvider(SandboxProvider):
     """
 
     name = "agentbay"
+    CAPABILITIES = {
+        "filesystem": True,
+        "terminal": True,
+        "metrics": True,
+        "screenshot": True,
+        "web": True,
+        "process": True,
+        "hooks": False,
+        "snapshot": False,
+    }
 
     def get_capability(self) -> ProviderCapability:
         return ProviderCapability(

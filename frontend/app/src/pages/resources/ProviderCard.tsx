@@ -29,6 +29,8 @@ export default function ProviderCard({ provider, selected, onSelect }: ProviderC
   const primaryMetric = telemetry.quota ?? telemetry.cpu;
 
   const runningSessions = sessions.filter((s) => s.status === "running");
+  const pausedSessions = sessions.filter((s) => s.status === "paused");
+  const stoppedSessions = sessions.filter((s) => s.status === "stopped");
 
   return (
     <button
@@ -116,12 +118,14 @@ export default function ProviderCard({ provider, selected, onSelect }: ProviderC
               key={s.id}
               className={[
                 "w-2 h-2 rounded-full",
-                s.status === "running" ? "bg-foreground" : "bg-border",
+                s.status === "running" ? "bg-foreground" : s.status === "paused" ? "bg-warning/80" : "bg-border",
               ].join(" ")}
             />
           ))}
           <span className="text-[10px] text-muted-foreground ml-1">
-            {runningSessions.length > 0 ? `${sessions.length} 会话` : `${sessions.length} 已暂停`}
+            {runningSessions.length} 占用中
+            {pausedSessions.length > 0 ? ` · ${pausedSessions.length} 已暂停` : ""}
+            {stoppedSessions.length > 0 ? ` · ${stoppedSessions.length} 已结束` : ""}
           </span>
         </div>
       )}

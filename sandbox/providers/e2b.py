@@ -27,6 +27,16 @@ class E2BProvider(SandboxProvider):
     """E2B cloud sandbox provider."""
 
     name = "e2b"
+    CAPABILITIES = {
+        "filesystem": True,
+        "terminal": True,
+        "metrics": False,
+        "screenshot": False,
+        "web": False,
+        "process": False,
+        "hooks": False,
+        "snapshot": True,
+    }
     WORKSPACE_ROOT = "/home/user/workspace"
 
     def get_capability(self) -> ProviderCapability:

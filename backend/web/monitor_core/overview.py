@@ -18,7 +18,6 @@ class ProviderCatalogEntry:
     vendor: str | None
     description: str
     provider_type: str
-    capabilities: dict[str, bool]
 
 
 PROVIDER_CATALOG: dict[str, ProviderCatalogEntry] = {
@@ -26,78 +25,74 @@ PROVIDER_CATALOG: dict[str, ProviderCatalogEntry] = {
         vendor=None,
         description="Direct host access",
         provider_type="local",
-        capabilities={
-            "filesystem": True,
-            "terminal": True,
-            "metrics": False,
-            "screenshot": False,
-            "web": False,
-            "process": False,
-            "hooks": False,
-            "snapshot": False,
-        },
     ),
     "daytona": ProviderCatalogEntry(
         vendor="Daytona",
         description="Managed cloud or self-host Daytona sandboxes",
         provider_type="cloud",
-        capabilities={
-            "filesystem": True,
-            "terminal": True,
-            "metrics": True,
-            "screenshot": False,
-            "web": False,
-            "process": True,
-            "hooks": True,
-            "snapshot": False,
-        },
     ),
     "e2b": ProviderCatalogEntry(
         vendor="E2B",
         description="Cloud sandbox with runtime metrics",
         provider_type="cloud",
-        capabilities={
-            "filesystem": True,
-            "terminal": True,
-            "metrics": True,
-            "screenshot": False,
-            "web": False,
-            "process": False,
-            "hooks": False,
-            "snapshot": True,
-        },
     ),
     "agentbay": ProviderCatalogEntry(
         vendor="Alibaba Cloud",
         description="Remote Linux sandbox",
         provider_type="cloud",
-        capabilities={
-            "filesystem": True,
-            "terminal": True,
-            "metrics": True,
-            "screenshot": True,
-            "web": True,
-            "process": True,
-            "hooks": False,
-            "snapshot": False,
-        },
     ),
     "docker": ProviderCatalogEntry(
         vendor=None,
         description="Isolated container sandbox",
         provider_type="container",
-        capabilities={
-            "filesystem": True,
-            "terminal": True,
-            "metrics": True,
-            "screenshot": False,
-            "web": False,
-            "process": True,
-            "hooks": False,
-            "snapshot": False,
-        },
     ),
 }
+
+CAPABILITY_KEYS = {
+    "filesystem",
+    "terminal",
+    "metrics",
+    "screenshot",
+    "web",
+    "process",
+    "hooks",
+    "snapshot",
+}
+
+
+def _declared_capabilities(provider_name: str) -> dict[str, bool]:
+    if provider_name == "local":
+        from sandbox.local import LocalSessionProvider
+
+        raw = getattr(LocalSessionProvider, "CAPABILITIES", None)
+    elif provider_name == "docker":
+        from sandbox.providers.docker import DockerProvider
+
+        raw = getattr(DockerProvider, "CAPABILITIES", None)
+    elif provider_name == "e2b":
+        from sandbox.providers.e2b import E2BProvider
+
+        raw = getattr(E2BProvider, "CAPABILITIES", None)
+    elif provider_name == "daytona":
+        from sandbox.providers.daytona import DaytonaProvider
+
+        raw = getattr(DaytonaProvider, "CAPABILITIES", None)
+    elif provider_name == "agentbay":
+        from sandbox.providers.agentbay import AgentBayProvider
+
+        raw = getattr(AgentBayProvider, "CAPABILITIES", None)
+    else:
+        raise RuntimeError(f"Unsupported provider type: {provider_name}")
+
+    if not isinstance(raw, dict):
+        raise RuntimeError(f"Provider {provider_name} missing class CAPABILITIES declaration")
+
+    missing = CAPABILITY_KEYS.difference(raw.keys())
+    if missing:
+        raise RuntimeError(f"Provider {provider_name} CAPABILITIES missing keys: {sorted(missing)}")
+
+    # @@@capability-contract-surface - monitor consumes only agreed capability keys for stable front-end shape.
+    return {key: bool(raw[key]) for key in sorted(CAPABILITY_KEYS)}
 
 
 def _read_config_payload(config_name: str) -> dict[str, Any]:
@@ -270,7 +265,7 @@ def list_resource_providers() -> dict[str, Any]:
                     if not available and item.get("reason")
                     else None
                 ),
-                "capabilities": catalog.capabilities,
+                "capabilities": _declared_capabilities(provider_name),
                 "telemetry": {
                     "running": _metric(running_count, None, "sandbox", "sandbox_db", "cached"),
                     "cpu": _metric(None, None, "cores", "unknown", "stale"),

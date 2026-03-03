@@ -22,6 +22,16 @@ if TYPE_CHECKING:
 @dataclass
 class LocalSessionProvider(SandboxProvider):
     name: str = "local"
+    CAPABILITIES = {
+        "filesystem": True,
+        "terminal": True,
+        "metrics": False,
+        "screenshot": False,
+        "web": False,
+        "process": False,
+        "hooks": False,
+        "snapshot": False,
+    }
     default_cwd: str | None = None
     _session_states: dict[str, str] = field(default_factory=dict, init=False, repr=False)
     _state_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
