@@ -2,6 +2,10 @@ import type { ProviderInfo } from "./types";
 
 interface ResourceSummary {
   snapshot_at: string;
+  last_refreshed_at?: string;
+  refresh_duration_ms?: number;
+  refresh_status?: "ok" | "error";
+  refresh_error?: string | null;
   total_providers: number;
   active_providers: number;
   unavailable_providers: number;

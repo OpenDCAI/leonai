@@ -2,7 +2,8 @@
 
 from fastapi import APIRouter, HTTPException
 
-from backend.web.monitor_core import MonitorCoreNotFoundError, diagnose, observe, overview
+from backend.web.monitor_core import MonitorCoreNotFoundError, diagnose, observe
+from backend.web.monitor_core.resource_overview_cache import get_resource_overview_snapshot
 
 router = APIRouter(prefix="/api/monitor")
 
@@ -55,4 +56,4 @@ def health_snapshot():
 
 @router.get("/resources")
 def resources_overview():
-    return overview.list_resource_providers()
+    return get_resource_overview_snapshot()

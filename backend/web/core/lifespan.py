@@ -6,6 +6,7 @@ from typing import Any
 
 from fastapi import FastAPI
 
+from backend.web.monitor_core.resource_overview_cache import resource_overview_refresh_loop
 from backend.web.services.event_buffer import RunEventBuffer
 from backend.web.services.idle_reaper import idle_reaper_loop
 from core.queue import MessageQueueManager
@@ -43,10 +44,14 @@ async def lifespan(app: FastAPI):
     app.state.idle_reaper_task: asyncio.Task | None = None
     app.state.cron_service = None
     app.state._event_loop = asyncio.get_running_loop()
+    app.state.monitor_resources_task: asyncio.Task | None = None
 
     try:
         # Start idle reaper background task
         app.state.idle_reaper_task = asyncio.create_task(idle_reaper_loop(app))
+
+        # Start resource overview refresh loop
+        app.state.monitor_resources_task = asyncio.create_task(resource_overview_refresh_loop())
 
         # Start cron scheduler
         from backend.web.services.cron_service import CronService
@@ -57,18 +62,19 @@ async def lifespan(app: FastAPI):
 
         yield
     finally:
+        # @@@background-task-shutdown-order - cancel monitor/reaper before provider cleanup.
+        for task_name in ("monitor_resources_task", "idle_reaper_task"):
+            task = getattr(app.state, task_name, None)
+            if task:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+
         # Cleanup: stop cron scheduler
         if app.state.cron_service:
             await app.state.cron_service.stop()
-
-        # Cleanup: stop idle reaper
-        task = app.state.idle_reaper_task
-        if task:
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
 
         # Cleanup: close all agents
         for agent in app.state.agent_pool.values():

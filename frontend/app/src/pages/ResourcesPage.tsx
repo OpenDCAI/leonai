@@ -13,6 +13,8 @@ export default function ResourcesPage() {
   const [summary, setSummary] = useState<{
     active_providers: number;
     running_sessions: number;
+    last_refreshed_at?: string;
+    refresh_status?: "ok" | "error";
   } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -30,6 +32,8 @@ export default function ResourcesPage() {
         setSummary({
           active_providers: payload.summary.active_providers,
           running_sessions: payload.summary.running_sessions,
+          last_refreshed_at: payload.summary.last_refreshed_at ?? payload.summary.snapshot_at,
+          refresh_status: payload.summary.refresh_status ?? "ok",
         });
         setProviders(nextProviders);
         setSelectedId((prev) => {
@@ -53,6 +57,10 @@ export default function ResourcesPage() {
   const selected = providers.find((p) => p.id === selectedId) ?? null;
   const activeCount = summary?.active_providers ?? 0;
   const totalSessions = summary?.running_sessions ?? 0;
+  const refreshedAt = summary?.last_refreshed_at
+    ? new Date(summary.last_refreshed_at).toLocaleTimeString()
+    : "--:--:--";
+  const refreshDotClass = summary?.refresh_status === "error" ? "bg-warning" : "bg-success";
   const allocatedResources = useMemo(() => deriveAllocatedResources(providers), [providers]);
 
   if (loading) {
@@ -95,6 +103,11 @@ export default function ResourcesPage() {
             </span>
             <span>·</span>
             <span>{totalSessions} 会话</span>
+            <span>·</span>
+            <span className="inline-flex items-center gap-1">
+              <span className={`w-1.5 h-1.5 rounded-full ${refreshDotClass}`} />
+              刷新 {refreshedAt}
+            </span>
           </div>
         </div>
       </div>
