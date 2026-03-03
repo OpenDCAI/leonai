@@ -35,6 +35,7 @@ if TYPE_CHECKING:
 
 from sandbox.interfaces.executor import AsyncCommand, ExecuteResult
 from sandbox.shell_output import normalize_pty_result
+from storage.providers.sqlite.kernel import connect_sqlite
 
 ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -71,6 +72,10 @@ class PhysicalTerminalRuntime(ABC):
         self._tasks: dict[str, asyncio.Task[ExecuteResult]] = {}
         self._stream_flush_interval_sec = 0.2
         self._last_stream_flush_at: dict[str, float] = {}
+        self._persisted_stdout_chunk_count: dict[str, int] = {}
+        self._persisted_stderr_chunk_count: dict[str, int] = {}
+        self._chunk_table_available: bool | None = None
+        self._running_output_tail_limit = 4096
 
     def bind_session(self, session_id: str) -> None:
         self.chat_session_id = session_id
@@ -82,9 +87,66 @@ class PhysicalTerminalRuntime(ABC):
         return Path(db_path)
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(str(self._db_path()), timeout=30)
-        conn.execute("PRAGMA busy_timeout=30000")
-        return conn
+        return connect_sqlite(self._db_path())
+
+    def _has_chunk_table(self, conn: sqlite3.Connection) -> bool:
+        cached = self._chunk_table_available
+        if cached is not None:
+            return cached
+        row = conn.execute(
+            """
+            SELECT 1
+            FROM sqlite_master
+            WHERE type = 'table' AND name = 'terminal_command_chunks'
+            LIMIT 1
+            """
+        ).fetchone()
+        self._chunk_table_available = row is not None
+        return self._chunk_table_available
+
+    @staticmethod
+    def _tail_output(chunks: list[str], *, max_chars: int) -> str:
+        if not chunks:
+            return ""
+        merged = "".join(chunks[-32:])
+        if len(merged) <= max_chars:
+            return merged
+        return merged[-max_chars:]
+
+    def _append_unflushed_chunks(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        command_id: str,
+        async_cmd: AsyncCommand,
+    ) -> None:
+        if not self._has_chunk_table(conn):
+            return
+        stdout_start = self._persisted_stdout_chunk_count.get(command_id, 0)
+        stderr_start = self._persisted_stderr_chunk_count.get(command_id, 0)
+        stdout_chunks = async_cmd.stdout_buffer[stdout_start:]
+        stderr_chunks = async_cmd.stderr_buffer[stderr_start:]
+        if not stdout_chunks and not stderr_chunks:
+            return
+        created_at = datetime.now().isoformat()
+        if stdout_chunks:
+            conn.executemany(
+                """
+                INSERT INTO terminal_command_chunks (command_id, stream, content, created_at)
+                VALUES (?, 'stdout', ?, ?)
+                """,
+                [(command_id, chunk, created_at) for chunk in stdout_chunks],
+            )
+            self._persisted_stdout_chunk_count[command_id] = stdout_start + len(stdout_chunks)
+        if stderr_chunks:
+            conn.executemany(
+                """
+                INSERT INTO terminal_command_chunks (command_id, stream, content, created_at)
+                VALUES (?, 'stderr', ?, ?)
+                """,
+                [(command_id, chunk, created_at) for chunk in stderr_chunks],
+            )
+            self._persisted_stderr_chunk_count[command_id] = stderr_start + len(stderr_chunks)
 
     def _upsert_command_row(
         self,
@@ -93,28 +155,35 @@ class PhysicalTerminalRuntime(ABC):
         command_line: str,
         cwd: str,
         status: str,
-        stdout: str = "",
-        stderr: str = "",
+        stdout: str | None = "",
+        stderr: str | None = "",
         exit_code: int | None = None,
+        conn: sqlite3.Connection | None = None,
     ) -> None:
         now = datetime.now().isoformat()
-        with self._connect() as conn:
-            existing = conn.execute(
+        should_commit = conn is None
+        target = conn or self._connect()
+        try:
+            existing = target.execute(
                 "SELECT command_id, created_at FROM terminal_commands WHERE command_id = ?",
                 (command_id,),
             ).fetchone()
             if existing:
-                conn.execute(
+                target.execute(
                     """
                     UPDATE terminal_commands
-                    SET status = ?, stdout = ?, stderr = ?, exit_code = ?, updated_at = ?,
+                    SET status = ?,
+                        stdout = COALESCE(?, stdout),
+                        stderr = COALESCE(?, stderr),
+                        exit_code = ?,
+                        updated_at = ?,
                         finished_at = CASE WHEN ? IN ('done', 'cancelled', 'failed') THEN ? ELSE finished_at END
                     WHERE command_id = ?
                     """,
                     (status, stdout, stderr, exit_code, now, status, now, command_id),
                 )
             else:
-                conn.execute(
+                target.execute(
                     """
                     INSERT INTO terminal_commands (
                         command_id, terminal_id, chat_session_id, command_line, cwd, status,
@@ -129,15 +198,19 @@ class PhysicalTerminalRuntime(ABC):
                         command_line,
                         cwd,
                         status,
-                        stdout,
-                        stderr,
+                        stdout or "",
+                        stderr or "",
                         exit_code,
                         now,
                         now,
                         now if status in {"done", "cancelled", "failed"} else None,
                     ),
                 )
-            conn.commit()
+            if should_commit:
+                target.commit()
+        finally:
+            if should_commit:
+                target.close()
 
     def _flush_running_output_if_needed(self, command_id: str, *, force: bool = False) -> None:
         async_cmd = self._commands.get(command_id)
@@ -148,14 +221,18 @@ class PhysicalTerminalRuntime(ABC):
         if not force and now - last < self._stream_flush_interval_sec:
             return
         self._last_stream_flush_at[command_id] = now
-        self._upsert_command_row(
-            command_id=command_id,
-            command_line=async_cmd.command_line,
-            cwd=async_cmd.cwd,
-            status="running",
-            stdout="".join(async_cmd.stdout_buffer),
-            stderr="".join(async_cmd.stderr_buffer),
-        )
+        with self._connect() as conn:
+            self._append_unflushed_chunks(conn, command_id=command_id, async_cmd=async_cmd)
+            self._upsert_command_row(
+                command_id=command_id,
+                command_line=async_cmd.command_line,
+                cwd=async_cmd.cwd,
+                status="running",
+                stdout=self._tail_output(async_cmd.stdout_buffer, max_chars=self._running_output_tail_limit),
+                stderr=self._tail_output(async_cmd.stderr_buffer, max_chars=self._running_output_tail_limit),
+                conn=conn,
+            )
+            conn.commit()
 
     def _load_command_from_db(self, command_id: str) -> AsyncCommand | None:
         with self._connect() as conn:
@@ -168,14 +245,42 @@ class PhysicalTerminalRuntime(ABC):
                 """,
                 (command_id, self.terminal.terminal_id),
             ).fetchone()
+            stdout_text = ""
+            stderr_text = ""
+            if row:
+                stdout_text = str(row["stdout"] or "")
+                stderr_text = str(row["stderr"] or "")
+            if row and self._has_chunk_table(conn):
+                chunk_rows = conn.execute(
+                    """
+                    SELECT stream, content
+                    FROM terminal_command_chunks
+                    WHERE command_id = ?
+                    ORDER BY chunk_id ASC
+                    """,
+                    (command_id,),
+                ).fetchall()
+                if chunk_rows:
+                    stdout_chunks = [str(chunk["content"] or "") for chunk in chunk_rows if chunk["stream"] == "stdout"]
+                    stderr_chunks = [str(chunk["content"] or "") for chunk in chunk_rows if chunk["stream"] == "stderr"]
+                    chunk_stdout = "".join(stdout_chunks)
+                    chunk_stderr = "".join(stderr_chunks)
+                    if row["status"] in {"done", "cancelled", "failed"}:
+                        if len(chunk_stdout) >= len(stdout_text):
+                            stdout_text = chunk_stdout
+                        if len(chunk_stderr) >= len(stderr_text):
+                            stderr_text = chunk_stderr
+                    else:
+                        stdout_text = chunk_stdout
+                        stderr_text = chunk_stderr
         if not row:
             return None
         async_cmd = AsyncCommand(
             command_id=row["command_id"],
             command_line=row["command_line"],
             cwd=row["cwd"],
-            stdout_buffer=[row["stdout"] or ""],
-            stderr_buffer=[row["stderr"] or ""],
+            stdout_buffer=[stdout_text],
+            stderr_buffer=[stderr_text],
             exit_code=row["exit_code"],
             done=row["status"] in {"done", "cancelled", "failed"},
         )
@@ -190,6 +295,8 @@ class PhysicalTerminalRuntime(ABC):
             cwd=cwd,
         )
         self._commands[command_id] = async_cmd
+        self._persisted_stdout_chunk_count[command_id] = 0
+        self._persisted_stderr_chunk_count[command_id] = 0
         self._upsert_command_row(
             command_id=command_id,
             command_line=command,
@@ -209,6 +316,7 @@ class PhysicalTerminalRuntime(ABC):
             except Exception as exc:
                 result = ExecuteResult(exit_code=1, stdout="", stderr=f"Error: {exc}")
                 status = "failed"
+            self._flush_running_output_if_needed(command_id, force=True)
             async_cmd.stdout_buffer = [result.stdout]
             async_cmd.stderr_buffer = [result.stderr]
             async_cmd.exit_code = result.exit_code
@@ -223,6 +331,8 @@ class PhysicalTerminalRuntime(ABC):
                 exit_code=result.exit_code,
             )
             self._last_stream_flush_at.pop(command_id, None)
+            self._persisted_stdout_chunk_count.pop(command_id, None)
+            self._persisted_stderr_chunk_count.pop(command_id, None)
             return result
 
         self._tasks[command_id] = asyncio.create_task(_run())
@@ -303,6 +413,7 @@ class PhysicalTerminalRuntime(ABC):
         if task.done():
             return False
         task.cancel()
+        self._flush_running_output_if_needed(command_id, force=True)
         cmd.done = True
         cmd.exit_code = 130
         cmd.stderr_buffer = ["Command cancelled"]
@@ -315,6 +426,9 @@ class PhysicalTerminalRuntime(ABC):
             stderr="Command cancelled",
             exit_code=130,
         )
+        self._last_stream_flush_at.pop(command_id, None)
+        self._persisted_stdout_chunk_count.pop(command_id, None)
+        self._persisted_stderr_chunk_count.pop(command_id, None)
         return True
 
     def store_completed_result(self, command_id: str, command_line: str, cwd: str, result: ExecuteResult) -> None:
@@ -338,6 +452,8 @@ class PhysicalTerminalRuntime(ABC):
             exit_code=result.exit_code,
         )
         self._last_stream_flush_at.pop(command_id, None)
+        self._persisted_stdout_chunk_count.pop(command_id, None)
+        self._persisted_stderr_chunk_count.pop(command_id, None)
 
     @abstractmethod
     async def execute(self, command: str, timeout: float | None = None) -> ExecuteResult:

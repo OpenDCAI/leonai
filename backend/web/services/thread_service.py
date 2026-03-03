@@ -5,6 +5,7 @@ from typing import Any
 
 from backend.web.core.config import DB_PATH
 from sandbox.db import DEFAULT_DB_PATH as SANDBOX_DB_PATH
+from storage.providers.sqlite.kernel import connect_sqlite
 
 
 def list_threads_from_db() -> list[dict[str, Any]]:
@@ -13,8 +14,7 @@ def list_threads_from_db() -> list[dict[str, Any]]:
     thread_meta: dict[str, dict[str, Any]] = {}  # thread_id -> {preview, updated_at}
 
     if DB_PATH.exists():
-        with sqlite3.connect(str(DB_PATH)) as conn:
-            conn.row_factory = sqlite3.Row
+        with connect_sqlite(DB_PATH, row_factory=sqlite3.Row) as conn:
             existing = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
             if "checkpoints" in existing:
                 rows = conn.execute("SELECT DISTINCT thread_id FROM checkpoints WHERE thread_id IS NOT NULL").fetchall()
@@ -52,8 +52,7 @@ def list_threads_from_db() -> list[dict[str, Any]]:
                     pass
 
     if SANDBOX_DB_PATH.exists():
-        with sqlite3.connect(str(SANDBOX_DB_PATH)) as conn:
-            conn.row_factory = sqlite3.Row
+        with connect_sqlite(SANDBOX_DB_PATH, row_factory=sqlite3.Row) as conn:
             existing = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
             if "chat_sessions" in existing:
                 rows = conn.execute(
@@ -64,8 +63,7 @@ def list_threads_from_db() -> list[dict[str, Any]]:
     # Batch-load agent names from thread_config
     thread_agents: dict[str, str | None] = {}
     if DB_PATH.exists():
-        with sqlite3.connect(str(DB_PATH)) as conn:
-            conn.row_factory = sqlite3.Row
+        with connect_sqlite(DB_PATH, row_factory=sqlite3.Row) as conn:
             tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
             if "thread_config" in tables:
                 rows = conn.execute("SELECT thread_id, agent FROM thread_config").fetchall()

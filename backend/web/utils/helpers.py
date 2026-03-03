@@ -10,6 +10,7 @@ from fastapi import HTTPException
 from backend.web.core.config import DB_PATH
 from storage.container import StorageContainer
 from storage.contracts import ThreadConfigRepo
+from storage.providers.sqlite.kernel import connect_sqlite
 from storage.runtime import build_storage_container
 from sandbox.db import DEFAULT_DB_PATH as SANDBOX_DB_PATH
 
@@ -27,8 +28,7 @@ def get_terminal_timestamps(terminal_id: str) -> tuple[str | None, str | None]:
     """Get created_at and updated_at timestamps for a terminal."""
     if not SANDBOX_DB_PATH.exists():
         return None, None
-    with sqlite3.connect(str(SANDBOX_DB_PATH)) as conn:
-        conn.row_factory = sqlite3.Row
+    with connect_sqlite(SANDBOX_DB_PATH, row_factory=sqlite3.Row) as conn:
         row = conn.execute(
             "SELECT created_at, updated_at FROM abstract_terminals WHERE terminal_id = ?",
             (terminal_id,),
@@ -42,8 +42,7 @@ def get_lease_timestamps(lease_id: str) -> tuple[str | None, str | None]:
     """Get created_at and updated_at timestamps for a lease."""
     if not SANDBOX_DB_PATH.exists():
         return None, None
-    with sqlite3.connect(str(SANDBOX_DB_PATH)) as conn:
-        conn.row_factory = sqlite3.Row
+    with connect_sqlite(SANDBOX_DB_PATH, row_factory=sqlite3.Row) as conn:
         row = conn.execute(
             "SELECT created_at, updated_at FROM sandbox_leases WHERE lease_id = ?",
             (lease_id,),
@@ -201,7 +200,7 @@ def delete_thread_in_db(thread_id: str) -> None:
 
     # Purge sandbox db tables (not managed by storage repos)
     if SANDBOX_DB_PATH.exists():
-        with sqlite3.connect(str(SANDBOX_DB_PATH)) as conn:
+        with connect_sqlite(SANDBOX_DB_PATH) as conn:
             tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
             for table in tables:
                 if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", table):

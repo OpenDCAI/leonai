@@ -10,6 +10,13 @@ import threading
 from collections.abc import Callable
 from pathlib import Path
 
+from storage.providers.sqlite.kernel import (
+    BUSY_TIMEOUT_MS,
+    SQLiteDBRole,
+    connect_sqlite,
+    resolve_role_db_path,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -17,7 +24,8 @@ class MessageQueueManager:
     """Unified SQLite message queue with wake-on-enqueue support."""
 
     def __init__(self, db_path: str | None = None):
-        self._db_path = db_path or str(Path.home() / ".leon" / "leon.db")
+        resolved = Path(db_path) if db_path else resolve_role_db_path(SQLiteDBRole.QUEUE)
+        self._db_path = str(resolved)
         self._wake_handlers: dict[str, Callable[[], None]] = {}
         self._wake_lock = threading.Lock()
         self._ensure_table()
@@ -28,9 +36,7 @@ class MessageQueueManager:
 
     def _ensure_table(self) -> None:
         Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(self._db_path) as conn:
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA busy_timeout=5000")
+        with connect_sqlite(self._db_path, timeout_ms=BUSY_TIMEOUT_MS) as conn:
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS message_queue ("
                 "  id         INTEGER PRIMARY KEY AUTOINCREMENT,"
@@ -45,10 +51,11 @@ class MessageQueueManager:
             conn.commit()
 
     def _conn(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self._db_path)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA busy_timeout=5000")
-        return conn
+        return connect_sqlite(
+            self._db_path,
+            row_factory=sqlite3.Row,
+            timeout_ms=BUSY_TIMEOUT_MS,
+        )
 
     # ------------------------------------------------------------------
     # Core operations
@@ -74,6 +81,13 @@ class MessageQueueManager:
     def dequeue(self, thread_id: str) -> str | None:
         """Atomically pop the oldest message (DELETE + RETURNING)."""
         with self._conn() as conn:
+            # Fast-path: avoid acquiring a write lock when queue is empty.
+            has_row = conn.execute(
+                "SELECT 1 FROM message_queue WHERE thread_id = ? LIMIT 1",
+                (thread_id,),
+            ).fetchone()
+            if has_row is None:
+                return None
             row = conn.execute(
                 "DELETE FROM message_queue "
                 "WHERE id = (SELECT MIN(id) FROM message_queue WHERE thread_id = ?) "
@@ -86,6 +100,13 @@ class MessageQueueManager:
     def drain_all(self, thread_id: str) -> list[str]:
         """Atomically DELETE all pending messages, return FIFO-ordered list."""
         with self._conn() as conn:
+            # Fast-path: avoid DELETE on empty queue to reduce lock contention on main DB.
+            has_row = conn.execute(
+                "SELECT 1 FROM message_queue WHERE thread_id = ? LIMIT 1",
+                (thread_id,),
+            ).fetchone()
+            if has_row is None:
+                return []
             rows = conn.execute(
                 "DELETE FROM message_queue WHERE thread_id = ? RETURNING content, id",
                 (thread_id,),

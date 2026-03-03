@@ -170,6 +170,57 @@ class TestTerminalStore:
         # Verify deleted
         assert store.get("thread-456") is None
 
+    def test_delete_terminal_cleans_command_chunks(self, store, temp_db):
+        """Deleting a terminal should remove command rows and associated output chunks."""
+        store.create(
+            terminal_id="term-123",
+            thread_id="thread-456",
+            lease_id="lease-789",
+        )
+        with sqlite3.connect(str(temp_db)) as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS terminal_commands (
+                    command_id TEXT PRIMARY KEY,
+                    terminal_id TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS terminal_command_chunks (
+                    chunk_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    command_id TEXT NOT NULL,
+                    stream TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    created_at TIMESTAMP NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                "INSERT INTO terminal_commands (command_id, terminal_id) VALUES (?, ?)",
+                ("cmd-1", "term-123"),
+            )
+            conn.execute(
+                """
+                INSERT INTO terminal_command_chunks (command_id, stream, content, created_at)
+                VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                """,
+                ("cmd-1", "stdout", "line-1"),
+            )
+            conn.commit()
+
+        store.delete("term-123")
+
+        with sqlite3.connect(str(temp_db)) as conn:
+            cmd_row = conn.execute("SELECT command_id FROM terminal_commands WHERE command_id = ?", ("cmd-1",)).fetchone()
+            chunk_row = conn.execute(
+                "SELECT chunk_id FROM terminal_command_chunks WHERE command_id = ?",
+                ("cmd-1",),
+            ).fetchone()
+        assert cmd_row is None
+        assert chunk_row is None
+
     def test_list_all_terminals(self, store):
         """Test listing all terminals."""
         import time

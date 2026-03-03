@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 from langgraph.checkpoint.sqlite import SqliteSaver
 
 from storage.providers.sqlite.checkpoint_repo import SQLiteCheckpointRepo
+from storage.providers.sqlite.kernel import connect_sqlite
 from tui.operations import FileOperation, FileOperationRecorder, get_recorder
 
 if TYPE_CHECKING:
@@ -48,7 +49,7 @@ class TimeTravelManager:
         # Always create our own sync SqliteSaver for reading checkpoints
         # This works regardless of whether the agent uses sync or async checkpointer
         db_path = Path.home() / ".leon" / "leon.db"
-        self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
+        self._conn = connect_sqlite(db_path, check_same_thread=False)
         self.checkpointer = SqliteSaver(self._conn)
         self.checkpoint_repo = SQLiteCheckpointRepo(conn=self._conn)
         self.recorder = recorder or get_recorder()

@@ -16,6 +16,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from storage.providers.sqlite.kernel import connect_sqlite
+
 from sandbox.db import DEFAULT_DB_PATH
 from sandbox.lifecycle import (
     ChatSessionState,
@@ -47,9 +49,7 @@ REQUIRED_CHAT_SESSION_COLUMNS = {
 
 
 def _connect(db_path: Path) -> sqlite3.Connection:
-    conn = sqlite3.connect(str(db_path), timeout=30)
-    conn.execute("PRAGMA busy_timeout=30000")
-    return conn
+    return connect_sqlite(db_path)
 
 
 @dataclass
@@ -244,6 +244,24 @@ class ChatSessionManager:
                 """
                 CREATE INDEX IF NOT EXISTS idx_terminal_commands_terminal_created
                 ON terminal_commands(terminal_id, created_at DESC)
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS terminal_command_chunks (
+                    chunk_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    command_id TEXT NOT NULL,
+                    stream TEXT NOT NULL CHECK (stream IN ('stdout', 'stderr')),
+                    content TEXT NOT NULL,
+                    created_at TIMESTAMP NOT NULL,
+                    FOREIGN KEY (command_id) REFERENCES terminal_commands(command_id)
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_terminal_command_chunks_command_order
+                ON terminal_command_chunks(command_id, chunk_id)
                 """
             )
             conn.execute(

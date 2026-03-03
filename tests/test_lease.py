@@ -329,6 +329,44 @@ class TestSQLiteLease:
         assert instance.instance_id == "inst-123"
         assert instance.status == "running"
 
+    def test_apply_rolls_back_state_when_event_insert_conflicts(self, store, mock_provider):
+        """Snapshot/metadata updates must roll back when event append fails."""
+        lease = store.create("lease-atomic", "test-provider")
+        lease.apply(
+            mock_provider,
+            event_type="provider.error",
+            source="test.seed",
+            payload={"error": "seed"},
+            event_id="evt-duplicate",
+        )
+
+        before = store.get("lease-atomic")
+        assert before is not None
+
+        with pytest.raises(sqlite3.IntegrityError):
+            lease.apply(
+                mock_provider,
+                event_type="provider.error",
+                source="test.conflict",
+                payload={"error": "boom"},
+                event_id="evt-duplicate",
+            )
+
+        after = store.get("lease-atomic")
+        assert after is not None
+        assert after.version == before.version
+        assert after.last_error == before.last_error
+        assert after.needs_refresh == before.needs_refresh
+        assert after.observed_state == before.observed_state
+
+        with sqlite3.connect(str(store.db_path), timeout=30) as conn:
+            count_row = conn.execute(
+                "SELECT COUNT(*) FROM lease_events WHERE event_id = ?",
+                ("evt-duplicate",),
+            ).fetchone()
+        assert count_row is not None
+        assert int(count_row[0]) == 1
+
 
 class TestLeaseIntegration:
     """Integration tests for lease lifecycle."""

@@ -2,6 +2,7 @@
 
 import asyncio
 import re
+import sqlite3
 import tempfile
 import time
 from pathlib import Path
@@ -476,6 +477,13 @@ async def test_daytona_runtime_streams_running_output(terminal_store, lease_stor
     assert done is not None
     assert done.exit_code == 0
     assert "tick-2" in done.stdout
+    with sqlite3.connect(str(terminal_store.db_path), timeout=30) as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM terminal_command_chunks WHERE command_id = ?",
+            (async_cmd.command_id,),
+        ).fetchone()
+    assert row is not None
+    assert int(row[0]) >= 2
     await runtime.close()
 
 

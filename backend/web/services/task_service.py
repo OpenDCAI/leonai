@@ -7,6 +7,7 @@ import uuid
 from typing import Any
 
 from backend.web.core.config import DB_PATH
+from storage.providers.sqlite.connection import create_connection
 
 
 def _ensure_tasks_table(conn: sqlite3.Connection) -> None:
@@ -48,8 +49,7 @@ def _ensure_tasks_table(conn: sqlite3.Connection) -> None:
 
 
 def _tasks_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(str(DB_PATH))
-    conn.row_factory = sqlite3.Row
+    conn = create_connection(DB_PATH, row_factory=sqlite3.Row)
     _ensure_tasks_table(conn)
     return conn
 

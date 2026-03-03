@@ -18,6 +18,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from storage.providers.sqlite.kernel import connect_sqlite
+
 from sandbox.db import DEFAULT_DB_PATH
 
 if TYPE_CHECKING:
@@ -43,9 +45,7 @@ REQUIRED_TERMINAL_POINTER_COLUMNS = {
 
 
 def _connect(db_path: Path) -> sqlite3.Connection:
-    conn = sqlite3.connect(str(db_path), timeout=30)
-    conn.execute("PRAGMA busy_timeout=30000")
-    return conn
+    return connect_sqlite(db_path)
 
 
 @dataclass
@@ -433,6 +433,16 @@ class TerminalStore:
 
             tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
             if "terminal_commands" in tables:
+                if "terminal_command_chunks" in tables:
+                    conn.execute(
+                        """
+                        DELETE FROM terminal_command_chunks
+                        WHERE command_id IN (
+                            SELECT command_id FROM terminal_commands WHERE terminal_id = ?
+                        )
+                        """,
+                        (terminal_id,),
+                    )
                 conn.execute(
                     "DELETE FROM terminal_commands WHERE terminal_id = ?",
                     (terminal_id,),

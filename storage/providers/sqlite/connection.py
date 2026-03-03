@@ -1,15 +1,17 @@
-"""Centralized SQLite connection factory.
+"""Backward-compatible SQLite connection helpers.
 
-Single source of truth for connection settings.
-All SQLite repos MUST obtain connections through this module.
+All new call sites should prefer `storage.providers.sqlite.kernel`.
 """
 
 import sqlite3
 from pathlib import Path
 
-WAL_MODE = "WAL"
-BUSY_TIMEOUT_MS = 30_000
-SYNCHRONOUS = "NORMAL"
+from storage.providers.sqlite.kernel import (
+    BUSY_TIMEOUT_MS,
+    SYNCHRONOUS,
+    WAL_MODE,
+    connect_sqlite,
+)
 
 
 def create_connection(
@@ -21,12 +23,9 @@ def create_connection(
 
     Guarantees: WAL mode, 30s busy_timeout, check_same_thread=False.
     """
-    path = Path(db_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(path), check_same_thread=False)
-    conn.execute(f"PRAGMA journal_mode={WAL_MODE}")
-    conn.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
-    conn.execute(f"PRAGMA synchronous={SYNCHRONOUS}")
-    if row_factory is not None:
-        conn.row_factory = row_factory
-    return conn
+    return connect_sqlite(
+        db_path,
+        row_factory=row_factory,
+        check_same_thread=False,
+        timeout_ms=BUSY_TIMEOUT_MS,
+    )

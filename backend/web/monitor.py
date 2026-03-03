@@ -12,13 +12,13 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
 
 from sandbox.db import DEFAULT_DB_PATH
+from storage.providers.sqlite.kernel import connect_sqlite
 
 router = APIRouter(prefix="/api/monitor")
 
 
 def get_db():
-    db = sqlite3.connect(str(DEFAULT_DB_PATH))
-    db.row_factory = sqlite3.Row
+    db = connect_sqlite(DEFAULT_DB_PATH, row_factory=sqlite3.Row)
     try:
         yield db
     finally:
