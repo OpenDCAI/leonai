@@ -1,4 +1,5 @@
 from pathlib import Path
+from unittest.mock import MagicMock
 
 from sandbox.provider import Metrics, ProviderCapability, ProviderExecResult, SessionInfo, SandboxProvider
 from sandbox.resource_snapshot import (
@@ -108,3 +109,23 @@ def test_probe_and_upsert_from_provider_metrics(tmp_path):
     snapshots = list_snapshots_by_lease_ids(["lease-2"], db_path=db_path)
     assert snapshots["lease-2"]["cpu_used"] == 23.5
     assert snapshots["lease-2"]["memory_total_mb"] == 4096.0
+
+
+def test_probe_and_upsert_ignores_non_numeric_metrics(tmp_path):
+    db_path = Path(tmp_path) / "sandbox.db"
+    provider = _FakeProvider()
+    provider.get_metrics = lambda _session_id: MagicMock()
+    result = probe_and_upsert_for_instance(
+        lease_id="lease-3",
+        provider_name="fake_provider",
+        observed_state="running",
+        probe_mode="create_running",
+        provider=provider,
+        instance_id="instance-1",
+        db_path=db_path,
+    )
+    assert result["ok"] is False
+    assert result["error"] == "metrics unavailable"
+    snapshots = list_snapshots_by_lease_ids(["lease-3"], db_path=db_path)
+    assert snapshots["lease-3"]["cpu_used"] is None
+    assert snapshots["lease-3"]["probe_error"] == "metrics unavailable"
