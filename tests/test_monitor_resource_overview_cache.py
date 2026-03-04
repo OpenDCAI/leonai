@@ -3,6 +3,7 @@ from backend.web.monitor_core import resource_overview_cache as cache
 
 def test_resource_overview_cache_refresh_adds_metadata(monkeypatch):
     cache.clear_resource_overview_cache()
+    monkeypatch.setattr(cache, "refresh_resource_snapshots", lambda: {"probed": 0, "errors": 0})
     monkeypatch.setattr(
         cache.overview,
         "list_resource_providers",
@@ -29,6 +30,7 @@ def test_resource_overview_cache_refresh_adds_metadata(monkeypatch):
 
 def test_resource_overview_cache_keeps_last_snapshot_on_refresh_error(monkeypatch):
     cache.clear_resource_overview_cache()
+    monkeypatch.setattr(cache, "refresh_resource_snapshots", lambda: {"probed": 0, "errors": 0})
     monkeypatch.setattr(
         cache.overview,
         "list_resource_providers",

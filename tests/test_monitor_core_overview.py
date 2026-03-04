@@ -118,6 +118,57 @@ def test_list_resource_providers_prefers_config_console_url_override(tmp_path, m
     assert provider["type"] == "container"
 
 
+def test_list_resource_providers_uses_snapshot_metrics(tmp_path, monkeypatch):
+    (tmp_path / "agentbay_prod.json").write_text(json.dumps({"provider": "agentbay"}))
+
+    monkeypatch.setattr(overview, "SANDBOXES_DIR", tmp_path)
+    monkeypatch.setattr(
+        overview,
+        "available_sandbox_types",
+        lambda: [{"name": "agentbay_prod", "available": True}],
+    )
+    monkeypatch.setattr(
+        overview,
+        "_list_sessions_fast",
+        lambda: [
+            {
+                "provider": "agentbay_prod",
+                "session_id": "sess-1",
+                "thread_id": "thread-1",
+                "lease_id": "lease-1",
+                "status": "running",
+                "created_at": "2026-03-03T00:00:00",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        overview,
+        "list_snapshots_by_lease_ids",
+        lambda _: {
+            "lease-1": {
+                "lease_id": "lease-1",
+                "cpu_used": 21.0,
+                "cpu_limit": 100.0,
+                "memory_used_mb": 1024.0,
+                "memory_total_mb": 4096.0,
+                "disk_used_gb": 4.0,
+                "disk_total_gb": 20.0,
+                "collected_at": "2099-01-01T00:00:00Z",
+            }
+        },
+    )
+
+    payload = overview.list_resource_providers()
+    provider = payload["providers"][0]
+    assert provider["telemetry"]["cpu"]["used"] == 21.0
+    assert provider["telemetry"]["cpu"]["limit"] == 100.0
+    assert provider["telemetry"]["memory"]["used"] == 1.0
+    assert provider["telemetry"]["memory"]["limit"] == 4.0
+    assert provider["telemetry"]["disk"]["used"] == 4.0
+    assert provider["telemetry"]["disk"]["limit"] == 20.0
+    assert provider["telemetry"]["cpu"]["source"] == "api"
+
+
 def test_thread_owner_uses_agent_ref_as_name_when_member_lookup_missing(tmp_path, monkeypatch):
     db_path = tmp_path / "leon.db"
     monkeypatch.setattr(overview, "DB_PATH", Path(db_path))

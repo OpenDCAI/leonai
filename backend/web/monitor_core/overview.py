@@ -9,9 +9,10 @@ from typing import Any
 from backend.web.core.config import DB_PATH
 from backend.web.core.config import SANDBOXES_DIR
 from backend.web.services.sandbox_service import available_sandbox_types
+from sandbox.db import DEFAULT_DB_PATH
 from sandbox.metadata import get_provider_catalog, resolve_console_url, resolve_provider_name, resolve_provider_type
 from sandbox.provider import ProviderCapability, RESOURCE_CAPABILITY_KEYS
-from sandbox.db import DEFAULT_DB_PATH
+from sandbox.resource_snapshot import list_snapshots_by_lease_ids
 
 def _declared_capabilities(provider_name: str) -> dict[str, bool]:
     if provider_name == "local":
@@ -58,6 +59,26 @@ def _to_session_status(raw_status: str | None) -> str:
     return "running"
 
 
+def _to_metric_freshness(collected_at: str | None) -> str:
+    if not collected_at:
+        return "stale"
+    raw = str(collected_at).strip()
+    if not raw:
+        return "stale"
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except Exception:
+        return "stale"
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    age_sec = max((datetime.now(timezone.utc) - parsed).total_seconds(), 0.0)
+    if age_sec <= 30:
+        return "live"
+    if age_sec <= 180:
+        return "cached"
+    return "stale"
+
+
 def _metric(used: float | int | None, limit: float | int | None, unit: str, source: str, freshness: str) -> dict[str, Any]:
     return {
         "used": used,
@@ -92,6 +113,7 @@ def _list_sessions_fast() -> list[dict[str, Any]]:
             SELECT
                 cs.chat_session_id AS session_id,
                 cs.thread_id AS thread_id,
+                cs.lease_id AS lease_id,
                 cs.status AS status,
                 cs.started_at AS created_at,
                 sl.provider_name AS provider
@@ -108,6 +130,7 @@ def _list_sessions_fast() -> list[dict[str, Any]]:
                 "provider": row["provider"] or "local",
                 "session_id": row["session_id"],
                 "thread_id": row["thread_id"],
+                "lease_id": row["lease_id"],
                 "status": row["status"],
                 "created_at": row["created_at"],
             }
@@ -179,6 +202,47 @@ def _thread_owners(thread_ids: list[str]) -> dict[str, dict[str, str | None]]:
     return owners
 
 
+def _sum_or_none(values: list[float | int]) -> float | None:
+    if not values:
+        return None
+    return float(sum(values))
+
+
+def _aggregate_provider_telemetry(
+    *,
+    provider_sessions: list[dict[str, Any]],
+    running_count: int,
+    snapshot_by_lease: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    lease_ids = sorted({str(session.get("lease_id") or "") for session in provider_sessions if session.get("lease_id")})
+    snapshots = [snapshot_by_lease[lease_id] for lease_id in lease_ids if lease_id in snapshot_by_lease]
+
+    freshness = "stale"
+    if snapshots:
+        latest_collected_at = max(str(snap.get("collected_at") or "") for snap in snapshots)
+        freshness = _to_metric_freshness(latest_collected_at)
+
+    cpu_used = _sum_or_none([float(s["cpu_used"]) for s in snapshots if s.get("cpu_used") is not None])
+    cpu_limit = _sum_or_none([float(s["cpu_limit"]) for s in snapshots if s.get("cpu_limit") is not None])
+    memory_used_gb = _sum_or_none([float(s["memory_used_mb"]) / 1024.0 for s in snapshots if s.get("memory_used_mb") is not None])
+    memory_limit_gb = _sum_or_none(
+        [float(s["memory_total_mb"]) / 1024.0 for s in snapshots if s.get("memory_total_mb") is not None]
+    )
+    disk_used_gb = _sum_or_none([float(s["disk_used_gb"]) for s in snapshots if s.get("disk_used_gb") is not None])
+    disk_limit_gb = _sum_or_none([float(s["disk_total_gb"]) for s in snapshots if s.get("disk_total_gb") is not None])
+
+    cpu_source = "api" if cpu_used is not None or cpu_limit is not None else "unknown"
+    memory_source = "api" if memory_used_gb is not None or memory_limit_gb is not None else "unknown"
+    disk_source = "api" if disk_used_gb is not None or disk_limit_gb is not None else "unknown"
+
+    return {
+        "running": _metric(running_count, None, "sandbox", "sandbox_db", "cached"),
+        "cpu": _metric(cpu_used, cpu_limit, "cores", cpu_source, freshness),
+        "memory": _metric(memory_used_gb, memory_limit_gb, "GB", memory_source, freshness),
+        "disk": _metric(disk_used_gb, disk_limit_gb, "GB", disk_source, freshness),
+    }
+
+
 def list_resource_providers() -> dict[str, Any]:
     # @@@overview-fast-path - avoid provider-network calls; overview uses DB session snapshot.
     sessions = _list_sessions_fast()
@@ -189,6 +253,7 @@ def list_resource_providers() -> dict[str, Any]:
         grouped_sessions.setdefault(provider_instance, []).append(session)
 
     owners = _thread_owners([str(session.get("thread_id") or "") for session in sessions])
+    snapshot_by_lease = list_snapshots_by_lease_ids([str(session.get("lease_id") or "") for session in sessions])
 
     providers: list[dict[str, Any]] = []
     for item in available_sandbox_types():
@@ -232,12 +297,11 @@ def list_resource_providers() -> dict[str, Any]:
                     else None
                 ),
                 "capabilities": _declared_capabilities(provider_name),
-                "telemetry": {
-                    "running": _metric(running_count, None, "sandbox", "sandbox_db", "cached"),
-                    "cpu": _metric(None, None, "cores", "unknown", "stale"),
-                    "memory": _metric(None, None, "GB", "unknown", "stale"),
-                    "disk": _metric(None, None, "GB", "unknown", "stale"),
-                },
+                "telemetry": _aggregate_provider_telemetry(
+                    provider_sessions=provider_sessions,
+                    running_count=running_count,
+                    snapshot_by_lease=snapshot_by_lease,
+                ),
                 "consoleUrl": resolve_console_url(provider_name, config_name, sandboxes_dir=SANDBOXES_DIR),
                 "sessions": normalized_sessions,
             }
