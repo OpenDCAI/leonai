@@ -1,5 +1,6 @@
 """Task CRUD — SQLite based (panel_tasks table)."""
 
+import json
 import sqlite3
 import time
 from typing import Any
@@ -24,7 +25,8 @@ def _ensure_tasks_table(conn: sqlite3.Connection) -> None:
             cron_job_id TEXT DEFAULT '',
             result TEXT DEFAULT '',
             started_at INTEGER DEFAULT 0,
-            completed_at INTEGER DEFAULT 0
+            completed_at INTEGER DEFAULT 0,
+            tags TEXT DEFAULT '[]'
         )
     """)
     # Migrate existing databases that lack the new columns.
@@ -35,6 +37,7 @@ def _ensure_tasks_table(conn: sqlite3.Connection) -> None:
         ("result", "TEXT DEFAULT ''"),
         ("started_at", "INTEGER DEFAULT 0"),
         ("completed_at", "INTEGER DEFAULT 0"),
+        ("tags", "TEXT DEFAULT '[]'"),
     ]
     for col_name, col_def in _migrate_new_columns:
         try:
@@ -50,10 +53,19 @@ def _tasks_conn() -> sqlite3.Connection:
     return conn
 
 
+def _deserialize_row(row: sqlite3.Row) -> dict[str, Any]:
+    d = dict(row)
+    try:
+        d["tags"] = json.loads(d.get("tags") or "[]")
+    except (json.JSONDecodeError, TypeError):
+        d["tags"] = []
+    return d
+
+
 def list_tasks() -> list[dict[str, Any]]:
     with _tasks_conn() as conn:
         rows = conn.execute("SELECT * FROM panel_tasks ORDER BY created_at DESC").fetchall()
-        return [dict(r) for r in rows]
+        return [_deserialize_row(r) for r in rows]
 
 
 def create_task(**fields: Any) -> dict[str, Any]:
@@ -63,8 +75,8 @@ def create_task(**fields: Any) -> dict[str, Any]:
         conn.execute(
             "INSERT INTO panel_tasks"
             " (id,title,description,assignee_id,status,priority,progress,deadline,created_at,"
-            "  thread_id,source,cron_job_id,result,started_at,completed_at)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "  thread_id,source,cron_job_id,result,started_at,completed_at,tags)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 tid,
                 fields.get("title", "新任务"),
@@ -81,29 +93,32 @@ def create_task(**fields: Any) -> dict[str, Any]:
                 fields.get("result", ""),
                 fields.get("started_at", 0),
                 fields.get("completed_at", 0),
+                json.dumps(fields.get("tags", [])),
             ),
         )
         conn.commit()
         row = conn.execute("SELECT * FROM panel_tasks WHERE id = ?", (tid,)).fetchone()
-        return dict(row)
+        return _deserialize_row(row)
 
 
 def update_task(task_id: str, **fields: Any) -> dict[str, Any] | None:
     allowed = {
         "title", "description", "assignee_id", "status", "priority", "progress", "deadline",
-        "thread_id", "source", "cron_job_id", "result", "started_at", "completed_at",
+        "thread_id", "source", "cron_job_id", "result", "started_at", "completed_at", "tags",
     }
     updates = {k: v for k, v in fields.items() if k in allowed and v is not None}
+    if "tags" in updates:
+        updates["tags"] = json.dumps(updates["tags"])
     if not updates:
         with _tasks_conn() as conn:
             row = conn.execute("SELECT * FROM panel_tasks WHERE id = ?", (task_id,)).fetchone()
-            return dict(row) if row else None
+            return _deserialize_row(row) if row else None
     set_clause = ", ".join(f"{k} = ?" for k in updates)
     with _tasks_conn() as conn:
         conn.execute(f"UPDATE panel_tasks SET {set_clause} WHERE id = ?", (*updates.values(), task_id))
         conn.commit()
         row = conn.execute("SELECT * FROM panel_tasks WHERE id = ?", (task_id,)).fetchone()
-        return dict(row) if row else None
+        return _deserialize_row(row) if row else None
 
 
 def delete_task(task_id: str) -> bool:
