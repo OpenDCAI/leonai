@@ -1,12 +1,11 @@
 """Diagnose capabilities for monitor core."""
 
 import sqlite3
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
+from backend.web.services.sandbox_service import init_providers_and_managers, load_all_sessions
 from sandbox.db import DEFAULT_DB_PATH
-
-from .control import list_sessions
 
 
 def runtime_health_snapshot() -> dict[str, Any]:
@@ -20,14 +19,15 @@ def runtime_health_snapshot() -> dict[str, Any]:
                 row = conn.execute(f"SELECT COUNT(1) FROM {table_name}").fetchone()
                 tables[table_name] = int(row[0]) if row else 0
 
-    sessions = list_sessions()
+    _, managers = init_providers_and_managers()
+    sessions = load_all_sessions(managers)
     provider_counts: dict[str, int] = {}
     for session in sessions:
         provider = str(session.get("provider") or "unknown")
         provider_counts[provider] = provider_counts.get(provider, 0) + 1
 
     return {
-        "snapshot_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "snapshot_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         "db": {"path": str(DEFAULT_DB_PATH), "exists": db_exists, "counts": tables},
         "sessions": {
             "total": len(sessions),

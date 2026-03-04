@@ -7,10 +7,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 
-from backend.web.monitor_core import control
-from backend.web.services.sandbox_service import (
-    available_sandbox_types,
-)
+from backend.web.services import sandbox_service
 
 router = APIRouter(prefix="/api/sandbox", tags=["sandbox"])
 
@@ -23,7 +20,9 @@ def _runtime_http_error(exc: RuntimeError) -> HTTPException:
 
 async def _mutate_session_action(session_id: str, action: str, provider: str | None) -> dict[str, Any]:
     try:
-        return await asyncio.to_thread(control.mutate_session, session_id, action, provider)
+        return await asyncio.to_thread(
+            sandbox_service.mutate_sandbox_session, session_id=session_id, action=action, provider_hint=provider,
+        )
     except RuntimeError as e:
         raise _runtime_http_error(e) from e
 
@@ -31,7 +30,7 @@ async def _mutate_session_action(session_id: str, action: str, provider: str | N
 @router.get("/types")
 async def list_sandbox_types() -> dict[str, Any]:
     """List available sandbox types."""
-    types = await asyncio.to_thread(available_sandbox_types)
+    types = await asyncio.to_thread(sandbox_service.available_sandbox_types)
     return {"types": types}
 
 
@@ -113,7 +112,8 @@ async def pick_folder() -> dict[str, Any]:
 @router.get("/sessions")
 async def list_sandbox_sessions() -> dict[str, Any]:
     """List all sandbox sessions across providers."""
-    sessions = await asyncio.to_thread(control.list_sessions)
+    _, managers = await asyncio.to_thread(sandbox_service.init_providers_and_managers)
+    sessions = await asyncio.to_thread(sandbox_service.load_all_sessions, managers)
     return {"sessions": sessions}
 
 
@@ -121,7 +121,7 @@ async def list_sandbox_sessions() -> dict[str, Any]:
 async def get_session_metrics(session_id: str, provider: str | None = Query(default=None)) -> dict[str, Any]:
     """Get metrics for a specific sandbox session."""
     try:
-        return await asyncio.to_thread(control.get_session_metrics, session_id, provider)
+        return await asyncio.to_thread(sandbox_service.get_session_metrics, session_id, provider)
     except RuntimeError as e:
         raise _runtime_http_error(e) from e
 
