@@ -116,7 +116,7 @@ export default function ProviderCard({ provider, selected, onSelect }: ProviderC
           ))}
           <span className="text-[10px] text-muted-foreground ml-1">
             {runningSessions.length} 占用中
-            {pausedSessions.length > 0 ? ` · ${pausedSessions.length} 已暂停` : ""}
+            {pausedSessions.length > 0 ? ` · ${pausedSessions.length} 暂停(不占用)` : ""}
             {stoppedSessions.length > 0 ? ` · ${stoppedSessions.length} 已结束` : ""}
           </span>
         </div>

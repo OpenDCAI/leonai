@@ -31,6 +31,8 @@ export default function ResourceAllocation({ resources, providerId }: ResourceAl
         const Icon = CAPABILITY_ICON_MAP[key];
         const allocations = byType.get(key as ResourceType) || [];
         const activeCount = allocations.filter((a) => a.sessionStatus === "running").length;
+        const pausedCount = allocations.filter((a) => a.sessionStatus === "paused").length;
+        const stoppedCount = allocations.filter((a) => a.sessionStatus === "stopped").length;
 
         return (
           <div
@@ -76,13 +78,11 @@ export default function ResourceAllocation({ resources, providerId }: ResourceAl
             {/* Count */}
             {allocations.length > 0 && (
               <span className="text-[10px] text-muted-foreground font-mono shrink-0">
-                {activeCount > 0 && (
-                  <span className="text-success">{activeCount} 活跃</span>
-                )}
-                {activeCount > 0 && allocations.length > activeCount && " · "}
-                {allocations.length > activeCount && (
-                  <span>{allocations.length - activeCount} 暂停</span>
-                )}
+                {activeCount > 0 && <span className="text-success">{activeCount} 活跃</span>}
+                {activeCount > 0 && pausedCount > 0 && " · "}
+                {pausedCount > 0 && <span>{pausedCount} 暂停</span>}
+                {(activeCount > 0 || pausedCount > 0) && stoppedCount > 0 && " · "}
+                {stoppedCount > 0 && <span>{stoppedCount} 结束</span>}
               </span>
             )}
           </div>
