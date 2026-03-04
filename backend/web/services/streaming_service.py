@@ -116,11 +116,8 @@ async def write_cancellation_markers(
             },
             new_versions,
         )
-    except Exception as e:
-        import traceback
-
-        print(f"Failed to write cancellation markers: {e}")
-        traceback.print_exc()
+    except Exception:
+        logger.exception("[streaming] failed to write cancellation markers for thread %s", thread_id)
 
     return cancelled_tool_call_ids
 
@@ -494,9 +491,9 @@ async def _run_agent_to_buffer(
                 store = TrajectoryStore()
                 store.save_trajectory(trajectory)
             except Exception:
-                import traceback
-
-                traceback.print_exc()
+                logger.warning(
+                    "[streaming] trajectory save failed for thread %s", thread_id, exc_info=True
+                )
 
         await emit({"event": "done", "data": json.dumps({"thread_id": thread_id})})
     except asyncio.CancelledError:
