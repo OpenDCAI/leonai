@@ -53,6 +53,7 @@ export function useThreadStream(
 
   /** Establish persistent SSE connection. */
   const connect = useCallback((startSeq = 0) => {
+    console.log(`[SSE-DIAG] connect(${startSeq}) called, threadId=${threadId}`);
     acRef.current?.abort();
 
     const ac = new AbortController();
@@ -62,9 +63,11 @@ export function useThreadStream(
     void (async () => {
       try {
         setPhase("connected");
+        console.log(`[SSE-DIAG] streamThreadEvents starting, after=${startSeq}`);
         await streamThreadEvents(
           threadId,
           (event) => {
+            console.log(`[SSE-DIAG] event received: type=${event.type}, subscribers=${subscribers.current.size}`);
             if (event.type === "status" && event.data) {
               setRuntimeStatus(event.data as StreamStatus);
             }
@@ -85,12 +88,19 @@ export function useThreadStream(
           startSeq,
         );
 
-        if (ac.signal.aborted) return;
+        if (ac.signal.aborted) {
+          console.log("[SSE-DIAG] streamThreadEvents returned, signal was aborted");
+          return;
+        }
         // streamThreadEvents returned (max attempts reached or 4xx error)
+        console.log("[SSE-DIAG] streamThreadEvents returned normally → phase=error");
         setPhase("error");
       } catch (err) {
-        if (ac.signal.aborted) return;
-        console.error("[useThreadStream] connection error:", err);
+        if (ac.signal.aborted) {
+          console.log("[SSE-DIAG] streamThreadEvents threw, signal was aborted");
+          return;
+        }
+        console.error("[SSE-DIAG] connection error:", err);
         setPhase("error");
       }
     })();
@@ -135,6 +145,7 @@ export function useThreadStream(
     }
 
     return () => {
+      console.log("[SSE-DIAG] useEffect cleanup — aborting SSE connection");
       acRef.current?.abort();
       acRef.current = null;
     };
