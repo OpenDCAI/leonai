@@ -79,14 +79,24 @@ def _to_metric_freshness(collected_at: str | None) -> str:
     return "stale"
 
 
-def _metric(used: float | int | None, limit: float | int | None, unit: str, source: str, freshness: str) -> dict[str, Any]:
-    return {
+def _metric(
+    used: float | int | None,
+    limit: float | int | None,
+    unit: str,
+    source: str,
+    freshness: str,
+    error: str | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
         "used": used,
         "limit": limit,
         "unit": unit,
         "source": source,
         "freshness": freshness,
     }
+    if error:
+        payload["error"] = error
+    return payload
 
 
 def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
@@ -231,15 +241,47 @@ def _aggregate_provider_telemetry(
     disk_used_gb = _sum_or_none([float(s["disk_used_gb"]) for s in snapshots if s.get("disk_used_gb") is not None])
     disk_limit_gb = _sum_or_none([float(s["disk_total_gb"]) for s in snapshots if s.get("disk_total_gb") is not None])
 
-    cpu_source = "api" if cpu_used is not None or cpu_limit is not None else "unknown"
-    memory_source = "api" if memory_used_gb is not None or memory_limit_gb is not None else "unknown"
-    disk_source = "api" if disk_used_gb is not None or disk_limit_gb is not None else "unknown"
+    has_snapshots = len(snapshots) > 0
+    latest_probe_error: str | None = None
+    for snapshot in sorted(snapshots, key=lambda item: str(item.get("collected_at") or "")):
+        raw_error = str(snapshot.get("probe_error") or "").strip()
+        if raw_error:
+            latest_probe_error = raw_error
+
+    cpu_has_value = cpu_used is not None or cpu_limit is not None
+    memory_has_value = memory_used_gb is not None or memory_limit_gb is not None
+    disk_has_value = disk_used_gb is not None or disk_limit_gb is not None
+
+    cpu_source = "api" if cpu_has_value else ("sandbox_db" if has_snapshots else "unknown")
+    memory_source = "api" if memory_has_value else ("sandbox_db" if has_snapshots else "unknown")
+    disk_source = "api" if disk_has_value else ("sandbox_db" if has_snapshots else "unknown")
 
     return {
         "running": _metric(running_count, None, "sandbox", "sandbox_db", "cached"),
-        "cpu": _metric(cpu_used, cpu_limit, "cores", cpu_source, freshness),
-        "memory": _metric(memory_used_gb, memory_limit_gb, "GB", memory_source, freshness),
-        "disk": _metric(disk_used_gb, disk_limit_gb, "GB", disk_source, freshness),
+        "cpu": _metric(
+            cpu_used,
+            cpu_limit,
+            "cores",
+            cpu_source,
+            freshness,
+            None if cpu_has_value else latest_probe_error,
+        ),
+        "memory": _metric(
+            memory_used_gb,
+            memory_limit_gb,
+            "GB",
+            memory_source,
+            freshness,
+            None if memory_has_value else latest_probe_error,
+        ),
+        "disk": _metric(
+            disk_used_gb,
+            disk_limit_gb,
+            "GB",
+            disk_source,
+            freshness,
+            None if disk_has_value else latest_probe_error,
+        ),
     }
 
 

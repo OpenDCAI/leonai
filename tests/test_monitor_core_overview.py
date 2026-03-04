@@ -169,6 +169,56 @@ def test_list_resource_providers_uses_snapshot_metrics(tmp_path, monkeypatch):
     assert provider["telemetry"]["cpu"]["source"] == "api"
 
 
+def test_list_resource_providers_surfaces_snapshot_probe_error(tmp_path, monkeypatch):
+    (tmp_path / "daytona_cloud.json").write_text(json.dumps({"provider": "daytona"}))
+
+    monkeypatch.setattr(overview, "SANDBOXES_DIR", tmp_path)
+    monkeypatch.setattr(
+        overview,
+        "available_sandbox_types",
+        lambda: [{"name": "daytona_cloud", "available": True}],
+    )
+    monkeypatch.setattr(
+        overview,
+        "_list_sessions_fast",
+        lambda: [
+            {
+                "provider": "daytona_cloud",
+                "session_id": "sess-1",
+                "thread_id": "thread-1",
+                "lease_id": "lease-1",
+                "status": "paused",
+                "created_at": "2026-03-03T00:00:00",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        overview,
+        "list_snapshots_by_lease_ids",
+        lambda _: {
+            "lease-1": {
+                "lease_id": "lease-1",
+                "cpu_used": None,
+                "cpu_limit": None,
+                "memory_used_mb": None,
+                "memory_total_mb": None,
+                "disk_used_gb": None,
+                "disk_total_gb": None,
+                "probe_error": "metrics unavailable",
+                "collected_at": "2099-01-01T00:00:00Z",
+            }
+        },
+    )
+
+    payload = overview.list_resource_providers()
+    provider = payload["providers"][0]
+    assert provider["telemetry"]["cpu"]["used"] is None
+    assert provider["telemetry"]["cpu"]["source"] == "sandbox_db"
+    assert provider["telemetry"]["cpu"]["error"] == "metrics unavailable"
+    assert provider["telemetry"]["memory"]["error"] == "metrics unavailable"
+    assert provider["telemetry"]["disk"]["error"] == "metrics unavailable"
+
+
 def test_thread_owner_uses_agent_ref_as_name_when_member_lookup_missing(tmp_path, monkeypatch):
     db_path = tmp_path / "leon.db"
     monkeypatch.setattr(overview, "DB_PATH", Path(db_path))

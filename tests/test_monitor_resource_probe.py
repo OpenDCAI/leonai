@@ -47,9 +47,15 @@ def test_refresh_resource_snapshots_counts_provider_build_error(monkeypatch):
         ],
     )
     monkeypatch.setattr(resource_probe, "build_provider_from_config_name", lambda _: None)
+    upserts: list[dict] = []
+    monkeypatch.setattr(resource_probe, "upsert_lease_resource_snapshot", lambda **kwargs: upserts.append(kwargs))
 
     result = resource_probe.refresh_resource_snapshots()
     assert result["probed"] == 0
     assert result["errors"] == 1
     assert result["running_targets"] == 1
     assert result["non_running_targets"] == 0
+    assert len(upserts) == 1
+    assert upserts[0]["lease_id"] == "l-1"
+    assert upserts[0]["probe_mode"] == "running_runtime"
+    assert upserts[0]["probe_error"] == "provider init failed: p-missing"
