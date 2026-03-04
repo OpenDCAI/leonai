@@ -81,3 +81,8 @@ docs/assets/
 /context_manager_*.py
 CLAUDE.local.md
 worktrees/
+
+# Playwright CLI artifacts
+frontend/app/.playwright-cli/
+frontend/app/*.png
+frontend/app/*.yml
