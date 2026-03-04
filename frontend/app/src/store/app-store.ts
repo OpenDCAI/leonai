@@ -204,19 +204,21 @@ export const useAppStore = create<AppState>()((set, get) => ({
   },
 
   addCronJob: async (fields = {}) => {
-    const item = await api<CronJob>("/cron-jobs", {
+    const data = await api<{ item: CronJob }>("/cron-jobs", {
       method: "POST",
       body: JSON.stringify(fields),
     });
+    const item = data.item;
     set((s) => ({ cronJobs: [item, ...s.cronJobs] }));
     return item;
   },
 
   updateCronJob: async (id, fields) => {
-    const updated = await api<CronJob>(`/cron-jobs/${id}`, {
+    const data = await api<{ item: CronJob }>(`/cron-jobs/${id}`, {
       method: "PUT",
       body: JSON.stringify(fields),
     });
+    const updated = data.item;
     set((s) => ({ cronJobs: s.cronJobs.map((x) => (x.id === id ? updated : x)) }));
   },
 

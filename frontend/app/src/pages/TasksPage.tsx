@@ -78,7 +78,7 @@ export default function Tasks() {
 
   useEffect(() => {
     const interval = setInterval(() => {
-      fetchTasks();
+      fetchTasks().catch(() => {/* background poll failure — store handles error state */});
     }, 5000);
     return () => clearInterval(interval);
   }, [fetchTasks]);

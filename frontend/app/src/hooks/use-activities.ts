@@ -57,14 +57,16 @@ export function useActivities() {
   }, []);
 
   const cancelCommand = useCallback(async (threadId: string, commandId: string) => {
-    await fetch(`/api/threads/${threadId}/commands/${commandId}/cancel`, { method: "POST" });
+    const res = await fetch(`/api/threads/${threadId}/commands/${commandId}/cancel`, { method: "POST" });
+    if (!res.ok) throw new Error(`取消失败: HTTP ${res.status}`);
     setActivities((prev) =>
       prev.map((a) => (a.commandId === commandId ? { ...a, status: "cancelled" as const } : a)),
     );
   }, []);
 
   const cancelTask = useCallback(async (threadId: string, taskId: string) => {
-    await fetch(`/api/threads/${threadId}/tasks/${taskId}/cancel`, { method: "POST" });
+    const res = await fetch(`/api/threads/${threadId}/tasks/${taskId}/cancel`, { method: "POST" });
+    if (!res.ok) throw new Error(`取消失败: HTTP ${res.status}`);
     setActivities((prev) =>
       prev.map((a) => (a.taskId === taskId ? { ...a, status: "cancelled" as const } : a)),
     );

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -27,6 +28,8 @@ from langchain.agents.middleware.types import (
 from langchain_core.messages import ToolMessage
 
 from backend.web.services import task_service
+
+logger = logging.getLogger(__name__)
 
 
 class TaskBoardMiddleware(AgentMiddleware):
@@ -289,7 +292,11 @@ class TaskBoardMiddleware(AgentMiddleware):
 
     def _handle_list(self, args: dict) -> dict:
         """List board tasks with optional status/priority filter."""
-        tasks = task_service.list_tasks()
+        try:
+            tasks = task_service.list_tasks()
+        except Exception as e:
+            logger.exception("[taskboard] list_tasks failed")
+            return {"error": f"Failed to list tasks: {e}"}
 
         status_filter = args.get("Status")
         if status_filter:
@@ -391,10 +398,14 @@ class TaskBoardMiddleware(AgentMiddleware):
 
     def _handle_create(self, args: dict) -> dict:
         """Create a board task with source='agent'."""
-        task = task_service.create_task(
-            title=args.get("Title", "New task"),
-            description=args.get("Description", ""),
-            priority=args.get("Priority", "medium"),
-            source="agent",
-        )
+        try:
+            task = task_service.create_task(
+                title=args.get("Title", "New task"),
+                description=args.get("Description", ""),
+                priority=args.get("Priority", "medium"),
+                source="agent",
+            )
+        except Exception as e:
+            logger.exception("[taskboard] create_task failed")
+            return {"error": f"Failed to create task: {e}"}
         return {"task": task}
