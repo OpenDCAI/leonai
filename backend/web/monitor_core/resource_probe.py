@@ -80,14 +80,6 @@ def refresh_resource_snapshots() -> dict[str, Any]:
                 provider_name=provider_key,
                 observed_state=status,
                 probe_mode=probe_mode,
-                cpu_used=None,
-                cpu_limit=None,
-                memory_used_mb=None,
-                memory_total_mb=None,
-                disk_used_gb=None,
-                disk_total_gb=None,
-                network_rx_kbps=None,
-                network_tx_kbps=None,
                 probe_error=f"provider init failed: {provider_key}",
             )
             errors += 1

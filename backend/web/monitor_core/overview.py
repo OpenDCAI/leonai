@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 from datetime import datetime, timezone
+from importlib import import_module
 from typing import Any
 
 from backend.web.core.config import DB_PATH
@@ -14,29 +15,22 @@ from sandbox.metadata import get_provider_catalog, resolve_console_url, resolve_
 from sandbox.provider import ProviderCapability, RESOURCE_CAPABILITY_KEYS
 from sandbox.resource_snapshot import list_snapshots_by_lease_ids
 
+_CAPABILITY_CLASS_BY_PROVIDER = {
+    "local": ("sandbox.local", "LocalSessionProvider"),
+    "docker": ("sandbox.providers.docker", "DockerProvider"),
+    "e2b": ("sandbox.providers.e2b", "E2BProvider"),
+    "daytona": ("sandbox.providers.daytona", "DaytonaProvider"),
+    "agentbay": ("sandbox.providers.agentbay", "AgentBayProvider"),
+}
+
+
 def _declared_capabilities(provider_name: str) -> dict[str, bool]:
-    if provider_name == "local":
-        from sandbox.local import LocalSessionProvider
-
-        declared = getattr(LocalSessionProvider, "CAPABILITY", None)
-    elif provider_name == "docker":
-        from sandbox.providers.docker import DockerProvider
-
-        declared = getattr(DockerProvider, "CAPABILITY", None)
-    elif provider_name == "e2b":
-        from sandbox.providers.e2b import E2BProvider
-
-        declared = getattr(E2BProvider, "CAPABILITY", None)
-    elif provider_name == "daytona":
-        from sandbox.providers.daytona import DaytonaProvider
-
-        declared = getattr(DaytonaProvider, "CAPABILITY", None)
-    elif provider_name == "agentbay":
-        from sandbox.providers.agentbay import AgentBayProvider
-
-        declared = getattr(AgentBayProvider, "CAPABILITY", None)
-    else:
+    declaration = _CAPABILITY_CLASS_BY_PROVIDER.get(provider_name)
+    if declaration is None:
         raise RuntimeError(f"Unsupported provider type: {provider_name}")
+    module_name, class_name = declaration
+    provider_cls = getattr(import_module(module_name), class_name)
+    declared = getattr(provider_cls, "CAPABILITY", None)
 
     if not isinstance(declared, ProviderCapability):
         raise RuntimeError(f"Provider {provider_name} missing class CAPABILITY declaration")
