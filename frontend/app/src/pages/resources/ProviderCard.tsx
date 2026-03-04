@@ -26,7 +26,7 @@ export default function ProviderCard({ provider, selected, onSelect }: ProviderC
   const isUnavailable = status === "unavailable";
   const isActive = status === "active";
   const TypeIcon = typeIcon[type];
-  const secondary = resolveSecondaryMetric(provider);
+  const secondary = resolveSecondaryMetric(telemetry);
 
   const runningSessions = sessions.filter((s) => s.status === "running");
   const pausedSessions = sessions.filter((s) => s.status === "paused");
@@ -69,7 +69,7 @@ export default function ProviderCard({ provider, selected, onSelect }: ProviderC
         <span className="text-[11px] text-muted-foreground">{typeLabel[type]}</span>
       </div>
 
-      {/* Center: fixed dual metrics (running + CPU) */}
+      {/* Center: fixed dual metrics (running + runtime metric) */}
       <div className="flex items-center justify-center min-h-[52px] mb-3 py-2 rounded-lg bg-muted/30">
         {isUnavailable ? (
           <div className="text-center">
@@ -120,27 +120,24 @@ export default function ProviderCard({ provider, selected, onSelect }: ProviderC
   );
 }
 
-function resolveSecondaryMetric(provider: ProviderInfo): {
+function resolveSecondaryMetric(telemetry: ProviderInfo["telemetry"]): {
   label: string;
   used: number | null;
   limit: number | null;
   unit: string;
 } {
-  const isLocal = provider.type === "local";
-  const isDocker = provider.id === "docker" || provider.id.startsWith("docker_");
-  if (isLocal || isDocker) {
-    return {
-      label: "CPU",
-      used: provider.telemetry.cpu.used,
-      limit: provider.telemetry.cpu.limit,
-      unit: provider.telemetry.cpu.unit,
-    };
-  }
+  const candidates = [
+    { label: "CPU", metric: telemetry.cpu },
+    { label: "内存", metric: telemetry.memory },
+    { label: "磁盘", metric: telemetry.disk },
+  ];
+  // @@@runtime-metric-priority - card keeps one runtime metric ring to avoid mixing quota semantics into runtime usage.
+  const chosen = candidates.find((item) => item.metric.used != null || item.metric.limit != null) ?? candidates[0];
   return {
-    label: "配额",
-    used: provider.telemetry.quota?.used ?? null,
-    limit: provider.telemetry.quota?.limit ?? null,
-    unit: provider.telemetry.quota?.unit ?? "sandbox",
+    label: chosen.label,
+    used: chosen.metric.used,
+    limit: chosen.metric.limit,
+    unit: chosen.metric.unit,
   };
 }
 
