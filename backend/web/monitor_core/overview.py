@@ -6,6 +6,7 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Any
 
+from backend.web.core.config import DB_PATH
 from backend.web.core.config import SANDBOXES_DIR
 from backend.web.services.sandbox_service import available_sandbox_types
 from sandbox.metadata import get_provider_catalog, resolve_console_url, resolve_provider_name, resolve_provider_type
@@ -114,6 +115,70 @@ def _list_sessions_fast() -> list[dict[str, Any]]:
     return sessions
 
 
+def _member_name_map() -> dict[str, str]:
+    try:
+        from backend.web.services.member_service import list_members
+
+        members = list_members()
+    except Exception:
+        return {}
+
+    mapping: dict[str, str] = {}
+    for member in members:
+        member_id = str(member.get("id") or "").strip()
+        member_name = str(member.get("name") or "").strip()
+        if member_id and member_name:
+            mapping[member_id] = member_name
+    return mapping
+
+
+def _thread_agent_refs(thread_ids: list[str]) -> dict[str, str]:
+    unique_thread_ids = sorted({tid for tid in thread_ids if tid})
+    if not unique_thread_ids or not DB_PATH.exists():
+        return {}
+
+    placeholders = ",".join(["?"] * len(unique_thread_ids))
+    with sqlite3.connect(str(DB_PATH), timeout=5) as conn:
+        conn.row_factory = sqlite3.Row
+        table = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='thread_config' LIMIT 1"
+        ).fetchone()
+        if table is None:
+            return {}
+
+        rows = conn.execute(
+            f"SELECT thread_id, agent FROM thread_config WHERE thread_id IN ({placeholders})",
+            unique_thread_ids,
+        ).fetchall()
+
+    refs: dict[str, str] = {}
+    for row in rows:
+        thread_id = str(row["thread_id"] or "").strip()
+        agent_ref = str(row["agent"] or "").strip()
+        if thread_id and agent_ref:
+            refs[thread_id] = agent_ref
+    return refs
+
+
+def _thread_owners(thread_ids: list[str]) -> dict[str, dict[str, str | None]]:
+    refs = _thread_agent_refs(thread_ids)
+    member_names = _member_name_map()
+
+    owners: dict[str, dict[str, str | None]] = {}
+    for thread_id in thread_ids:
+        agent_ref = refs.get(thread_id)
+        if not agent_ref:
+            owners[thread_id] = {"agent_id": None, "agent_name": "Leon"}
+            continue
+
+        # @@@agent-name-resolution - thread_config.agent may be member id or direct display name.
+        owners[thread_id] = {
+            "agent_id": agent_ref,
+            "agent_name": member_names.get(agent_ref, agent_ref),
+        }
+    return owners
+
+
 def list_resource_providers() -> dict[str, Any]:
     # @@@overview-fast-path - avoid provider-network calls; overview uses DB session snapshot.
     sessions = _list_sessions_fast()
@@ -122,6 +187,8 @@ def list_resource_providers() -> dict[str, Any]:
         # @@@provider-instance-identity - session.provider is config-instance name (not provider kind).
         provider_instance = str(session.get("provider") or "local")
         grouped_sessions.setdefault(provider_instance, []).append(session)
+
+    owners = _thread_owners([str(session.get("thread_id") or "") for session in sessions])
 
     providers: list[dict[str, Any]] = []
     for item in available_sandbox_types():
@@ -137,12 +204,14 @@ def list_resource_providers() -> dict[str, Any]:
             normalized = _to_session_status(session.get("status"))
             if normalized == "running":
                 running_count += 1
+            thread_id = str(session.get("thread_id") or "")
+            owner = owners.get(thread_id, {"agent_id": None, "agent_name": "Leon"})
             normalized_sessions.append(
                 {
                     "id": str(session.get("session_id") or ""),
-                    "threadId": str(session.get("thread_id") or ""),
-                    "agentId": "default",
-                    "agentName": "Default",
+                    "threadId": thread_id,
+                    "agentId": str(owner.get("agent_id") or ""),
+                    "agentName": str(owner.get("agent_name") or "Leon"),
                     "status": normalized,
                     "startedAt": str(session.get("created_at") or ""),
                 }

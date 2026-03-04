@@ -1,4 +1,6 @@
+import sqlite3
 import json
+from pathlib import Path
 
 from backend.web.monitor_core import overview
 
@@ -7,6 +9,13 @@ def test_list_resource_providers_maps_status_and_metric_metadata(tmp_path, monke
     (tmp_path / "docker_dev.json").write_text(json.dumps({"provider": "docker"}))
 
     monkeypatch.setattr(overview, "SANDBOXES_DIR", tmp_path)
+    db_path = tmp_path / "leon.db"
+    monkeypatch.setattr(overview, "DB_PATH", Path(db_path))
+    with sqlite3.connect(str(db_path)) as conn:
+        conn.execute("CREATE TABLE thread_config (thread_id TEXT PRIMARY KEY, agent TEXT)")
+        conn.execute("INSERT INTO thread_config (thread_id, agent) VALUES (?, ?)", ("thread-local-1", "member-1"))
+        conn.commit()
+    monkeypatch.setattr(overview, "_member_name_map", lambda: {"member-1": "Alice"})
     monkeypatch.setattr(
         overview,
         "available_sandbox_types",
@@ -49,11 +58,15 @@ def test_list_resource_providers_maps_status_and_metric_metadata(tmp_path, monke
     assert local["telemetry"]["running"]["used"] == 1
     assert local["telemetry"]["running"]["source"] == "sandbox_db"
     assert local["telemetry"]["running"]["freshness"] == "cached"
+    assert local["sessions"][0]["threadId"] == "thread-local-1"
+    assert local["sessions"][0]["agentId"] == "member-1"
+    assert local["sessions"][0]["agentName"] == "Alice"
 
     docker = next(item for item in payload["providers"] if item["id"] == "docker_dev")
     assert docker["status"] == "unavailable"
     assert docker["error"]["code"] == "PROVIDER_UNAVAILABLE"
     assert docker["sessions"][0]["status"] == "paused"
+    assert docker["sessions"][0]["agentName"] == "Leon"
 
 
 def test_list_resource_providers_marks_ready_when_no_running_sessions(tmp_path, monkeypatch):
@@ -103,3 +116,19 @@ def test_list_resource_providers_prefers_config_console_url_override(tmp_path, m
     assert provider["id"] == "daytona_selfhost"
     assert provider["consoleUrl"] == "https://ops.example.com/daytona"
     assert provider["type"] == "container"
+
+
+def test_thread_owner_uses_agent_ref_as_name_when_member_lookup_missing(tmp_path, monkeypatch):
+    db_path = tmp_path / "leon.db"
+    monkeypatch.setattr(overview, "DB_PATH", Path(db_path))
+    with sqlite3.connect(str(db_path)) as conn:
+        conn.execute("CREATE TABLE thread_config (thread_id TEXT PRIMARY KEY, agent TEXT)")
+        conn.execute("INSERT INTO thread_config (thread_id, agent) VALUES (?, ?)", ("thread-1", "Lex"))
+        conn.commit()
+    monkeypatch.setattr(overview, "_member_name_map", lambda: {})
+
+    owners = overview._thread_owners(["thread-1", "thread-2"])
+    assert owners["thread-1"]["agent_id"] == "Lex"
+    assert owners["thread-1"]["agent_name"] == "Lex"
+    assert owners["thread-2"]["agent_id"] is None
+    assert owners["thread-2"]["agent_name"] == "Leon"
