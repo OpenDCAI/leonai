@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 from datetime import datetime
 from typing import Any
 
@@ -67,7 +66,7 @@ def _lease_link(lease_id: str | None) -> dict[str, Any]:
     return {"lease_id": lease_id, "lease_url": f"/lease/{lease_id}" if lease_id else None}
 
 
-def map_threads(rows: list[sqlite3.Row]) -> dict[str, Any]:
+def map_threads(rows: list[dict[str, Any]]) -> dict[str, Any]:
     items = [
         {
             "thread_id": row["thread_id"],
@@ -83,7 +82,7 @@ def map_threads(rows: list[sqlite3.Row]) -> dict[str, Any]:
     return {"title": "All Threads", "count": len(items), "items": items}
 
 
-def map_thread_detail(thread_id: str, sessions: list[sqlite3.Row]) -> dict[str, Any]:
+def map_thread_detail(thread_id: str, sessions: list[dict[str, Any]]) -> dict[str, Any]:
     lease_ids = {
         str(session["lease_id"]) for session in sessions if session["lease_id"]
     }
@@ -115,7 +114,7 @@ def map_thread_detail(thread_id: str, sessions: list[sqlite3.Row]) -> dict[str, 
     }
 
 
-def map_leases(rows: list[sqlite3.Row]) -> dict[str, Any]:
+def map_leases(rows: list[dict[str, Any]]) -> dict[str, Any]:
     items = [
         {
             "lease_id": row["lease_id"],
@@ -133,7 +132,9 @@ def map_leases(rows: list[sqlite3.Row]) -> dict[str, Any]:
     return {"title": "All Leases", "count": len(items), "items": items}
 
 
-def map_lease_detail(lease_id: str, lease: sqlite3.Row, threads: list[sqlite3.Row], events: list[sqlite3.Row]) -> dict[str, Any]:
+def map_lease_detail(
+    lease_id: str, lease: dict[str, Any], threads: list[dict[str, Any]], events: list[dict[str, Any]],
+) -> dict[str, Any]:
     badge = make_badge(lease["desired_state"], lease["observed_state"])
     badge["error"] = lease["last_error"]
 
@@ -171,7 +172,7 @@ def map_lease_detail(lease_id: str, lease: sqlite3.Row, threads: list[sqlite3.Ro
     }
 
 
-def map_diverged(rows: list[sqlite3.Row]) -> dict[str, Any]:
+def map_diverged(rows: list[dict[str, Any]]) -> dict[str, Any]:
     items = [
         {
             "lease_id": row["lease_id"],
@@ -198,7 +199,7 @@ def map_diverged(rows: list[sqlite3.Row]) -> dict[str, Any]:
     }
 
 
-def map_events(rows: list[sqlite3.Row]) -> dict[str, Any]:
+def map_events(rows: list[dict[str, Any]]) -> dict[str, Any]:
     items = [
         {
             "event_id": row["event_id"],
@@ -222,7 +223,7 @@ def map_events(rows: list[sqlite3.Row]) -> dict[str, Any]:
     }
 
 
-def map_event_detail(event_id: str, event: sqlite3.Row) -> dict[str, Any]:
+def map_event_detail(event_id: str, event: dict[str, Any]) -> dict[str, Any]:
     payload = json.loads(event["payload_json"]) if event["payload_json"] else {}
     return {
         "event_id": event_id,
