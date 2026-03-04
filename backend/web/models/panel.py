@@ -38,6 +38,7 @@ class CreateTaskRequest(BaseModel):
     assignee_id: str = ""
     priority: str = "medium"
     deadline: str = ""
+    tags: list[str] = []
 
 
 class UpdateTaskRequest(BaseModel):
@@ -48,6 +49,7 @@ class UpdateTaskRequest(BaseModel):
     priority: str | None = None
     progress: int | None = None
     deadline: str | None = None
+    tags: list[str] | None = None
 
 
 class BulkTaskStatusRequest(BaseModel):

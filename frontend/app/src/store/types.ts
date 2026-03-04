@@ -71,6 +71,7 @@ export interface Task {
   result: string;
   started_at: number;
   completed_at: number;
+  tags: string[];
 }
 
 export interface CronJob {

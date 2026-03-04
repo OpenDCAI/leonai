@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { X, Calendar, User, Tag, ChevronDown } from "lucide-react";
 import type { Priority, CronJob, Task, TaskStatus } from "@/store/types";
 
@@ -6,15 +6,91 @@ import type { Priority, CronJob, Task, TaskStatus } from "@/store/types";
 
 type TabType = "task" | "cron";
 
-const CATEGORIES = [
-  { id: "code-review", label: "代码审查", color: "bg-blue-500" },
-  { id: "report", label: "日报周报", color: "bg-emerald-500" },
-  { id: "backup", label: "数据备份", color: "bg-amber-500" },
-  { id: "security", label: "安全检查", color: "bg-red-500" },
-  { id: "cleanup", label: "清理维护", color: "bg-violet-500" },
-  { id: "monitoring", label: "监控巡检", color: "bg-cyan-500" },
-  { id: "other", label: "其他", color: "bg-gray-400" },
-];
+// ── TagInput ──────────────────────────────────────────────
+
+function TagInput({
+  tags,
+  onChange,
+  existingTags = [],
+  placeholder = "输入标签，回车添加...",
+}: {
+  tags: string[];
+  onChange: (tags: string[]) => void;
+  existingTags?: string[];
+  placeholder?: string;
+}) {
+  const [input, setInput] = useState("");
+  const [open, setOpen] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const suggestions = existingTags
+    .filter((t) => !tags.includes(t) && t.toLowerCase().includes(input.toLowerCase().trim()))
+    .slice(0, 8);
+
+  const addTag = (tag: string) => {
+    const trimmed = tag.trim();
+    if (trimmed && !tags.includes(trimmed)) onChange([...tags, trimmed]);
+    setInput("");
+  };
+
+  const removeTag = (tag: string) => onChange(tags.filter((t) => t !== tag));
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter" && input.trim()) {
+      e.preventDefault();
+      addTag(input);
+    } else if (e.key === "Backspace" && !input && tags.length) {
+      removeTag(tags[tags.length - 1]);
+    }
+  };
+
+  return (
+    <div className="relative">
+      <div
+        className="min-h-[42px] flex flex-wrap gap-1.5 items-center px-3 py-2 rounded-xl bg-card border border-border focus-within:border-primary/40 transition-colors cursor-text"
+        onClick={() => inputRef.current?.focus()}
+      >
+        {tags.map((tag) => (
+          <span key={tag} className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-primary/10 text-primary text-xs font-medium">
+            {tag}
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); removeTag(tag); }}
+              className="hover:text-primary/60 leading-none text-sm"
+            >
+              ×
+            </button>
+          </span>
+        ))}
+        <input
+          ref={inputRef}
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={handleKeyDown}
+          onFocus={() => setOpen(true)}
+          onBlur={() => setTimeout(() => setOpen(false), 150)}
+          placeholder={tags.length === 0 ? placeholder : ""}
+          className="flex-1 min-w-[80px] bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground/40"
+        />
+      </div>
+      {open && suggestions.length > 0 && (
+        <div className="absolute top-full left-0 right-0 mt-1 py-1 bg-background border border-border rounded-xl shadow-lg z-20 max-h-[160px] overflow-y-auto">
+          {suggestions.map((tag) => (
+            <button
+              key={tag}
+              type="button"
+              onMouseDown={(e) => { e.preventDefault(); addTag(tag); }}
+              className="w-full text-left px-3 py-1.5 text-sm text-foreground hover:bg-muted transition-colors flex items-center gap-2"
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-primary/50 shrink-0" />
+              {tag}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 const PRIORITY_OPTIONS: { value: Priority; label: string; active: string }[] = [
   { value: "high", label: "高", active: "bg-destructive/10 text-destructive border-destructive/20" },
@@ -88,6 +164,7 @@ interface TaskModalProps {
   editTask?: Task;
   defaultTab?: TabType;
   members: Member[];
+  existingTags?: string[];
   onClose: () => void;
   onCreateTask: (fields: Partial<Task>) => Promise<void>;
   onSaveTask: (id: string, fields: Partial<Task>) => Promise<void>;
@@ -104,16 +181,11 @@ interface TaskFormState {
   status: TaskStatus;
   assigneeId: string;
   deadline: string;
-  category: string;
+  tags: string[];
   progress: number;
 }
 
 function taskToForm(task: Task): TaskFormState {
-  let category = "other";
-  try {
-    const tmpl = JSON.parse(task.result || "{}");
-    if (tmpl.category) category = tmpl.category;
-  } catch { /* ok */ }
   return {
     title: task.title,
     description: task.description,
@@ -121,19 +193,19 @@ function taskToForm(task: Task): TaskFormState {
     status: task.status,
     assigneeId: task.assignee_id,
     deadline: task.deadline || "",
-    category,
+    tags: task.tags || [],
     progress: task.progress,
   };
 }
 
 function defaultTaskForm(): TaskFormState {
-  return { title: "", description: "", priority: "medium", status: "pending", assigneeId: "", deadline: "", category: "other", progress: 0 };
+  return { title: "", description: "", priority: "medium", status: "pending", assigneeId: "", deadline: "", tags: [], progress: 0 };
 }
 
 // ── Component ─────────────────────────────────────────────
 
 export default function TaskModal({
-  open, editTask, defaultTab = "task", members,
+  open, editTask, defaultTab = "task", members, existingTags = [],
   onClose, onCreateTask, onSaveTask, onDeleteTask, onCreateCronJob,
 }: TaskModalProps) {
   const isEdit = !!editTask;
@@ -152,7 +224,7 @@ export default function TaskModal({
   const [cronTaskTitle, setCronTaskTitle] = useState("");
   const [cronTaskDescription, setCronTaskDescription] = useState("");
   const [cronTaskPriority, setCronTaskPriority] = useState<Priority>("medium");
-  const [cronCategory, setCronCategory] = useState("other");
+  const [cronTaskTags, setCronTaskTags] = useState<string[]>([]);
   const [freqOpen, setFreqOpen] = useState(false);
 
   const humanSchedule = useMemo(() => scheduleToHuman(schedule), [schedule]);
@@ -173,7 +245,7 @@ export default function TaskModal({
 
   const resetCronForm = () => {
     setCronName(""); setCronDescription(""); setCronTaskTitle(""); setCronTaskDescription("");
-    setCronTaskPriority("medium"); setCronCategory("other");
+    setCronTaskPriority("medium"); setCronTaskTags([]);
     setSchedule({ frequency: "daily", hour: 9, minute: 0, weekdays: [1], monthDay: 1, intervalValue: 2 });
     setFreqOpen(false);
   };
@@ -192,17 +264,18 @@ export default function TaskModal({
           title: form.title.trim(), description: form.description,
           priority: form.priority, status: form.status,
           assignee_id: form.assigneeId, deadline: form.deadline,
+          tags: form.tags,
           progress: form.status === "completed" ? 100 : form.status === "pending" ? 0 : form.progress,
         });
       } else if (tab === "task") {
         if (!form.title.trim()) return;
-        await onCreateTask({ title: form.title.trim(), description: form.description, priority: form.priority, assignee_id: form.assigneeId, deadline: form.deadline, source: "manual" });
+        await onCreateTask({ title: form.title.trim(), description: form.description, priority: form.priority, assignee_id: form.assigneeId, deadline: form.deadline, tags: form.tags, source: "manual" });
       } else {
         if (!cronName.trim()) return;
         await onCreateCronJob({
           name: cronName.trim(), description: cronDescription,
           cron_expression: buildCron(schedule),
-          task_template: JSON.stringify({ title: cronTaskTitle, description: cronTaskDescription, priority: cronTaskPriority, category: cronCategory }),
+          task_template: JSON.stringify({ title: cronTaskTitle, description: cronTaskDescription, priority: cronTaskPriority, tags: cronTaskTags }),
           enabled: 1,
         });
       }
@@ -250,23 +323,16 @@ export default function TaskModal({
 
       <div className="border-t border-border" />
 
-      {/* Category */}
+      {/* Tags */}
       <div className="space-y-2">
         <span className="text-[11px] text-muted-foreground font-medium flex items-center gap-1">
-          <Tag className="w-3 h-3" />分类
+          <Tag className="w-3 h-3" />标签
         </span>
-        <div className="flex flex-wrap gap-1.5">
-          {CATEGORIES.map((cat) => (
-            <button key={cat.id} onClick={() => setForm((f) => ({ ...f, category: cat.id }))}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
-                form.category === cat.id ? "bg-foreground text-background shadow-sm" : "bg-muted/60 text-muted-foreground hover:bg-muted"
-              }`}
-            >
-              <span className={`w-2 h-2 rounded-full ${cat.color}`} />
-              {cat.label}
-            </button>
-          ))}
-        </div>
+        <TagInput
+          tags={form.tags}
+          onChange={(tags) => setForm((f) => ({ ...f, tags }))}
+          existingTags={existingTags}
+        />
       </div>
 
       {/* Priority */}
@@ -480,20 +546,13 @@ export default function TaskModal({
         />
         <div className="space-y-2">
           <span className="text-[11px] text-muted-foreground font-medium flex items-center gap-1">
-            <Tag className="w-3 h-3" />分类
+            <Tag className="w-3 h-3" />标签
           </span>
-          <div className="flex flex-wrap gap-1.5">
-            {CATEGORIES.map((cat) => (
-              <button key={cat.id} onClick={() => setCronCategory(cat.id)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
-                  cronCategory === cat.id ? "bg-foreground text-background shadow-sm" : "bg-muted/60 text-muted-foreground hover:bg-muted"
-                }`}
-              >
-                <span className={`w-2 h-2 rounded-full ${cat.color}`} />
-                {cat.label}
-              </button>
-            ))}
-          </div>
+          <TagInput
+            tags={cronTaskTags}
+            onChange={setCronTaskTags}
+            existingTags={existingTags}
+          />
         </div>
         <div className="space-y-2">
           <span className="text-[11px] text-muted-foreground font-medium">优先级</span>

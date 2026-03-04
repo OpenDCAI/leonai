@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import {
   Search, CheckCircle2, Circle, Clock, AlertCircle,
   ListTodo, ArrowUpDown, ChevronDown, ChevronUp, LayoutGrid, List,
@@ -92,6 +92,7 @@ export default function Tasks() {
   const [viewMode, setViewMode] = useState<ViewMode>("table");
   const [dragOverColumn, setDragOverColumn] = useState<TaskStatus | null>(null);
   const [activeTab, setActiveTab] = useState<ActiveTab>("tasks");
+  const [tagFilter, setTagFilter] = useState<string | null>(null);
 
   // Unified task modal state (create + edit)
   const [taskModalOpen, setTaskModalOpen] = useState(false);
@@ -205,9 +206,16 @@ export default function Tasks() {
     }
   };
 
+  const allTags = useMemo(() => {
+    const set = new Set<string>();
+    tasks.forEach((t) => (t.tags || []).forEach((tag) => set.add(tag)));
+    return [...set].sort();
+  }, [tasks]);
+
   let filtered = tasks.filter((t) => {
     if (statusFilter !== "all" && t.status !== statusFilter) return false;
     if (priorityFilter !== "all" && t.priority !== priorityFilter) return false;
+    if (tagFilter && !(t.tags || []).includes(tagFilter)) return false;
     if (search) {
       const { name } = getAssigneeInfo(t.assignee_id);
       if (!t.title.toLowerCase().includes(search.toLowerCase()) && !name.toLowerCase().includes(search.toLowerCase())) return false;
@@ -413,6 +421,17 @@ export default function Tasks() {
           )}
         </div>
 
+        {/* Active tag filter */}
+        {tagFilter && (
+          <div className="flex items-center gap-2 px-4 md:px-6 py-1.5 border-b border-border bg-primary/[0.03] shrink-0">
+            <span className="text-xs text-muted-foreground">标签过滤：</span>
+            <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-primary/10 text-primary text-xs font-medium">
+              {tagFilter}
+              <button onClick={() => setTagFilter(null)} className="hover:text-primary/60 leading-none text-sm">×</button>
+            </span>
+          </div>
+        )}
+
         {/* Stats */}
         {statsBar}
 
@@ -477,12 +496,29 @@ export default function Tasks() {
                               editingTask?.id === task.id ? "border-primary/40 shadow-sm" : "border-border hover:border-primary/30"
                             }`}
                           >
-                            <div className="flex items-center gap-1 mb-2">
-                              <p className="text-sm font-medium text-foreground leading-snug">{task.title}</p>
-                              {task.source && task.source !== "manual" && (
-                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary shrink-0">
-                                  {sourceLabel[task.source] || task.source}
-                                </span>
+                            <div className="flex flex-col gap-1 mb-2">
+                              <div className="flex items-center gap-1">
+                                <p className="text-sm font-medium text-foreground leading-snug">{task.title}</p>
+                                {task.source && task.source !== "manual" && (
+                                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary shrink-0">
+                                    {sourceLabel[task.source] || task.source}
+                                  </span>
+                                )}
+                              </div>
+                              {(task.tags || []).length > 0 && (
+                                <div className="flex flex-wrap gap-1">
+                                  {(task.tags || []).map((tag) => (
+                                    <button
+                                      key={tag}
+                                      onClick={(e) => { e.stopPropagation(); setTagFilter(tagFilter === tag ? null : tag); }}
+                                      className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium transition-colors ${
+                                        tagFilter === tag ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-primary/10 hover:text-primary"
+                                      }`}
+                                    >
+                                      {tag}
+                                    </button>
+                                  ))}
+                                </div>
                               )}
                             </div>
                             <div className="flex items-center justify-between">
@@ -611,13 +647,24 @@ export default function Tasks() {
                         <input type="checkbox" aria-label={`选择任务: ${task.title}`} checked={selectedRows.has(task.id)} onChange={() => toggleSelectRow(task.id)} className="w-3.5 h-3.5 accent-primary rounded" />
                       </span>
                       <StatusIcon className={`w-4 h-4 ${status.color}`} />
-                      <span className="text-sm font-medium text-foreground truncate flex items-center gap-1">
+                      <span className="text-sm font-medium text-foreground truncate flex items-center gap-1 flex-wrap">
                         {task.title}
                         {task.source && task.source !== "manual" && (
                           <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary ml-1 shrink-0">
                             {sourceLabel[task.source] || task.source}
                           </span>
                         )}
+                        {(task.tags || []).map((tag) => (
+                          <button
+                            key={tag}
+                            onClick={(e) => { e.stopPropagation(); setTagFilter(tagFilter === tag ? null : tag); }}
+                            className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium shrink-0 transition-colors ${
+                              tagFilter === tag ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-primary/10 hover:text-primary"
+                            }`}
+                          >
+                            {tag}
+                          </button>
+                        ))}
                         {task.thread_id && (
                           <a href={`/chat/${task.thread_id}`}
                              className="text-muted-foreground hover:text-primary ml-1 shrink-0"
@@ -783,6 +830,7 @@ export default function Tasks() {
         editTask={editingTask}
         defaultTab={taskModalTab}
         members={memberList}
+        existingTags={allTags}
         onClose={closeTaskModal}
         onCreateTask={handleCreateTask}
         onSaveTask={handleSaveTask}
