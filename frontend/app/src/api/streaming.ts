@@ -128,10 +128,8 @@ export async function streamActivityEvents(
     async (after) => {
       const url = `/api/threads/${encodeURIComponent(threadId)}/activity/events?after=${after}`;
       const res = await fetch(url, { signal });
-      if (!res.ok) {
-        if (res.status === 204) return { after, done: true }; // No activity buffer
-        throw new Error(`Activity SSE failed: ${res.status}`);
-      }
+      if (res.status === 204) return { after, done: true }; // No activity buffer yet
+      if (!res.ok) throw new Error(`Activity SSE failed: ${res.status}`);
       if (!res.body) return { after, done: true };
       const { lastSeq, finished } = await consumeSSEStream(res.body.getReader(), onEvent, after);
       return { after: lastSeq, done: finished };
