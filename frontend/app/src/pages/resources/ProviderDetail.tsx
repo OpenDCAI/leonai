@@ -27,7 +27,7 @@ interface ProviderDetailProps {
 }
 
 export default function ProviderDetail({ provider, allocatedResources }: ProviderDetailProps) {
-  const { name, description, vendor, type, status, unavailableReason, telemetry, error } = provider;
+  const { name, description, vendor, type, status, unavailableReason, telemetry, error, cardCpuMode, cardCpuReason } = provider;
   const TypeIcon = typeIcon[type];
 
   if (status === "unavailable") {
@@ -108,6 +108,11 @@ export default function ProviderDetail({ provider, allocatedResources }: Provide
           <StatBlock metric={telemetry.memory} label="memory" title="内存" />
           <StatBlock metric={telemetry.disk} label="disk" title="磁盘" />
         </div>
+        {cardCpuMode === "placeholder_no_quota" && (
+          <p className="text-[10px] text-muted-foreground mb-5">
+            CPU 卡片口径：未接入 quota API，卡片固定显示为 `---`。{cardCpuReason ? `原因: ${cardCpuReason}` : ""}
+          </p>
+        )}
 
         {telemetry.quota && (
           <div className="mb-5">

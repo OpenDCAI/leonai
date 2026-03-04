@@ -27,6 +27,7 @@ export interface UsageMetric {
   unit: string;
   source: MetricSource;
   freshness?: MetricFreshness;
+  error?: string;
 }
 
 export interface ProviderTelemetry {
@@ -73,6 +74,8 @@ export interface ProviderInfo {
   quota?: ProviderQuota;
   telemetry: ProviderTelemetry;
   cardCpu?: UsageMetric;
+  cardCpuMode?: "direct" | "placeholder_no_quota";
+  cardCpuReason?: string | null;
   consoleUrl?: string;
   latencyMs?: number;
   sessions: ResourceSession[];

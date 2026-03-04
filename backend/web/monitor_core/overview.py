@@ -273,16 +273,20 @@ def _aggregate_provider_telemetry(
     }
 
 
-def _resolve_card_cpu_metric(provider_type: str, telemetry: dict[str, Any]) -> dict[str, Any]:
+def _resolve_card_cpu_metric(provider_type: str, telemetry: dict[str, Any]) -> tuple[dict[str, Any], str, str | None]:
     cpu = dict(telemetry.get("cpu") or {})
     if provider_type != "cloud":
-        return cpu
+        return cpu, "direct", str(cpu.get("error") or "").strip() or None
     # @@@card-cpu-cloud-guardrail - cloud provider lacks reliable account-level quota API; card CPU must stay placeholder until quota contract exists.
+    original_error = str(cpu.get("error") or "").strip()
+    reason = "Cloud CPU card metric is intentionally hidden until quota API is integrated."
+    if original_error:
+        reason = f"{reason} Latest probe: {original_error}"
     cpu["used"] = None
     cpu["limit"] = None
     cpu["source"] = "unknown"
-    cpu.pop("error", None)
-    return cpu
+    cpu["error"] = reason
+    return cpu, "placeholder_no_quota", reason
 
 
 def list_resource_providers() -> dict[str, Any]:
@@ -339,6 +343,7 @@ def list_resource_providers() -> dict[str, Any]:
             running_count=running_count,
             snapshot_by_lease=snapshot_by_lease,
         )
+        card_cpu, card_cpu_mode, card_cpu_reason = _resolve_card_cpu_metric(provider_type, telemetry)
         providers.append(
             {
                 "id": config_name,
@@ -353,7 +358,9 @@ def list_resource_providers() -> dict[str, Any]:
                 ),
                 "capabilities": capabilities,
                 "telemetry": telemetry,
-                "cardCpu": _resolve_card_cpu_metric(provider_type, telemetry),
+                "cardCpu": card_cpu,
+                "cardCpuMode": card_cpu_mode,
+                "cardCpuReason": card_cpu_reason,
                 "consoleUrl": resolve_console_url(provider_name, config_name, sandboxes_dir=SANDBOXES_DIR),
                 "sessions": normalized_sessions,
             }

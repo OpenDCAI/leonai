@@ -178,6 +178,10 @@ def test_list_resource_providers_marks_ready_when_no_running_sessions(tmp_path, 
     assert e2b["status"] == "ready"
     assert e2b["telemetry"]["running"]["used"] == 0
     assert e2b["telemetry"]["cpu"]["freshness"] == "stale"
+    assert e2b["cardCpuMode"] == "placeholder_no_quota"
+    assert e2b["cardCpu"]["used"] is None
+    assert e2b["cardCpu"]["limit"] is None
+    assert "quota API" in e2b["cardCpuReason"]
 
 
 def test_list_resource_providers_prefers_config_console_url_override(tmp_path, monkeypatch):

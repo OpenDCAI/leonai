@@ -89,6 +89,7 @@ export default function ProviderCard({ provider, selected, onSelect }: ProviderC
               used={cardCpu.used}
               limit={cardCpu.limit}
               unit={cardCpu.unit}
+              note={provider.cardCpuReason ?? cardCpu.error}
             />
           </div>
         )}
@@ -125,15 +126,17 @@ function MetricCircle({
   used,
   limit,
   unit,
+  note,
 }: {
   label: string;
   used: number | null;
   limit: number | null;
   unit: string;
+  note?: string;
 }) {
   const showRing = used != null && limit != null && limit > 0;
   return (
-    <div className="text-center min-w-[64px]">
+    <div className="text-center min-w-[64px]" title={note || undefined}>
       {showRing ? (
         <QuotaRing used={used} limit={limit} />
       ) : (
