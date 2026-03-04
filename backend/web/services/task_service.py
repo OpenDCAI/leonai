@@ -2,7 +2,7 @@
 
 import json
 import sqlite3
-import time
+import uuid
 from typing import Any
 
 from backend.web.core.config import DB_PATH
@@ -69,8 +69,9 @@ def list_tasks() -> list[dict[str, Any]]:
 
 
 def create_task(**fields: Any) -> dict[str, Any]:
+    import time
     now = int(time.time() * 1000)
-    tid = str(now)
+    tid = uuid.uuid4().hex
     with _tasks_conn() as conn:
         conn.execute(
             "INSERT INTO panel_tasks"

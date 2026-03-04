@@ -71,8 +71,9 @@ class CronService:
             logger.warning("[cron-service] job %s has invalid JSON template", job_id)
             return None
 
-        # Build task fields from template, override source/cron_job_id
-        task_fields: dict[str, Any] = {**template}
+        # Build task fields from template — only allow known safe keys
+        _ALLOWED_TEMPLATE_KEYS = {"title", "description", "priority", "assignee_id", "deadline", "tags"}
+        task_fields: dict[str, Any] = {k: v for k, v in template.items() if k in _ALLOWED_TEMPLATE_KEYS}
         task_fields["source"] = "cron"
         task_fields["cron_job_id"] = job_id
 
@@ -137,4 +138,9 @@ class CronService:
         jobs = await asyncio.to_thread(cron_job_service.list_cron_jobs)
         for job in jobs:
             if self.is_due(job):
-                await self.trigger_job(job["id"])
+                try:
+                    await self.trigger_job(job["id"])
+                except Exception:
+                    logger.exception(
+                        "[cron-service] failed to trigger job %s — skipping", job["id"]
+                    )
