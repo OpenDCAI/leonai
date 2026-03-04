@@ -106,7 +106,9 @@ export function useStreamHandler(
 
   // Subscribe to stream events → drive UI state
   useEffect(() => {
+    console.log("[STREAM-DIAG] subscriber registered");
     return subscribe((event) => {
+      console.log(`[STREAM-DIAG] event=${event.type}, turnId=${turnIdRef.current}, hasBound=${hasBoundRef.current}`);
       // run_start: ensure we have an assistant turn ready
       if (event.type === "run_start" && !turnIdRef.current) {
         const fallbackId = makeId("reconnect-turn");

@@ -64,7 +64,9 @@ export async function streamThreadEvents(
   while (!signal?.aborted) {
     try {
       const url = `/api/threads/${encodeURIComponent(threadId)}/events?after=${after}`;
+      console.log(`[SSE-FETCH] fetching ${url}`);
       const res = await fetch(url, { signal });
+      console.log(`[SSE-FETCH] response status=${res.status}, ok=${res.ok}`);
 
       if (!res.ok) {
         // 4xx = unrecoverable
@@ -77,13 +79,17 @@ export async function streamThreadEvents(
       if (!res.body) return;
 
       attempts = 0;
+      console.log("[SSE-FETCH] consuming SSE stream...");
       const { lastSeq } = await consumeSSEStream(res.body.getReader(), onEvent, after);
+      console.log(`[SSE-FETCH] stream ended, lastSeq=${lastSeq}, reconnecting...`);
       after = lastSeq;
 
       // Server closed connection (normal disconnect) — reconnect
       if (signal?.aborted) return;
-    } catch {
+    } catch (fetchErr) {
       if (signal?.aborted) return;
+      console.log(`[SSE-FETCH] catch: ${fetchErr}`);
+
       if (++attempts > MAX_ATTEMPTS) {
         onEvent({ type: "error", data: { error: "Max reconnection attempts reached" } });
         return;
