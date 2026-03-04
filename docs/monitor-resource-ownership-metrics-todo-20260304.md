@@ -85,9 +85,15 @@
 - Some providers cannot supply paused-state runtime metrics; store explicit nulls and reason, not fake values.
 
 ## Acceptance Checklist
-- [ ] No `Default`/hardcoded agent name in resource API payload.
-- [ ] Resource panel can identify `agent_name + thread_id` for live sessions.
-- [ ] Snapshot row exists/updates after lease create and on refresh loop.
-- [ ] Running providers show real metrics when SDK supports them.
-- [ ] Paused providers do not pretend runtime metrics; null + reason is visible in API payload.
-- [ ] All steps committed and pushed incrementally to `feat/resource-page`.
+- [x] No `Default`/hardcoded agent name in resource API payload.
+- [x] Resource panel can identify `agent_name + thread_id` for live sessions.
+- [x] Snapshot row exists/updates after lease create and on refresh loop.
+- [x] Running providers show real metrics when SDK supports them.
+- [x] Paused providers do not pretend runtime metrics; null + reason is visible in API payload.
+- [x] All steps committed and pushed incrementally to `feat/resource-page`.
+
+## Progress Notes (2026-03-04)
+- Ownership chain landed and now resolves by `thread_config.agent` + member lookup. Unknown owners are explicit (`Unknown`) instead of fake defaults.
+- Loop sampling now targets `sandbox_leases` running/paused instances only; provider instances are lazy-built per target.
+- Probe failures are persisted into `lease_resource_snapshots.probe_error`; resources overview surfaces `telemetry.{cpu,memory,disk}.error` when values are unavailable.
+- Frontend allocation counters now separate `活跃 / 暂停 / 结束` and no longer mislabel all non-running sessions as paused.
