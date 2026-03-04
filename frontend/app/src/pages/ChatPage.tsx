@@ -88,7 +88,6 @@ function ChatPageInner({ threadId }: { threadId: string }) {
     useDisplayDeltas({
       threadId,
       refreshThreads: tm.refreshThreads,
-      refreshThread,
       onUpdate: (updater) => setEntries(updater),
       loading,
       runStarted,
@@ -159,8 +158,12 @@ function ChatPageInner({ threadId }: { threadId: string }) {
   async function handleDropUploadFiles(files: DroppedUploadFile[]): Promise<string[]> {
     const uploadedPaths: string[] = [];
     for (const item of files) {
-      const payload = await uploadWorkspaceFile(threadId, item.file, item.relativePath);
-      uploadedPaths.push(payload.path);
+      const payload = await uploadWorkspaceFile(threadId, {
+        file: item.file,
+        channel: "upload",
+        path: item.relativePath,
+      });
+      uploadedPaths.push(payload.relative_path);
     }
     return uploadedPaths;
   }
