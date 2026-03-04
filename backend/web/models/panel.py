@@ -1,6 +1,9 @@
 """Pydantic models for panel API (Members, Tasks, Library, Profile)."""
 
-from pydantic import BaseModel
+import json
+
+from croniter import croniter
+from pydantic import BaseModel, field_validator
 
 
 # ── Members ──
@@ -90,6 +93,22 @@ class CreateCronJobRequest(BaseModel):
     task_template: str = "{}"
     enabled: bool = True
 
+    @field_validator("cron_expression")
+    @classmethod
+    def validate_cron_expression(cls, v: str) -> str:
+        if not croniter.is_valid(v):
+            raise ValueError(f"Invalid cron expression: {v!r}")
+        return v
+
+    @field_validator("task_template")
+    @classmethod
+    def validate_task_template(cls, v: str) -> str:
+        try:
+            json.loads(v)
+        except (json.JSONDecodeError, TypeError):
+            raise ValueError("task_template must be valid JSON")
+        return v
+
 
 class UpdateCronJobRequest(BaseModel):
     name: str | None = None
@@ -97,6 +116,23 @@ class UpdateCronJobRequest(BaseModel):
     cron_expression: str | None = None
     task_template: str | None = None
     enabled: bool | None = None
+
+    @field_validator("cron_expression")
+    @classmethod
+    def validate_cron_expression(cls, v: str | None) -> str | None:
+        if v is not None and not croniter.is_valid(v):
+            raise ValueError(f"Invalid cron expression: {v!r}")
+        return v
+
+    @field_validator("task_template")
+    @classmethod
+    def validate_task_template(cls, v: str | None) -> str | None:
+        if v is not None:
+            try:
+                json.loads(v)
+            except (json.JSONDecodeError, TypeError):
+                raise ValueError("task_template must be valid JSON")
+        return v
 
 
 # ── Backward compatibility aliases ──

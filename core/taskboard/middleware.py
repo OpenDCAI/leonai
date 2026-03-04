@@ -12,6 +12,7 @@ Tools:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from collections.abc import Awaitable, Callable
@@ -253,7 +254,7 @@ class TaskBoardMiddleware(AgentMiddleware):
         tool_name = request.tool_call.get("name")
         if tool_name not in self.ALL_TOOLS:
             return await handler(request)
-        return self._handle_tool_call(request.tool_call)
+        return await asyncio.to_thread(self._handle_tool_call, request.tool_call)
 
     # ------------------------------------------------------------------
     # Dispatch
@@ -374,8 +375,6 @@ class TaskBoardMiddleware(AgentMiddleware):
 
     async def on_idle(self) -> dict[str, Any] | None:
         """Called when agent enters IDLE state. Returns highest-priority pending task, or None."""
-        import asyncio
-
         tasks = await asyncio.to_thread(task_service.list_tasks)
         pending = [t for t in tasks if t["status"] == "pending"]
         if not pending:
