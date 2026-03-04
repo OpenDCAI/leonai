@@ -5,29 +5,47 @@ from pathlib import Path
 from backend.web.monitor_core import overview
 
 
-def test_list_resource_providers_maps_status_and_metric_metadata(tmp_path, monkeypatch):
-    (tmp_path / "docker_dev.json").write_text(json.dumps({"provider": "docker"}))
+def _write_provider_config(tmp_path: Path, instance_name: str, payload: dict) -> None:
+    (tmp_path / f"{instance_name}.json").write_text(json.dumps(payload))
 
-    monkeypatch.setattr(overview, "SANDBOXES_DIR", tmp_path)
-    db_path = tmp_path / "leon.db"
-    monkeypatch.setattr(overview, "DB_PATH", Path(db_path))
+
+def _seed_thread_config(db_path: Path, rows: list[tuple[str, str]]) -> None:
     with sqlite3.connect(str(db_path)) as conn:
         conn.execute("CREATE TABLE thread_config (thread_id TEXT PRIMARY KEY, agent TEXT)")
-        conn.execute("INSERT INTO thread_config (thread_id, agent) VALUES (?, ?)", ("thread-local-1", "member-1"))
+        conn.executemany("INSERT INTO thread_config (thread_id, agent) VALUES (?, ?)", rows)
         conn.commit()
+
+
+def _patch_resources_context(
+    monkeypatch,
+    *,
+    tmp_path: Path,
+    providers: list[dict],
+    sessions: list[dict],
+    snapshots: dict | None = None,
+) -> None:
+    monkeypatch.setattr(overview, "SANDBOXES_DIR", tmp_path)
+    monkeypatch.setattr(overview, "available_sandbox_types", lambda: providers)
+    monkeypatch.setattr(overview, "_list_sessions_fast", lambda: sessions)
+    if snapshots is not None:
+        monkeypatch.setattr(overview, "list_snapshots_by_lease_ids", lambda _: snapshots)
+
+
+def test_list_resource_providers_maps_status_and_metric_metadata(tmp_path, monkeypatch):
+    _write_provider_config(tmp_path, "docker_dev", {"provider": "docker"})
+
+    db_path = tmp_path / "leon.db"
+    monkeypatch.setattr(overview, "DB_PATH", Path(db_path))
+    _seed_thread_config(db_path, [("thread-local-1", "member-1")])
     monkeypatch.setattr(overview, "_member_name_map", lambda: {"member-1": "Alice"})
-    monkeypatch.setattr(
-        overview,
-        "available_sandbox_types",
-        lambda: [
+    _patch_resources_context(
+        monkeypatch,
+        tmp_path=tmp_path,
+        providers=[
             {"name": "local", "available": True},
             {"name": "docker_dev", "available": False, "reason": "docker daemon down"},
         ],
-    )
-    monkeypatch.setattr(
-        overview,
-        "_list_sessions_fast",
-        lambda: [
+        sessions=[
             {
                 "provider": "local",
                 "session_id": "sess-local-1",
@@ -70,15 +88,13 @@ def test_list_resource_providers_maps_status_and_metric_metadata(tmp_path, monke
 
 
 def test_list_resource_providers_marks_ready_when_no_running_sessions(tmp_path, monkeypatch):
-    (tmp_path / "e2b_test.json").write_text(json.dumps({"provider": "e2b"}))
-
-    monkeypatch.setattr(overview, "SANDBOXES_DIR", tmp_path)
-    monkeypatch.setattr(
-        overview,
-        "available_sandbox_types",
-        lambda: [{"name": "e2b_test", "available": True}],
+    _write_provider_config(tmp_path, "e2b_test", {"provider": "e2b"})
+    _patch_resources_context(
+        monkeypatch,
+        tmp_path=tmp_path,
+        providers=[{"name": "e2b_test", "available": True}],
+        sessions=[],
     )
-    monkeypatch.setattr(overview, "_list_sessions_fast", lambda: [])
 
     payload = overview.list_resource_providers()
     assert len(payload["providers"]) == 1
@@ -93,23 +109,21 @@ def test_list_resource_providers_marks_ready_when_no_running_sessions(tmp_path, 
 
 
 def test_list_resource_providers_prefers_config_console_url_override(tmp_path, monkeypatch):
-    (tmp_path / "daytona_selfhost.json").write_text(
-        json.dumps(
-            {
-                "provider": "daytona",
-                "console_url": "https://ops.example.com/daytona",
-                "daytona": {"target": "local", "api_url": "https://daytona.example.com/api"},
-            }
-        )
+    _write_provider_config(
+        tmp_path,
+        "daytona_selfhost",
+        {
+            "provider": "daytona",
+            "console_url": "https://ops.example.com/daytona",
+            "daytona": {"target": "local", "api_url": "https://daytona.example.com/api"},
+        },
     )
-
-    monkeypatch.setattr(overview, "SANDBOXES_DIR", tmp_path)
-    monkeypatch.setattr(
-        overview,
-        "available_sandbox_types",
-        lambda: [{"name": "daytona_selfhost", "available": True}],
+    _patch_resources_context(
+        monkeypatch,
+        tmp_path=tmp_path,
+        providers=[{"name": "daytona_selfhost", "available": True}],
+        sessions=[],
     )
-    monkeypatch.setattr(overview, "_list_sessions_fast", lambda: [])
 
     payload = overview.list_resource_providers()
     provider = payload["providers"][0]
@@ -119,18 +133,12 @@ def test_list_resource_providers_prefers_config_console_url_override(tmp_path, m
 
 
 def test_list_resource_providers_uses_snapshot_metrics(tmp_path, monkeypatch):
-    (tmp_path / "agentbay_prod.json").write_text(json.dumps({"provider": "agentbay"}))
-
-    monkeypatch.setattr(overview, "SANDBOXES_DIR", tmp_path)
-    monkeypatch.setattr(
-        overview,
-        "available_sandbox_types",
-        lambda: [{"name": "agentbay_prod", "available": True}],
-    )
-    monkeypatch.setattr(
-        overview,
-        "_list_sessions_fast",
-        lambda: [
+    _write_provider_config(tmp_path, "agentbay_prod", {"provider": "agentbay"})
+    _patch_resources_context(
+        monkeypatch,
+        tmp_path=tmp_path,
+        providers=[{"name": "agentbay_prod", "available": True}],
+        sessions=[
             {
                 "provider": "agentbay_prod",
                 "session_id": "sess-1",
@@ -140,11 +148,7 @@ def test_list_resource_providers_uses_snapshot_metrics(tmp_path, monkeypatch):
                 "created_at": "2026-03-03T00:00:00",
             }
         ],
-    )
-    monkeypatch.setattr(
-        overview,
-        "list_snapshots_by_lease_ids",
-        lambda _: {
+        snapshots={
             "lease-1": {
                 "lease_id": "lease-1",
                 "cpu_used": 21.0,
@@ -170,18 +174,12 @@ def test_list_resource_providers_uses_snapshot_metrics(tmp_path, monkeypatch):
 
 
 def test_list_resource_providers_surfaces_snapshot_probe_error(tmp_path, monkeypatch):
-    (tmp_path / "daytona_cloud.json").write_text(json.dumps({"provider": "daytona"}))
-
-    monkeypatch.setattr(overview, "SANDBOXES_DIR", tmp_path)
-    monkeypatch.setattr(
-        overview,
-        "available_sandbox_types",
-        lambda: [{"name": "daytona_cloud", "available": True}],
-    )
-    monkeypatch.setattr(
-        overview,
-        "_list_sessions_fast",
-        lambda: [
+    _write_provider_config(tmp_path, "daytona_cloud", {"provider": "daytona"})
+    _patch_resources_context(
+        monkeypatch,
+        tmp_path=tmp_path,
+        providers=[{"name": "daytona_cloud", "available": True}],
+        sessions=[
             {
                 "provider": "daytona_cloud",
                 "session_id": "sess-1",
@@ -191,11 +189,7 @@ def test_list_resource_providers_surfaces_snapshot_probe_error(tmp_path, monkeyp
                 "created_at": "2026-03-03T00:00:00",
             }
         ],
-    )
-    monkeypatch.setattr(
-        overview,
-        "list_snapshots_by_lease_ids",
-        lambda _: {
+        snapshots={
             "lease-1": {
                 "lease_id": "lease-1",
                 "cpu_used": None,
@@ -222,10 +216,7 @@ def test_list_resource_providers_surfaces_snapshot_probe_error(tmp_path, monkeyp
 def test_thread_owner_uses_agent_ref_as_name_when_member_lookup_missing(tmp_path, monkeypatch):
     db_path = tmp_path / "leon.db"
     monkeypatch.setattr(overview, "DB_PATH", Path(db_path))
-    with sqlite3.connect(str(db_path)) as conn:
-        conn.execute("CREATE TABLE thread_config (thread_id TEXT PRIMARY KEY, agent TEXT)")
-        conn.execute("INSERT INTO thread_config (thread_id, agent) VALUES (?, ?)", ("thread-1", "Lex"))
-        conn.commit()
+    _seed_thread_config(db_path, [("thread-1", "Lex")])
     monkeypatch.setattr(overview, "_member_name_map", lambda: {})
 
     owners = overview._thread_owners(["thread-1", "thread-2"])
