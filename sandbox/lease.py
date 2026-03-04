@@ -114,7 +114,6 @@ class SandboxLease(ABC):
         self.last_error = last_error
         self.needs_refresh = needs_refresh
         self.refresh_hint_at = refresh_hint_at
-        self.bind_mounts: list | None = None
 
     # @@@compat-refresh-error - legacy callers still read refresh_error while storage canonicalized to last_error.
     @property
@@ -129,7 +128,7 @@ class SandboxLease(ABC):
         return self._current_instance
 
     @abstractmethod
-    def ensure_active_instance(self, provider: SandboxProvider, bind_mounts: list | None = None) -> SandboxInstance: ...
+    def ensure_active_instance(self, provider: SandboxProvider) -> SandboxInstance: ...
 
     @abstractmethod
     def destroy_instance(self, provider: SandboxProvider) -> None: ...
@@ -442,16 +441,6 @@ class SQLiteLease(SandboxLease):
             if should_commit:
                 target.close()
 
-    def persist_bind_mounts(self) -> None:
-        """Write bind_mounts to the lease DB row so they survive process restart."""
-        raw = json.dumps(self.bind_mounts) if self.bind_mounts else None
-        with _connect(self.db_path) as conn:
-            conn.execute(
-                "UPDATE sandbox_leases SET bind_mounts_json = ? WHERE lease_id = ?",
-                (raw, self.lease_id),
-            )
-            conn.commit()
-
     def _record_provider_error(self, message: str) -> None:
         self.last_error = message[:500]
         self.needs_refresh = True
@@ -470,8 +459,6 @@ class SQLiteLease(SandboxLease):
         self.last_error = other.last_error
         self.needs_refresh = other.needs_refresh
         self.refresh_hint_at = other.refresh_hint_at
-        if other.bind_mounts is not None:
-            self.bind_mounts = other.bind_mounts
 
     def apply(
         self,
@@ -614,10 +601,7 @@ class SQLiteLease(SandboxLease):
 
             return self._snapshot()
 
-    def ensure_active_instance(self, provider: SandboxProvider, bind_mounts: list | None = None) -> SandboxInstance:
-        # @@@lazy-bind-mounts - use stored bind_mounts as fallback for lazy creation paths
-        if bind_mounts is None:
-            bind_mounts = self.bind_mounts
+    def ensure_active_instance(self, provider: SandboxProvider) -> SandboxInstance:
         capability = provider.get_capability()
         if self._current_instance and self.observed_state == "running" and self._is_fresh() and not self.needs_refresh:
             return self._current_instance
@@ -685,7 +669,7 @@ class SQLiteLease(SandboxLease):
 
             self.status = "recovering"
             self._persist_lease_metadata()
-            session_info = provider.create_session(context_id=f"leon-{self.lease_id}", bind_mounts=bind_mounts)
+            session_info = provider.create_session(context_id=f"leon-{self.lease_id}")
             self._current_instance = SandboxInstance(
                 instance_id=session_info.session_id,
                 provider_name=self.provider_name,
@@ -830,9 +814,6 @@ class LeaseStore:
                 conn.execute("UPDATE sandbox_leases SET instance_status = observed_state")
                 conn.commit()
                 lease_cols = {row[1] for row in conn.execute("PRAGMA table_info(sandbox_leases)").fetchall()}
-            if "bind_mounts_json" not in lease_cols:
-                conn.execute("ALTER TABLE sandbox_leases ADD COLUMN bind_mounts_json TEXT")
-                conn.commit()
             instance_cols = {row[1] for row in conn.execute("PRAGMA table_info(sandbox_instances)").fetchall()}
             event_cols = {row[1] for row in conn.execute("PRAGMA table_info(lease_events)").fetchall()}
 
@@ -869,8 +850,7 @@ class LeaseStore:
                        last_error,
                        needs_refresh,
                        refresh_hint_at,
-                       status,
-                       bind_mounts_json
+                       status
                 FROM sandbox_leases
                 WHERE lease_id = ?
                 """,
@@ -890,8 +870,7 @@ class LeaseStore:
                     created_at=datetime.fromisoformat(created_raw),
                 )
 
-            bind_mounts_raw = row["bind_mounts_json"]
-            lease = SQLiteLease(
+            return SQLiteLease(
                 lease_id=row["lease_id"],
                 provider_name=row["provider_name"],
                 current_instance=instance,
@@ -906,8 +885,6 @@ class LeaseStore:
                 needs_refresh=bool(row["needs_refresh"]),
                 refresh_hint_at=datetime.fromisoformat(row["refresh_hint_at"]) if row["refresh_hint_at"] else None,
             )
-            lease.bind_mounts = json.loads(bind_mounts_raw) if bind_mounts_raw else None
-            return lease
 
     def create(self, lease_id: str, provider_name: str) -> SandboxLease:
         now = datetime.now().isoformat()

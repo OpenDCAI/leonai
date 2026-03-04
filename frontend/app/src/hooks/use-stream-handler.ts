@@ -15,7 +15,6 @@ import { makeId } from "./utils";
 interface StreamHandlerDeps {
   threadId: string;
   refreshThreads: () => Promise<void>;
-  refreshThread: () => Promise<void>;
   onUpdate: (updater: (prev: ChatEntry[]) => ChatEntry[]) => void;
   /** True while useThreadData is loading the snapshot — connection waits for this. */
   loading: boolean;
@@ -67,7 +66,7 @@ function applyReconnectTurn(
 }
 
 export function useStreamHandler(deps: StreamHandlerDeps): StreamHandlerState & StreamHandlerActions {
-  const { threadId, refreshThreads, refreshThread, onUpdate, loading, runStarted } = deps;
+  const { threadId, refreshThreads, onUpdate, loading, runStarted } = deps;
 
   // Local state for immediate UI feedback when user sends a message
   // (covers the window between flushSync and useThreadStream.isRunning becoming true)

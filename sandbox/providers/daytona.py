@@ -70,6 +70,7 @@ class DaytonaProvider(SandboxProvider):
         api_url: str = "https://app.daytona.io/api",
         target: str = "local",
         default_cwd: str = "/home/daytona",
+        bind_mounts: list[MountSpec] | None = None,
         provider_name: str | None = None,
     ):
         from daytona_sdk import Daytona
@@ -80,6 +81,9 @@ class DaytonaProvider(SandboxProvider):
         self.api_url = api_url
         self.target = target
         self.default_cwd = default_cwd
+        self.bind_mounts: list[MountSpec] = [
+            MountSpec.model_validate(m) if isinstance(m, dict) else m for m in (bind_mounts or [])
+        ]
 
         os.environ["DAYTONA_API_KEY"] = api_key
         os.environ["DAYTONA_API_URL"] = api_url
@@ -88,24 +92,20 @@ class DaytonaProvider(SandboxProvider):
 
     # ==================== Session Lifecycle ====================
 
-    def create_session(self, context_id: str | None = None, bind_mounts: list | None = None) -> SessionInfo:
+    def create_session(self, context_id: str | None = None) -> SessionInfo:
         from daytona_sdk import CreateSandboxFromSnapshotParams
-
-        # @@@per-thread-bind-mounts - bind_mounts are now per-thread, passed at session creation time
-        mounts = [MountSpec.model_validate(m) if isinstance(m, dict) else m for m in (bind_mounts or [])]
 
         mount_mounts: list[MountSpec] = []
         copy_mounts: list[tuple[str, str]] = []
-        for mount in mounts:
+        for mount in self.bind_mounts:
             if mount.mode == "copy":
                 copy_mounts.append((mount.source, mount.target))
             else:
                 mount_mounts.append(mount)
 
-        sandbox_name = context_id or f"leon-{uuid.uuid4().hex[:12]}"
         if mount_mounts:
             # @@@daytona-bindmount-http-create - SDK currently lacks bind_mounts field, so self-host bind mounts use direct API create.
-            sandbox_id = self._create_via_http(name=sandbox_name, bind_mounts=mount_mounts)
+            sandbox_id = self._create_via_http(bind_mounts=mount_mounts)
             self._wait_until_started(sandbox_id)
             sb = self.client.find_one(sandbox_id)
         else:
@@ -222,14 +222,14 @@ class DaytonaProvider(SandboxProvider):
     def _api_auth_headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
 
-    def _create_via_http(self, bind_mounts: list[MountSpec], name: str | None = None) -> str:
+    def _create_via_http(self, bind_mounts: list[MountSpec]) -> str:
         normalized_mounts: list[dict[str, Any]] = []
         for mount in bind_mounts:
             if mount.mode != "mount":
                 continue
             normalized_mounts.append({"hostPath": mount.source, "mountPath": mount.target, "readOnly": mount.read_only})
         payload = {
-            "name": name or f"leon-{uuid.uuid4().hex[:12]}",
+            "name": f"leon-{uuid.uuid4().hex[:12]}",
             "autoStopInterval": 0,
             "bindMounts": normalized_mounts,
         }
