@@ -164,30 +164,6 @@ def probe_and_upsert_for_instance(
         network_rx_kbps = _metric_float(metrics, "network_rx_kbps")
         network_tx_kbps = _metric_float(metrics, "network_tx_kbps")
 
-    # Fallback: try terminal-based probing only when provider has no get_metrics() impl
-    if metrics is None:
-        try:
-            terminal_metrics = provider.get_metrics_via_commands(instance_id)
-            if terminal_metrics is not None:
-                if cpu_used is None:
-                    cpu_used = _metric_float(terminal_metrics, "cpu_percent")
-                    cpu_limit = None
-                if memory_used_mb is None:
-                    memory_used_mb = _metric_float(terminal_metrics, "memory_used_mb")
-                    memory_total_mb = _metric_float(terminal_metrics, "memory_total_mb")
-                if disk_used_gb is None:
-                    disk_used_gb = _metric_float(terminal_metrics, "disk_used_gb")
-                    disk_total_gb = _metric_float(terminal_metrics, "disk_total_gb")
-                if network_rx_kbps is None:
-                    network_rx_kbps = _metric_float(terminal_metrics, "network_rx_kbps")
-                    network_tx_kbps = _metric_float(terminal_metrics, "network_tx_kbps")
-                # Clear error if we got any metrics via terminal
-                if any([cpu_used, memory_used_mb, disk_used_gb]):
-                    probe_error = None
-        except Exception as exc:
-            if not probe_error:
-                probe_error = f"terminal probe failed: {exc}"
-
     if (
         cpu_used is None
         and memory_used_mb is None

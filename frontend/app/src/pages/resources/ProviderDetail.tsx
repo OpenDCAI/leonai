@@ -141,7 +141,7 @@ export default function ProviderDetail({ provider }: ProviderDetailProps) {
             <span className="text-[11px] text-muted-foreground uppercase tracking-wider font-medium">沙盒列表</span>
           </div>
           <div className="rounded-lg bg-muted/15 border border-border/40 p-3">
-            <SessionList sessions={provider.sessions} />
+            <SessionList sessions={provider.sessions} providerType={type} />
           </div>
         </div>
       </div>

@@ -162,7 +162,10 @@ class DaytonaProvider(SandboxProvider):
     # ==================== Inspection ====================
 
     def get_metrics(self, session_id: str) -> Metrics | None:
-        # @@@daytona-metrics - SDK gives static limits; terminal gives live usage (running only).
+        # @@@daytona-metrics - SDK gives static limits (memory/disk quota).
+        # For running sandboxes: one composite cgroup v2 command collects live CPU + memory (~237ms).
+        # free/top are NOT installed in Daytona containers; df / shows host disk (useless per-container).
+        # memory.max='max' (no cgroup limit) → memory_total from SDK quota only.
         try:
             sb = self.client.find_one(session_id)
             self._sandboxes[session_id] = sb
@@ -175,25 +178,60 @@ class DaytonaProvider(SandboxProvider):
         disk_total_gb = float(disk_gib) if disk_gib else None
 
         is_running = getattr(sb, "state", None) and sb.state.value == "started"
-        if is_running:
-            terminal = self.get_metrics_via_commands(session_id)
-            if terminal is not None:
-                # @@@daytona-memory-total - Daytona does not enforce cgroup memory limits; terminal
-                # free -m shows host RAM (can be 100s of GB), not the container's quota. Use SDK
-                # quota as memory_total and skip memory_used to avoid nonsensical used > total.
-                # Disk IS enforced by Daytona (df -BG / matches sdk disk quota).
-                return Metrics(
-                    cpu_percent=terminal.cpu_percent,
-                    memory_used_mb=None,
-                    memory_total_mb=memory_total_mb,
-                    disk_used_gb=terminal.disk_used_gb,
-                    disk_total_gb=disk_total_gb or terminal.disk_total_gb,
-                    network_rx_kbps=terminal.network_rx_kbps,
-                    network_tx_kbps=terminal.network_tx_kbps,
-                )
+        if not is_running:
+            return Metrics(memory_total_mb=memory_total_mb, disk_total_gb=disk_total_gb)
 
-        # Paused or terminal failed: return limits only
-        return Metrics(memory_total_mb=memory_total_mb, disk_total_gb=disk_total_gb)
+        # Two-sample cpu.stat (0.2s window) + memory.current in one execute() call.
+        # Separator lets us split the output cleanly without fragile line-counting.
+        cmd = (
+            "cat /sys/fs/cgroup/cpu.stat"
+            "; sleep 0.2"
+            "; echo '---MEM---'"
+            "; cat /sys/fs/cgroup/memory.current"
+            "; echo '---CPU2---'"
+            "; cat /sys/fs/cgroup/cpu.stat"
+        )
+        result = self.execute(session_id, cmd, timeout_ms=5000)
+
+        cpu_percent = None
+        memory_used_mb = None
+
+        if result.exit_code == 0 and result.output:
+            try:
+                mem_marker = "---MEM---"
+                cpu2_marker = "---CPU2---"
+                text = result.output
+                i_mem = text.index(mem_marker)
+                i_cpu2 = text.index(cpu2_marker)
+
+                cpu1_block = text[:i_mem]
+                mem_block = text[i_mem + len(mem_marker):i_cpu2]
+                cpu2_block = text[i_cpu2 + len(cpu2_marker):]
+
+                def _usage_usec(block: str) -> int | None:
+                    for line in block.splitlines():
+                        if line.startswith("usage_usec"):
+                            return int(line.split()[1])
+                    return None
+
+                u1 = _usage_usec(cpu1_block)
+                u2 = _usage_usec(cpu2_block)
+                if u1 is not None and u2 is not None:
+                    # delta_usec / 200_000us (0.2s window) * 100 → CPU%
+                    cpu_percent = (u2 - u1) / 2_000.0
+
+                mem_str = mem_block.strip()
+                if mem_str.isdigit():
+                    memory_used_mb = int(mem_str) / (1024 ** 2)
+            except Exception:
+                pass
+
+        return Metrics(
+            cpu_percent=cpu_percent,
+            memory_used_mb=memory_used_mb,
+            memory_total_mb=memory_total_mb,
+            disk_total_gb=disk_total_gb,
+        )
 
     # ==================== Internal ====================
 

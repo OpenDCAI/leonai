@@ -196,7 +196,8 @@ class E2BProvider(SandboxProvider):
             return []
 
     def get_metrics(self, session_id: str) -> Metrics | None:
-        return None
+        # E2B is Ubuntu-based; free/top/df are available → delegate to shell command probing.
+        return self.get_metrics_via_commands(session_id)
 
     def snapshot_workspace(self, session_id: str) -> list[dict]:
         """Download all files from /home/user/workspace."""

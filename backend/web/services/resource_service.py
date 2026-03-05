@@ -341,7 +341,7 @@ def list_resource_providers() -> dict[str, Any]:
         provider_instance = str(session.get("provider") or "local")
         grouped.setdefault(provider_instance, []).append(session)
 
-    owners = _thread_owners([str(s.get("thread_id") or "") for s in sessions])
+    owners = _thread_owners([str(s["thread_id"]) for s in sessions if s.get("thread_id")])
     snapshot_by_lease = list_snapshots_by_lease_ids([str(s.get("lease_id") or "") for s in sessions])
 
     providers: list[dict[str, Any]] = []
@@ -359,15 +359,19 @@ def list_resource_providers() -> dict[str, Any]:
         provider_sessions = grouped.get(config_name, [])
         normalized_sessions: list[dict[str, Any]] = []
         running_count = 0
+        # @@@running-dedup - lease-driven query may yield multiple rows per lease (one per crew member).
+        # Count each running lease only once.
+        seen_running_leases: set[str] = set()
         for session in provider_sessions:
             # Use unified state mapping logic
             observed_state = session.get("observed_state")
             desired_state = session.get("desired_state")
             normalized = map_lease_to_session_status(observed_state, desired_state)
-            if normalized == "running":
-                running_count += 1
             thread_id = str(session.get("thread_id") or "")
             lease_id = str(session.get("lease_id") or "")
+            if normalized == "running" and lease_id not in seen_running_leases:
+                running_count += 1
+                seen_running_leases.add(lease_id)
             session_metrics = _to_session_metrics(snapshot_by_lease.get(lease_id))
             owner = owners.get(thread_id, {"agent_id": None, "agent_name": "未绑定Agent"})
             normalized_sessions.append({
@@ -433,6 +437,61 @@ def list_resource_providers() -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Public API: sandbox filesystem browse
+# ---------------------------------------------------------------------------
+
+
+def sandbox_browse(lease_id: str, path: str) -> dict[str, Any]:
+    """Browse the filesystem of a sandbox lease via its provider."""
+    from pathlib import PurePosixPath
+
+    repo = SQLiteSandboxMonitorRepo()
+    try:
+        lease = repo.query_lease(lease_id)
+        instance_id = repo.query_lease_instance_id(lease_id)
+    finally:
+        repo.close()
+
+    if not lease:
+        raise KeyError(f"Lease not found: {lease_id}")
+
+    provider_name = str(lease.get("provider_name") or "").strip()
+    if not provider_name:
+        raise RuntimeError("Lease has no provider")
+
+    if not instance_id:
+        raise RuntimeError("No active instance for this lease — sandbox may be destroyed or paused")
+
+    provider = build_provider_from_config_name(provider_name)
+    if provider is None:
+        raise RuntimeError(f"Could not initialize provider: {provider_name}")
+
+    try:
+        entries = provider.list_dir(instance_id, path)
+    except Exception as exc:
+        raise RuntimeError(f"Failed to list directory: {exc}") from exc
+
+    norm_path = path if path else "/"
+
+    items = []
+    for entry in entries:
+        name = str(entry.get("name") or "").strip()
+        if not name or name.startswith("."):
+            continue
+        is_dir = entry.get("type") == "directory"
+        child_path = f"{norm_path.rstrip('/')}/{name}"
+        items.append({"name": name, "path": child_path, "is_dir": is_dir})
+
+    # Dirs first, then files, each alphabetically
+    items.sort(key=lambda x: (not x["is_dir"], x["name"].lower()))
+
+    parent = str(PurePosixPath(norm_path).parent)
+    parent_path = parent if parent != norm_path else None
+
+    return {"current_path": norm_path, "parent_path": parent_path, "items": items}
+
+
+# ---------------------------------------------------------------------------
 # Public API: resource probe
 # ---------------------------------------------------------------------------
 
@@ -458,7 +517,7 @@ def refresh_resource_snapshots() -> dict[str, Any]:
         instance_id = item["instance_id"]
         status = item["observed_state"]
         # detached means running (not connected to terminal)
-        probe_mode = "running_runtime" if status == "detached" else "non_running_sdk"
+        probe_mode = "running_runtime" if status in ("running", "detached") else "non_running_sdk"
         if probe_mode == "running_runtime":
             running_targets += 1
         else:

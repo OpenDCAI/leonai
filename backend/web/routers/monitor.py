@@ -2,7 +2,7 @@
 
 import asyncio
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from backend.web.services import monitor_service
 from backend.web.services.resource_cache import (
@@ -68,3 +68,14 @@ def resources_overview():
 async def resources_refresh():
     # @@@refresh-off-main-loop - provider I/O stays off event loop to avoid request head-of-line blocking.
     return await asyncio.to_thread(refresh_resource_overview_sync)
+
+
+@router.get("/sandbox/{lease_id}/browse")
+async def sandbox_browse(lease_id: str, path: str = Query(default="/")):
+    from backend.web.services.resource_service import sandbox_browse as _browse
+    try:
+        return await asyncio.to_thread(_browse, lease_id, path)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e

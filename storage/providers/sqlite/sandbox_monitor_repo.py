@@ -43,6 +43,7 @@ class SQLiteSandboxMonitorRepo:
                 sl.current_instance_id
             FROM chat_sessions cs
             LEFT JOIN sandbox_leases sl ON cs.lease_id = sl.lease_id
+            WHERE cs.status != 'closed'
             GROUP BY cs.thread_id
             ORDER BY MAX(cs.last_active_at) DESC
             """
@@ -86,7 +87,7 @@ class SQLiteSandboxMonitorRepo:
                 sl.updated_at,
                 MAX(cs.thread_id) as thread_id
             FROM sandbox_leases sl
-            LEFT JOIN chat_sessions cs ON sl.lease_id = cs.lease_id
+            LEFT JOIN chat_sessions cs ON sl.lease_id = cs.lease_id AND cs.status != 'closed'
             GROUP BY sl.lease_id
             ORDER BY sl.updated_at DESC
             """
@@ -102,7 +103,7 @@ class SQLiteSandboxMonitorRepo:
 
     def query_lease_threads(self, lease_id: str) -> list[dict]:
         rows = self._conn.execute(
-            "SELECT DISTINCT thread_id FROM chat_sessions WHERE lease_id = ?",
+            "SELECT DISTINCT thread_id FROM chat_sessions WHERE lease_id = ? AND status != 'closed'",
             (lease_id,),
         ).fetchall()
         return [_row_to_dict(r) for r in rows]
@@ -158,23 +159,29 @@ class SQLiteSandboxMonitorRepo:
         return [_row_to_dict(r) for r in rows]
 
     def list_sessions_with_leases(self) -> list[dict]:
-        """Sessions joined with lease info for resource overview."""
-        if not self._table_exists("chat_sessions") or not self._table_exists("sandbox_leases"):
+        """Leases with active crew (non-closed chat_sessions) for resource overview.
+
+        @@@lease-source-of-truth - sandbox_leases is the source of truth for sandboxes.
+        chat_sessions is LEFT JOIN'd for crew info only, filtered to non-closed to avoid
+        returning phantom rows for stale/reopened sessions on the same lease.
+        """
+        if not self._table_exists("sandbox_leases"):
             return []
         rows = self._conn.execute(
             """
             SELECT
-                cs.chat_session_id AS session_id,
-                cs.thread_id AS thread_id,
-                cs.lease_id AS lease_id,
-                cs.status AS status,
-                cs.started_at AS created_at,
+                sl.lease_id AS lease_id,
                 sl.provider_name AS provider,
                 sl.observed_state AS observed_state,
-                sl.desired_state AS desired_state
-            FROM chat_sessions cs
-            LEFT JOIN sandbox_leases sl ON cs.lease_id = sl.lease_id
-            ORDER BY cs.started_at DESC
+                sl.desired_state AS desired_state,
+                sl.created_at AS created_at,
+                cs.chat_session_id AS session_id,
+                cs.thread_id AS thread_id
+            FROM sandbox_leases sl
+            LEFT JOIN chat_sessions cs
+                ON sl.lease_id = cs.lease_id
+                AND cs.status != 'closed'
+            ORDER BY sl.created_at DESC
             """
         ).fetchall()
         return [
@@ -183,7 +190,6 @@ class SQLiteSandboxMonitorRepo:
                 "session_id": r["session_id"],
                 "thread_id": r["thread_id"],
                 "lease_id": r["lease_id"],
-                "status": r["status"],
                 "observed_state": r["observed_state"],
                 "desired_state": r["desired_state"],
                 "created_at": r["created_at"],
@@ -253,6 +259,28 @@ class SQLiteSandboxMonitorRepo:
 
         logger.info(f"list_probe_targets returning {len(targets)} targets")
         return targets
+
+    def query_lease_instance_id(self, lease_id: str) -> str | None:
+        """Effective instance_id for a lease (COALESCE sandbox_instances + current_instance_id)."""
+        if self._table_exists("sandbox_instances"):
+            row = self._conn.execute(
+                """
+                SELECT COALESCE(si.provider_session_id, sl.current_instance_id) as instance_id
+                FROM sandbox_leases sl
+                LEFT JOIN sandbox_instances si ON sl.lease_id = si.lease_id
+                WHERE sl.lease_id = ?
+                """,
+                (lease_id,),
+            ).fetchone()
+        else:
+            row = self._conn.execute(
+                "SELECT current_instance_id as instance_id FROM sandbox_leases WHERE lease_id = ?",
+                (lease_id,),
+            ).fetchone()
+        if not row:
+            return None
+        val = str(row["instance_id"] or "").strip()
+        return val or None
 
     def _table_exists(self, table_name: str) -> bool:
         row = self._conn.execute(
