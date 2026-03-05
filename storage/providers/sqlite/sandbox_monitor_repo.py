@@ -189,23 +189,33 @@ class SQLiteSandboxMonitorRepo:
         ]
 
     def list_probe_targets(self) -> list[dict]:
-        """Active lease instances eligible for resource probing."""
-        if not self._table_exists("sandbox_leases"):
+        """Active lease instances eligible for resource probing.
+
+        Returns sessions with runtime_id (instance_id) from chat_sessions,
+        not from sandbox_leases.current_instance_id which may be NULL.
+        """
+        if not self._table_exists("sandbox_leases") or not self._table_exists("chat_sessions"):
             return []
         rows = self._conn.execute(
             """
-            SELECT lease_id, provider_name, current_instance_id, observed_state
-            FROM sandbox_leases
-            WHERE current_instance_id IS NOT NULL
-              AND observed_state IN ('detached', 'paused')
-            ORDER BY updated_at DESC
+            SELECT
+                cs.lease_id,
+                sl.provider_name,
+                cs.runtime_id as instance_id,
+                sl.observed_state
+            FROM chat_sessions cs
+            LEFT JOIN sandbox_leases sl ON cs.lease_id = sl.lease_id
+            WHERE cs.status != 'closed'
+              AND cs.runtime_id IS NOT NULL
+              AND sl.observed_state IN ('detached', 'paused')
+            ORDER BY cs.started_at DESC
             """
         ).fetchall()
         targets: list[dict] = []
         for row in rows:
             lease_id = str(row["lease_id"] or "").strip()
             provider_name = str(row["provider_name"] or "").strip()
-            instance_id = str(row["current_instance_id"] or "").strip()
+            instance_id = str(row["instance_id"] or "").strip()
             observed_state = str(row["observed_state"] or "unknown").strip().lower()
             if lease_id and provider_name and instance_id:
                 targets.append({
