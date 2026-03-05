@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 
 from storage.providers.sqlite.kernel import connect_sqlite
 
-from sandbox.db import DEFAULT_DB_PATH
+from sandbox.config import DEFAULT_DB_PATH
 from sandbox.lifecycle import (
     ChatSessionState,
     assert_chat_session_transition,
@@ -28,7 +28,7 @@ from sandbox.lifecycle import (
 if TYPE_CHECKING:
     from sandbox.lease import SandboxLease
     from sandbox.provider import SandboxProvider
-    from sandbox.runtime import PhysicalTerminalRuntime
+    from sandbox.runtimes.base import PhysicalTerminalRuntime
     from sandbox.terminal import AbstractTerminal
 
 REQUIRED_CHAT_SESSION_COLUMNS = {
@@ -291,7 +291,7 @@ class ChatSessionManager:
             )
 
     def _build_runtime(self, terminal: AbstractTerminal, lease: SandboxLease) -> PhysicalTerminalRuntime:
-        from sandbox.runtime import create_runtime
+        from sandbox.runtimes import create_runtime
 
         return create_runtime(self.provider, terminal, lease)
 

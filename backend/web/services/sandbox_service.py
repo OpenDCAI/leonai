@@ -8,7 +8,7 @@ from typing import Any
 from backend.web.core.config import LOCAL_WORKSPACE_ROOT, SANDBOXES_DIR
 from backend.web.utils.helpers import is_virtual_thread_id
 from sandbox.config import SandboxConfig
-from sandbox.db import DEFAULT_DB_PATH as SANDBOX_DB_PATH
+from sandbox.config import DEFAULT_DB_PATH as SANDBOX_DB_PATH
 from sandbox.manager import SandboxManager
 
 
@@ -29,7 +29,7 @@ def available_sandbox_types() -> list[dict[str, Any]]:
 
 def init_providers_and_managers() -> tuple[dict, dict]:
     """Load sandbox providers and managers from config files."""
-    from sandbox.local import LocalSessionProvider
+    from sandbox.providers.local import LocalSessionProvider
 
     providers: dict[str, Any] = {
         "local": LocalSessionProvider(default_cwd=str(LOCAL_WORKSPACE_ROOT)),

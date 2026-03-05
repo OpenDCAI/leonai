@@ -11,7 +11,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from sandbox.db import DEFAULT_DB_PATH
+from sandbox.config import DEFAULT_DB_PATH
 from storage.providers.sqlite.kernel import connect_sqlite
 
 router = APIRouter(prefix="/api/monitor")

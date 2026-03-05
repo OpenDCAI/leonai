@@ -14,15 +14,14 @@ import pytest
 from sandbox.chat_session import ChatSessionManager
 from sandbox.lease import LeaseStore, SandboxInstance
 from sandbox.provider import ProviderExecResult
-from sandbox.runtime import (
+from sandbox.interfaces.executor import ExecuteResult
+from sandbox.runtimes import (
     DockerPtyRuntime,
-    ExecuteResult,
     LocalPersistentShellRuntime,
     RemoteWrappedRuntime,
-    _extract_state_from_output,
-    _normalize_pty_result,
     create_runtime,
 )
+from sandbox.runtimes.base import _extract_state_from_output, _normalize_pty_result
 from sandbox.terminal import TerminalState, TerminalStore
 
 
