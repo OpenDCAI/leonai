@@ -21,7 +21,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from sandbox.config import DEFAULT_DB_PATH
 from storage.contracts import SummaryRepo, SummaryRow
 from storage.providers.sqlite.kernel import connect_sqlite
 
@@ -60,7 +59,7 @@ class SummaryStore:
     Follows the same pattern as TerminalStore for consistency.
     """
 
-    def __init__(self, db_path: Path = DEFAULT_DB_PATH, summary_repo: SummaryRepo | None = None):
+    def __init__(self, db_path: Path = Path.home() / ".leon" / "sandbox.db", summary_repo: SummaryRepo | None = None):
         self.db_path = db_path
         self._repo: SummaryRepo
         if summary_repo is not None:
