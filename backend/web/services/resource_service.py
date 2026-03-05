@@ -379,7 +379,8 @@ def refresh_resource_snapshots() -> dict[str, Any]:
         provider_key = item["provider_name"]
         instance_id = item["instance_id"]
         status = item["observed_state"]
-        probe_mode = "running_runtime" if status == "running" else "non_running_sdk"
+        # detached means running (not connected to terminal)
+        probe_mode = "running_runtime" if status == "detached" else "non_running_sdk"
         if probe_mode == "running_runtime":
             running_targets += 1
         else:
