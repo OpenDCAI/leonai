@@ -1,8 +1,8 @@
 import { memo } from "react";
-import type { AssistantTurn, NoticeSegment, StreamStatus, ToolSegment, TurnSegment } from "../../api";
+import type { AssistantTurn, NoticeSegment, NotificationType, StreamStatus, ToolSegment, TurnSegment } from "../../api";
 import MarkdownContent from "../MarkdownContent";
 import { CopyButton } from "./CopyButton";
-import { parseNoticeContent, STATUS_ICON } from "./NoticeBubble";
+import { InlineNotice } from "./NoticeBubble";
 import { ThinkingIndicator } from "./ThinkingIndicator";
 import { ToolDetailBox } from "./ToolDetailBox";
 import { formatTime } from "./utils";
@@ -10,7 +10,7 @@ import { formatTime } from "./utils";
 // --- Phase splitting: segments → content phases + notice dividers ---
 
 type ContentPhase = { kind: "content"; segments: TurnSegment[] };
-type NoticePhase = { kind: "notice"; content: string };
+type NoticePhase = { kind: "notice"; content: string; notificationType?: NotificationType };
 type Phase = ContentPhase | NoticePhase;
 
 function splitPhases(segments: TurnSegment[]): Phase[] {
@@ -19,7 +19,8 @@ function splitPhases(segments: TurnSegment[]): Phase[] {
   for (const seg of segments) {
     if (seg.type === "notice") {
       if (buf.length > 0) { phases.push({ kind: "content", segments: buf }); buf = []; }
-      phases.push({ kind: "notice", content: (seg as NoticeSegment).content });
+      const ns = seg as NoticeSegment;
+      phases.push({ kind: "notice", content: ns.content, notificationType: ns.notification_type });
     } else {
       buf.push(seg);
     }
@@ -30,20 +31,8 @@ function splitPhases(segments: TurnSegment[]): Phase[] {
 
 // --- Notice divider (inline within assistant block) ---
 
-function NoticeDivider({ content }: { content: string }) {
-  const parsed = parseNoticeContent(content);
-  if (!parsed.text) return null;
-  const icon = parsed.status ? STATUS_ICON[parsed.status] : null;
-  return (
-    <div className="flex items-center gap-3 my-2 select-none">
-      <div className="flex-1 h-px bg-gray-100" />
-      <span className="inline-flex items-center gap-1.5 px-2.5 text-[11px] text-gray-400">
-        {icon}
-        {parsed.text}
-      </span>
-      <div className="flex-1 h-px bg-gray-100" />
-    </div>
-  );
+function NoticeDivider({ content, notificationType }: { content: string; notificationType?: NotificationType }) {
+  return <InlineNotice content={content} notificationType={notificationType} />;
 }
 
 // --- Content phase rendering (tools + final text) ---
@@ -123,7 +112,7 @@ export const AssistantBlock = memo(function AssistantBlock({ entry, isStreamingT
           /* Phase-based rendering: split at notice boundaries */
           splitPhases(entry.segments).map((phase, i) =>
             phase.kind === "notice"
-              ? <NoticeDivider key={`notice-${i}-${phase.content.slice(0, 32)}`} content={phase.content} />
+              ? <NoticeDivider key={`notice-${i}-${phase.content.slice(0, 32)}`} content={phase.content} notificationType={phase.notificationType} />
               : <ContentPhaseBlock
                   key={phase.segments[0]?.type === "tool" ? `tool-${(phase.segments[0] as ToolSegment).step.id}` : `content-${i}`}
                   segments={phase.segments}
