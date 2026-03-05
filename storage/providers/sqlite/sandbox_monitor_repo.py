@@ -213,7 +213,7 @@ class SQLiteSandboxMonitorRepo:
                     sl.observed_state
                 FROM sandbox_leases sl
                 LEFT JOIN sandbox_instances si ON sl.lease_id = si.lease_id
-                WHERE sl.observed_state IN ('detached', 'paused')
+                WHERE sl.observed_state IN ('running', 'detached', 'paused')
                   AND COALESCE(si.provider_session_id, sl.current_instance_id) IS NOT NULL
                   AND COALESCE(si.provider_session_id, sl.current_instance_id) != ''
                 ORDER BY sl.updated_at DESC
@@ -228,7 +228,7 @@ class SQLiteSandboxMonitorRepo:
                     sl.current_instance_id as instance_id,
                     sl.observed_state
                 FROM sandbox_leases sl
-                WHERE sl.observed_state IN ('detached', 'paused')
+                WHERE sl.observed_state IN ('running', 'detached', 'paused')
                   AND sl.current_instance_id IS NOT NULL
                   AND sl.current_instance_id != ''
                 ORDER BY sl.updated_at DESC
