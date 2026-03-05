@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from pathlib import Path
 
 from storage.providers.sqlite.kernel import SQLiteDBRole, connect_sqlite_role
+
+logger = logging.getLogger(__name__)
 
 
 def _row_to_dict(row: sqlite3.Row) -> dict:
@@ -191,26 +194,33 @@ class SQLiteSandboxMonitorRepo:
     def list_probe_targets(self) -> list[dict]:
         """Active lease instances eligible for resource probing.
 
-        Returns sessions with runtime_id (instance_id) from chat_sessions,
-        not from sandbox_leases.current_instance_id which may be NULL.
+        Returns sessions with chat_session_id as instance_id.
+        Docker provider expects session_id (chat_session_id), not runtime_id.
         """
-        if not self._table_exists("sandbox_leases") or not self._table_exists("chat_sessions"):
+        if not self._table_exists("sandbox_leases"):
+            logger.warning("sandbox_leases table does not exist")
             return []
+        if not self._table_exists("chat_sessions"):
+            logger.warning("chat_sessions table does not exist")
+            return []
+
         rows = self._conn.execute(
             """
             SELECT
                 cs.lease_id,
                 sl.provider_name,
-                cs.runtime_id as instance_id,
+                cs.chat_session_id as instance_id,
                 sl.observed_state
             FROM chat_sessions cs
             LEFT JOIN sandbox_leases sl ON cs.lease_id = sl.lease_id
-            WHERE cs.status != 'closed'
-              AND cs.runtime_id IS NOT NULL
+            WHERE cs.chat_session_id IS NOT NULL
               AND sl.observed_state IN ('detached', 'paused')
             ORDER BY cs.started_at DESC
             """
         ).fetchall()
+
+        logger.info(f"list_probe_targets query returned {len(rows)} rows")
+
         targets: list[dict] = []
         for row in rows:
             lease_id = str(row["lease_id"] or "").strip()
@@ -224,6 +234,8 @@ class SQLiteSandboxMonitorRepo:
                     "instance_id": instance_id,
                     "observed_state": observed_state,
                 })
+
+        logger.info(f"list_probe_targets returning {len(targets)} targets")
         return targets
 
     def _table_exists(self, table_name: str) -> bool:
