@@ -123,6 +123,104 @@ async def write_cancellation_markers(
     return cancelled_tool_call_ids
 
 
+async def _repair_incomplete_tool_calls(agent: Any, config: dict[str, Any]) -> None:
+    """Detect and repair incomplete tool_call history in checkpoint.
+
+    If an AIMessage has tool_calls without matching ToolMessages,
+    insert synthetic error ToolMessages at the correct position
+    (right after the AIMessage) so the LLM doesn't reject the history.
+    """
+    try:
+        from langchain_core.messages import RemoveMessage, ToolMessage
+
+        graph = getattr(agent, "agent", None)
+        if not graph:
+            return
+
+        state = await graph.aget_state(config)
+        if not state or not state.values:
+            return
+
+        messages = state.values.get("messages", [])
+        if not messages:
+            return
+
+        # Collect all tool_call IDs and their ToolMessage responses
+        pending_tc_ids: dict[str, str] = {}  # tc_id -> tool_name
+        answered_tc_ids: set[str] = set()
+
+        for msg in messages:
+            msg_class = msg.__class__.__name__
+            if msg_class == "AIMessage":
+                for tc in getattr(msg, "tool_calls", []):
+                    tc_id = tc.get("id")
+                    if tc_id:
+                        pending_tc_ids[tc_id] = tc.get("name", "unknown")
+            elif msg_class == "ToolMessage":
+                tc_id = getattr(msg, "tool_call_id", None)
+                if tc_id:
+                    answered_tc_ids.add(tc_id)
+
+        unmatched = {tc_id: name for tc_id, name in pending_tc_ids.items() if tc_id not in answered_tc_ids}
+        if not unmatched:
+            return
+
+        thread_id = config.get("configurable", {}).get("thread_id")
+        logger.warning(
+            "[streaming] Repairing %d incomplete tool_call(s) in thread %s: %s",
+            len(unmatched), thread_id, list(unmatched.keys()),
+        )
+
+        # Strategy: remove messages after the broken AIMessage, then re-add
+        # them with the ToolMessage inserted at the correct position.
+        # Find the first broken AIMessage index
+        broken_ai_idx = None
+        for i, msg in enumerate(messages):
+            if msg.__class__.__name__ == "AIMessage":
+                for tc in getattr(msg, "tool_calls", []):
+                    if tc.get("id") in unmatched:
+                        broken_ai_idx = i
+                        break
+            if broken_ai_idx is not None:
+                break
+
+        if broken_ai_idx is None:
+            return
+
+        # Messages after the broken AIMessage that need to be re-ordered
+        after_msgs = messages[broken_ai_idx + 1:]
+
+        # Build update: remove all messages after broken AI, then add
+        # ToolMessage(s) + remaining messages in order
+        updates = []
+
+        # Remove messages after the broken AIMessage
+        for msg in after_msgs:
+            msg_id = getattr(msg, "id", None)
+            if msg_id:
+                updates.append(RemoveMessage(id=msg_id))
+
+        # Add synthetic ToolMessages for unmatched tool_calls
+        for tc_id, tool_name in unmatched.items():
+            updates.append(
+                ToolMessage(
+                    content="Error: task was interrupted (server restart or timeout). Results unavailable.",
+                    tool_call_id=tc_id,
+                    name=tool_name,
+                )
+            )
+
+        # Re-add the remaining messages (HumanMessages etc.)
+        for msg in after_msgs:
+            if msg.__class__.__name__ != "ToolMessage" or getattr(msg, "tool_call_id", None) not in unmatched:
+                updates.append(msg)
+
+        await graph.aupdate_state(config, {"messages": updates})
+        logger.warning("[streaming] Repaired incomplete tool_calls for thread %s", thread_id)
+    except Exception:
+        logger.exception("[streaming] Failed to repair incomplete tool_calls")
+
+
 # ---------------------------------------------------------------------------
 # Thread event buffer management
 # ---------------------------------------------------------------------------
@@ -259,7 +357,6 @@ async def _run_agent_to_buffer(
         if isinstance(data, dict):
             data["_seq"] = seq
             data["_run_id"] = run_id
-            data["agent_id"] = "main"
             if message_id:
                 data["message_id"] = message_id
             event = {**event, "data": json.dumps(data, ensure_ascii=False)}
@@ -373,6 +470,11 @@ async def _run_agent_to_buffer(
             await prime_sandbox(agent, thread_id)
 
         emitted_tool_call_ids: set[str] = set()
+
+        # Repair broken thread state: if last AIMessage has tool_calls without
+        # matching ToolMessages, inject synthetic error ToolMessages so the LLM
+        # won't reject the message history.
+        await _repair_incomplete_tool_calls(agent, config)
 
         # Emit run_start
         await emit({

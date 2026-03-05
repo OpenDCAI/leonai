@@ -249,7 +249,6 @@ class CommandMiddleware(AgentMiddleware[CommandState]):
                     "task_type": "bash",
                     "command_line": command_line,
                     "background": True,
-                    "agent_id": "main",
                 }, ensure_ascii=False),
             })
 
@@ -329,7 +328,6 @@ class CommandMiddleware(AgentMiddleware[CommandState]):
                         "task_id": command_id,
                         "exit_code": exit_code,
                         "background": True,
-                        "agent_id": "main",
                     }, ensure_ascii=False),
                 })
                 break
