@@ -39,6 +39,8 @@ export function useThreadStream(
 
   /** Single AbortController for the persistent SSE connection. */
   const acRef = useRef<AbortController | null>(null);
+  /** Guards against duplicate init() calls from StrictMode double-mount. */
+  const initAcRef = useRef<AbortController | null>(null);
 
   const refreshRef = useRef(refreshThreads);
   refreshRef.current = refreshThreads;
@@ -119,6 +121,11 @@ export function useThreadStream(
   useEffect(() => {
     if (loading) return;
 
+    // Cancel any in-flight init from a previous mount (StrictMode double-mount)
+    initAcRef.current?.abort();
+    const initAc = new AbortController();
+    initAcRef.current = initAc;
+
     if (runStarted) {
       // Navigated from NewChatPage: postRun was already called.
       // Connect immediately, the run_start event will set isRunning.
@@ -126,19 +133,21 @@ export function useThreadStream(
       connect(0);
       // Non-blocking: still fetch runtime for runtimeStatus display
       void getThreadRuntime(threadId)
-        .then((rt) => { if (rt) setRuntimeStatus(rt); })
+        .then((rt) => { if (!initAc.signal.aborted && rt) setRuntimeStatus(rt); })
         .catch(() => {});
     } else {
       // Page refresh / direct URL: check runtime then connect
       async function init() {
         try {
           const runtime = await getThreadRuntime(threadId);
+          if (initAc.signal.aborted) return; // StrictMode: first mount's init — discard
           if (runtime) setRuntimeStatus(runtime);
           if (runtime?.state?.state === "active") {
             setIsRunning(true);
           }
           connect(runtime?.last_seq ?? 0);
         } catch (err) {
+          if (initAc.signal.aborted) return;
           console.error("[useThreadStream] init failed:", err);
           connect(0);
         }
@@ -148,6 +157,7 @@ export function useThreadStream(
 
     return () => {
       console.log("[SSE-DIAG] useEffect cleanup — aborting SSE connection");
+      initAc.abort();
       acRef.current?.abort();
       acRef.current = null;
     };
