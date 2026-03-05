@@ -1,14 +1,21 @@
+import { useMemo } from "react";
 import { Streamdown } from "streamdown";
 
 interface MarkdownContentProps {
   content: string;
 }
 
+/** Strip <system-reminder>...</system-reminder> blocks that LLM may echo. */
+function stripSystemReminders(text: string): string {
+  return text.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "").trim();
+}
+
 export default function MarkdownContent({ content }: MarkdownContentProps) {
-  if (!content) return null;
+  const cleaned = useMemo(() => stripSystemReminders(content), [content]);
+  if (!cleaned) return null;
   return (
-    <div className="markdown-content text-[13px] leading-[1.55] text-[#404040]">
-      <Streamdown>{content}</Streamdown>
+    <div className="markdown-content text-[13px] leading-[1.2] text-[#404040]">
+      <Streamdown>{cleaned}</Streamdown>
     </div>
   );
 }
