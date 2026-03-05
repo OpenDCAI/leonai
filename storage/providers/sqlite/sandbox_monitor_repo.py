@@ -197,7 +197,7 @@ class SQLiteSandboxMonitorRepo:
             SELECT lease_id, provider_name, current_instance_id, observed_state
             FROM sandbox_leases
             WHERE current_instance_id IS NOT NULL
-              AND observed_state IN ('running', 'paused')
+              AND observed_state IN ('detached', 'paused')
             ORDER BY updated_at DESC
             """
         ).fetchall()
