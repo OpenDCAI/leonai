@@ -1,5 +1,4 @@
 import json
-import sqlite3
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -11,18 +10,16 @@ def _write_provider_config(tmp_path: Path, instance_name: str, payload: dict) ->
     (tmp_path / f"{instance_name}.json").write_text(json.dumps(payload))
 
 
-def _seed_thread_config(db_path: Path, rows: list[tuple[str, str]]) -> None:
-    with sqlite3.connect(str(db_path)) as conn:
-        conn.execute("CREATE TABLE thread_config (thread_id TEXT PRIMARY KEY, agent TEXT)")
-        conn.executemany("INSERT INTO thread_config (thread_id, agent) VALUES (?, ?)", rows)
-        conn.commit()
-
-
-def _connect_sqlite_test(db_path: Path, row_factory: type | None = None) -> sqlite3.Connection:
-    conn = sqlite3.connect(str(db_path))
-    if row_factory is not None:
-        conn.row_factory = row_factory
-    return conn
+def _make_fake_thread_config_repo(agent_by_thread: dict[str, str]):
+    """Fake ThreadConfigRepo backed by a simple dict — works for both SQLite and Supabase code paths."""
+    repo = MagicMock()
+    repo.lookup_config.side_effect = lambda tid: (
+        {"sandbox_type": "local", "cwd": None, "model": None, "queue_mode": None,
+         "observation_provider": None, "agent": agent_by_thread[tid]}
+        if tid in agent_by_thread else None
+    )
+    repo.close.return_value = None
+    return repo
 
 
 def _make_fake_repo(sessions: list[dict]):
@@ -94,12 +91,10 @@ def _patch_resources_context(
 def test_list_resource_providers_maps_status_and_metric_metadata(tmp_path, monkeypatch):
     _write_provider_config(tmp_path, "docker_dev", {"provider": "docker"})
 
-    db_path = tmp_path / "leon.db"
     monkeypatch.setattr(
-        resource_service, "connect_sqlite_role",
-        lambda *a, **kw: _connect_sqlite_test(db_path, kw.get("row_factory")),
+        resource_service, "_make_thread_config_repo",
+        lambda: _make_fake_thread_config_repo({"thread-local-1": "member-1"}),
     )
-    _seed_thread_config(db_path, [("thread-local-1", "member-1")])
     monkeypatch.setattr(resource_service, "_member_name_map", lambda: {"member-1": "Alice"})
     _patch_resources_context(
         monkeypatch,
@@ -113,14 +108,16 @@ def test_list_resource_providers_maps_status_and_metric_metadata(tmp_path, monke
                 "provider": "local",
                 "session_id": "sess-local-1",
                 "thread_id": "thread-local-1",
-                "status": "running",
+                "observed_state": "detached",
+                "desired_state": "running",
                 "created_at": "2026-03-03T00:00:00",
             },
             {
                 "provider": "docker_dev",
                 "session_id": "sess-docker-1",
                 "thread_id": "thread-docker-1",
-                "status": "paused",
+                "observed_state": "paused",
+                "desired_state": "paused",
                 "created_at": "2026-03-03T00:00:00",
             },
         ],
@@ -169,10 +166,9 @@ def test_list_resource_providers_marks_ready_when_no_running_sessions(tmp_path, 
     assert e2b["status"] == "ready"
     assert e2b["telemetry"]["running"]["used"] == 0
     assert e2b["telemetry"]["cpu"]["freshness"] == "stale"
-    assert e2b["cardCpuMode"] == "placeholder_no_quota"
     assert e2b["cardCpu"]["used"] is None
     assert e2b["cardCpu"]["limit"] is None
-    assert "quota API" in e2b["cardCpuReason"]
+    assert e2b["cardCpu"]["error"] is not None
 
 
 def test_list_resource_providers_prefers_config_console_url_override(tmp_path, monkeypatch):
@@ -280,13 +276,11 @@ def test_list_resource_providers_surfaces_snapshot_probe_error(tmp_path, monkeyp
     assert provider["telemetry"]["disk"]["error"] == "metrics unavailable"
 
 
-def test_thread_owner_uses_agent_ref_as_name_when_member_lookup_missing(tmp_path, monkeypatch):
-    db_path = tmp_path / "leon.db"
+def test_thread_owner_uses_agent_ref_as_name_when_member_lookup_missing(monkeypatch):
     monkeypatch.setattr(
-        resource_service, "connect_sqlite_role",
-        lambda *a, **kw: _connect_sqlite_test(db_path, kw.get("row_factory")),
+        resource_service, "_make_thread_config_repo",
+        lambda: _make_fake_thread_config_repo({"thread-1": "Lex"}),
     )
-    _seed_thread_config(db_path, [("thread-1", "Lex")])
     monkeypatch.setattr(resource_service, "_member_name_map", lambda: {})
 
     owners = resource_service._thread_owners(["thread-1", "thread-2"])
@@ -294,6 +288,32 @@ def test_thread_owner_uses_agent_ref_as_name_when_member_lookup_missing(tmp_path
     assert owners["thread-1"]["agent_name"] == "Lex"
     assert owners["thread-2"]["agent_id"] is None
     assert owners["thread-2"]["agent_name"] == "未绑定Agent"
+
+
+def test_thread_owner_works_with_supabase_backed_thread_config(monkeypatch):
+    """Thread config lookup routes through ThreadConfigRepo abstraction,
+    so it works identically whether the backing store is SQLite or Supabase."""
+
+    class _FakeSupabaseThreadConfigRepo:
+        """Mimics SupabaseThreadConfigRepo interface without a real Supabase connection."""
+        def __init__(self):
+            self._data = {"thread-supabase-1": "agent-uuid-abc"}
+
+        def lookup_config(self, thread_id: str):
+            agent = self._data.get(thread_id)
+            return {"sandbox_type": "local", "cwd": None, "model": None,
+                    "queue_mode": None, "observation_provider": None, "agent": agent} if agent else None
+
+        def close(self): pass
+
+    monkeypatch.setattr(resource_service, "_make_thread_config_repo", _FakeSupabaseThreadConfigRepo)
+    monkeypatch.setattr(resource_service, "_member_name_map", lambda: {"agent-uuid-abc": "Bob"})
+
+    owners = resource_service._thread_owners(["thread-supabase-1", "thread-missing"])
+    assert owners["thread-supabase-1"]["agent_id"] == "agent-uuid-abc"
+    assert owners["thread-supabase-1"]["agent_name"] == "Bob"
+    assert owners["thread-missing"]["agent_id"] is None
+    assert owners["thread-missing"]["agent_name"] == "未绑定Agent"
 
 
 def test_list_resource_providers_uses_instance_capability_single_source(tmp_path, monkeypatch):

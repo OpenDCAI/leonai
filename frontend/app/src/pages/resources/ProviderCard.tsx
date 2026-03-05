@@ -2,6 +2,7 @@ import { Monitor, Cloud, Container, X } from "lucide-react";
 import type { ProviderInfo } from "./types";
 import QuotaRing from "./QuotaRing";
 import { CapabilityStrip } from "./CapabilityIcons";
+import { formatNumber, formatLimit } from "./utils/format";
 
 const typeIcon = {
   local: Monitor,
@@ -69,7 +70,7 @@ export default function ProviderCard({ provider, selected, onSelect }: ProviderC
         <span className="text-[11px] text-muted-foreground">{typeLabel[type]}</span>
       </div>
 
-      {/* Center: fixed dual metrics (running + runtime metric) */}
+      {/* Center: metrics (running + CPU if available) */}
       <div className="flex items-center justify-center min-h-[52px] mb-3 py-2 rounded-lg bg-muted/30">
         {isUnavailable ? (
           <div className="text-center">
@@ -84,13 +85,16 @@ export default function ProviderCard({ provider, selected, onSelect }: ProviderC
               limit={telemetry.running.limit}
               unit={telemetry.running.unit}
             />
-            <MetricCircle
-              label="CPU"
-              used={cardCpu.used}
-              limit={cardCpu.limit}
-              unit={cardCpu.unit}
-              note={provider.cardCpuReason ?? cardCpu.error}
-            />
+            {/* Only show CPU ring if we have valid CPU data */}
+            {(cardCpu.used != null || cardCpu.limit != null) && (
+              <MetricCircle
+                label="CPU"
+                used={cardCpu.used}
+                limit={cardCpu.limit}
+                unit={cardCpu.unit}
+                note={cardCpu.error}
+              />
+            )}
           </div>
         )}
       </div>
@@ -101,18 +105,24 @@ export default function ProviderCard({ provider, selected, onSelect }: ProviderC
       {/* Session dots */}
       {sessions.length > 0 && (
         <div className="flex items-center gap-1.5 mt-2">
-          {sessions.slice(0, 5).map((s) => (
-            <div
-              key={s.id}
-              className={[
-                "w-2 h-2 rounded-full",
-                s.status === "running" ? "bg-success" : s.status === "paused" ? "bg-warning/80" : "bg-border",
-              ].join(" ")}
-            />
-          ))}
+          {sessions.slice(0, 5).map((s) => {
+            const dotClass = {
+              running: "bg-success animate-pulse",
+              paused: "bg-warning/80",
+              stopped: "bg-border",
+              destroying: "bg-destructive animate-pulse",
+            }[s.status] || "bg-border";
+
+            return (
+              <div
+                key={s.id}
+                className={`w-2 h-2 rounded-full ${dotClass}`}
+              />
+            );
+          })}
           <span className="text-[10px] text-muted-foreground ml-1">
             {runningSessions.length} 占用中
-            {pausedSessions.length > 0 ? ` · ${pausedSessions.length} 暂停(不占用)` : ""}
+            {pausedSessions.length > 0 ? ` · ${pausedSessions.length} 暂停` : ""}
             {stoppedSessions.length > 0 ? ` · ${stoppedSessions.length} 已结束` : ""}
           </span>
         </div>
@@ -141,29 +151,13 @@ function MetricCircle({
         <QuotaRing used={used} limit={limit} />
       ) : (
         <div className="w-12 h-12 rounded-full border border-border bg-card flex items-center justify-center mx-auto">
-          <span className="text-xs font-mono font-semibold text-foreground">{formatUsed(used)}</span>
+          <span className="text-xs font-mono font-semibold text-foreground">
+            {used != null ? `${formatNumber(used)}${unit === "%" ? "%" : ""}` : "--"}
+          </span>
         </div>
       )}
       <p className="text-[10px] text-muted-foreground mt-1">{label}</p>
-      <p className="text-[9px] text-muted-foreground/60 font-mono">{formatLimit(limit, unit)}</p>
+      {limit != null && <p className="text-[9px] text-muted-foreground/60 font-mono">{formatLimit(limit, unit)}</p>}
     </div>
   );
-}
-
-function formatUsed(value: number | null): string {
-  if (value == null) {
-    return "--";
-  }
-  if (Number.isInteger(value)) {
-    return String(value);
-  }
-  return value.toFixed(1).replace(/\.0$/, "");
-}
-
-function formatLimit(limit: number | null, unit: string): string {
-  if (limit == null) {
-    return `limit: -- ${unit}`;
-  }
-  const show = Number.isInteger(limit) ? String(limit) : limit.toFixed(1).replace(/\.0$/, "");
-  return `limit: ${show} ${unit}`;
 }

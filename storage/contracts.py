@@ -98,7 +98,13 @@ class SummaryRepo(Protocol):
 
 
 class SandboxMonitorRepo(Protocol):
-    """Read-only queries against the sandbox DB for monitoring."""
+    """Read-only queries against the sandbox DB for monitoring.
+
+    @@@sandbox-monitor-sqlite-only - Only SQLiteXSandboxMonitorRepo exists because sandbox_leases,
+    chat_sessions, and sandbox_instances are always written by the local sandbox runtime into
+    sandbox.db (SQLite). These tables never live in Supabase. The main storage strategy (SQLite vs
+    Supabase) does not affect this repo.
+    """
 
     def close(self) -> None: ...
     def query_threads(self) -> list[dict[str, Any]]: ...

@@ -1,7 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useIsMobile } from "@/hooks/use-mobile";
 import type { ProviderInfo } from "./resources/types";
-import { deriveAllocatedResources } from "./resources/allocation";
 import { fetchResourceProviders, refreshResourceProviders } from "./resources/api";
 import ProviderCard from "./resources/ProviderCard";
 import ProviderDetail from "./resources/ProviderDetail";
@@ -91,7 +90,6 @@ export default function ResourcesPage() {
     ? new Date(summary.last_refreshed_at).toLocaleTimeString()
     : "--:--:--";
   const refreshDotClass = summary?.refresh_status === "error" ? "bg-warning" : "bg-success";
-  const allocatedResources = useMemo(() => deriveAllocatedResources(providers), [providers]);
 
   if (loading) {
     return (
@@ -168,7 +166,7 @@ export default function ResourcesPage() {
 
         {/* Provider detail */}
         <div key={selectedId} className="animate-fade-in">
-          <ProviderDetail provider={selected} allocatedResources={allocatedResources} />
+          <ProviderDetail provider={selected} />
         </div>
       </div>
     </div>

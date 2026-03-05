@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
-import sqlite3
+import json
+from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from backend.web.core.config import SANDBOXES_DIR
 from backend.web.services.sandbox_service import available_sandbox_types, build_provider_from_config_name
-from sandbox.metadata import get_provider_catalog, resolve_console_url, resolve_provider_name, resolve_provider_type
+from backend.web.utils.helpers import _build_thread_config_repo as _make_thread_config_repo
+from sandbox.local import LocalSessionProvider
 from sandbox.provider import RESOURCE_CAPABILITY_KEYS
 from sandbox.resource_snapshot import (
     ensure_resource_snapshot_table,
@@ -17,8 +20,78 @@ from sandbox.resource_snapshot import (
     upsert_lease_resource_snapshot,
 )
 from storage.models import map_lease_to_session_status
-from storage.providers.sqlite.kernel import SQLiteDBRole, connect_sqlite_role
 from storage.providers.sqlite.sandbox_monitor_repo import SQLiteSandboxMonitorRepo
+
+# ---------------------------------------------------------------------------
+# Provider catalog (display metadata: vendor, description, console URL)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class _CatalogEntry:
+    vendor: str | None
+    description: str
+    provider_type: str
+
+
+_CATALOG: dict[str, _CatalogEntry] = {
+    "local": _CatalogEntry(vendor=None, description="Direct host access", provider_type="local"),
+    "daytona": _CatalogEntry(vendor="Daytona", description="Managed cloud or self-host Daytona sandboxes", provider_type="cloud"),
+    "e2b": _CatalogEntry(vendor="E2B", description="Cloud sandbox with runtime metrics", provider_type="cloud"),
+    "agentbay": _CatalogEntry(vendor="Alibaba Cloud", description="Remote Linux sandbox", provider_type="cloud"),
+    "docker": _CatalogEntry(vendor=None, description="Isolated container sandbox", provider_type="container"),
+}
+
+
+def _load_config_payload(config_name: str, *, sandboxes_dir: Path) -> dict[str, Any]:
+    if config_name == "local":
+        return {"provider": "local"}
+    config_path = sandboxes_dir / f"{config_name}.json"
+    payload = json.loads(config_path.read_text())
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"Sandbox config is not a JSON object: {config_path}")
+    return payload
+
+
+def resolve_provider_name(config_name: str, *, sandboxes_dir: Path) -> str:
+    payload = _load_config_payload(config_name, sandboxes_dir=sandboxes_dir)
+    provider = str(payload.get("provider") or "").strip()
+    if not provider:
+        raise RuntimeError(f"Sandbox config missing provider: {config_name}")
+    return provider
+
+
+def _resolve_provider_type(provider_name: str, config_name: str, *, sandboxes_dir: Path) -> str:
+    entry = _CATALOG.get(provider_name)
+    if not entry:
+        raise RuntimeError(f"Unsupported provider type: {provider_name}")
+    if provider_name != "daytona" or config_name == "local":
+        return entry.provider_type
+    # @@@daytona-target-kind - one provider type maps to cloud/self-host via config target.
+    payload = _load_config_payload(config_name, sandboxes_dir=sandboxes_dir)
+    daytona = payload.get("daytona") if isinstance(payload.get("daytona"), dict) else {}
+    target = str(daytona.get("target") or "").strip().lower()
+    return "cloud" if target == "cloud" else "container"
+
+
+def _resolve_console_url(provider_name: str, config_name: str, *, sandboxes_dir: Path) -> str | None:
+    payload = _load_config_payload(config_name, sandboxes_dir=sandboxes_dir)
+    override = str(payload.get("console_url") or "").strip()
+    if override:
+        return override
+    if provider_name == "agentbay":
+        return "https://agentbay.console.aliyun.com/overview"
+    if provider_name == "e2b":
+        return "https://e2b.dev"
+    if provider_name == "daytona":
+        daytona = payload.get("daytona") if isinstance(payload.get("daytona"), dict) else {}
+        target = str(daytona.get("target") or "").strip().lower()
+        if target == "cloud":
+            return "https://app.daytona.io"
+        api_url = str(daytona.get("api_url") or "").strip().rstrip("/")
+        return api_url[:-4] if api_url.endswith("/api") else api_url
+    return None
+
 
 # ---------------------------------------------------------------------------
 # Capability helpers
@@ -146,31 +219,23 @@ def _member_name_map() -> dict[str, str]:
 
 
 def _thread_agent_refs(thread_ids: list[str]) -> dict[str, str]:
-    """Batch lookup agent refs from thread_config in the main DB."""
+    """Batch lookup agent refs from thread_config via the storage abstraction (SQLite or Supabase)."""
     unique = sorted({tid for tid in thread_ids if tid})
     if not unique:
         return {}
-    conn = connect_sqlite_role(SQLiteDBRole.MAIN, row_factory=sqlite3.Row, check_same_thread=False)
+    repo = _make_thread_config_repo()
     try:
-        table = conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='thread_config' LIMIT 1"
-        ).fetchone()
-        if table is None:
-            return {}
-        placeholders = ",".join(["?"] * len(unique))
-        rows = conn.execute(
-            f"SELECT thread_id, agent FROM thread_config WHERE thread_id IN ({placeholders})",
-            unique,
-        ).fetchall()
+        refs: dict[str, str] = {}
+        for tid in unique:
+            config = repo.lookup_config(tid) or {}
+            agent_ref = str(config.get("agent") or "").strip()
+            if agent_ref:
+                refs[tid] = agent_ref
+        return refs
+    except Exception:
+        return {}
     finally:
-        conn.close()
-    refs: dict[str, str] = {}
-    for row in rows:
-        tid = str(row["thread_id"] or "").strip()
-        agent_ref = str(row["agent"] or "").strip()
-        if tid and agent_ref:
-            refs[tid] = agent_ref
-    return refs
+        repo.close()
 
 
 def _thread_owners(thread_ids: list[str]) -> dict[str, dict[str, str | None]]:
@@ -213,10 +278,15 @@ def _aggregate_provider_telemetry(
         [float(s["memory_used_mb"]) / 1024.0 for s in snapshots if s.get("memory_used_mb") is not None]
     )
     mem_limit = _sum_or_none(
-        [float(s["memory_total_mb"]) / 1024.0 for s in snapshots if s.get("memory_total_mb") is not None]
+        [float(s["memory_total_mb"]) / 1024.0 for s in snapshots
+         if s.get("memory_total_mb") is not None and float(s["memory_total_mb"]) > 0]
     )
     disk_used = _sum_or_none([float(s["disk_used_gb"]) for s in snapshots if s.get("disk_used_gb") is not None])
-    disk_limit = _sum_or_none([float(s["disk_total_gb"]) for s in snapshots if s.get("disk_total_gb") is not None])
+    # @@@disk-total-zero-guard - disk_total=0 is physically impossible; treat as missing probe data.
+    disk_limit = _sum_or_none(
+        [float(s["disk_total_gb"]) for s in snapshots
+         if s.get("disk_total_gb") is not None and float(s["disk_total_gb"]) > 0]
+    )
 
     has_snapshots = len(snapshots) > 0
     latest_probe_error: str | None = None
@@ -238,22 +308,18 @@ def _aggregate_provider_telemetry(
     }
 
 
-def _resolve_card_cpu_metric(
-    provider_type: str, telemetry: dict[str, Any],
-) -> tuple[dict[str, Any], str, str | None]:
+def _resolve_card_cpu_metric(provider_type: str, telemetry: dict[str, Any]) -> dict[str, Any]:
     cpu = dict(telemetry.get("cpu") or {})
-    if provider_type != "cloud":
-        return cpu, "direct", str(cpu.get("error") or "").strip() or None
-    # @@@card-cpu-cloud-guardrail - cloud provider lacks quota API; card CPU stays placeholder.
-    original_error = str(cpu.get("error") or "").strip()
-    reason = "Cloud CPU card metric is intentionally hidden until quota API is integrated."
-    if original_error:
-        reason = f"{reason} Latest probe: {original_error}"
+    if provider_type == "local":
+        # Local = host machine itself; CPU% is meaningful.
+        return cpu
+    # @@@card-cpu-non-local-guardrail - container/cloud providers only have per-sandbox CPU readings,
+    # not a provider-level quota. Aggregating sandbox internals on the summary card is misleading.
     cpu["used"] = None
     cpu["limit"] = None
     cpu["source"] = "unknown"
-    cpu["error"] = reason
-    return cpu, "placeholder_no_quota", reason
+    cpu["error"] = "CPU usage is per-sandbox, not a provider-level quota."
+    return cpu
 
 
 # ---------------------------------------------------------------------------
@@ -283,7 +349,7 @@ def list_resource_providers() -> dict[str, Any]:
         config_name = str(item["name"])
         available = bool(item.get("available"))
         provider_name = resolve_provider_name(config_name, sandboxes_dir=SANDBOXES_DIR)
-        catalog = get_provider_catalog(provider_name)
+        catalog = _CATALOG.get(provider_name) or _CatalogEntry(vendor=None, description=provider_name, provider_type="cloud")
         capabilities, capability_error = _resolve_instance_capabilities(config_name)
         effective_available = available and capability_error is None
         unavailable_reason: str | None = None
@@ -315,13 +381,27 @@ def list_resource_providers() -> dict[str, Any]:
                 "metrics": session_metrics,
             })
 
-        provider_type = resolve_provider_type(provider_name, config_name, sandboxes_dir=SANDBOXES_DIR)
+        provider_type = _resolve_provider_type(provider_name, config_name, sandboxes_dir=SANDBOXES_DIR)
         telemetry = _aggregate_provider_telemetry(
             provider_sessions=provider_sessions,
             running_count=running_count,
             snapshot_by_lease=snapshot_by_lease,
         )
-        card_cpu, card_cpu_mode, card_cpu_reason = _resolve_card_cpu_metric(provider_type, telemetry)
+        # @@@local-host-metrics - local sessions bypass the probe loop, so fetch host metrics inline.
+        # Fast: no network, just shell commands (ps, vm_stat, df).
+        if config_name == "local" and effective_available and capabilities.get("metrics"):
+            host_m = LocalSessionProvider().get_metrics("host")
+            if host_m is not None:
+                telemetry = {
+                    "running": telemetry["running"],
+                    "cpu": _metric(host_m.cpu_percent, None, "%", "direct", "live"),
+                    "memory": _metric(
+                        host_m.memory_used_mb / 1024.0 if host_m.memory_used_mb is not None else None,
+                        host_m.memory_total_mb / 1024.0 if host_m.memory_total_mb is not None else None,
+                        "GB", "direct", "live",
+                    ),
+                    "disk": _metric(host_m.disk_used_gb, host_m.disk_total_gb, "GB", "direct", "live"),
+                }
         providers.append({
             "id": config_name,
             "name": config_name,
@@ -335,10 +415,8 @@ def list_resource_providers() -> dict[str, Any]:
             ),
             "capabilities": capabilities,
             "telemetry": telemetry,
-            "cardCpu": card_cpu,
-            "cardCpuMode": card_cpu_mode,
-            "cardCpuReason": card_cpu_reason,
-            "consoleUrl": resolve_console_url(provider_name, config_name, sandboxes_dir=SANDBOXES_DIR),
+            "cardCpu": _resolve_card_cpu_metric(provider_type, telemetry),
+            "consoleUrl": _resolve_console_url(provider_name, config_name, sandboxes_dir=SANDBOXES_DIR),
             "sessions": normalized_sessions,
         })
 

@@ -65,6 +65,7 @@ def build_provider_from_config_name(name: str, *, sandboxes_dir: Path | None = N
                 image=config.docker.image,
                 mount_path=config.docker.mount_path,
                 provider_name=name,
+                docker_host=config.docker.docker_host,
             )
 
         if config.provider == "e2b":

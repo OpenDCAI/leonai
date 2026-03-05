@@ -34,7 +34,7 @@ class DaytonaProvider(SandboxProvider):
         resource_capabilities=build_resource_capabilities(
             filesystem=True,
             terminal=True,
-            metrics=False,
+            metrics=True,
             screenshot=False,
             web=False,
             process=False,
@@ -162,7 +162,38 @@ class DaytonaProvider(SandboxProvider):
     # ==================== Inspection ====================
 
     def get_metrics(self, session_id: str) -> Metrics | None:
-        return None
+        # @@@daytona-metrics - SDK gives static limits; terminal gives live usage (running only).
+        try:
+            sb = self.client.find_one(session_id)
+            self._sandboxes[session_id] = sb
+        except Exception:
+            return None
+
+        memory_gib = getattr(sb, "memory", None)
+        disk_gib = getattr(sb, "disk", None)
+        memory_total_mb = float(memory_gib) * 1024.0 if memory_gib else None
+        disk_total_gb = float(disk_gib) if disk_gib else None
+
+        is_running = getattr(sb, "state", None) and sb.state.value == "started"
+        if is_running:
+            terminal = self.get_metrics_via_commands(session_id)
+            if terminal is not None:
+                # @@@daytona-memory-total - Daytona does not enforce cgroup memory limits; terminal
+                # free -m shows host RAM (can be 100s of GB), not the container's quota. Use SDK
+                # quota as memory_total and skip memory_used to avoid nonsensical used > total.
+                # Disk IS enforced by Daytona (df -BG / matches sdk disk quota).
+                return Metrics(
+                    cpu_percent=terminal.cpu_percent,
+                    memory_used_mb=None,
+                    memory_total_mb=memory_total_mb,
+                    disk_used_gb=terminal.disk_used_gb,
+                    disk_total_gb=disk_total_gb or terminal.disk_total_gb,
+                    network_rx_kbps=terminal.network_rx_kbps,
+                    network_tx_kbps=terminal.network_tx_kbps,
+                )
+
+        # Paused or terminal failed: return limits only
+        return Metrics(memory_total_mb=memory_total_mb, disk_total_gb=disk_total_gb)
 
     # ==================== Internal ====================
 

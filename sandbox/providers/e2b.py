@@ -37,7 +37,7 @@ class E2BProvider(SandboxProvider):
         resource_capabilities=build_resource_capabilities(
             filesystem=True,
             terminal=True,
-            metrics=False,
+            metrics=True,
             screenshot=False,
             web=False,
             process=False,

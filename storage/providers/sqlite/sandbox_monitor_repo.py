@@ -194,30 +194,46 @@ class SQLiteSandboxMonitorRepo:
     def list_probe_targets(self) -> list[dict]:
         """Active lease instances eligible for resource probing.
 
-        Returns sessions with chat_session_id as instance_id.
-        Docker provider expects session_id (chat_session_id), not runtime_id.
+        @@@probe-instance-id - Uses provider_session_id from sandbox_instances
+        (the ID the provider recognizes), falling back to current_instance_id.
         """
         if not self._table_exists("sandbox_leases"):
             logger.warning("sandbox_leases table does not exist")
             return []
-        if not self._table_exists("chat_sessions"):
-            logger.warning("chat_sessions table does not exist")
-            return []
 
-        rows = self._conn.execute(
-            """
-            SELECT
-                cs.lease_id,
-                sl.provider_name,
-                cs.chat_session_id as instance_id,
-                sl.observed_state
-            FROM chat_sessions cs
-            LEFT JOIN sandbox_leases sl ON cs.lease_id = sl.lease_id
-            WHERE cs.chat_session_id IS NOT NULL
-              AND sl.observed_state IN ('detached', 'paused')
-            ORDER BY cs.started_at DESC
-            """
-        ).fetchall()
+        has_instances = self._table_exists("sandbox_instances")
+
+        if has_instances:
+            rows = self._conn.execute(
+                """
+                SELECT DISTINCT
+                    sl.lease_id,
+                    sl.provider_name,
+                    COALESCE(si.provider_session_id, sl.current_instance_id) as instance_id,
+                    sl.observed_state
+                FROM sandbox_leases sl
+                LEFT JOIN sandbox_instances si ON sl.lease_id = si.lease_id
+                WHERE sl.observed_state IN ('detached', 'paused')
+                  AND COALESCE(si.provider_session_id, sl.current_instance_id) IS NOT NULL
+                  AND COALESCE(si.provider_session_id, sl.current_instance_id) != ''
+                ORDER BY sl.updated_at DESC
+                """
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                """
+                SELECT
+                    sl.lease_id,
+                    sl.provider_name,
+                    sl.current_instance_id as instance_id,
+                    sl.observed_state
+                FROM sandbox_leases sl
+                WHERE sl.observed_state IN ('detached', 'paused')
+                  AND sl.current_instance_id IS NOT NULL
+                  AND sl.current_instance_id != ''
+                ORDER BY sl.updated_at DESC
+                """
+            ).fetchall()
 
         logger.info(f"list_probe_targets query returned {len(rows)} rows")
 

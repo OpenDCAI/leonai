@@ -24,6 +24,7 @@ class AgentBayConfig(BaseModel):
 class DockerConfig(BaseModel):
     image: str = "python:3.12-slim"
     mount_path: str = "/workspace"
+    docker_host: str | None = None  # e.g. "unix:///var/run/docker.sock" to bypass stuck Docker Desktop context
 
 
 class E2BConfig(BaseModel):

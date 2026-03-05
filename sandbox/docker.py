@@ -12,7 +12,7 @@ from sandbox.remote import RemoteSandbox
 class DockerSandbox(RemoteSandbox):
     def __init__(self, config: SandboxConfig, db_path: Path | None = None) -> None:
         dc = config.docker
-        provider = DockerProvider(image=dc.image, mount_path=dc.mount_path, provider_name=config.name)
+        provider = DockerProvider(image=dc.image, mount_path=dc.mount_path, provider_name=config.name, docker_host=dc.docker_host)
         super().__init__(
             provider=provider,
             config=config,

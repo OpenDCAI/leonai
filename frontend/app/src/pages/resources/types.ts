@@ -53,8 +53,9 @@ export interface ResourceSession {
   threadId: string;
   agentId: string;
   agentName: string;
-  status: "running" | "paused" | "stopped";
+  status: "running" | "paused" | "stopped" | "destroying";
   startedAt: string;
+  createdAt?: string;
   metrics?: SessionMetrics;
 }
 
@@ -74,8 +75,6 @@ export interface ProviderInfo {
   quota?: ProviderQuota;
   telemetry: ProviderTelemetry;
   cardCpu: UsageMetric;
-  cardCpuMode: "direct" | "placeholder_no_quota";
-  cardCpuReason: string | null;
   consoleUrl?: string;
   latencyMs?: number;
   sessions: ResourceSession[];

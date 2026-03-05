@@ -156,7 +156,7 @@ def probe_and_upsert_for_instance(
     # @@@metrics-type-guard - Provider SDK/mocks may return non-numeric placeholders; persist only numeric metrics.
     if metrics is not None:
         cpu_used = _metric_float(metrics, "cpu_percent")
-        cpu_limit = 100.0 if cpu_used is not None else None
+        cpu_limit = None
         memory_used_mb = _metric_float(metrics, "memory_used_mb")
         memory_total_mb = _metric_float(metrics, "memory_total_mb")
         disk_used_gb = _metric_float(metrics, "disk_used_gb")
@@ -164,14 +164,14 @@ def probe_and_upsert_for_instance(
         network_rx_kbps = _metric_float(metrics, "network_rx_kbps")
         network_tx_kbps = _metric_float(metrics, "network_tx_kbps")
 
-    # Fallback: try terminal-based probing if no metrics yet
-    if metrics is None or (cpu_used is None and memory_used_mb is None and disk_used_gb is None):
+    # Fallback: try terminal-based probing only when provider has no get_metrics() impl
+    if metrics is None:
         try:
             terminal_metrics = provider.get_metrics_via_commands(instance_id)
             if terminal_metrics is not None:
                 if cpu_used is None:
                     cpu_used = _metric_float(terminal_metrics, "cpu_percent")
-                    cpu_limit = 100.0 if cpu_used is not None else None
+                    cpu_limit = None
                 if memory_used_mb is None:
                     memory_used_mb = _metric_float(terminal_metrics, "memory_used_mb")
                     memory_total_mb = _metric_float(terminal_metrics, "memory_total_mb")
@@ -189,16 +189,13 @@ def probe_and_upsert_for_instance(
                 probe_error = f"terminal probe failed: {exc}"
 
     if (
-        metrics is None
-        or (
-            cpu_used is None
-            and memory_used_mb is None
-            and memory_total_mb is None
-            and disk_used_gb is None
-            and disk_total_gb is None
-            and network_rx_kbps is None
-            and network_tx_kbps is None
-        )
+        cpu_used is None
+        and memory_used_mb is None
+        and memory_total_mb is None
+        and disk_used_gb is None
+        and disk_total_gb is None
+        and network_rx_kbps is None
+        and network_tx_kbps is None
     ) and probe_error is None:
         probe_error = "metrics unavailable"
 

@@ -21,7 +21,7 @@ def test_refresh_resource_snapshots_probes_running_leases_only(monkeypatch):
         resource_service,
         "SQLiteSandboxMonitorRepo",
         lambda: _make_probe_repo([
-            {"provider_name": "p1", "instance_id": "s-1", "lease_id": "l-1", "observed_state": "running"},
+            {"provider_name": "p1", "instance_id": "s-1", "lease_id": "l-1", "observed_state": "detached"},
             {"provider_name": "p1", "instance_id": "s-2", "lease_id": "l-2", "observed_state": "paused"},
         ]),
     )
@@ -52,7 +52,7 @@ def test_refresh_resource_snapshots_counts_provider_build_error(monkeypatch):
         resource_service,
         "SQLiteSandboxMonitorRepo",
         lambda: _make_probe_repo([
-            {"provider_name": "p-missing", "instance_id": "s-1", "lease_id": "l-1", "observed_state": "running"},
+            {"provider_name": "p-missing", "instance_id": "s-1", "lease_id": "l-1", "observed_state": "detached"},
         ]),
     )
     monkeypatch.setattr(resource_service, "build_provider_from_config_name", lambda _: None)

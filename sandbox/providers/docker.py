@@ -6,6 +6,7 @@ Implements SandboxProvider using local Docker containers.
 
 from __future__ import annotations
 
+import os
 import shlex
 import subprocess
 import uuid
@@ -58,12 +59,14 @@ class DockerProvider(SandboxProvider):
         mount_path: str = "/workspace",
         command_timeout_sec: float = 20.0,
         provider_name: str | None = None,
+        docker_host: str | None = None,
     ):
         if provider_name:
             self.name = provider_name
         self.image = image
         self.mount_path = mount_path
         self.command_timeout_sec = command_timeout_sec
+        self._docker_host = docker_host
         self._sessions: dict[str, str] = {}  # session_id -> container_id
 
     def create_session(self, context_id: str | None = None) -> SessionInfo:
@@ -81,6 +84,8 @@ class DockerProvider(SandboxProvider):
         ]
 
         if context_id:
+            # @@@context-label - also label with context_id so probe can find container via lease_id
+            cmd.extend(["--label", f"leon.context_id={context_id}"])
             volume = context_id
             cmd.extend(["-v", f"{volume}:{self.mount_path}"])
 
@@ -225,35 +230,47 @@ class DockerProvider(SandboxProvider):
         container_id = self._get_container_id(session_id, allow_missing=True)
         if not container_id:
             return None
-        result = self._run(
-            [
-                "docker",
-                "stats",
-                "--no-stream",
-                "--format",
-                "{{.CPUPerc}}\t{{.MemUsage}}\t{{.NetIO}}\t{{.BlockIO}}",
-                container_id,
-            ],
+
+        # CPU and memory RSS from docker stats.
+        # @@@docker-memory-limit - no --memory flag set → MemUsage denominator is host RAM, not a container limit.
+        stats_result = self._run(
+            ["docker", "stats", "--no-stream", "--format", "{{.CPUPerc}}\t{{.MemUsage}}", container_id],
             timeout=self.command_timeout_sec,
             check=False,
         )
-        if result.returncode != 0:
+        if stats_result.returncode != 0:
             return None
-        parts = result.stdout.strip().split("\t")
-        if len(parts) != 4:
+        parts = stats_result.stdout.strip().split("\t")
+        if len(parts) != 2:
             return None
         cpu_percent = self._parse_percent(parts[0])
-        mem_used, mem_total = self._parse_mem_usage(parts[1])
-        net_rx, net_tx = self._parse_io(parts[2])
-        disk_used, disk_total = self._parse_io(parts[3])
+        mem_used, _ = self._parse_mem_usage(parts[1])  # ignore denominator (host RAM)
+
+        # @@@docker-disk - BlockIO from docker stats is cumulative r/w bytes, not filesystem capacity.
+        # Use df inside container for real disk usage.
+        disk_result = self._run(
+            ["docker", "exec", container_id, "df", "-BG", "/"],
+            timeout=self.command_timeout_sec,
+            check=False,
+        )
+        disk_used_gb, disk_total_gb = None, None
+        if disk_result.returncode == 0:
+            lines = disk_result.stdout.strip().splitlines()
+            if len(lines) >= 2:
+                df_parts = lines[1].split()
+                if len(df_parts) >= 3:
+                    try:
+                        disk_total_gb = float(df_parts[1].rstrip("G"))
+                        disk_used_gb = float(df_parts[2].rstrip("G"))
+                    except ValueError:
+                        pass
+
         return Metrics(
             cpu_percent=cpu_percent,
             memory_used_mb=mem_used,
-            memory_total_mb=mem_total,
-            disk_used_gb=disk_used / 1024,
-            disk_total_gb=disk_total / 1024,
-            network_rx_kbps=net_rx,
-            network_tx_kbps=net_tx,
+            memory_total_mb=None,  # no --memory limit → no meaningful total
+            disk_used_gb=disk_used_gb,
+            disk_total_gb=disk_total_gb,
         )
 
     def _get_container_id(self, session_id: str, allow_missing: bool = False) -> str | None:
@@ -282,6 +299,11 @@ class DockerProvider(SandboxProvider):
         check: bool = True,
     ) -> subprocess.CompletedProcess[str]:
         effective_timeout = timeout if timeout is not None else self.command_timeout_sec
+        # @@@docker-host - pass DOCKER_HOST when configured to bypass stuck Docker Desktop context
+        env = None
+        if self._docker_host:
+            env = os.environ.copy()
+            env["DOCKER_HOST"] = self._docker_host
         try:
             result = subprocess.run(
                 cmd,
@@ -289,6 +311,7 @@ class DockerProvider(SandboxProvider):
                 text=True,
                 capture_output=True,
                 timeout=effective_timeout,
+                env=env,
             )
         except subprocess.TimeoutExpired as exc:
             raise RuntimeError(f"Docker command timed out after {effective_timeout}s: {' '.join(cmd)}") from exc

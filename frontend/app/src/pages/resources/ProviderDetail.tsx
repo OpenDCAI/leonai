@@ -1,7 +1,8 @@
 import { Monitor, Cloud, Container, Lock, Settings, ArrowRight, ExternalLink } from "lucide-react";
 import { Link } from "react-router-dom";
-import type { AllocatedResource, ProviderInfo, ResourceSession, UsageMetric } from "./types";
-import ResourceAllocation from "./ResourceAllocation";
+import type { ProviderInfo, UsageMetric } from "./types";
+import SessionList from "./SessionList";
+import { formatNumber, formatLimit } from "./utils/format";
 
 const typeIcon = {
   local: Monitor,
@@ -23,11 +24,10 @@ const statusLabel = {
 
 interface ProviderDetailProps {
   provider: ProviderInfo;
-  allocatedResources: AllocatedResource[];
 }
 
-export default function ProviderDetail({ provider, allocatedResources }: ProviderDetailProps) {
-  const { name, description, vendor, type, status, unavailableReason, telemetry, error, cardCpuMode, cardCpuReason } = provider;
+export default function ProviderDetail({ provider }: ProviderDetailProps) {
+  const { name, description, vendor, type, status, unavailableReason, telemetry, error } = provider;
   const TypeIcon = typeIcon[type];
 
   if (status === "unavailable") {
@@ -64,6 +64,13 @@ export default function ProviderDetail({ provider, allocatedResources }: Provide
       </div>
     );
   }
+
+  // @@@overview-semantic - local = host machine metrics (CPU/mem/disk are provider-level).
+  // Non-local = session counts only; per-instance probe data is not a global provider quota.
+  const isLocal = type === "local";
+  const runningCount = provider.sessions.filter((s) => s.status === "running").length;
+  const pausedCount = provider.sessions.filter((s) => s.status === "paused").length;
+  const stoppedCount = provider.sessions.filter((s) => s.status === "stopped").length;
 
   return (
     <div className="rounded-xl border border-border bg-card shadow-sm overflow-hidden">
@@ -102,16 +109,20 @@ export default function ProviderDetail({ provider, allocatedResources }: Provide
         <div className="mb-1">
           <span className="text-[11px] text-muted-foreground uppercase tracking-wider font-medium">概览</span>
         </div>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
-          <StatBlock metric={telemetry.running} label="running" title="运行数" />
-          <StatBlock metric={telemetry.cpu} label="cpu" title="CPU" />
-          <StatBlock metric={telemetry.memory} label="memory" title="内存" />
-          <StatBlock metric={telemetry.disk} label="disk" title="磁盘" />
-        </div>
-        {cardCpuMode === "placeholder_no_quota" && (
-          <p className="text-[10px] text-muted-foreground mb-5">
-            CPU 卡片口径：未接入 quota API，卡片固定显示为 `---`。{cardCpuReason ? `原因: ${cardCpuReason}` : ""}
-          </p>
+
+        {isLocal ? (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+            <StatBlock metric={telemetry.running} label="running" title="运行数" />
+            <StatBlock metric={provider.cardCpu} label="cpu" title="CPU" />
+            <StatBlock metric={telemetry.memory} label="memory" title="内存" />
+            <StatBlock metric={telemetry.disk} label="disk" title="磁盘" />
+          </div>
+        ) : (
+          <div className="grid grid-cols-3 gap-3 mb-5">
+            <CountBlock value={runningCount} label="running" title="运行中" />
+            <CountBlock value={pausedCount} label="paused" title="已暂停" />
+            <CountBlock value={stoppedCount} label="ended" title="已结束" />
+          </div>
         )}
 
         {telemetry.quota && (
@@ -125,98 +136,17 @@ export default function ProviderDetail({ provider, allocatedResources }: Provide
           </div>
         )}
 
-        <div className="mb-5">
+        <div>
           <div className="mb-2">
             <span className="text-[11px] text-muted-foreground uppercase tracking-wider font-medium">沙盒列表</span>
           </div>
           <div className="rounded-lg bg-muted/15 border border-border/40 p-3">
-            <SessionMetricsList sessions={provider.sessions} />
-          </div>
-        </div>
-
-        <div>
-          <div className="mb-2">
-            <span className="text-[11px] text-muted-foreground uppercase tracking-wider font-medium">资源分配</span>
-          </div>
-          <div className="rounded-lg bg-muted/15 border border-border/40 p-3">
-            <ResourceAllocation resources={allocatedResources} providerId={provider.id} />
+            <SessionList sessions={provider.sessions} />
           </div>
         </div>
       </div>
     </div>
   );
-}
-
-function SessionMetricsList({ sessions }: { sessions: ResourceSession[] }) {
-  const activeSessions = sessions.filter((session) => session.status !== "stopped");
-  if (activeSessions.length === 0) {
-    return <p className="text-xs text-muted-foreground">暂无运行中/暂停会话</p>;
-  }
-
-  return (
-    <div className="space-y-2">
-      {activeSessions.map((session) => (
-        <div key={session.id} className="rounded-md border border-border/50 bg-card/60 px-3 py-2">
-          <div className="flex items-center justify-between gap-2 mb-1">
-            <div className="flex items-center gap-2">
-              <StatusDot status={session.status} />
-              <span className="text-xs text-foreground font-medium">{session.agentName || "未绑定Agent"}</span>
-              <span className="text-[10px] text-muted-foreground font-mono">{shortId(session.threadId)}</span>
-            </div>
-            <span className="text-[10px] text-muted-foreground font-mono">{session.status}</span>
-          </div>
-          <div className="grid grid-cols-3 gap-2 text-[10px] font-mono">
-            <MetricCell label="CPU" value={session.metrics?.cpu} unit="%" />
-            <MetricCell label="RAM" value={session.metrics?.memory} unit="GB" />
-            <MetricCell label="磁盘" value={session.metrics?.disk} unit="GB" />
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function StatusDot({ status }: { status: ResourceSession["status"] }) {
-  return (
-    <span
-      className={[
-        "h-2 w-2 rounded-full",
-        status === "running" ? "bg-success" : status === "paused" ? "bg-warning/80" : "bg-muted-foreground/40",
-      ].join(" ")}
-    />
-  );
-}
-
-function MetricCell({
-  label,
-  value,
-  unit,
-}: {
-  label: string;
-  value: number | null | undefined;
-  unit: string;
-}) {
-  return (
-    <div className="rounded border border-border/40 bg-muted/20 px-2 py-1">
-      <p className="text-muted-foreground">{label}</p>
-      <p className="text-foreground font-semibold">{formatMetricValue(value, unit)}</p>
-    </div>
-  );
-}
-
-function formatMetricValue(value: number | null | undefined, unit: string): string {
-  if (value == null) {
-    return "--";
-  }
-  const show = Number.isInteger(value) ? String(value) : value.toFixed(1).replace(/\.0$/, "");
-  return `${show}${unit}`;
-}
-
-function shortId(raw: string): string {
-  if (!raw) {
-    return "--";
-  }
-  return raw.length <= 12 ? raw : `${raw.slice(0, 8)}...`;
 }
 
 function StatBlock({
@@ -230,30 +160,27 @@ function StatBlock({
   title: string;
   compact?: boolean;
 }) {
+  // Append unit inline when there's no limit line (e.g. "21.5%" for CPU)
+  const valueStr =
+    metric.used != null
+      ? `${formatNumber(metric.used)}${metric.limit == null && metric.unit === "%" ? "%" : ""}`
+      : "--";
   return (
     <div className={["rounded-lg bg-muted/30 border border-border/40", compact ? "px-3 py-2" : "py-3 px-2"].join(" ")}>
-      <p className="text-lg md:text-2xl font-mono font-bold text-foreground">{formatUsed(metric.used)}</p>
-      <p className="text-[10px] text-muted-foreground font-mono">{formatLimit(metric.limit, metric.unit)}</p>
+      <p className="text-lg md:text-2xl font-mono font-bold text-foreground">{valueStr}</p>
+      {metric.limit != null && <p className="text-[10px] text-muted-foreground font-mono">{formatLimit(metric.limit, metric.unit)}</p>}
       <p className="text-[9px] text-muted-foreground/60 uppercase tracking-wider mt-1">{label}</p>
       {!compact && <p className="text-[10px] text-muted-foreground mt-1">{title}</p>}
     </div>
   );
 }
 
-function formatUsed(value: number | null): string {
-  if (value == null) {
-    return "Unknown";
-  }
-  if (Number.isInteger(value)) {
-    return String(value);
-  }
-  return value.toFixed(1).replace(/\.0$/, "");
-}
-
-function formatLimit(limit: number | null, unit: string): string {
-  if (limit == null) {
-    return `limit: Unknown ${unit}`;
-  }
-  const show = Number.isInteger(limit) ? String(limit) : limit.toFixed(1).replace(/\.0$/, "");
-  return `limit: ${show} ${unit}`;
+function CountBlock({ value, label, title }: { value: number; label: string; title: string }) {
+  return (
+    <div className="rounded-lg bg-muted/30 border border-border/40 py-3 px-2">
+      <p className="text-lg md:text-2xl font-mono font-bold text-foreground">{value}</p>
+      <p className="text-[9px] text-muted-foreground/60 uppercase tracking-wider mt-1">{label}</p>
+      <p className="text-[10px] text-muted-foreground mt-1">{title}</p>
+    </div>
+  );
 }

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import platform
 import shlex
 import subprocess
 import threading
@@ -43,7 +44,7 @@ class LocalSessionProvider(SandboxProvider):
         resource_capabilities=build_resource_capabilities(
             filesystem=True,
             terminal=True,
-            metrics=False,
+            metrics=True,
             screenshot=False,
             web=False,
             process=False,
@@ -153,7 +154,60 @@ class LocalSessionProvider(SandboxProvider):
         return items
 
     def get_metrics(self, session_id: str) -> Metrics | None:
-        return None
+        if platform.system() != "Darwin":
+            return self.get_metrics_via_commands(session_id)
+
+        # @@@local-metrics-macos - use fast macOS-native commands; avoid 'top' which requires sampling delay.
+        try:
+            # CPU: sum per-process %cpu and normalize by core count
+            r = self.execute(
+                session_id,
+                "sysctl -n hw.ncpu; ps -A -o %cpu | awk 'NR>1{s+=$1} END{printf \"%g\", s}'",
+                timeout_ms=5000,
+            )
+            cpu_percent = None
+            if r.exit_code == 0:
+                lines = r.output.strip().splitlines()
+                ncpu = int(lines[0]) if lines else 1
+                if len(lines) > 1 and lines[1]:
+                    cpu_percent = float(lines[1]) / max(ncpu, 1)
+
+            # Memory: total from hw.memsize, used = (active + wired + compressor) * page_size
+            r = self.execute(session_id, "pagesize; sysctl -n hw.memsize; vm_stat", timeout_ms=5000)
+            memory_used_mb, memory_total_mb = None, None
+            if r.exit_code == 0:
+                lines = r.output.strip().splitlines()
+                page_size = int(lines[0]) if lines else 4096
+                memory_total_mb = int(lines[1]) / 1024 / 1024 if len(lines) > 1 else None
+                active = wired = compressor = 0
+                for line in lines[2:]:
+                    if "Pages active:" in line:
+                        active = int(line.split()[-1].rstrip("."))
+                    elif "Pages wired down:" in line:
+                        wired = int(line.split()[-1].rstrip("."))
+                    elif "Pages occupied by compressor:" in line:
+                        compressor = int(line.split()[-1].rstrip("."))
+                if memory_total_mb is not None:
+                    memory_used_mb = (active + wired + compressor) * page_size / 1024 / 1024
+
+            # Disk: df -g for 1G-blocks on macOS. APFS volumes share one container, so
+            # "Used" column shows only this volume's data; use total - available for real aggregate.
+            r = self.execute(session_id, "df -g / | awk 'NR==2{print $2 - $4, $2}'", timeout_ms=5000)
+            disk_used_gb, disk_total_gb = None, None
+            if r.exit_code == 0 and r.output.strip():
+                parts = r.output.strip().split()
+                disk_used_gb = float(parts[0]) if parts else None
+                disk_total_gb = float(parts[1]) if len(parts) > 1 else None
+
+            return Metrics(
+                cpu_percent=cpu_percent,
+                memory_used_mb=memory_used_mb,
+                memory_total_mb=memory_total_mb,
+                disk_used_gb=disk_used_gb,
+                disk_total_gb=disk_total_gb,
+            )
+        except Exception:
+            return None
 
 
 class LocalSandbox(Sandbox):
