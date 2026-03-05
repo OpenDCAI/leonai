@@ -5,9 +5,6 @@ export const STREAM_EVENT_TYPES = [
   "task_start", "task_done", "task_error",
   // Control (3) — run boundaries + runtime status
   "status", "run_start", "run_done",
-  // P3 legacy — kept until Background Task unification
-  "command_progress", "background_task_start", "background_task_text",
-  "background_task_done", "background_task_error",
 ] as const;
 
 export type StreamEventType = (typeof STREAM_EVENT_TYPES)[number];
@@ -224,15 +221,4 @@ export interface TaskAgentRequest {
   description?: string;
   model?: string;
   max_turns?: number;
-}
-
-export interface Activity {
-  id: string;
-  type: "command" | "background_task";
-  label: string;
-  status: "running" | "done" | "error" | "cancelled";
-  startTime: number;
-  outputPreview?: string;
-  commandId?: string;
-  taskId?: string;
 }
