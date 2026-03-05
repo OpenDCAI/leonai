@@ -1,15 +1,17 @@
-import { memo } from "react";
+import { memo, useState } from "react";
 import type { TurnSegment, ToolSegment } from "../../api";
 import MarkdownContent from "../MarkdownContent";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from "../ui/dialog";
 import { DEFAULT_BADGE, TOOL_BADGE_STYLES } from "./constants";
-import { getStepSummary } from "./utils";
-import { CheckCircle2, Loader2, XCircle, MessageSquare } from "lucide-react";
+import { getStepSummary, getStepResultSummary } from "./utils";
+import { CheckCircle2, Loader2, XCircle, MessageSquare, ChevronRight, ChevronDown } from "lucide-react";
+import { getToolRenderer } from "../tool-renderers";
 
 interface DetailBoxModalProps {
   open: boolean;
@@ -34,25 +36,38 @@ function StatusIcon({ status }: { status: string }) {
 
 function ToolEntry({ seg }: { seg: ToolSegment }) {
   const { step } = seg;
+  const [expanded, setExpanded] = useState(false);
   const badge = TOOL_BADGE_STYLES[step.name] ?? { ...DEFAULT_BADGE, label: step.name };
   const hasSubagent = !!step.subagent_stream;
+  const resultSummary = getStepResultSummary(step);
+  const Renderer = getToolRenderer(step);
 
   return (
     <div className="border-l-2 border-gray-200 pl-3 py-1.5">
-      <div className="flex items-center gap-1.5">
+      <div
+        className="flex items-center gap-1.5 cursor-pointer hover:bg-gray-50 -ml-3 pl-3 -mr-3 pr-3 py-1 rounded transition-colors"
+        onClick={() => setExpanded(!expanded)}
+      >
+        {expanded ? (
+          <ChevronDown className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+        ) : (
+          <ChevronRight className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+        )}
         <StatusIcon status={step.status} />
         <span className={`inline-flex items-center px-1.5 py-0 rounded text-[10px] font-medium ${badge.bg} ${badge.text}`}>
           {badge.label || step.name}
         </span>
         <span className="text-[12px] text-gray-600 font-mono truncate">
-          {getStepSummary(step)}
+          {resultSummary ?? getStepSummary(step)}
         </span>
       </div>
-      {step.result && (
-        <div className="mt-1 text-[11px] text-gray-500 font-mono pl-5 max-h-20 overflow-y-auto whitespace-pre-wrap">
-          {step.result.length > 500 ? step.result.slice(0, 500) + "..." : step.result}
+
+      {expanded && (
+        <div className="mt-2 pl-5">
+          <Renderer step={step} expanded={true} />
         </div>
       )}
+
       {hasSubagent && step.subagent_stream && (
         <div className="mt-1 pl-5 text-[11px] text-blue-600">
           子 Agent: {step.subagent_stream.description || step.subagent_stream.task_id}
@@ -104,6 +119,9 @@ export const DetailBoxModal = memo(function DetailBoxModal({
           <DialogTitle className="text-sm font-medium">
             Turn 详情 — {toolCount} 工具调用{textCount > 1 ? `, ${textCount} 段文本` : ""}
           </DialogTitle>
+          <DialogDescription className="sr-only">
+            查看本轮对话的完整执行细节，包括工具调用和文本输出
+          </DialogDescription>
         </DialogHeader>
         <div className="space-y-2 mt-2">
           {segments.map((seg, i) => {
