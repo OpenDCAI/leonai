@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
-import threading
-import uuid
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from sandbox.base import Sandbox
 from sandbox.manager import SandboxManager
-from sandbox.provider import Metrics, ProviderCapability, ProviderExecResult, SandboxProvider, SessionInfo
+from sandbox.providers.local import LocalSessionProvider  # noqa: F401 — re-export for back-compat
 from sandbox.thread_context import get_current_thread_id, set_current_thread_id
 
 if TYPE_CHECKING:
@@ -19,98 +16,15 @@ if TYPE_CHECKING:
     from sandbox.interfaces.filesystem import FileSystemBackend
 
 
-@dataclass
-class LocalSessionProvider(SandboxProvider):
-    name: str = "local"
-    default_cwd: str | None = None
-    _session_states: dict[str, str] = field(default_factory=dict, init=False, repr=False)
-    _state_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
+class _LazyLocalExecutor:
+    def __init__(self, sandbox: LocalSandbox):
+        self._sandbox = sandbox
+        self.is_remote = False
+        self.runtime_owns_cwd = True
+        self.shell_name = "local-session"
 
-    def get_capability(self) -> ProviderCapability:
-        return ProviderCapability(
-            can_pause=True,
-            can_resume=True,
-            can_destroy=True,
-            supports_webhook=False,
-            supports_status_probe=False,
-            eager_instance_binding=True,
-            inspect_visible=False,
-            runtime_kind="local",
-        )
-
-    def create_session(self, context_id: str | None = None) -> SessionInfo:
-        session_id = context_id or f"local-{uuid.uuid4().hex[:12]}"
-        with self._state_lock:
-            self._session_states[session_id] = "running"
-        return SessionInfo(session_id=session_id, provider="local", status="running")
-
-    def destroy_session(self, session_id: str, sync: bool = True) -> bool:
-        with self._state_lock:
-            state = self._session_states.get(session_id)
-            if state == "detached":
-                return True
-            self._session_states[session_id] = "detached"
-        return True
-
-    def pause_session(self, session_id: str) -> bool:
-        with self._state_lock:
-            # @@@local-provider-process-boundary - LocalSessionProvider state is in-memory only; in multi-worker
-            # web backends the pause/resume request can land on a different process than the one that created
-            # the session. For lease-bound local sessions (context_id like "leon-<lease_id>" or "local-..."),
-            # treat missing in-memory state as "running" so pause/resume stays idempotent across processes.
-            state = self._session_states.get(session_id)
-            if state is None:
-                if session_id.startswith(("leon-", "local-")):
-                    state = "running"
-                else:
-                    return False
-            if state == "detached":
-                return False
-            if state != "paused":
-                self._session_states[session_id] = "paused"
-        return True
-
-    def resume_session(self, session_id: str) -> bool:
-        with self._state_lock:
-            state = self._session_states.get(session_id)
-            if state is None:
-                if session_id.startswith(("leon-", "local-")):
-                    state = "running"
-                else:
-                    return False
-            if state == "detached":
-                return False
-            if state != "running":
-                self._session_states[session_id] = "running"
-        return True
-
-    def get_session_status(self, session_id: str) -> str:
-        with self._state_lock:
-            state = self._session_states.get(session_id)
-            if state is None and session_id.startswith(("leon-", "local-")):
-                return "running"
-            return state or "detached"
-
-    def execute(
-        self,
-        session_id: str,
-        command: str,
-        timeout_ms: int = 30000,
-        cwd: str | None = None,
-    ) -> ProviderExecResult:
-        raise RuntimeError("Local provider execute() is unsupported; use runtime shell execution.")
-
-    def read_file(self, session_id: str, path: str) -> str:
-        raise RuntimeError("Local provider read_file() is unsupported.")
-
-    def write_file(self, session_id: str, path: str, content: str) -> str:
-        raise RuntimeError("Local provider write_file() is unsupported.")
-
-    def list_dir(self, session_id: str, path: str) -> list[dict]:
-        raise RuntimeError("Local provider list_dir() is unsupported.")
-
-    def get_metrics(self, session_id: str) -> Metrics | None:
-        return None
+    def __getattr__(self, name: str):
+        return getattr(self._sandbox._get_capability().command, name)
 
 
 class LocalSandbox(Sandbox):
@@ -162,17 +76,7 @@ class LocalSandbox(Sandbox):
         return None
 
     def shell(self) -> BaseExecutor:
-        class LazyLocalExecutor:
-            def __init__(self, sandbox: LocalSandbox):
-                self._sandbox = sandbox
-                self.is_remote = False
-                self.runtime_owns_cwd = True
-                self.shell_name = "local-session"
-
-            def __getattr__(self, name: str):
-                return getattr(self._sandbox._get_capability().command, name)
-
-        return LazyLocalExecutor(self)  # type: ignore[return-value]
+        return _LazyLocalExecutor(self)  # type: ignore[return-value]
 
     def close(self) -> None:
         for session in self._manager.list_sessions():

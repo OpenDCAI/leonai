@@ -16,6 +16,31 @@ from sandbox.provider import SandboxProvider
 from sandbox.thread_context import get_current_thread_id, set_current_thread_id
 
 
+class _LazyFSBackend:
+    is_remote = True
+
+    def __init__(self, sandbox: RemoteSandbox):
+        self._remote = sandbox
+
+    def __getattr__(self, name: str):
+        return getattr(self._remote._get_capability().fs, name)
+
+
+class _LazyExecutor:
+    # @@@lazy-remote-flag - CommandMiddleware probes is_remote during init; keep this side-effect free.
+    is_remote = True
+    runtime_owns_cwd = True
+    # @@@lazy-shell-name - CommandMiddleware logs shell_name during init.
+    # Expose a static label so hasattr/getattr won't trigger capability lookup before thread_id is set.
+    shell_name = "remote"
+
+    def __init__(self, sandbox: RemoteSandbox):
+        self._remote = sandbox
+
+    def __getattr__(self, name: str):
+        return getattr(self._remote._get_capability().command, name)
+
+
 class RemoteSandbox(Sandbox):
     """Base class for remote sandboxes (AgentBay, Docker, E2B, Daytona).
 
@@ -31,6 +56,10 @@ class RemoteSandbox(Sandbox):
         config: SandboxConfig,
         default_cwd: str,
         db_path: Path | None = None,
+        *,
+        name: str | None = None,
+        working_dir: str | None = None,
+        env_label: str = "Remote sandbox",
     ) -> None:
         self._config = config
         self._default_cwd = default_cwd
@@ -40,6 +69,9 @@ class RemoteSandbox(Sandbox):
             db_path=db_path,
         )
         self._on_exit = config.on_exit
+        self._name = name or config.name
+        self._working_dir = working_dir or default_cwd
+        self._env_label = env_label
 
         # Cache capability per thread
         self._capability_cache: dict[str, SandboxCapability] = {}
@@ -78,37 +110,22 @@ class RemoteSandbox(Sandbox):
                 )
 
     def fs(self) -> FileSystemBackend:
-        # Return a lazy wrapper that defers capability lookup until actual use
-        # This allows agent initialization before thread_id is set
-        class LazyFSBackend:
-            def __init__(self, remote_sandbox):
-                self._remote = remote_sandbox
-                # Set is_remote immediately so middleware can check it
-                self.is_remote = True
-
-            def __getattr__(self, name):
-                # Defer to actual backend when methods are called
-                return getattr(self._remote._get_capability().fs, name)
-
-        return LazyFSBackend(self)  # type: ignore
+        return _LazyFSBackend(self)  # type: ignore[return-value]
 
     def shell(self) -> BaseExecutor:
-        # Return a lazy wrapper that defers capability lookup until actual use
-        class LazyExecutor:
-            def __init__(self, remote_sandbox):
-                self._remote = remote_sandbox
-                # @@@lazy-remote-flag - CommandMiddleware probes is_remote during init; keep this side-effect free.
-                self.is_remote = True
-                self.runtime_owns_cwd = True
-                # @@@lazy-shell-name - CommandMiddleware logs shell_name during init.
-                # Expose a static label so hasattr/getattr won't trigger capability lookup before thread_id is set.
-                self.shell_name = "remote"
+        return _LazyExecutor(self)  # type: ignore[return-value]
 
-            def __getattr__(self, name):
-                # Defer to actual backend when methods are called
-                return getattr(self._remote._get_capability().command, name)
+    @property
+    def name(self) -> str:
+        return self._name
 
-        return LazyExecutor(self)  # type: ignore
+    @property
+    def working_dir(self) -> str:
+        return self._working_dir
+
+    @property
+    def env_label(self) -> str:
+        return self._env_label
 
     @property
     def manager(self) -> SandboxManager:

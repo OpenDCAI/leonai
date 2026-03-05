@@ -1,0 +1,702 @@
+"""PhysicalTerminalRuntime ABC, _SubprocessPtySession, and helpers."""
+
+from __future__ import annotations
+
+import asyncio
+import os
+import pty
+import re
+import select
+import shlex
+import sqlite3
+import subprocess
+import time
+import uuid
+from abc import ABC, abstractmethod
+from collections.abc import Callable
+from datetime import datetime
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from sandbox.lease import SandboxLease
+    from sandbox.provider import SandboxProvider
+    from sandbox.terminal import AbstractTerminal, TerminalState
+
+from sandbox.interfaces.executor import AsyncCommand, ExecuteResult
+from sandbox.shell_output import normalize_pty_result
+from storage.providers.sqlite.kernel import connect_sqlite
+
+ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _parse_env_output(raw: str) -> dict[str, str]:
+    env_map: dict[str, str] = {}
+    for line in raw.replace("\r", "").splitlines():
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        if not ENV_NAME_RE.match(key):
+            continue
+        env_map[key] = value
+    return env_map
+
+
+def _sanitize_shell_output(raw: str) -> str:
+    cleaned = raw.replace("\r", "").replace("\x01\x01\x01", "").replace("\x02\x02\x02", "")
+    cleaned = re.sub(r"\x1B\[[0-?]*[ -/]*[@-~]", "", cleaned)
+    cleaned = re.sub(r"\x1B\][^\x07]*\x07", "", cleaned)
+    while True:
+        next_cleaned = re.sub(r"[^\n]\x08", "", cleaned)
+        if next_cleaned == cleaned:
+            break
+        cleaned = next_cleaned
+    cleaned = cleaned.replace("\x08", "")
+    cleaned = "".join(ch for ch in cleaned if ch in "\n\t" or 32 <= ord(ch))
+    return cleaned
+
+
+def _normalize_pty_result(output: str, command: str | None = None) -> str:
+    return normalize_pty_result(output, command)
+
+
+def _extract_state_from_output(
+    raw_output: str,
+    start_marker: str,
+    end_marker: str,
+    *,
+    cwd_fallback: str,
+    env_fallback: dict[str, str],
+) -> tuple[str, dict[str, str], str]:
+    pattern = re.compile(rf"{re.escape(start_marker)}(.*?){re.escape(end_marker)}", re.S)
+    matches = list(pattern.finditer(raw_output))
+    if not matches:
+        # @@@markerless-empty-output-fallback - Some lightweight providers/tests return empty stdout on successful exec.
+        # Keep previous terminal snapshot only for truly-empty output; any non-empty markerless output still fails loudly.
+        if not _sanitize_shell_output(raw_output).strip():
+            return cwd_fallback, dict(env_fallback), ""
+        raise RuntimeError("Failed to parse terminal state: state markers not found")
+
+    match = matches[-1]
+    pre_state = raw_output[: match.start()]
+    state_blob = match.group(1)
+    post_state = raw_output[match.end() :]
+    state_lines = [_sanitize_shell_output(line).strip() for line in state_blob.splitlines()]
+    state_lines = [line for line in state_lines if line]
+
+    new_cwd = ""
+    parsed_env: dict[str, str] = {}
+    for line in state_lines:
+        if "=" in line:
+            key, value = line.split("=", 1)
+            if ENV_NAME_RE.match(key):
+                parsed_env[key] = value
+            continue
+        if os.path.isabs(line):
+            new_cwd = line
+
+    if not new_cwd:
+        raise RuntimeError("Failed to parse terminal state: cwd not found in state snapshot")
+    if not parsed_env:
+        raise RuntimeError("Failed to parse terminal state: env snapshot is empty")
+
+    cleaned_output = _sanitize_shell_output(pre_state + post_state).strip()
+    return new_cwd, parsed_env, cleaned_output
+
+
+class _SubprocessPtySession:
+    def __init__(self, command: list[str], cwd: str | None = None):
+        self.command = command
+        self.cwd = cwd
+        self._master_fd: int | None = None
+        self._proc: subprocess.Popen[bytes] | None = None
+
+    @property
+    def process(self) -> subprocess.Popen[bytes] | None:
+        return self._proc
+
+    def is_alive(self) -> bool:
+        return self._proc is not None and self._proc.poll() is None
+
+    @staticmethod
+    def _extract_marker_exit(raw: str, marker: str, command: str | None = None) -> tuple[str, int]:
+        exit_code = 0
+        cleaned_lines: list[str] = []
+        marker_re = re.compile(rf"{re.escape(marker)}\s+(-?\d+)")
+        for line in raw.replace("\r", "").splitlines():
+            m = marker_re.search(line)
+            if m:
+                exit_code = int(m.group(1))
+                continue
+            cleaned_lines.append(line)
+        cleaned = _sanitize_shell_output("\n".join(cleaned_lines).strip())
+        return _normalize_pty_result(cleaned, command), exit_code
+
+    def start(self) -> None:
+        if self.is_alive():
+            return
+        master_fd, slave_fd = pty.openpty()
+        try:
+            self._proc = subprocess.Popen(
+                self.command,
+                stdin=slave_fd,
+                stdout=slave_fd,
+                stderr=slave_fd,
+                cwd=self.cwd,
+                close_fds=True,
+            )
+        finally:
+            os.close(slave_fd)
+        self._master_fd = master_fd
+
+    def run(
+        self,
+        command: str,
+        timeout: float | None,
+        on_stdout_chunk: Callable[[str], None] | None = None,
+    ) -> tuple[str, str, int]:
+        if not self.is_alive() or self._master_fd is None:
+            raise RuntimeError("PTY session is not running")
+
+        marker = f"__LEON_PTY_END_{uuid.uuid4().hex[:8]}__"
+        marker_done_re = re.compile(rf"{re.escape(marker)}\s+-?\d+")
+        payload = f"{command}\nprintf '\\n{marker} %s\\n' $?\n"
+        os.write(self._master_fd, payload.encode("utf-8"))
+
+        raw = bytearray()
+        emitted_raw_len = 0
+        deadline = time.monotonic() + timeout if timeout else None
+        while True:
+            if deadline is not None and time.monotonic() > deadline:
+                raise TimeoutError(f"Command timed out after {timeout}s")
+            wait_sec = 0.1 if deadline is None else max(0.0, min(0.1, deadline - time.monotonic()))
+            readable, _, _ = select.select([self._master_fd], [], [], wait_sec)
+            if not readable:
+                continue
+            chunk = os.read(self._master_fd, 4096)
+            if not chunk:
+                raise RuntimeError("PTY stream closed unexpectedly")
+            raw.extend(chunk)
+            decoded = raw.decode("utf-8", errors="replace")
+            if marker_done_re.search(decoded):
+                cleaned, exit_code = self._extract_marker_exit(decoded, marker, command)
+                return cleaned, "", exit_code
+            if on_stdout_chunk is not None:
+                if len(decoded) > emitted_raw_len:
+                    delta_raw = decoded[emitted_raw_len:]
+                    emitted_raw_len = len(decoded)
+                    delta = _sanitize_shell_output(delta_raw)
+                    if delta:
+                        on_stdout_chunk(delta)
+
+    def interrupt_and_recover(self, recover_timeout: float = 3.0) -> bool:
+        """Send Ctrl+C to interrupt the current command and recover the session.
+
+        Blocks for up to 1s (drain) + recover_timeout (default 3s) = ~4s worst case.
+        Called inside _session_lock, so other commands wait during recovery.
+
+        Returns True if the session is recovered and ready for new commands.
+        Returns False if the session is dead and needs to be recreated.
+        """
+        if not self.is_alive() or self._master_fd is None:
+            return False
+
+        # Step 1: Send Ctrl+C (SIGINT) to kill the foreground process
+        try:
+            os.write(self._master_fd, b"\x03\n")
+        except OSError:
+            return False
+
+        # Step 2: Drain remaining output until deadline (not just first quiet gap,
+        # because bursty processes like rg may have short pauses between output chunks)
+        drain_deadline = time.monotonic() + 1.0
+        while time.monotonic() < drain_deadline:
+            remaining = max(0.0, drain_deadline - time.monotonic())
+            readable, _, _ = select.select([self._master_fd], [], [], min(0.1, remaining))
+            if not readable:
+                continue
+            try:
+                chunk = os.read(self._master_fd, 65536)
+                if not chunk:
+                    return False
+            except OSError:
+                return False
+
+        # Step 3: Verify the shell is responsive with a probe command.
+        # Use `true &&` to reset $? to 0 (SIGINT leaves $?=130).
+        probe_marker = f"__LEON_PROBE_{uuid.uuid4().hex[:8]}__"
+        probe_re = re.compile(rf"{re.escape(probe_marker)}\s+0")
+        try:
+            os.write(self._master_fd, f"true && printf '\\n{probe_marker} %s\\n' $?\n".encode("utf-8"))
+        except OSError:
+            return False
+
+        probe_deadline = time.monotonic() + recover_timeout
+        probe_buf = bytearray()
+        while time.monotonic() < probe_deadline:
+            wait_sec = max(0.0, min(0.1, probe_deadline - time.monotonic()))
+            readable, _, _ = select.select([self._master_fd], [], [], wait_sec)
+            if not readable:
+                continue
+            try:
+                chunk = os.read(self._master_fd, 4096)
+                if not chunk:
+                    return False
+            except OSError:
+                return False
+            probe_buf.extend(chunk)
+            if probe_re.search(probe_buf.decode("utf-8", errors="replace")):
+                return True
+
+        # Probe timed out — shell is unresponsive
+        return False
+
+    def close(self) -> None:
+        if self._master_fd is not None:
+            try:
+                os.close(self._master_fd)
+            except OSError:
+                pass
+            self._master_fd = None
+
+        if self._proc and self._proc.poll() is None:
+            self._proc.terminate()
+            try:
+                self._proc.wait(timeout=5.0)
+            except Exception:
+                self._proc.kill()
+                self._proc.wait(timeout=5.0)
+
+
+class PhysicalTerminalRuntime(ABC):
+    """Ephemeral shell/pty process owned by ChatSession.
+
+    This is the actual running process that executes commands.
+    It's ephemeral - when the ChatSession ends, this dies.
+
+    Responsibilities:
+    - Own physical shell/pty process
+    - Execute commands
+    - Hydrate state from AbstractTerminal on startup
+    - Persist state to AbstractTerminal after commands
+    - Provide access to lease for I/O operations
+
+    Does NOT:
+    - Own terminal identity (that's AbstractTerminal)
+    - Own compute lifecycle (that's SandboxLease)
+    - Outlive ChatSession
+    """
+
+    def __init__(
+        self,
+        terminal: AbstractTerminal,
+        lease: SandboxLease,
+    ):
+        self.terminal = terminal
+        self.lease = lease
+        self.runtime_id = f"runtime-{uuid.uuid4().hex[:12]}"
+        self.chat_session_id: str | None = None
+        self._commands: dict[str, AsyncCommand] = {}
+        self._tasks: dict[str, asyncio.Task[ExecuteResult]] = {}
+        self._stream_flush_interval_sec = 0.2
+        self._last_stream_flush_at: dict[str, float] = {}
+        self._persisted_stdout_chunk_count: dict[str, int] = {}
+        self._persisted_stderr_chunk_count: dict[str, int] = {}
+        self._chunk_table_available: bool | None = None
+        self._running_output_tail_limit = 4096
+
+    def bind_session(self, session_id: str) -> None:
+        self.chat_session_id = session_id
+
+    def _db_path(self) -> Path:
+        db_path = getattr(self.terminal, "db_path", None)
+        if not db_path:
+            raise RuntimeError("Terminal db_path is required for command registry")
+        return Path(db_path)
+
+    def _connect(self) -> sqlite3.Connection:
+        return connect_sqlite(self._db_path())
+
+    def _has_chunk_table(self, conn: sqlite3.Connection) -> bool:
+        cached = self._chunk_table_available
+        if cached is not None:
+            return cached
+        row = conn.execute(
+            """
+            SELECT 1
+            FROM sqlite_master
+            WHERE type = 'table' AND name = 'terminal_command_chunks'
+            LIMIT 1
+            """
+        ).fetchone()
+        self._chunk_table_available = row is not None
+        return self._chunk_table_available
+
+    @staticmethod
+    def _tail_output(chunks: list[str], *, max_chars: int) -> str:
+        if not chunks:
+            return ""
+        merged = "".join(chunks[-32:])
+        if len(merged) <= max_chars:
+            return merged
+        return merged[-max_chars:]
+
+    def _append_unflushed_chunks(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        command_id: str,
+        async_cmd: AsyncCommand,
+    ) -> None:
+        if not self._has_chunk_table(conn):
+            return
+        stdout_start = self._persisted_stdout_chunk_count.get(command_id, 0)
+        stderr_start = self._persisted_stderr_chunk_count.get(command_id, 0)
+        stdout_chunks = async_cmd.stdout_buffer[stdout_start:]
+        stderr_chunks = async_cmd.stderr_buffer[stderr_start:]
+        if not stdout_chunks and not stderr_chunks:
+            return
+        created_at = datetime.now().isoformat()
+        if stdout_chunks:
+            conn.executemany(
+                """
+                INSERT INTO terminal_command_chunks (command_id, stream, content, created_at)
+                VALUES (?, 'stdout', ?, ?)
+                """,
+                [(command_id, chunk, created_at) for chunk in stdout_chunks],
+            )
+            self._persisted_stdout_chunk_count[command_id] = stdout_start + len(stdout_chunks)
+        if stderr_chunks:
+            conn.executemany(
+                """
+                INSERT INTO terminal_command_chunks (command_id, stream, content, created_at)
+                VALUES (?, 'stderr', ?, ?)
+                """,
+                [(command_id, chunk, created_at) for chunk in stderr_chunks],
+            )
+            self._persisted_stderr_chunk_count[command_id] = stderr_start + len(stderr_chunks)
+
+    def _upsert_command_row(
+        self,
+        *,
+        command_id: str,
+        command_line: str,
+        cwd: str,
+        status: str,
+        stdout: str | None = "",
+        stderr: str | None = "",
+        exit_code: int | None = None,
+        conn: sqlite3.Connection | None = None,
+    ) -> None:
+        now = datetime.now().isoformat()
+        should_commit = conn is None
+        target = conn or self._connect()
+        try:
+            existing = target.execute(
+                "SELECT command_id, created_at FROM terminal_commands WHERE command_id = ?",
+                (command_id,),
+            ).fetchone()
+            if existing:
+                target.execute(
+                    """
+                    UPDATE terminal_commands
+                    SET status = ?,
+                        stdout = COALESCE(?, stdout),
+                        stderr = COALESCE(?, stderr),
+                        exit_code = ?,
+                        updated_at = ?,
+                        finished_at = CASE WHEN ? IN ('done', 'cancelled', 'failed') THEN ? ELSE finished_at END
+                    WHERE command_id = ?
+                    """,
+                    (status, stdout, stderr, exit_code, now, status, now, command_id),
+                )
+            else:
+                target.execute(
+                    """
+                    INSERT INTO terminal_commands (
+                        command_id, terminal_id, chat_session_id, command_line, cwd, status,
+                        stdout, stderr, exit_code, created_at, updated_at, finished_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        command_id,
+                        self.terminal.terminal_id,
+                        self.chat_session_id,
+                        command_line,
+                        cwd,
+                        status,
+                        stdout or "",
+                        stderr or "",
+                        exit_code,
+                        now,
+                        now,
+                        now if status in {"done", "cancelled", "failed"} else None,
+                    ),
+                )
+            if should_commit:
+                target.commit()
+        finally:
+            if should_commit:
+                target.close()
+
+    def _flush_running_output_if_needed(self, command_id: str, *, force: bool = False) -> None:
+        async_cmd = self._commands.get(command_id)
+        if async_cmd is None:
+            return
+        now = time.monotonic()
+        last = self._last_stream_flush_at.get(command_id, 0.0)
+        if not force and now - last < self._stream_flush_interval_sec:
+            return
+        self._last_stream_flush_at[command_id] = now
+        with self._connect() as conn:
+            self._append_unflushed_chunks(conn, command_id=command_id, async_cmd=async_cmd)
+            self._upsert_command_row(
+                command_id=command_id,
+                command_line=async_cmd.command_line,
+                cwd=async_cmd.cwd,
+                status="running",
+                stdout=self._tail_output(async_cmd.stdout_buffer, max_chars=self._running_output_tail_limit),
+                stderr=self._tail_output(async_cmd.stderr_buffer, max_chars=self._running_output_tail_limit),
+                conn=conn,
+            )
+            conn.commit()
+
+    def _load_command_from_db(self, command_id: str) -> AsyncCommand | None:
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                """
+                SELECT command_id, command_line, cwd, status, stdout, stderr, exit_code
+                FROM terminal_commands
+                WHERE command_id = ? AND terminal_id = ?
+                """,
+                (command_id, self.terminal.terminal_id),
+            ).fetchone()
+            stdout_text = ""
+            stderr_text = ""
+            if row:
+                stdout_text = str(row["stdout"] or "")
+                stderr_text = str(row["stderr"] or "")
+            if row and self._has_chunk_table(conn):
+                chunk_rows = conn.execute(
+                    """
+                    SELECT stream, content
+                    FROM terminal_command_chunks
+                    WHERE command_id = ?
+                    ORDER BY chunk_id ASC
+                    """,
+                    (command_id,),
+                ).fetchall()
+                if chunk_rows:
+                    stdout_chunks = [str(chunk["content"] or "") for chunk in chunk_rows if chunk["stream"] == "stdout"]
+                    stderr_chunks = [str(chunk["content"] or "") for chunk in chunk_rows if chunk["stream"] == "stderr"]
+                    chunk_stdout = "".join(stdout_chunks)
+                    chunk_stderr = "".join(stderr_chunks)
+                    if row["status"] in {"done", "cancelled", "failed"}:
+                        if len(chunk_stdout) >= len(stdout_text):
+                            stdout_text = chunk_stdout
+                        if len(chunk_stderr) >= len(stderr_text):
+                            stderr_text = chunk_stderr
+                    else:
+                        stdout_text = chunk_stdout
+                        stderr_text = chunk_stderr
+        if not row:
+            return None
+        async_cmd = AsyncCommand(
+            command_id=row["command_id"],
+            command_line=row["command_line"],
+            cwd=row["cwd"],
+            stdout_buffer=[stdout_text],
+            stderr_buffer=[stderr_text],
+            exit_code=row["exit_code"],
+            done=row["status"] in {"done", "cancelled", "failed"},
+        )
+        self._commands[command_id] = async_cmd
+        return async_cmd
+
+    async def start_command(self, command: str, cwd: str) -> AsyncCommand:
+        command_id = f"cmd_{uuid.uuid4().hex[:12]}"
+        async_cmd = AsyncCommand(
+            command_id=command_id,
+            command_line=command,
+            cwd=cwd,
+        )
+        self._commands[command_id] = async_cmd
+        self._persisted_stdout_chunk_count[command_id] = 0
+        self._persisted_stderr_chunk_count[command_id] = 0
+        self._upsert_command_row(
+            command_id=command_id,
+            command_line=command,
+            cwd=cwd,
+            status="running",
+        )
+
+        async def _run() -> ExecuteResult:
+            def _append_stdout(chunk: str) -> None:
+                if chunk:
+                    async_cmd.stdout_buffer.append(chunk)
+                    self._flush_running_output_if_needed(command_id)
+
+            try:
+                result = await self._execute_background_command(command, timeout=None, on_stdout_chunk=_append_stdout)
+                status = "done"
+            except Exception as exc:
+                result = ExecuteResult(exit_code=1, stdout="", stderr=f"Error: {exc}")
+                status = "failed"
+            self._flush_running_output_if_needed(command_id, force=True)
+            async_cmd.stdout_buffer = [result.stdout]
+            async_cmd.stderr_buffer = [result.stderr]
+            async_cmd.exit_code = result.exit_code
+            async_cmd.done = True
+            self._upsert_command_row(
+                command_id=command_id,
+                command_line=command,
+                cwd=cwd,
+                status=status,
+                stdout=result.stdout,
+                stderr=result.stderr,
+                exit_code=result.exit_code,
+            )
+            self._last_stream_flush_at.pop(command_id, None)
+            self._persisted_stdout_chunk_count.pop(command_id, None)
+            self._persisted_stderr_chunk_count.pop(command_id, None)
+            return result
+
+        self._tasks[command_id] = asyncio.create_task(_run())
+        return async_cmd
+
+    async def _execute_background_command(
+        self,
+        command: str,
+        timeout: float | None,
+        on_stdout_chunk: Callable[[str], None] | None = None,
+    ) -> ExecuteResult:
+        return await self.execute(command, timeout=timeout)
+
+    async def get_command(self, command_id: str) -> AsyncCommand | None:
+        cmd = self._commands.get(command_id)
+        if cmd:
+            if not cmd.done and command_id not in self._tasks:
+                # @@@cross-runtime-status-source - If this runtime didn't start the task, trust DB row instead of stale memory.
+                refreshed = self._load_command_from_db(command_id)
+                return refreshed or cmd
+            return cmd
+        return self._load_command_from_db(command_id)
+
+    async def wait_for_command(self, command_id: str, timeout: float | None = None) -> ExecuteResult | None:
+        async_cmd = await self.get_command(command_id)
+        if async_cmd is None:
+            return None
+        task = self._tasks.get(command_id)
+        if task is None and not async_cmd.done:
+            deadline = time.monotonic() + timeout if timeout is not None else None
+            while not async_cmd.done:
+                if deadline is not None and time.monotonic() > deadline:
+                    return ExecuteResult(
+                        exit_code=-1,
+                        stdout="".join(async_cmd.stdout_buffer),
+                        stderr="".join(async_cmd.stderr_buffer),
+                        timed_out=True,
+                        command_id=command_id,
+                    )
+                await asyncio.sleep(0.1)
+                refreshed = self._load_command_from_db(command_id)
+                if refreshed is None:
+                    return None
+                async_cmd = refreshed
+        if task is not None and not task.done():
+            try:
+                if timeout is None:
+                    await task
+                else:
+                    await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
+            except TimeoutError:
+                return ExecuteResult(
+                    exit_code=-1,
+                    stdout="".join(async_cmd.stdout_buffer),
+                    stderr="".join(async_cmd.stderr_buffer),
+                    timed_out=True,
+                    command_id=command_id,
+                )
+            except asyncio.CancelledError:
+                return ExecuteResult(
+                    exit_code=130,
+                    stdout="".join(async_cmd.stdout_buffer),
+                    stderr="Command cancelled",
+                    command_id=command_id,
+                )
+        return ExecuteResult(
+            exit_code=async_cmd.exit_code or 0,
+            stdout="".join(async_cmd.stdout_buffer),
+            stderr="".join(async_cmd.stderr_buffer),
+            command_id=command_id,
+        )
+
+    async def cancel_command(self, command_id: str) -> bool:
+        task = self._tasks.get(command_id)
+        cmd = await self.get_command(command_id)
+        if not task or not cmd:
+            return False
+        if task.done():
+            return False
+        task.cancel()
+        self._flush_running_output_if_needed(command_id, force=True)
+        cmd.done = True
+        cmd.exit_code = 130
+        cmd.stderr_buffer = ["Command cancelled"]
+        self._upsert_command_row(
+            command_id=command_id,
+            command_line=cmd.command_line,
+            cwd=cmd.cwd,
+            status="cancelled",
+            stdout="".join(cmd.stdout_buffer),
+            stderr="Command cancelled",
+            exit_code=130,
+        )
+        self._last_stream_flush_at.pop(command_id, None)
+        self._persisted_stdout_chunk_count.pop(command_id, None)
+        self._persisted_stderr_chunk_count.pop(command_id, None)
+        return True
+
+    def store_completed_result(self, command_id: str, command_line: str, cwd: str, result: ExecuteResult) -> None:
+        cmd = AsyncCommand(
+            command_id=command_id,
+            command_line=command_line,
+            cwd=cwd,
+            stdout_buffer=[result.stdout],
+            stderr_buffer=[result.stderr],
+            exit_code=result.exit_code,
+            done=True,
+        )
+        self._commands[command_id] = cmd
+        self._upsert_command_row(
+            command_id=command_id,
+            command_line=command_line,
+            cwd=cwd,
+            status="done",
+            stdout=result.stdout,
+            stderr=result.stderr,
+            exit_code=result.exit_code,
+        )
+        self._last_stream_flush_at.pop(command_id, None)
+        self._persisted_stdout_chunk_count.pop(command_id, None)
+        self._persisted_stderr_chunk_count.pop(command_id, None)
+
+    @abstractmethod
+    async def execute(self, command: str, timeout: float | None = None) -> ExecuteResult:
+        """Execute command in this runtime."""
+        ...
+
+    @abstractmethod
+    async def close(self) -> None:
+        """Close the physical runtime process."""
+        ...
+
+    def get_terminal_state(self) -> TerminalState:
+        """Get current terminal state."""
+        return self.terminal.get_state()
+
+    def update_terminal_state(self, state: TerminalState) -> None:
+        """Update terminal state after command execution."""
+        self.terminal.update_state(state)
