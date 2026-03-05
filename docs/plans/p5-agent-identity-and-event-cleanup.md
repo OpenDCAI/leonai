@@ -25,14 +25,15 @@ Leon 的层次模型应该是 **member → agent → thread → run**，其中 a
 
 因此 `agent_id` 不应该出现在 SSE 事件数据中。它是后端内部的生命周期管理概念，不需要泄漏到传输协议层。
 
-### 3. 路由应该用关系字段，不是身份字段
+### 3. 路由只需要两层：Thread + run_id
 
-当前后端 drain 循环用 `agent_id != "main"` 区分主/子 agent 事件。但事件数据中已经有一个天然的关系字段——`parent_tool_call_id`：
+事件路由不需要额外字段：
+- **Thread 级**：SSE 连接 URL 已确定归属（`/api/threads/{thread_id}/events`）
+- **Turn 级**：`run_id`（`run_start` / `run_done` 标记边界）确定事件属于哪轮
 
-- **有 `parent_tool_call_id`** → 这是某个 tool call 派生出来的子 agent 事件
-- **没有** → 这是主 thread 的事件
-
-这个字段表达的是事件的**来源关系**，比用身份字段做路由更准确。
+子 Agent 不需要特殊路由：
+- **Blocking**：就是正常的 tool_call → tool_result，自然属于当前 Turn
+- **Async**：启动的 tool_call 已有 tool_result，之后异步任务属于整个 Thread，通过 `task_start` / `task_done` 通知
 
 ## 推导过程
 
@@ -55,10 +56,16 @@ Leon 的层次模型应该是 **member → agent → thread → run**，其中 a
   → Agent 是执行者，不直接触发事件。
   → agent_id 是后端内部概念，不泄漏到 SSE 协议。
   ↓
+追问: 路由靠什么？parent_tool_call_id？
+  → 不对。路由只有两层：Thread（SSE 连接）+ Turn（run_id）
+  → Blocking 子 Agent = 正常 tool_call → tool_result，自然在当前 Turn
+  → Async 子 Agent = 启动完就属于 Thread，走 task_start/task_done 通知
+  → parent_tool_call_id 不是路由字段，最多作为元数据记录来源
+  ↓
 结论:
   1. agent_instances.json 持久化 agent 身份（后端内部）
-  2. SSE 事件移除 agent_id，用 parent_tool_call_id 做路由
-  3. 前端去掉 "main" 判断，改用 parent_tool_call_id / background
+  2. SSE 事件移除 agent_id，路由靠 SSE 连接 + run_id
+  3. 前端去掉 "main" 判断，去掉 parent_tool_call_id 路由逻辑
 ```
 
 ## 设计
@@ -106,24 +113,23 @@ Leon 的层次模型应该是 **member → agent → thread → run**，其中 a
 
 `streaming_service.py:619-662`：
 - 原：`agent_id != "main"` → 子 agent 事件
-- 改：`parent_tool_call_id` 存在 → 子 agent 事件
-- `task_start/task_done/task_error` 中有 `parent_tool_call_id` → 子 agent 生命周期
-- `task_start/task_done/task_error` 中无 `parent_tool_call_id` 但有 `background: true` → 后台任务通知
+- 改：移除 agent_id 判断。事件路由靠 SSE 连接（Thread 级）+ run_id（Turn 级）
+- `task_start/task_done/task_error` 有 `background: true` → Background Task 状态通知
 
-### S3. 前端清理 — 去掉 "main"
+### S3. 前端清理 — 去掉 "main" 和 parent_tool_call_id 路由
 
 `hooks/stream-event-handlers.ts:161,167`：
 - 原：`agentId && agentId !== "main"` → handleSubagentEvent
-- 改：`data.parent_tool_call_id` 存在 → handleSubagentEvent
+- 改：移除此路由逻辑。Blocking 子 Agent 是正常 tool_call → tool_result；Async 子 Agent 走 task_start/task_done
 
 `hooks/use-background-tasks.ts:46`：
 - 原：`data?.background === true && data?.agent_id === "main"`
-- 改：`data?.background === true && !data?.parent_tool_call_id`
+- 改：`data?.background === true`
 
 ### S4. Runtime 清理
 
 `core/monitor/runtime.py`：
-- `emit_subagent_event` 不再注入 `agent_id` 到事件数据（保留 `parent_tool_call_id` 和 `background`）
+- `emit_subagent_event` 不再注入 `agent_id` 到事件数据
 - `emit_activity_event` 无变化（本就不注入 agent_id）
 
 ## 涉及文件
@@ -145,7 +151,7 @@ Leon 的层次模型应该是 **member → agent → thread → run**，其中 a
 ## 验证方案
 
 1. 发送消息 → SSE 事件中无 `agent_id` 字段
-2. 触发子 Agent → 事件通过 `parent_tool_call_id` 正确路由到子 agent buffer
+2. Blocking 子 Agent → 正常 tool_call → tool_result 流，无 agent_id 字段
 3. 后台 bash 命令 → `task_start` 事件有 `background: true`，无 `agent_id`，前端正确更新
 4. 重启后端 → `agent_instances.json` 中的 agent_id 不变
 5. 前端代码中搜索 `"main"` → 0 结果（与 agent_id 路由相关的）
