@@ -166,7 +166,9 @@ class SQLiteSandboxMonitorRepo:
                 cs.lease_id AS lease_id,
                 cs.status AS status,
                 cs.started_at AS created_at,
-                sl.provider_name AS provider
+                sl.provider_name AS provider,
+                sl.observed_state AS observed_state,
+                sl.desired_state AS desired_state
             FROM chat_sessions cs
             LEFT JOIN sandbox_leases sl ON cs.lease_id = sl.lease_id
             ORDER BY cs.started_at DESC
@@ -179,6 +181,8 @@ class SQLiteSandboxMonitorRepo:
                 "thread_id": r["thread_id"],
                 "lease_id": r["lease_id"],
                 "status": r["status"],
+                "observed_state": r["observed_state"],
+                "desired_state": r["desired_state"],
                 "created_at": r["created_at"],
             }
             for r in rows

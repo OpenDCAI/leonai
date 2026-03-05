@@ -16,6 +16,7 @@ from sandbox.resource_snapshot import (
     probe_and_upsert_for_instance,
     upsert_lease_resource_snapshot,
 )
+from storage.models import map_lease_to_session_status
 from storage.providers.sqlite.kernel import SQLiteDBRole, connect_sqlite_role
 from storage.providers.sqlite.sandbox_monitor_repo import SQLiteSandboxMonitorRepo
 
@@ -49,15 +50,6 @@ def _to_resource_status(available: bool, running_count: int) -> str:
     if not available:
         return "unavailable"
     return "active" if running_count > 0 else "ready"
-
-
-def _to_session_status(raw_status: str | None) -> str:
-    status = (raw_status or "").strip().lower()
-    if status == "paused":
-        return "paused"
-    if status in {"destroyed", "stopped", "closed", "terminated", "error"}:
-        return "stopped"
-    return "running"
 
 
 def _to_metric_freshness(collected_at: str | None) -> str:
@@ -302,7 +294,10 @@ def list_resource_providers() -> dict[str, Any]:
         normalized_sessions: list[dict[str, Any]] = []
         running_count = 0
         for session in provider_sessions:
-            normalized = _to_session_status(session.get("status"))
+            # Use unified state mapping logic
+            observed_state = session.get("observed_state")
+            desired_state = session.get("desired_state")
+            normalized = map_lease_to_session_status(observed_state, desired_state)
             if normalized == "running":
                 running_count += 1
             thread_id = str(session.get("thread_id") or "")

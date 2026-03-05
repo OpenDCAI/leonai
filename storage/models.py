@@ -3,6 +3,90 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
+
+
+# ============================================================================
+# Sandbox State Models
+# ============================================================================
+
+
+class LeaseObservedState(Enum):
+    """Sandbox lease actual state (from provider).
+
+    These are the actual states reported by sandbox providers.
+    """
+    DETACHED = "detached"  # Running (not connected to terminal)
+    PAUSED = "paused"      # Paused
+    # None means destroyed
+
+
+class LeaseDesiredState(Enum):
+    """Sandbox lease desired state (set by user/system)."""
+    RUNNING = "running"
+    PAUSED = "paused"
+    DESTROYED = "destroyed"
+
+
+class SessionDisplayStatus(Enum):
+    """Frontend display status (unified contract).
+
+    These are the status values that frontend expects and displays.
+    """
+    RUNNING = "running"      # Currently running
+    PAUSED = "paused"        # Paused
+    STOPPED = "stopped"      # Stopped/destroyed
+    DESTROYING = "destroying"  # Being destroyed
+
+
+def map_lease_to_session_status(
+    observed_state: str | None,
+    desired_state: str | None
+) -> str:
+    """Map sandbox lease state to frontend display status.
+
+    Mapping rules:
+    - observed="detached" + desired="running" → "running"
+    - observed="detached" + desired="paused" → "paused" (pausing in progress)
+    - observed="paused" + desired="paused" → "paused"
+    - observed=None → "stopped"
+    - desired="destroyed" → "destroying"
+
+    Args:
+        observed_state: Actual state from provider ("detached", "paused", or None)
+        desired_state: Desired state ("running", "paused", "destroyed", or None)
+
+    Returns:
+        Display status string ("running", "paused", "stopped", or "destroying")
+    """
+    if not observed_state:
+        return SessionDisplayStatus.STOPPED.value
+
+    observed = observed_state.strip().lower()
+    desired = (desired_state or "").strip().lower()
+
+    # Being destroyed
+    if desired == LeaseDesiredState.DESTROYED.value:
+        return SessionDisplayStatus.DESTROYING.value
+
+    # Running (detached means sandbox is running)
+    if observed == LeaseObservedState.DETACHED.value:
+        if desired == LeaseDesiredState.PAUSED.value:
+            # Pausing in progress
+            return SessionDisplayStatus.PAUSED.value
+        return SessionDisplayStatus.RUNNING.value
+
+    # Paused
+    if observed == LeaseObservedState.PAUSED.value:
+        return SessionDisplayStatus.PAUSED.value
+
+    # Unknown state, treat as stopped
+    return SessionDisplayStatus.STOPPED.value
+
+
+# ============================================================================
+# File Operation Models
+# ============================================================================
 
 
 @dataclass
