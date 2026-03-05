@@ -10,6 +10,7 @@ import TaskProgress from "../components/TaskProgress";
 import TokenStats from "../components/TokenStats";
 import { useAppActions } from "../hooks/use-app-actions";
 import { useBackgroundTasks } from "../hooks/use-background-tasks";
+import { BackgroundSessionsIndicator } from "../components/chat-area/BackgroundSessionsIndicator";
 import { useResizableX } from "../hooks/use-resizable-x";
 import { useSandboxManager } from "../hooks/use-sandbox-manager";
 import { useStreamHandler } from "../hooks/use-stream-handler";
@@ -124,6 +125,22 @@ function ChatPageInner({ threadId }: { threadId: string }) {
     [entries, handleFocusAgent],
   );
 
+  const handleCancelTask = useCallback(
+    async (taskId: string) => {
+      try {
+        const response = await fetch(`/api/threads/${threadId}/tasks/${taskId}/cancel`, {
+          method: "POST",
+        });
+        if (!response.ok) {
+          console.error("[ChatPage] Failed to cancel task:", response.statusText);
+        }
+      } catch (err) {
+        console.error("[ChatPage] Error cancelling task:", err);
+      }
+    },
+    [threadId],
+  );
+
   const computerResize = useResizableX(600, 360, 1200, true);
 
   return (
@@ -146,30 +163,17 @@ function ChatPageInner({ threadId }: { threadId: string }) {
               {sandboxActionError}
             </div>
           )}
-          <ChatArea
-            entries={entries}
-            isStreaming={isStreaming}
-            runtimeStatus={runtimeStatus}
-            loading={loading}
-            onFocusAgent={handleFocusAgent}
-            onTaskNoticeClick={handleTaskNoticeClick}
-          />
-          {tasks.length > 0 && (
-            <div className="px-4 py-2 bg-blue-50 border-t border-blue-200">
-              <div className="text-xs font-medium text-blue-900 mb-1">后台任务 ({tasks.length})</div>
-              <div className="space-y-1">
-                {tasks.map((task) => (
-                  <div key={task.task_id} className="text-xs text-blue-700 flex items-center gap-2">
-                    <span className={task.status === "running" ? "animate-pulse" : ""}>
-                      {task.status === "running" ? "🔄" : task.status === "completed" ? "✅" : "❌"}
-                    </span>
-                    <span className="font-mono">{task.task_type}</span>
-                    <span className="flex-1 truncate">{task.command_line || task.description}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+          <div className="relative flex-1 flex flex-col min-h-0">
+            <BackgroundSessionsIndicator tasks={tasks} onCancelTask={handleCancelTask} />
+            <ChatArea
+              entries={entries}
+              isStreaming={isStreaming}
+              runtimeStatus={runtimeStatus}
+              loading={loading}
+              onFocusAgent={handleFocusAgent}
+              onTaskNoticeClick={handleTaskNoticeClick}
+            />
+          </div>
           <TaskProgress
             isStreaming={isStreaming}
             runtimeStatus={runtimeStatus}

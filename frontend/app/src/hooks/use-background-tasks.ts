@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useThreadStream } from './use-thread-stream';
 import type { StreamEvent } from '../api/types';
 
-interface BackgroundTask {
+export interface BackgroundTask {
   task_id: string;
   task_type: 'bash' | 'agent';
   status: 'running' | 'completed' | 'error';
