@@ -60,10 +60,7 @@ function ContentPhaseBlock({
   const textSegs = segments.filter(
     (s): s is TextSegment => s.type === "text" && s.content.trim().length > 0,
   );
-  const finalText = textSegs.length > 0 ? textSegs[textSegs.length - 1] : null;
-
-  const resultEcho = !isStreaming && finalText != null && isToolResultEcho(finalText.content, toolSegs);
-  const visibleText = resultEcho ? null : finalText;
+  const visibleText = textSegs.length > 0 ? textSegs[textSegs.length - 1] : null;
 
   return (
     <>
