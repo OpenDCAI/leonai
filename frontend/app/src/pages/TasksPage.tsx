@@ -467,9 +467,6 @@ export default function Tasks() {
           </div>
         )}
 
-        {/* Stats */}
-        {statsBar}
-
         {/* Bulk actions bar */}
         {selectedRows.size > 0 && (
           <div className="flex items-center gap-3 px-6 py-2 bg-primary/5 border-b border-primary/15 text-xs shrink-0">
