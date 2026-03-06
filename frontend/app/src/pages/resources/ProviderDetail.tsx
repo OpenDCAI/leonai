@@ -122,21 +122,17 @@ export default function ProviderDetail({ provider }: ProviderDetailProps) {
           </div>
 
           {isLocal ? (
-            /* Local: show host metrics as stat blocks */
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
-              <StatBlock metric={telemetry.running} label="running" title="运行数" />
-              <StatBlock metric={provider.cardCpu} label="cpu" title="CPU" />
-              <StatBlock metric={telemetry.memory} label="memory" title="内存" />
-              <StatBlock metric={telemetry.disk} label="disk" title="磁盘" />
+            /* Local: compact strip with running count + host metrics inline */
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 mb-5 text-xs font-mono">
+              <StatPill count={runningCount} label="运行中" dotClass="bg-success animate-pulse-slow" />
+              <MetricPill label="CPU" metric={provider.cardCpu} />
+              <MetricPill label="RAM" metric={telemetry.memory} />
+              <MetricPill label="Disk" metric={telemetry.disk} />
             </div>
           ) : (
-            /* Non-local: compact inline stat strip instead of big count cards */
+            /* Non-local: compact inline stat strip */
             <div className="flex items-center gap-5 mb-5 text-xs font-mono">
-              <StatPill
-                count={runningCount}
-                label="运行中"
-                dotClass="bg-success animate-pulse-slow"
-              />
+              <StatPill count={runningCount} label="运行中" dotClass="bg-success animate-pulse-slow" />
               {pausedCount > 0 && (
                 <StatPill count={pausedCount} label="已暂停" dotClass="bg-warning/80" />
               )}
@@ -192,7 +188,7 @@ export default function ProviderDetail({ provider }: ProviderDetailProps) {
 }
 
 // ---------------------------------------------------------------------------
-// Stat strip pill (non-local overview)
+// StatPill (count-based, used in both local + non-local strips)
 // ---------------------------------------------------------------------------
 
 function StatPill({
@@ -214,7 +210,27 @@ function StatPill({
 }
 
 // ---------------------------------------------------------------------------
-// StatBlock (local overview)
+// MetricPill (value/limit, used in local strip)
+// ---------------------------------------------------------------------------
+
+function MetricPill({ label, metric }: { label: string; metric: UsageMetric }) {
+  const { used, limit, unit } = metric;
+  if (used == null) return null;
+
+  const usedStr = `${formatNumber(used)}${limit == null && unit === "%" ? "%" : ""}`;
+  const limitStr = limit != null ? ` / ${formatNumber(limit)} ${unit}` : unit === "%" ? "" : ` ${unit}`;
+
+  return (
+    <span className="inline-flex items-center gap-1">
+      <span className="text-muted-foreground/60">{label}</span>
+      <span className="text-foreground font-semibold">{usedStr}</span>
+      {limitStr && <span className="text-muted-foreground/50">{limitStr}</span>}
+    </span>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// StatBlock (quota only now — local overview uses strip instead)
 // ---------------------------------------------------------------------------
 
 function StatBlock({
