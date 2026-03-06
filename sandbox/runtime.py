@@ -114,7 +114,7 @@ def _compute_env_delta(
 
 
 def _build_export_block(env_delta: dict[str, str]) -> str:
-    return "\n".join(f"export {k}={shlex.quote(v)}" for k, v in env_delta.items())
+    return "\n".join(f"export {k}={shlex.quote(str(v))}" for k, v in env_delta.items())
 
 
 def _build_state_snapshot_cmd() -> tuple[str, str, str]:
@@ -123,6 +123,20 @@ def _build_state_snapshot_cmd() -> tuple[str, str, str]:
     end = f"__LEON_STATE_END_{uuid.uuid4().hex[:8]}__"
     cmd = "\n".join([f"echo {shlex.quote(start)}", "pwd", "env", f"echo {shlex.quote(end)}"])
     return start, end, cmd
+
+
+def _extract_marker_exit(raw: str, marker: str, command: str | None = None) -> tuple[str, int]:
+    exit_code = 0
+    cleaned_lines: list[str] = []
+    marker_re = re.compile(rf"{re.escape(marker)}\s+(-?\d+)")
+    for line in raw.replace("\r", "").splitlines():
+        m = marker_re.search(line)
+        if m:
+            exit_code = int(m.group(1))
+            continue
+        cleaned_lines.append(line)
+    cleaned = _sanitize_shell_output("\n".join(cleaned_lines).strip())
+    return _normalize_pty_result(cleaned, command), exit_code
 
 
 class _SubprocessPtySession:
@@ -138,20 +152,6 @@ class _SubprocessPtySession:
 
     def is_alive(self) -> bool:
         return self._proc is not None and self._proc.poll() is None
-
-    @staticmethod
-    def _extract_marker_exit(raw: str, marker: str, command: str | None = None) -> tuple[str, int]:
-        exit_code = 0
-        cleaned_lines: list[str] = []
-        marker_re = re.compile(rf"{re.escape(marker)}\s+(-?\d+)")
-        for line in raw.replace("\r", "").splitlines():
-            m = marker_re.search(line)
-            if m:
-                exit_code = int(m.group(1))
-                continue
-            cleaned_lines.append(line)
-        cleaned = _sanitize_shell_output("\n".join(cleaned_lines).strip())
-        return _normalize_pty_result(cleaned, command), exit_code
 
     def start(self) -> None:
         if self.is_alive():
@@ -200,7 +200,7 @@ class _SubprocessPtySession:
             raw.extend(chunk)
             decoded = raw.decode("utf-8", errors="replace")
             if marker_done_re.search(decoded):
-                cleaned, exit_code = self._extract_marker_exit(decoded, marker, command)
+                cleaned, exit_code = _extract_marker_exit(decoded, marker, command)
                 return cleaned, "", exit_code
             if on_stdout_chunk is not None:
                 if len(decoded) > emitted_raw_len:
@@ -798,6 +798,8 @@ class RemoteWrappedRuntime(_RemoteRuntimeBase):
         instance = self.lease.ensure_active_instance(self.provider)
         state = self.terminal.get_state()
         timeout_ms = int(timeout * 1000) if timeout else 30000
+        # @@@ _build_state_snapshot_cmd returns (start, end, cmd) but RemoteWrappedRuntime
+        # builds its own inline block to interleave cd/exports/command, so the pre-built cmd is unused.
         start_marker, end_marker, _ = _build_state_snapshot_cmd()
         exports = _build_export_block(state.env_delta)
         wrapped = "\n".join(

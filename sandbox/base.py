@@ -45,20 +45,6 @@ class Sandbox(ABC):
     def close(self) -> None:
         pass
 
-    def ensure_session(self, thread_id: str) -> None:
-        from sandbox.thread_context import set_current_thread_id
-        set_current_thread_id(thread_id)
-        self._capability_cache.pop(thread_id, None)  # type: ignore[attr-defined]
-        self._get_capability()  # type: ignore[attr-defined]
-
-    def pause_thread(self, thread_id: str) -> bool:
-        self._capability_cache.pop(thread_id, None)  # type: ignore[attr-defined]
-        return self._manager.pause_session(thread_id)  # type: ignore[attr-defined]
-
-    def resume_thread(self, thread_id: str) -> bool:
-        self._capability_cache.pop(thread_id, None)  # type: ignore[attr-defined]
-        return self._manager.resume_session(thread_id)  # type: ignore[attr-defined]
-
 
 class _LazyFSBackend:
     is_remote = True
@@ -165,11 +151,28 @@ class RemoteSandbox(Sandbox):
     def manager(self) -> SandboxManager:
         return self._manager
 
+    def ensure_session(self, thread_id: str) -> None:
+        from sandbox.thread_context import set_current_thread_id
+        set_current_thread_id(thread_id)
+        self._capability_cache.pop(thread_id, None)
+        self._get_capability()
+
+    def pause_thread(self, thread_id: str) -> bool:
+        self._capability_cache.pop(thread_id, None)
+        return self._manager.pause_session(thread_id)
+
+    def resume_thread(self, thread_id: str) -> bool:
+        self._capability_cache.pop(thread_id, None)
+        return self._manager.resume_session(thread_id)
+
     def close(self) -> None:
         if self._on_exit == "pause":
-            count = self._manager.pause_all_sessions()
-            if count > 0:
-                logger.info("[%s] Paused %d session(s)", self.name, count)
+            try:
+                count = self._manager.pause_all_sessions()
+                if count > 0:
+                    logger.info("[%s] Paused %d session(s)", self.name, count)
+            except Exception:
+                logger.exception("[%s] pause_all_sessions failed during close", self.name)
         elif self._on_exit == "destroy":
             for session in self._manager.list_sessions():
                 try:
@@ -233,6 +236,23 @@ class LocalSandbox(Sandbox):
     def shell(self) -> BaseExecutor:
         return _LazyLocalExecutor(self)  # type: ignore[return-value]
 
+    def ensure_session(self, thread_id: str) -> None:
+        from sandbox.thread_context import set_current_thread_id
+        set_current_thread_id(thread_id)
+        self._capability_cache.pop(thread_id, None)
+        self._get_capability()
+
+    def pause_thread(self, thread_id: str) -> bool:
+        self._capability_cache.pop(thread_id, None)
+        return self._manager.pause_session(thread_id)
+
+    def resume_thread(self, thread_id: str) -> bool:
+        self._capability_cache.pop(thread_id, None)
+        return self._manager.resume_session(thread_id)
+
     def close(self) -> None:
         for session in self._manager.list_sessions():
-            self._manager.destroy_session(session["thread_id"])
+            try:
+                self._manager.destroy_session(session["thread_id"])
+            except Exception:
+                logger.exception("[LocalSandbox] Failed to destroy session %s", session.get("thread_id"))

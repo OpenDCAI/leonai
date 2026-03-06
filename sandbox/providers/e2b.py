@@ -136,7 +136,11 @@ class E2BProvider(SandboxProvider):
             return "unknown"
 
     def get_all_session_statuses(self) -> dict[str, str]:
-        """Batch status check — one API call for all sessions."""
+        """Batch status check — one API call for all sessions.
+
+        Returns {} on any API failure (fail-open: caller gets a definitively-empty
+        result rather than stale data). Callers must treat {} as "unknown", not "none running".
+        """
         from e2b import Sandbox
 
         try:
@@ -267,6 +271,7 @@ from sandbox.runtime import (  # noqa: E402
     _build_export_block,
     _build_state_snapshot_cmd,
     _compute_env_delta,
+    _extract_marker_exit,
     _extract_state_from_output,
     _normalize_pty_result,
     _parse_env_output,
@@ -303,7 +308,7 @@ class E2BPtyRuntime(_RemoteRuntimeBase):
                     raw.extend(pty_data)
                     decoded = raw.decode("utf-8", errors="replace")
                     if marker in decoded:
-                        cleaned, exit_code = _SubprocessPtySession._extract_marker_exit(decoded, marker, command)
+                        cleaned, exit_code = _extract_marker_exit(decoded, marker, command)
                         return cleaned, "", exit_code
                 if timeout and time.monotonic() - started > timeout:
                     raise TimeoutError(f"Command timed out after {timeout}s")

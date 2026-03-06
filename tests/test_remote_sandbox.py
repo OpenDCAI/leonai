@@ -1,5 +1,6 @@
 """Unit tests for RemoteSandbox._run_init_commands and RemoteSandbox.close()."""
 
+import asyncio
 import tempfile
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
@@ -76,12 +77,20 @@ def test_run_init_commands_failure_raises(temp_db):
 
 
 def test_run_init_commands_idempotent(temp_db):
-    provider = _make_provider()
-    sandbox = _make_sandbox(provider, temp_db, init_commands=["echo once"])
+    sandbox = _make_sandbox(_make_provider(), temp_db, init_commands=["echo once"])
     set_current_thread_id("thread-init-2")
     sandbox._get_capability()
     sandbox._get_capability()
-    assert provider.create_runtime.return_value.execute.call_count == 1
+    assert len(sandbox._init_commands_run) == 1
+
+
+@pytest.mark.asyncio
+async def test_run_init_commands_inside_running_loop(temp_db):
+    """Covers the run_coroutine_threadsafe branch: _get_capability called from a running event loop."""
+    sandbox = _make_sandbox(_make_provider(), temp_db, init_commands=["echo hello"])
+    set_current_thread_id("thread-init-async")
+    await asyncio.to_thread(sandbox._get_capability)
+    assert "thread-init-async" in sandbox._init_commands_run
 
 
 # ── RemoteSandbox.close() ────────────────────────────────────────────────────
