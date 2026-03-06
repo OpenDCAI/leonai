@@ -205,6 +205,7 @@ from sandbox.runtime import (  # noqa: E402
     _build_export_block,
     _build_state_snapshot_cmd,
     _compute_env_delta,
+    _extract_marker_exit,
     _extract_state_from_output,
     _parse_env_output,
     _sanitize_shell_output,
@@ -319,7 +320,7 @@ class DaytonaSessionRuntime(_RemoteRuntimeBase):
             raw.extend(chunk)
             decoded = raw.decode("utf-8", errors="replace")
             if marker_done_re.search(decoded):
-                cleaned, exit_code = _SubprocessPtySession._extract_marker_exit(decoded, marker, command)
+                cleaned, exit_code = _extract_marker_exit(decoded, marker, command)
                 return cleaned, "", exit_code
             if on_stdout_chunk is not None:
                 if len(decoded) > emitted_raw_len:

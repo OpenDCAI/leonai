@@ -147,13 +147,14 @@ class TestLocalPersistentShellRuntime:
 
         # Execute command to start session
         await runtime.execute("echo 'test'")
-        assert runtime._session is not None
+        assert runtime._pty_session is not None
+        proc = runtime._pty_session.process
 
         # Close
         await runtime.close()
 
         # Session should be terminated
-        assert runtime._session.returncode is not None
+        assert proc is not None and proc.returncode is not None
 
     @pytest.mark.asyncio
     async def test_state_version_increments(self, terminal_store, lease_store):
@@ -436,6 +437,7 @@ class TestRuntimeIntegration:
 
 
 def test_docker_provider_create_runtime(terminal_store, lease_store):
+    pytest.importorskip("docker")
     from sandbox.providers.docker import DockerProvider, DockerPtyRuntime as DockerPtyRuntimeDirect
     terminal = terminal_store.create("term-1", "thread-1", "lease-1", "/tmp")
     lease = lease_store.create("lease-1", "docker")

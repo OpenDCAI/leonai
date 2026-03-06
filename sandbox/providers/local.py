@@ -143,7 +143,6 @@ class LocalPersistentShellRuntime(PhysicalTerminalRuntime):
         super().__init__(terminal, lease)
         self.shell_command = shell_command
         self._pty_session: _SubprocessPtySession | None = None
-        self._session = None
         self._session_lock = asyncio.Lock()
         self._baseline_env: dict[str, str] | None = None
 
@@ -154,8 +153,6 @@ class LocalPersistentShellRuntime(PhysicalTerminalRuntime):
         state = self.terminal.get_state()
         self._pty_session = _SubprocessPtySession(list(self.shell_command), cwd=state.cwd)
         self._pty_session.start()
-        self._session = self._pty_session.process
-
         self._pty_session.run("export PS1=''; stty -echo", timeout)
         if state.env_delta:
             exports = _build_export_block(state.env_delta)
