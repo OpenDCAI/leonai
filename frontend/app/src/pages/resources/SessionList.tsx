@@ -2,6 +2,7 @@ import { useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import type { ResourceSession, SessionMetrics } from "./types";
 import { getAgentColor, getAgentInitials } from "./utils/avatar";
 import { calculateDuration, formatDuration } from "./utils/duration";
@@ -234,13 +235,14 @@ function MetricCell({
           <span className="text-muted-foreground font-normal"> / {limitStr}</span>
         )}
         {showNote && (
-          <span
-            title={note}
-            className="ml-1 text-muted-foreground cursor-help text-[9px] inline-block"
-            style={{ userSelect: 'none' }}
-          >
-            ⓘ
-          </span>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="ml-1 text-muted-foreground cursor-help text-[9px] inline-block" style={{ userSelect: "none" }}>
+                ⓘ
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>{note}</TooltipContent>
+          </Tooltip>
         )}
       </p>
     </div>
