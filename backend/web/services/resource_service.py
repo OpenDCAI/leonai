@@ -65,13 +65,9 @@ def _resolve_provider_type(provider_name: str, config_name: str, *, sandboxes_di
     entry = _CATALOG.get(provider_name)
     if not entry:
         raise RuntimeError(f"Unsupported provider type: {provider_name}")
-    if provider_name != "daytona" or config_name == "local":
-        return entry.provider_type
-    # @@@daytona-target-kind - one provider type maps to cloud/self-host via config target.
-    payload = _load_config_payload(config_name, sandboxes_dir=sandboxes_dir)
-    daytona = payload.get("daytona") if isinstance(payload.get("daytona"), dict) else {}
-    target = str(daytona.get("target") or "").strip().lower()
-    return "cloud" if target == "cloud" else "container"
+    # @@@daytona-always-cloud - daytona is always "云端" (cloud) regardless of target (cloud/self-host)
+    # Both cloud-hosted and self-hosted daytona are conceptually cloud sandboxes from user perspective
+    return entry.provider_type
 
 
 def _resolve_console_url(provider_name: str, config_name: str, *, sandboxes_dir: Path) -> str | None:
@@ -179,22 +175,45 @@ def _as_float(value: Any) -> float | None:
     return None
 
 
-def _to_session_metrics(snapshot: dict[str, Any] | None) -> dict[str, float | None] | None:
+def _to_session_metrics(snapshot: dict[str, Any] | None) -> dict[str, Any] | None:
     if not snapshot:
         return None
     cpu = _as_float(snapshot.get("cpu_used"))
     memory_mb = _as_float(snapshot.get("memory_used_mb"))
+    memory_total_mb = _as_float(snapshot.get("memory_total_mb"))
     disk_gb = _as_float(snapshot.get("disk_used_gb"))
+    disk_total_gb = _as_float(snapshot.get("disk_total_gb"))
     network_rx = _as_float(snapshot.get("network_rx_kbps"))
     network_tx = _as_float(snapshot.get("network_tx_kbps"))
-    if cpu is None and memory_mb is None and disk_gb is None and network_rx is None and network_tx is None:
+    probe_error = str(snapshot.get("probe_error") or "").strip() or None
+
+    if all(v is None for v in [cpu, memory_mb, memory_total_mb, disk_gb, disk_total_gb]):
         return None
+
+    memory_note: str | None = None
+    if memory_total_mb is None:
+        memory_note = "no container memory limit configured"
+
+    disk_note: str | None = None
+    if disk_gb is None:
+        if probe_error:
+            disk_note = probe_error
+        elif disk_total_gb is not None:
+            disk_note = "disk usage not measurable inside container; showing quota only"
+        else:
+            disk_note = "disk metrics unavailable"
+
     return {
         "cpu": cpu,
         "memory": (memory_mb / 1024.0) if memory_mb is not None else None,
+        "memoryLimit": (memory_total_mb / 1024.0) if memory_total_mb is not None else None,
+        "memoryNote": memory_note,
         "disk": disk_gb,
+        "diskLimit": disk_total_gb,
+        "diskNote": disk_note,
         "networkIn": network_rx,
         "networkOut": network_tx,
+        "probeError": probe_error,
     }
 
 
