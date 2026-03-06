@@ -7,9 +7,10 @@ import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "./ui/resiz
 interface SandboxFileBrowserProps {
   leaseId: string;
   providerType: string;
+  className?: string;
 }
 
-export function SandboxFileBrowser({ leaseId, providerType }: SandboxFileBrowserProps) {
+export function SandboxFileBrowser({ leaseId, providerType, className = "h-[300px]" }: SandboxFileBrowserProps) {
   const isLocal = providerType === "local" || !leaseId;
   const defaultPath = isLocal ? "~" : "/";
 
@@ -62,7 +63,7 @@ export function SandboxFileBrowser({ leaseId, providerType }: SandboxFileBrowser
   }
 
   return (
-    <div className="text-xs h-[300px]">
+    <div className={`text-xs ${className}`}>
       <ResizablePanelGroup direction="horizontal" className="h-full border rounded border-border/30">
         {/* Left: File list */}
         <ResizablePanel defaultSize={50} minSize={30}>

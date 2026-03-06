@@ -1,7 +1,10 @@
+import { useState } from "react";
 import { Monitor, Cloud, Container, Lock, Settings, ArrowRight, ExternalLink } from "lucide-react";
 import { Link } from "react-router-dom";
 import type { ProviderInfo, UsageMetric } from "./types";
-import SessionList from "./SessionList";
+import { groupByLease, type LeaseGroup } from "./SessionList";
+import SandboxCard from "./SandboxCard";
+import SandboxDetailSheet from "./SandboxDetailSheet";
 import { formatNumber, formatLimit } from "./utils/format";
 
 const typeIcon = {
@@ -29,6 +32,9 @@ interface ProviderDetailProps {
 export default function ProviderDetail({ provider }: ProviderDetailProps) {
   const { name, description, vendor, type, status, unavailableReason, telemetry, error } = provider;
   const TypeIcon = typeIcon[type];
+
+  const [selectedGroup, setSelectedGroup] = useState<LeaseGroup | null>(null);
+  const [sheetOpen, setSheetOpen] = useState(false);
 
   if (status === "unavailable") {
     return (
@@ -72,82 +78,144 @@ export default function ProviderDetail({ provider }: ProviderDetailProps) {
   const pausedCount = provider.sessions.filter((s) => s.status === "paused").length;
   const stoppedCount = provider.sessions.filter((s) => s.status === "stopped").length;
 
+  const groups = groupByLease(provider.sessions);
+
   return (
-    <div className="rounded-xl border border-border bg-card shadow-sm overflow-hidden">
-      <div className="flex items-center justify-between px-5 py-4 border-b border-border bg-muted/20">
-        <div className="flex items-center gap-3">
-          <TypeIcon className="w-4 h-4 text-muted-foreground" />
-          <div>
-            <h3 className="text-sm font-semibold text-foreground">{name}</h3>
-            <p className="text-[11px] text-muted-foreground">
-              {description}
-              {vendor && ` · ${vendor}`}
-            </p>
+    <>
+      <div className="rounded-xl border border-border bg-card shadow-sm overflow-hidden">
+        {/* Provider header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border bg-muted/20">
+          <div className="flex items-center gap-3">
+            <TypeIcon className="w-4 h-4 text-muted-foreground" />
+            <div>
+              <h3 className="text-sm font-semibold text-foreground">{name}</h3>
+              <p className="text-[11px] text-muted-foreground">
+                {description}
+                {vendor && ` · ${vendor}`}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            {provider.consoleUrl && (
+              <a
+                href={provider.consoleUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-[10px] text-muted-foreground hover:text-foreground"
+              >
+                控制台
+                <ExternalLink className="h-3 w-3" />
+              </a>
+            )}
+            <span className="text-[11px] text-muted-foreground">{typeLabel[type]}</span>
+            <span className="text-[11px] text-muted-foreground">·</span>
+            <span className={`text-[11px] ${status === "active" ? "text-success" : "text-muted-foreground"}`}>
+              {statusLabel[status]}
+            </span>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          {provider.consoleUrl && (
-            <a
-              href={provider.consoleUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-[10px] text-muted-foreground hover:text-foreground"
-            >
-              控制台
-              <ExternalLink className="h-3 w-3" />
-            </a>
+
+        <div className="p-5">
+          {/* Overview */}
+          <div className="mb-1">
+            <span className="text-[11px] text-muted-foreground uppercase tracking-wider font-medium">概览</span>
+          </div>
+
+          {isLocal ? (
+            /* Local: show host metrics as stat blocks */
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+              <StatBlock metric={telemetry.running} label="running" title="运行数" />
+              <StatBlock metric={provider.cardCpu} label="cpu" title="CPU" />
+              <StatBlock metric={telemetry.memory} label="memory" title="内存" />
+              <StatBlock metric={telemetry.disk} label="disk" title="磁盘" />
+            </div>
+          ) : (
+            /* Non-local: compact inline stat strip instead of big count cards */
+            <div className="flex items-center gap-5 mb-5 text-xs font-mono">
+              <StatPill
+                count={runningCount}
+                label="运行中"
+                dotClass="bg-success animate-pulse-slow"
+              />
+              {pausedCount > 0 && (
+                <StatPill count={pausedCount} label="已暂停" dotClass="bg-warning/80" />
+              )}
+              <StatPill count={stoppedCount} label="已结束" dotClass="bg-muted-foreground/30" />
+            </div>
           )}
-          <span className="text-[11px] text-muted-foreground">{typeLabel[type]}</span>
-          <span className="text-[11px] text-muted-foreground">·</span>
-          <span className={`text-[11px] ${status === "active" ? "text-success" : "text-muted-foreground"}`}>
-            {statusLabel[status]}
-          </span>
+
+          {telemetry.quota && (
+            <div className="mb-5">
+              <div className="mb-2">
+                <span className="text-[11px] text-muted-foreground uppercase tracking-wider font-medium">配额</span>
+              </div>
+              <div className="rounded-lg bg-muted/15 border border-border/40 p-3">
+                <StatBlock metric={telemetry.quota} label="quota" title="额度" compact />
+              </div>
+            </div>
+          )}
+
+          {/* Sandbox card grid */}
+          <div>
+            <div className="mb-3">
+              <span className="text-[11px] text-muted-foreground uppercase tracking-wider font-medium">沙盒</span>
+            </div>
+            {groups.length === 0 ? (
+              <p className="text-xs text-muted-foreground">暂无沙盒</p>
+            ) : (
+              <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3">
+                {groups.map((group) => (
+                  <SandboxCard
+                    key={group.leaseId || group.sessions[0].id}
+                    group={group}
+                    onClick={() => {
+                      setSelectedGroup(group);
+                      setSheetOpen(true);
+                    }}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
-      <div className="p-5">
-        <div className="mb-1">
-          <span className="text-[11px] text-muted-foreground uppercase tracking-wider font-medium">概览</span>
-        </div>
-
-        {isLocal ? (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
-            <StatBlock metric={telemetry.running} label="running" title="运行数" />
-            <StatBlock metric={provider.cardCpu} label="cpu" title="CPU" />
-            <StatBlock metric={telemetry.memory} label="memory" title="内存" />
-            <StatBlock metric={telemetry.disk} label="disk" title="磁盘" />
-          </div>
-        ) : (
-          <div className="grid grid-cols-3 gap-3 mb-5">
-            <CountBlock value={runningCount} label="running" title="运行中" />
-            <CountBlock value={pausedCount} label="paused" title="已暂停" />
-            <CountBlock value={stoppedCount} label="ended" title="已结束" />
-          </div>
-        )}
-
-        {telemetry.quota && (
-          <div className="mb-5">
-            <div className="mb-2">
-              <span className="text-[11px] text-muted-foreground uppercase tracking-wider font-medium">配额</span>
-            </div>
-            <div className="rounded-lg bg-muted/15 border border-border/40 p-3">
-              <StatBlock metric={telemetry.quota} label="quota" title="额度" compact />
-            </div>
-          </div>
-        )}
-
-        <div>
-          <div className="mb-2">
-            <span className="text-[11px] text-muted-foreground uppercase tracking-wider font-medium">沙盒列表</span>
-          </div>
-          <div className="rounded-lg bg-muted/15 border border-border/40 p-3">
-            <SessionList sessions={provider.sessions} providerType={type} />
-          </div>
-        </div>
-      </div>
-    </div>
+      {/* Detail sheet — rendered outside the card to avoid stacking context issues */}
+      <SandboxDetailSheet
+        group={selectedGroup}
+        providerType={type}
+        open={sheetOpen}
+        onClose={() => setSheetOpen(false)}
+      />
+    </>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Stat strip pill (non-local overview)
+// ---------------------------------------------------------------------------
+
+function StatPill({
+  count,
+  label,
+  dotClass,
+}: {
+  count: number;
+  label: string;
+  dotClass: string;
+}) {
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${dotClass}`} />
+      <span className="font-semibold text-foreground tabular-nums">{count}</span>
+      <span className="text-muted-foreground">{label}</span>
+    </span>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// StatBlock (local overview)
+// ---------------------------------------------------------------------------
 
 function StatBlock({
   metric,
@@ -160,7 +228,6 @@ function StatBlock({
   title: string;
   compact?: boolean;
 }) {
-  // Append unit inline when there's no limit line (e.g. "21.5%" for CPU)
   const valueStr =
     metric.used != null
       ? `${formatNumber(metric.used)}${metric.limit == null && metric.unit === "%" ? "%" : ""}`
@@ -171,16 +238,6 @@ function StatBlock({
       {metric.limit != null && <p className="text-[10px] text-muted-foreground font-mono">{formatLimit(metric.limit, metric.unit)}</p>}
       <p className="text-[9px] text-muted-foreground/60 uppercase tracking-wider mt-1">{label}</p>
       {!compact && <p className="text-[10px] text-muted-foreground mt-1">{title}</p>}
-    </div>
-  );
-}
-
-function CountBlock({ value, label, title }: { value: number; label: string; title: string }) {
-  return (
-    <div className="rounded-lg bg-muted/30 border border-border/40 py-3 px-2">
-      <p className="text-lg md:text-2xl font-mono font-bold text-foreground">{value}</p>
-      <p className="text-[9px] text-muted-foreground/60 uppercase tracking-wider mt-1">{label}</p>
-      <p className="text-[10px] text-muted-foreground mt-1">{title}</p>
     </div>
   );
 }

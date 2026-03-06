@@ -13,7 +13,7 @@ import { SandboxFileBrowser } from "@/components/SandboxFileBrowser";
 // Grouping
 // ---------------------------------------------------------------------------
 
-interface LeaseGroup {
+export interface LeaseGroup {
   leaseId: string;
   status: ResourceSession["status"];
   sessions: ResourceSession[];
@@ -28,7 +28,7 @@ const STATUS_ORDER: Record<ResourceSession["status"], number> = {
   stopped: 3,
 };
 
-function groupByLease(sessions: ResourceSession[]): LeaseGroup[] {
+export function groupByLease(sessions: ResourceSession[]): LeaseGroup[] {
   const map = new Map<string, ResourceSession[]>();
   for (const s of sessions) {
     // Group by leaseId; local sessions with no lease each get their own group
