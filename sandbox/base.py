@@ -8,9 +8,12 @@ A Sandbox bundles sub-capabilities by interaction surface:
 from __future__ import annotations
 
 import asyncio
+import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from sandbox.capability import SandboxCapability
@@ -43,7 +46,18 @@ class Sandbox(ABC):
         pass
 
     def ensure_session(self, thread_id: str) -> None:
-        pass
+        from sandbox.thread_context import set_current_thread_id
+        set_current_thread_id(thread_id)
+        self._capability_cache.pop(thread_id, None)  # type: ignore[attr-defined]
+        self._get_capability()  # type: ignore[attr-defined]
+
+    def pause_thread(self, thread_id: str) -> bool:
+        self._capability_cache.pop(thread_id, None)  # type: ignore[attr-defined]
+        return self._manager.pause_session(thread_id)  # type: ignore[attr-defined]
+
+    def resume_thread(self, thread_id: str) -> bool:
+        self._capability_cache.pop(thread_id, None)  # type: ignore[attr-defined]
+        return self._manager.resume_session(thread_id)  # type: ignore[attr-defined]
 
 
 class _LazyFSBackend:
@@ -111,7 +125,18 @@ class RemoteSandbox(Sandbox):
 
     def _run_init_commands(self, capability: SandboxCapability) -> None:
         for i, cmd in enumerate(self._config.init_commands, 1):
-            result = asyncio.run(capability.command.execute(cmd))
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+
+            if loop:
+                import concurrent.futures
+                future = asyncio.run_coroutine_threadsafe(capability.command.execute(cmd), loop)
+                result = future.result(timeout=30)
+            else:
+                result = asyncio.run(capability.command.execute(cmd))
+
             if result.exit_code != 0:
                 raise RuntimeError(
                     f"Init command #{i} failed: {cmd}\n"
@@ -140,32 +165,18 @@ class RemoteSandbox(Sandbox):
     def manager(self) -> SandboxManager:
         return self._manager
 
-    def ensure_session(self, thread_id: str) -> None:
-        from sandbox.thread_context import set_current_thread_id
-        set_current_thread_id(thread_id)
-        self._capability_cache.pop(thread_id, None)
-        self._get_capability()
-
-    def pause_thread(self, thread_id: str) -> bool:
-        self._capability_cache.pop(thread_id, None)
-        return self._manager.pause_session(thread_id)
-
-    def resume_thread(self, thread_id: str) -> bool:
-        self._capability_cache.pop(thread_id, None)
-        return self._manager.resume_session(thread_id)
-
     def close(self) -> None:
-        try:
-            if self._on_exit == "pause":
-                count = self._manager.pause_all_sessions()
-                if count > 0:
-                    print(f"[{self.name}] Paused {count} session(s)")
-            elif self._on_exit == "destroy":
-                for session in self._manager.list_sessions():
+        if self._on_exit == "pause":
+            count = self._manager.pause_all_sessions()
+            if count > 0:
+                logger.info("[%s] Paused %d session(s)", self.name, count)
+        elif self._on_exit == "destroy":
+            for session in self._manager.list_sessions():
+                try:
                     self._manager.destroy_session(thread_id=session["thread_id"])
-                print(f"[{self.name}] Destroyed all sessions")
-        except Exception as e:
-            print(f"[{self.name}] Cleanup error: {e}")
+                except Exception:
+                    logger.exception("[%s] Failed to destroy session %s", self.name, session.get("thread_id"))
+            logger.info("[%s] Destroy pass complete", self.name)
 
 
 class _LazyLocalExecutor:
@@ -215,20 +226,6 @@ class LocalSandbox(Sandbox):
         if thread_id not in self._capability_cache:
             self._capability_cache[thread_id] = self._manager.get_sandbox(thread_id)
         return self._capability_cache[thread_id]
-
-    def ensure_session(self, thread_id: str) -> None:
-        from sandbox.thread_context import set_current_thread_id
-        set_current_thread_id(thread_id)
-        self._capability_cache.pop(thread_id, None)
-        self._get_capability()
-
-    def pause_thread(self, thread_id: str) -> bool:
-        self._capability_cache.pop(thread_id, None)
-        return self._manager.pause_session(thread_id)
-
-    def resume_thread(self, thread_id: str) -> bool:
-        self._capability_cache.pop(thread_id, None)
-        return self._manager.resume_session(thread_id)
 
     def fs(self) -> FileSystemBackend | None:
         return None

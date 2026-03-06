@@ -4,7 +4,9 @@ AgentBay sandbox provider.
 Implements SandboxProvider using Alibaba Cloud's AgentBay SDK.
 """
 
-from typing import Any
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
 
 from sandbox.provider import (
     Metrics,
@@ -13,6 +15,11 @@ from sandbox.provider import (
     SandboxProvider,
     SessionInfo,
 )
+
+if TYPE_CHECKING:
+    from sandbox.lease import SandboxLease
+    from sandbox.runtime import PhysicalTerminalRuntime
+    from sandbox.terminal import AbstractTerminal
 
 
 class AgentBayProvider(SandboxProvider):
@@ -219,6 +226,6 @@ class AgentBayProvider(SandboxProvider):
             self._sessions[session_id] = result.session
         return self._sessions[session_id]
 
-    def create_runtime(self, terminal, lease):
+    def create_runtime(self, terminal: AbstractTerminal, lease: SandboxLease) -> PhysicalTerminalRuntime:
         from sandbox.runtime import RemoteWrappedRuntime
         return RemoteWrappedRuntime(terminal, lease, self)

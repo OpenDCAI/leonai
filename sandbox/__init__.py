@@ -12,8 +12,11 @@ Usage:
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 from sandbox.base import LocalSandbox, RemoteSandbox, Sandbox
 from sandbox.config import SandboxConfig, resolve_sandbox_name
@@ -45,7 +48,7 @@ def create_sandbox(
         api_key = ab.api_key or os.getenv("AGENTBAY_API_KEY")
         if not api_key:
             raise ValueError("AgentBay sandbox requires AGENTBAY_API_KEY")
-        print(f"[AgentBaySandbox] Initialized (region={ab.region_id})")
+        logger.info("[AgentBaySandbox] Initialized (region=%s)", ab.region_id)
         return RemoteSandbox(
             provider=AgentBayProvider(
                 api_key=api_key,
@@ -66,7 +69,7 @@ def create_sandbox(
         from sandbox.providers.docker import DockerProvider
 
         dc = config.docker
-        print(f"[DockerSandbox] Initialized (image={dc.image})")
+        logger.info("[DockerSandbox] Initialized (image=%s)", dc.image)
         return RemoteSandbox(
             provider=DockerProvider(image=dc.image, mount_path=dc.mount_path, provider_name=config.name),
             config=config,
@@ -84,7 +87,7 @@ def create_sandbox(
         api_key = e.api_key or os.getenv("E2B_API_KEY")
         if not api_key:
             raise ValueError("E2B sandbox requires E2B_API_KEY")
-        print(f"[E2BSandbox] Initialized (template={e.template})")
+        logger.info("[E2BSandbox] Initialized (template=%s)", e.template)
         return RemoteSandbox(
             provider=E2BProvider(
                 api_key=api_key,
@@ -108,7 +111,7 @@ def create_sandbox(
         api_key = dt.api_key or os.getenv("DAYTONA_API_KEY")
         if not api_key:
             raise ValueError("Daytona sandbox requires DAYTONA_API_KEY")
-        print(f"[DaytonaSandbox] Initialized (target={dt.target})")
+        logger.info("[DaytonaSandbox] Initialized (target=%s)", dt.target)
         return RemoteSandbox(
             provider=DaytonaProvider(
                 api_key=api_key,
@@ -136,6 +139,7 @@ __all__ = [
     "set_current_thread_id",
     "get_current_thread_id",
     "RemoteSandbox",
+    "LocalSandbox",
 ]
 
 
