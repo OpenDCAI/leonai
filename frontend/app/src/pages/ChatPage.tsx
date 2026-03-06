@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams, useOutletContext, useLocation } from "react-router-dom";
+import { toast } from "sonner";
 import ChatArea from "../components/ChatArea";
 import type { AssistantTurn } from "../api";
+import { uploadWorkspaceFile } from "../api";
 import ComputerPanel from "../components/ComputerPanel";
 import { DragHandle } from "../components/DragHandle";
 import Header from "../components/Header";
@@ -148,6 +150,24 @@ function ChatPageInner({ threadId }: { threadId: string }) {
 
   const computerResize = useResizableX(600, 360, 1200, true);
 
+  async function handleUploadFiles(files: File[]): Promise<void> {
+    const toastId = toast.loading(`Uploading ${files.length} file(s)...`);
+    try {
+      for (const file of files) {
+        await uploadWorkspaceFile(threadId, {
+          file,
+          channel: "upload",
+          path: file.name,
+        });
+      }
+      toast.success(`Uploaded ${files.length} file(s)`, { id: toastId });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      toast.error(`Upload failed: ${msg}`, { id: toastId });
+      throw error;
+    }
+  }
+
   return (
     <>
       <Header
@@ -194,6 +214,7 @@ function ChatPageInner({ threadId }: { threadId: string }) {
             onSendMessage={(msg) => void handleSendMessage(msg)}
             onSendQueueMessage={handleSendQueueMessage}
             onStop={handleStopStreaming}
+            onUploadFiles={handleUploadFiles}
           />
           <TokenStats runtimeStatus={runtimeStatus} />
         </div>
