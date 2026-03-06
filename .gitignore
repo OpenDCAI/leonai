@@ -15,6 +15,7 @@ CLAUDE.md
 
 # Runtime cache
 .claude/.sks-last-search.json
+.claude/skill-groups/
 skills-lock.json
 
 # IDE
