@@ -231,6 +231,28 @@ class DockerProvider(SandboxProvider):
         if not container_id:
             return None
 
+        # Check state — docker stats only works on running containers.
+        state_result = self._run(
+            ["docker", "inspect", "--format", "{{.State.Status}}", container_id],
+            timeout=self.command_timeout_sec,
+            check=False,
+        )
+        if state_result.returncode != 0:
+            return None
+        container_state = state_result.stdout.strip()
+
+        # @@@docker-paused-disk - paused/stopped containers still hold filesystem space.
+        # docker stats won't work for them, but docker ps --size reads the writable layer without
+        # touching the container process.
+        if container_state != "running":
+            return Metrics(
+                cpu_percent=None,
+                memory_used_mb=None,
+                memory_total_mb=None,
+                disk_used_gb=self._disk_usage_from_ps(container_id),
+                disk_total_gb=None,
+            )
+
         # CPU and memory RSS from docker stats.
         # @@@docker-memory-limit - no --memory flag set → MemUsage denominator is host RAM, not a container limit.
         stats_result = self._run(
@@ -271,6 +293,33 @@ class DockerProvider(SandboxProvider):
             disk_used_gb=disk_used_gb,
             disk_total_gb=None,  # @@@docker-disk-no-limit - no --storage-opt, df / total = host disk
         )
+
+    def _disk_usage_from_ps(self, container_id: str) -> float | None:
+        """Read writable-layer size for any container state via docker ps --size."""
+        result = self._run(
+            ["docker", "ps", "-a", "--filter", f"id={container_id}", "--format", "{{.Size}}"],
+            timeout=self.command_timeout_sec,
+            check=False,
+        )
+        if result.returncode != 0:
+            return None
+        size_str = result.stdout.strip()
+        if not size_str:
+            return None
+        # Output: "8.19kB (virtual 159MB)" — first token is writable layer
+        writable = size_str.split(" (")[0]
+        try:
+            if writable.endswith("GB"):
+                return float(writable[:-2])
+            if writable.endswith("MB"):
+                return float(writable[:-2]) / 1024.0
+            if writable.lower().endswith("kb"):
+                return float(writable[:-2]) / (1024.0 * 1024.0)
+            if writable.endswith("B"):
+                return float(writable[:-1]) / (1024.0 ** 3)
+        except ValueError:
+            pass
+        return None
 
     def _get_container_id(self, session_id: str, allow_missing: bool = False) -> str | None:
         container_id = self._sessions.get(session_id)
