@@ -181,8 +181,10 @@ class DaytonaProvider(SandboxProvider):
         if not is_running:
             return Metrics(memory_total_mb=memory_total_mb, disk_total_gb=disk_total_gb)
 
-        # Two-sample cpu.stat (0.2s window) + memory.current in one execute() call.
+        # Two-sample cpu.stat (0.2s window) + memory.current + df in one execute() call.
         # Separator lets us split the output cleanly without fragile line-counting.
+        # Two-sample cpu.stat (0.2s window) + memory.current in one execute() call.
+        # @@@daytona-disk - df / shows HOST disk (not container quota), so we skip disk_used.
         cmd = (
             "cat /sys/fs/cgroup/cpu.stat"
             "; sleep 0.2"

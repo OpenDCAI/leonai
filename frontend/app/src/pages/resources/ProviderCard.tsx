@@ -102,10 +102,16 @@ export default function ProviderCard({ provider, selected, onSelect }: ProviderC
       {/* Capability icons */}
       <CapabilityStrip capabilities={provider.capabilities} />
 
-      {/* Session dots */}
+      {/* Session dots — sorted running(green) → paused(yellow) → stopped(grey) */}
       {sessions.length > 0 && (
         <div className="flex items-center gap-1.5 mt-2">
-          {sessions.slice(0, 5).map((s) => {
+          {[...sessions]
+            .sort((a, b) => {
+              const order = { running: 0, destroying: 1, paused: 2, stopped: 3 };
+              return (order[a.status] ?? 4) - (order[b.status] ?? 4);
+            })
+            .slice(0, 5)
+            .map((s) => {
             const dotClass = {
               running: "bg-success animate-pulse",
               paused: "bg-warning/80",
