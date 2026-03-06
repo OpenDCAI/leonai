@@ -435,14 +435,22 @@ class TestRuntimeIntegration:
         await runtime2.close()
 
 
-def test_create_runtime_selects_docker_pty(terminal_store, lease_store):
+def test_docker_provider_create_runtime(terminal_store, lease_store):
+    from sandbox.providers.docker import DockerProvider, DockerPtyRuntime as DockerPtyRuntimeDirect
     terminal = terminal_store.create("term-1", "thread-1", "lease-1", "/tmp")
     lease = lease_store.create("lease-1", "docker")
-    provider = MagicMock()
-    provider.create_runtime.return_value = DockerPtyRuntime(terminal, lease, provider)
-
+    provider = DockerProvider(image="ubuntu:latest", mount_path="/workspace")
     runtime = provider.create_runtime(terminal, lease)
-    assert isinstance(runtime, DockerPtyRuntime)
+    assert isinstance(runtime, DockerPtyRuntimeDirect)
+
+
+def test_local_provider_create_runtime(terminal_store, lease_store):
+    from sandbox.providers.local import LocalPersistentShellRuntime as LocalRuntimeDirect, LocalSessionProvider
+    terminal = terminal_store.create("term-2", "thread-2", "lease-2", "/tmp")
+    lease = lease_store.create("lease-2", "local")
+    provider = LocalSessionProvider()
+    runtime = provider.create_runtime(terminal, lease)
+    assert isinstance(runtime, LocalRuntimeDirect)
 
 
 @pytest.mark.asyncio

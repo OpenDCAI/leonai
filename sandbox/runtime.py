@@ -104,6 +104,27 @@ def _extract_state_from_output(
     return new_cwd, parsed_env, cleaned_output
 
 
+def _compute_env_delta(
+    env_map: dict[str, str],
+    baseline_env: dict[str, str],
+    prev_env_delta: dict[str, str],
+) -> dict[str, str]:
+    persisted_keys = set(prev_env_delta.keys())
+    return {k: v for k, v in env_map.items() if baseline_env.get(k) != v or k in persisted_keys}
+
+
+def _build_export_block(env_delta: dict[str, str]) -> str:
+    return "\n".join(f"export {k}={shlex.quote(v)}" for k, v in env_delta.items())
+
+
+def _build_state_snapshot_cmd() -> tuple[str, str, str]:
+    """Returns (start_marker, end_marker, full_cmd)."""
+    start = f"__LEON_STATE_START_{uuid.uuid4().hex[:8]}__"
+    end = f"__LEON_STATE_END_{uuid.uuid4().hex[:8]}__"
+    cmd = "\n".join([f"echo {shlex.quote(start)}", "pwd", "env", f"echo {shlex.quote(end)}"])
+    return start, end, cmd
+
+
 class _SubprocessPtySession:
     def __init__(self, command: list[str], cwd: str | None = None):
         self.command = command
@@ -777,9 +798,8 @@ class RemoteWrappedRuntime(_RemoteRuntimeBase):
         instance = self.lease.ensure_active_instance(self.provider)
         state = self.terminal.get_state()
         timeout_ms = int(timeout * 1000) if timeout else 30000
-        start_marker = f"__LEON_STATE_START_{uuid.uuid4().hex[:8]}__"
-        end_marker = f"__LEON_STATE_END_{uuid.uuid4().hex[:8]}__"
-        exports = "\n".join(f"export {key}={shlex.quote(value)}" for key, value in state.env_delta.items())
+        start_marker, end_marker, _ = _build_state_snapshot_cmd()
+        exports = _build_export_block(state.env_delta)
         wrapped = "\n".join(
             part
             for part in [

@@ -5,8 +5,14 @@ from __future__ import annotations
 import threading
 import uuid
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from sandbox.provider import Metrics, ProviderCapability, ProviderExecResult, SandboxProvider, SessionInfo
+
+if TYPE_CHECKING:
+    from sandbox.lease import SandboxLease
+    from sandbox.runtime import PhysicalTerminalRuntime
+    from sandbox.terminal import AbstractTerminal
 
 
 @dataclass
@@ -102,7 +108,7 @@ class LocalSessionProvider(SandboxProvider):
     def get_metrics(self, session_id: str) -> Metrics | None:
         return None
 
-    def create_runtime(self, terminal, lease):
+    def create_runtime(self, terminal: AbstractTerminal, lease: SandboxLease) -> PhysicalTerminalRuntime:
         from sandbox.providers.local import LocalPersistentShellRuntime
         return LocalPersistentShellRuntime(terminal, lease)
 
@@ -110,13 +116,14 @@ class LocalSessionProvider(SandboxProvider):
 # ── Runtime ──────────────────────────────────────────────────────────────────
 
 import asyncio  # noqa: E402
-import shlex  # noqa: E402
 from collections.abc import Callable  # noqa: E402
 
 from sandbox.interfaces.executor import ExecuteResult  # noqa: E402
 from sandbox.runtime import (  # noqa: E402
     PhysicalTerminalRuntime,
     _SubprocessPtySession,
+    _build_export_block,
+    _compute_env_delta,
     _parse_env_output,
 )
 
@@ -151,7 +158,7 @@ class LocalPersistentShellRuntime(PhysicalTerminalRuntime):
 
         self._pty_session.run("export PS1=''; stty -echo", timeout)
         if state.env_delta:
-            exports = "\n".join(f"export {k}={shlex.quote(v)}" for k, v in state.env_delta.items())
+            exports = _build_export_block(state.env_delta)
             if exports:
                 self._pty_session.run(exports, timeout)
         baseline_out, _, _ = self._pty_session.run("env", timeout)
@@ -177,9 +184,7 @@ class LocalPersistentShellRuntime(PhysicalTerminalRuntime):
         pwd_lines = [line.strip() for line in pwd_stdout.splitlines() if line.strip()]
         new_cwd = pwd_lines[-1] if pwd_lines else state.cwd
         env_map = _parse_env_output(env_stdout)
-        baseline_env = self._baseline_env or {}
-        persisted_keys = set(state.env_delta.keys())
-        env_delta = {k: v for k, v in env_map.items() if baseline_env.get(k) != v or k in persisted_keys}
+        env_delta = _compute_env_delta(env_map, self._baseline_env or {}, state.env_delta)
 
         if new_cwd:
             from sandbox.terminal import TerminalState
@@ -234,4 +239,3 @@ class LocalPersistentShellRuntime(PhysicalTerminalRuntime):
         """Close the shell session."""
         if self._pty_session:
             await asyncio.to_thread(self._pty_session.close)
-            self._session = self._pty_session.process

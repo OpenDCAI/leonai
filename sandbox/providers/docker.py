@@ -11,15 +11,24 @@ import shlex
 import subprocess
 import uuid
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from sandbox.interfaces.executor import ExecuteResult
 from sandbox.provider import Metrics, ProviderCapability, ProviderExecResult, SandboxProvider, SessionInfo
 from sandbox.runtime import (
     _RemoteRuntimeBase,
     _SubprocessPtySession,
+    _build_export_block,
+    _build_state_snapshot_cmd,
+    _compute_env_delta,
     _extract_state_from_output,
     _parse_env_output,
 )
+
+if TYPE_CHECKING:
+    from sandbox.lease import SandboxLease
+    from sandbox.runtime import PhysicalTerminalRuntime
+    from sandbox.terminal import AbstractTerminal
 
 
 class DockerProvider(SandboxProvider):
@@ -247,7 +256,7 @@ class DockerProvider(SandboxProvider):
             network_tx_kbps=net_tx,
         )
 
-    def create_runtime(self, terminal, lease):
+    def create_runtime(self, terminal: AbstractTerminal, lease: SandboxLease) -> PhysicalTerminalRuntime:
         return DockerPtyRuntime(terminal, lease, self)
 
     def _get_container_id(self, session_id: str, allow_missing: bool = False) -> str | None:
@@ -392,7 +401,7 @@ class DockerPtyRuntime(_RemoteRuntimeBase):
         self._pty_session.run("export PS1=''; stty -echo", timeout)
         self._pty_session.run(f"cd {shlex.quote(state.cwd)} || exit 1", timeout)
         if state.env_delta:
-            exports = "\n".join(f"export {k}={shlex.quote(v)}" for k, v in state.env_delta.items())
+            exports = _build_export_block(state.env_delta)
             if exports:
                 self._pty_session.run(exports, timeout)
         baseline_out, _, _ = self._pty_session.run("env", timeout)
@@ -409,9 +418,7 @@ class DockerPtyRuntime(_RemoteRuntimeBase):
         state = self.terminal.get_state()
         stdout, stderr, exit_code = session.run(command, timeout, on_stdout_chunk=on_stdout_chunk)
 
-        start_marker = f"__LEON_STATE_START_{uuid.uuid4().hex[:8]}__"
-        end_marker = f"__LEON_STATE_END_{uuid.uuid4().hex[:8]}__"
-        snapshot_cmd = "\n".join([f"echo {shlex.quote(start_marker)}", "pwd", "env", f"echo {shlex.quote(end_marker)}"])
+        start_marker, end_marker, snapshot_cmd = _build_state_snapshot_cmd()
         snapshot_out, _, _ = session.run(snapshot_cmd, timeout)
         new_cwd, env_map, _ = _extract_state_from_output(
             snapshot_out,
@@ -420,9 +427,7 @@ class DockerPtyRuntime(_RemoteRuntimeBase):
             cwd_fallback=state.cwd,
             env_fallback=state.env_delta,
         )
-        baseline_env = self._baseline_env or {}
-        persisted_keys = set(state.env_delta.keys())
-        env_delta = {k: v for k, v in env_map.items() if baseline_env.get(k) != v or k in persisted_keys}
+        env_delta = _compute_env_delta(env_map, self._baseline_env or {}, state.env_delta)
         from sandbox.terminal import TerminalState
 
         self.update_terminal_state(TerminalState(cwd=new_cwd, env_delta=env_delta))

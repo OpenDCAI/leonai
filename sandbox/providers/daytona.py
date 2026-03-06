@@ -8,10 +8,18 @@ Important: runtime semantics remain PTY-backed (`daytona_pty`) for both SaaS and
 
 from __future__ import annotations
 
+import logging
 import os
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sandbox.provider import Metrics, ProviderCapability, ProviderExecResult, SandboxProvider, SessionInfo
+
+logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from sandbox.lease import SandboxLease
+    from sandbox.runtime import PhysicalTerminalRuntime
+    from sandbox.terminal import AbstractTerminal
 
 
 class DaytonaProvider(SandboxProvider):
@@ -61,31 +69,47 @@ class DaytonaProvider(SandboxProvider):
         return SessionInfo(session_id=sb.id, provider=self.name, status="running")
 
     def destroy_session(self, session_id: str, sync: bool = True) -> bool:
-        sb = self._get_sandbox(session_id)
-        sb.delete()
-        self._sandboxes.pop(session_id, None)
-        return True
+        try:
+            sb = self._get_sandbox(session_id)
+            sb.delete()
+            self._sandboxes.pop(session_id, None)
+            return True
+        except Exception:
+            logger.exception("[DaytonaProvider] destroy_session failed for %s", session_id)
+            return False
 
     def pause_session(self, session_id: str) -> bool:
-        sb = self._get_sandbox(session_id)
-        sb.stop()
-        return True
+        try:
+            sb = self._get_sandbox(session_id)
+            sb.stop()
+            return True
+        except Exception:
+            logger.exception("[DaytonaProvider] pause_session failed for %s", session_id)
+            return False
 
     def resume_session(self, session_id: str) -> bool:
-        sb = self._get_sandbox(session_id)
-        sb.start()
-        return True
+        try:
+            sb = self._get_sandbox(session_id)
+            sb.start()
+            return True
+        except Exception:
+            logger.exception("[DaytonaProvider] resume_session failed for %s", session_id)
+            return False
 
     def get_session_status(self, session_id: str) -> str:
-        # @@@status-refresh - Always refetch sandbox before reading state to avoid stale cached status.
-        sb = self.client.find_one(session_id)
-        self._sandboxes[session_id] = sb
-        state = sb.state.value
-        if state == "started":
-            return "running"
-        if state == "stopped":
-            return "paused"
-        return "unknown"
+        try:
+            # @@@status-refresh - Always refetch sandbox before reading state to avoid stale cached status.
+            sb = self.client.find_one(session_id)
+            self._sandboxes[session_id] = sb
+            state = sb.state.value
+            if state == "started":
+                return "running"
+            if state == "stopped":
+                return "paused"
+            return "unknown"
+        except Exception:
+            logger.exception("[DaytonaProvider] get_session_status failed for %s", session_id)
+            return "unknown"
 
     # ==================== Execution ====================
 
@@ -157,7 +181,7 @@ class DaytonaProvider(SandboxProvider):
         """Expose native SDK sandbox for runtime-level persistent terminal handling."""
         return self._get_sandbox(session_id)
 
-    def create_runtime(self, terminal, lease):
+    def create_runtime(self, terminal: AbstractTerminal, lease: SandboxLease) -> PhysicalTerminalRuntime:
         from sandbox.providers.daytona import DaytonaSessionRuntime
         return DaytonaSessionRuntime(terminal, lease, self)
 
@@ -178,6 +202,9 @@ from sandbox.runtime import (  # noqa: E402
     ENV_NAME_RE,
     _RemoteRuntimeBase,
     _SubprocessPtySession,
+    _build_export_block,
+    _build_state_snapshot_cmd,
+    _compute_env_delta,
     _extract_state_from_output,
     _parse_env_output,
     _sanitize_shell_output,
@@ -342,9 +369,8 @@ class DaytonaSessionRuntime(_RemoteRuntimeBase):
             _, _, shell_exit = self._run_pty_command_sync(self._pty_handle, "export PS1=''; stty -echo", timeout)
             if shell_exit != 0:
                 raise RuntimeError(f"Daytona PTY shell normalization failed (exit={shell_exit})")
-            init_parts = [f"cd {shlex.quote(effective_cwd)} || exit 1"]
-            init_parts.extend(f"export {k}={shlex.quote(v)}" for k, v in effective_env.items())
-            init_command = "\n".join(part for part in init_parts if part)
+            export_block = _build_export_block(effective_env)
+            init_command = "\n".join(p for p in [f"cd {shlex.quote(effective_cwd)} || exit 1", export_block] if p)
             if init_command:
                 _, _, init_exit = self._run_pty_command_sync(self._pty_handle, init_command, timeout)
                 if init_exit != 0:
@@ -369,13 +395,8 @@ class DaytonaSessionRuntime(_RemoteRuntimeBase):
         # Snapshot must be able to run after infra recovery (PTY re-created), so always ensure a handle.
         handle = self._ensure_session_sync(timeout)
         state = self.terminal.get_state()
-        start_marker = f"__LEON_STATE_START_{uuid.uuid4().hex[:8]}__"
-        end_marker = f"__LEON_STATE_END_{uuid.uuid4().hex[:8]}__"
-        snapshot_out, _, _ = self._run_pty_command_sync(
-            handle,
-            "\n".join([f"echo {shlex.quote(start_marker)}", "pwd", "env", f"echo {shlex.quote(end_marker)}"]),
-            timeout,
-        )
+        start_marker, end_marker, snapshot_cmd = _build_state_snapshot_cmd()
+        snapshot_out, _, _ = self._run_pty_command_sync(handle, snapshot_cmd, timeout)
         new_cwd, env_map, _ = _extract_state_from_output(
             snapshot_out,
             start_marker,
@@ -383,9 +404,7 @@ class DaytonaSessionRuntime(_RemoteRuntimeBase):
             cwd_fallback=state.cwd,
             env_fallback=state.env_delta,
         )
-        baseline_env = self._baseline_env or {}
-        persisted_keys = set(state.env_delta.keys())
-        env_delta = {k: v for k, v in env_map.items() if baseline_env.get(k) != v or k in persisted_keys}
+        env_delta = _compute_env_delta(env_map, self._baseline_env or {}, state.env_delta)
         from sandbox.terminal import TerminalState
 
         self.update_terminal_state(TerminalState(cwd=new_cwd, env_delta=env_delta))

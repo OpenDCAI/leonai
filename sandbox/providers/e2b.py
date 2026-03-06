@@ -11,8 +11,11 @@ Key differences from AgentBay:
 
 from __future__ import annotations
 
+import logging
 import os
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+logger = logging.getLogger(__name__)
 
 from sandbox.provider import (
     Metrics,
@@ -21,6 +24,11 @@ from sandbox.provider import (
     SandboxProvider,
     SessionInfo,
 )
+
+if TYPE_CHECKING:
+    from sandbox.lease import SandboxLease
+    from sandbox.runtime import PhysicalTerminalRuntime
+    from sandbox.terminal import AbstractTerminal
 
 
 class E2BProvider(SandboxProvider):
@@ -84,6 +92,7 @@ class E2BProvider(SandboxProvider):
                 Sandbox.kill(session_id, api_key=self.api_key)
             return True
         except Exception:
+            logger.exception("[E2BProvider] destroy_session failed for %s", session_id)
             return False
 
     def pause_session(self, session_id: str) -> bool:
@@ -93,6 +102,7 @@ class E2BProvider(SandboxProvider):
             self._sandboxes.pop(session_id, None)
             return True
         except Exception:
+            logger.exception("[E2BProvider] pause_session failed for %s", session_id)
             return False
 
     def resume_session(self, session_id: str) -> bool:
@@ -107,6 +117,7 @@ class E2BProvider(SandboxProvider):
             self._sandboxes[session_id] = sandbox
             return True
         except Exception:
+            logger.exception("[E2BProvider] resume_session failed for %s", session_id)
             return False
 
     def get_session_status(self, session_id: str) -> str:
@@ -121,6 +132,7 @@ class E2BProvider(SandboxProvider):
                     return s.state.value
             return "deleted"
         except Exception:
+            logger.exception("[E2BProvider] get_session_status failed for %s", session_id)
             return "unknown"
 
     def get_all_session_statuses(self) -> dict[str, str]:
@@ -132,6 +144,7 @@ class E2BProvider(SandboxProvider):
             items = paginator.next_items()
             return {s.sandbox_id: s.state.value for s in items}
         except Exception:
+            logger.exception("[E2BProvider] get_all_session_statuses failed")
             return {}
 
     def execute(
@@ -181,6 +194,7 @@ class E2BProvider(SandboxProvider):
                 for entry in entries
             ]
         except Exception:
+            logger.warning("[E2BProvider] list_dir failed for path %s", path, exc_info=True)
             return []
 
     def get_metrics(self, session_id: str) -> Metrics | None:
@@ -207,6 +221,7 @@ class E2BProvider(SandboxProvider):
                     rel = p.removeprefix(self.WORKSPACE_ROOT + "/")
                     files.append({"file_path": rel, "content": bytes(data)})
                 except Exception:
+                    logger.warning("[E2BProvider] snapshot_workspace failed to read %s", p, exc_info=True)
                     continue
         return files
 
@@ -234,7 +249,7 @@ class E2BProvider(SandboxProvider):
         """Expose native SDK sandbox for runtime-level persistent terminal handling."""
         return self._get_sandbox(session_id)
 
-    def create_runtime(self, terminal, lease):
+    def create_runtime(self, terminal: AbstractTerminal, lease: SandboxLease) -> PhysicalTerminalRuntime:
         from sandbox.providers.e2b import E2BPtyRuntime
         return E2BPtyRuntime(terminal, lease, self)
 
@@ -242,13 +257,16 @@ class E2BProvider(SandboxProvider):
 # ── Runtime ──────────────────────────────────────────────────────────────────
 
 import asyncio  # noqa: E402
-import re  # noqa: E402
 import time  # noqa: E402
 import uuid  # noqa: E402
 
 from sandbox.interfaces.executor import ExecuteResult  # noqa: E402
 from sandbox.runtime import (  # noqa: E402
     _RemoteRuntimeBase,
+    _SubprocessPtySession,
+    _build_export_block,
+    _build_state_snapshot_cmd,
+    _compute_env_delta,
     _extract_state_from_output,
     _normalize_pty_result,
     _parse_env_output,
@@ -265,20 +283,6 @@ class E2BPtyRuntime(_RemoteRuntimeBase):
         self._bound_instance_id: str | None = None
         self._pty_pid: int | None = None
         self._baseline_env: dict[str, str] | None = None
-
-    @staticmethod
-    def _extract_marker_exit(raw: str, marker: str, command: str | None = None) -> tuple[str, int]:
-        exit_code = 0
-        cleaned_lines: list[str] = []
-        marker_re = re.compile(rf"{re.escape(marker)}\s+(-?\d+)")
-        for line in raw.splitlines():
-            m = marker_re.search(line)
-            if m:
-                exit_code = int(m.group(1))
-                continue
-            cleaned_lines.append(line)
-        cleaned = _sanitize_shell_output("\n".join(cleaned_lines).strip())
-        return _normalize_pty_result(cleaned, command), exit_code
 
     def _run_pty_command_sync(
         self,
@@ -299,7 +303,7 @@ class E2BPtyRuntime(_RemoteRuntimeBase):
                     raw.extend(pty_data)
                     decoded = raw.decode("utf-8", errors="replace")
                     if marker in decoded:
-                        cleaned, exit_code = self._extract_marker_exit(decoded, marker, command)
+                        cleaned, exit_code = _SubprocessPtySession._extract_marker_exit(decoded, marker, command)
                         return cleaned, "", exit_code
                 if timeout and time.monotonic() - started > timeout:
                     raise TimeoutError(f"Command timed out after {timeout}s")
@@ -308,8 +312,6 @@ class E2BPtyRuntime(_RemoteRuntimeBase):
             handle.disconnect()
 
     def _ensure_shell_sync(self, timeout: float | None) -> tuple[object, int]:
-        import shlex
-
         instance = self.lease.ensure_active_instance(self.provider)
         if self._bound_instance_id != instance.instance_id:
             self._bound_instance_id = instance.instance_id
@@ -339,7 +341,7 @@ class E2BPtyRuntime(_RemoteRuntimeBase):
         self._run_pty_command_sync(sandbox, self._pty_pid, "export PS1=''; stty -echo", timeout)
 
         if state.env_delta:
-            exports = "\n".join(f"export {k}={shlex.quote(v)}" for k, v in state.env_delta.items())
+            exports = _build_export_block(state.env_delta)
             if exports:
                 self._run_pty_command_sync(sandbox, self._pty_pid, exports, timeout)
 
@@ -348,20 +350,12 @@ class E2BPtyRuntime(_RemoteRuntimeBase):
         return sandbox, self._pty_pid
 
     def _execute_once_sync(self, command: str, timeout: float | None = None) -> ExecuteResult:
-        import shlex
-
         sandbox, pid = self._ensure_shell_sync(timeout)
         state = self.terminal.get_state()
         stdout, stderr, exit_code = self._run_pty_command_sync(sandbox, pid, command, timeout)
 
-        start_marker = f"__LEON_STATE_START_{uuid.uuid4().hex[:8]}__"
-        end_marker = f"__LEON_STATE_END_{uuid.uuid4().hex[:8]}__"
-        snapshot_out, _, _ = self._run_pty_command_sync(
-            sandbox,
-            pid,
-            "\n".join([f"echo {shlex.quote(start_marker)}", "pwd", "env", f"echo {shlex.quote(end_marker)}"]),
-            timeout,
-        )
+        start_marker, end_marker, snapshot_cmd = _build_state_snapshot_cmd()
+        snapshot_out, _, _ = self._run_pty_command_sync(sandbox, pid, snapshot_cmd, timeout)
         new_cwd, env_map, _ = _extract_state_from_output(
             snapshot_out,
             start_marker,
@@ -369,9 +363,7 @@ class E2BPtyRuntime(_RemoteRuntimeBase):
             cwd_fallback=state.cwd,
             env_fallback=state.env_delta,
         )
-        baseline_env = self._baseline_env or {}
-        persisted_keys = set(state.env_delta.keys())
-        env_delta = {k: v for k, v in env_map.items() if baseline_env.get(k) != v or k in persisted_keys}
+        env_delta = _compute_env_delta(env_map, self._baseline_env or {}, state.env_delta)
         from sandbox.terminal import TerminalState
 
         self.update_terminal_state(TerminalState(cwd=new_cwd, env_delta=env_delta))

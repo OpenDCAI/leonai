@@ -1,9 +1,12 @@
 """Sandbox management service."""
 
+import logging
 import os
 import uuid
 from datetime import datetime
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from backend.web.core.config import LOCAL_WORKSPACE_ROOT, SANDBOXES_DIR
 from backend.web.utils.helpers import is_virtual_thread_id
@@ -46,14 +49,16 @@ def init_providers_and_managers() -> tuple[dict, dict]:
                 from sandbox.providers.agentbay import AgentBayProvider
 
                 key = config.agentbay.api_key or os.getenv("AGENTBAY_API_KEY")
-                if key:
-                    providers[name] = AgentBayProvider(
-                        api_key=key,
-                        region_id=config.agentbay.region_id,
-                        default_context_path=config.agentbay.context_path,
-                        image_id=config.agentbay.image_id,
-                        provider_name=name,
-                    )
+                if not key:
+                    logger.warning("[sandbox] %s configured but no API key; skipping", name)
+                    continue
+                providers[name] = AgentBayProvider(
+                    api_key=key,
+                    region_id=config.agentbay.region_id,
+                    default_context_path=config.agentbay.context_path,
+                    image_id=config.agentbay.image_id,
+                    provider_name=name,
+                )
             elif config.provider == "docker":
                 from sandbox.providers.docker import DockerProvider
 
@@ -66,28 +71,32 @@ def init_providers_and_managers() -> tuple[dict, dict]:
                 from sandbox.providers.e2b import E2BProvider
 
                 key = config.e2b.api_key or os.getenv("E2B_API_KEY")
-                if key:
-                    providers[name] = E2BProvider(
-                        api_key=key,
-                        template=config.e2b.template,
-                        default_cwd=config.e2b.cwd,
-                        timeout=config.e2b.timeout,
-                        provider_name=name,
-                    )
+                if not key:
+                    logger.warning("[sandbox] %s configured but no API key; skipping", name)
+                    continue
+                providers[name] = E2BProvider(
+                    api_key=key,
+                    template=config.e2b.template,
+                    default_cwd=config.e2b.cwd,
+                    timeout=config.e2b.timeout,
+                    provider_name=name,
+                )
             elif config.provider == "daytona":
                 from sandbox.providers.daytona import DaytonaProvider
 
                 key = config.daytona.api_key or os.getenv("DAYTONA_API_KEY")
-                if key:
-                    providers[name] = DaytonaProvider(
-                        api_key=key,
-                        api_url=config.daytona.api_url,
-                        target=config.daytona.target,
-                        default_cwd=config.daytona.cwd,
-                        provider_name=name,
-                    )
-        except Exception as e:
-            print(f"[sandbox] Failed to load {name}: {e}")
+                if not key:
+                    logger.warning("[sandbox] %s configured but no API key; skipping", name)
+                    continue
+                providers[name] = DaytonaProvider(
+                    api_key=key,
+                    api_url=config.daytona.api_url,
+                    target=config.daytona.target,
+                    default_cwd=config.daytona.cwd,
+                    provider_name=name,
+                )
+        except Exception:
+            logger.exception("[sandbox] Failed to load %s", name)
 
     managers = {name: SandboxManager(provider=p, db_path=SANDBOX_DB_PATH) for name, p in providers.items()}
     return providers, managers
