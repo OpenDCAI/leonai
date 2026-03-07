@@ -71,6 +71,7 @@ class SandboxRepository:
         else:
             # Auto-commit mode
             conn = connect_sqlite(self.db_path)
+            conn.row_factory = sqlite3.Row
             try:
                 yield conn
                 conn.commit()
@@ -81,8 +82,7 @@ class SandboxRepository:
 
     def ensure_tables(self) -> None:
         """Create all sandbox tables if they don't exist."""
-        conn = connect_sqlite(self.db_path)
-        try:
+        with self._transaction() as conn:
             # Lease tables
             conn.execute(
                 """
@@ -254,10 +254,6 @@ class SandboxRepository:
                 """
             )
 
-            conn.commit()
-        finally:
-            conn.close()
-
     # === LEASE OPERATIONS ===
 
     def upsert_lease(
@@ -345,7 +341,6 @@ class SandboxRepository:
     def get_lease(self, lease_id: str) -> dict[str, Any] | None:
         """Get lease by ID."""
         with self._transaction() as conn:
-            conn.row_factory = sqlite3.Row
             row = conn.execute(
                 "SELECT * FROM sandbox_leases WHERE lease_id = ?", (lease_id,)
             ).fetchone()
@@ -359,7 +354,6 @@ class SandboxRepository:
     def find_lease_by_instance(self, provider_name: str, instance_id: str) -> dict[str, Any] | None:
         """Find lease by provider and instance ID."""
         with self._transaction() as conn:
-            conn.row_factory = sqlite3.Row
             row = conn.execute(
                 "SELECT * FROM sandbox_leases WHERE provider_name = ? AND current_instance_id = ? LIMIT 1",
                 (provider_name, instance_id),
@@ -369,7 +363,6 @@ class SandboxRepository:
     def list_all_leases(self) -> list[dict[str, Any]]:
         """List all leases with summary info."""
         with self._transaction() as conn:
-            conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 """
                 SELECT lease_id, provider_name, current_instance_id, desired_state,
@@ -383,7 +376,6 @@ class SandboxRepository:
     def list_leases_by_provider(self, provider_name: str) -> list[dict[str, Any]]:
         """List leases for a specific provider."""
         with self._transaction() as conn:
-            conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 """
                 SELECT lease_id, provider_name, current_instance_id, desired_state,
@@ -489,7 +481,6 @@ class SandboxRepository:
     def get_terminal(self, terminal_id: str) -> dict[str, Any] | None:
         """Get terminal by ID."""
         with self._transaction() as conn:
-            conn.row_factory = sqlite3.Row
             row = conn.execute(
                 "SELECT * FROM abstract_terminals WHERE terminal_id = ?", (terminal_id,)
             ).fetchone()
@@ -498,7 +489,6 @@ class SandboxRepository:
     def list_terminals_by_thread(self, thread_id: str) -> list[dict[str, Any]]:
         """List terminals for thread."""
         with self._transaction() as conn:
-            conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 "SELECT * FROM abstract_terminals WHERE thread_id = ? ORDER BY created_at DESC",
                 (thread_id,),
@@ -543,7 +533,6 @@ class SandboxRepository:
     def get_terminal_pointer(self, thread_id: str) -> dict[str, Any] | None:
         """Get terminal pointer for thread."""
         with self._transaction() as conn:
-            conn.row_factory = sqlite3.Row
             row = conn.execute(
                 "SELECT * FROM thread_terminal_pointers WHERE thread_id = ?", (thread_id,)
             ).fetchone()
@@ -657,7 +646,6 @@ class SandboxRepository:
     def get_session(self, chat_session_id: str) -> dict[str, Any] | None:
         """Get session by ID."""
         with self._transaction() as conn:
-            conn.row_factory = sqlite3.Row
             row = conn.execute(
                 "SELECT * FROM chat_sessions WHERE chat_session_id = ?", (chat_session_id,)
             ).fetchone()
