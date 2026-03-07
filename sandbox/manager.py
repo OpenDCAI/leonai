@@ -174,6 +174,15 @@ class SandboxManager:
                 lease = self.lease_store.create(terminal.lease_id, self.provider.name)
             self._assert_lease_provider(lease, thread_id)
 
+        # @@@workspace-bindmount - configure bind mount before container creation
+        if hasattr(self.provider, 'set_thread_bind_mounts'):
+            workspace_path = self.workspace_sync.get_thread_workspace_path(thread_id)
+            workspace_path.mkdir(parents=True, exist_ok=True)
+            from sandbox.config import MountSpec
+            self.provider.set_thread_bind_mounts(thread_id, [
+                MountSpec(source=str(workspace_path), target="/workspace/files", read_only=False)
+            ])
+
         self._ensure_bound_instance(lease)
 
         session_id = f"sess-{uuid.uuid4().hex[:12]}"
