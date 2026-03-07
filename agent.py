@@ -61,7 +61,6 @@ from core.command.hooks.path_security import PathSecurityHook
 
 from core.model_params import normalize_model_kwargs
 from storage.container import StorageContainer
-from core.task import TaskMiddleware
 
 # New architecture: ToolRegistry + ToolRunner + Services
 from core.runtime.registry import ToolRegistry
@@ -73,6 +72,9 @@ from core.tools.search.service import SearchService
 from core.tools.skills.service import SkillsService
 from core.tools.task.service import TaskService
 from core.tools.tool_search.service import ToolSearchService
+
+# Multi-agent team coordination
+from core.agents.teams.service import TeamService
 from core.tools.web.service import WebService
 
 # Multi-agent services
@@ -225,12 +227,6 @@ class LeonAgent:
         # Build middleware stack
         middleware = self._build_middleware_stack()
 
-        # Configure TaskMiddleware with parent context
-        if hasattr(self, "_task_middleware"):
-            self._task_middleware.set_parent_middleware(middleware)
-            if not self._needs_async_init:
-                self._task_middleware.set_db_path(self.db_path)
-
         # Ensure ToolNode is created (middleware tools need at least one BaseTool)
         if not mcp_tools and not self._has_middleware_tools(middleware):
             mcp_tools = [self._create_placeholder_tool()]
@@ -252,9 +248,6 @@ class LeonAgent:
 
         # Get runtime from MonitorMiddleware
         self.runtime = self._monitor_middleware.runtime
-
-        # Set agent reference in TaskMiddleware for runtime access
-        self._task_middleware.set_agent(self)
 
         # Inject runtime/model into MemoryMiddleware
         if hasattr(self, "_memory_middleware"):
@@ -288,10 +281,6 @@ class LeonAgent:
 
         # Update agent with checkpointer
         self.agent.checkpointer = self.checkpointer
-
-        # Update TaskMiddleware
-        if hasattr(self, "_task_middleware"):
-            self._task_middleware.set_db_path(self.db_path)
 
         # Mark as initialized
         self._needs_async_init = False
@@ -634,12 +623,6 @@ class LeonAgent:
                 model_overrides.get("context_limit") or get_model_context_limit(lookup_name)
             )
 
-        # Update task middleware references
-        if hasattr(self, "_task_middleware"):
-            self._task_middleware.parent_model = resolved_model
-            self._task_middleware.api_key = self.api_key
-            self._task_middleware.model_kwargs = self._build_model_kwargs()
-
         if self.verbose:
             print(f"[LeonAgent] Config updated: model={resolved_model}")
 
@@ -787,18 +770,7 @@ class LeonAgent:
         self._taskboard_middleware = TaskBoardMiddleware()
         middleware.append(self._taskboard_middleware)
 
-        # 6. Task (old sub-agent middleware — kept for backward compat with Task tool)
-        self._task_middleware = TaskMiddleware(
-            workspace_root=self.workspace_root,
-            parent_model=self.model_name,
-            api_key=self.api_key,
-            model_kwargs=self._build_model_kwargs(),
-            queue_manager=self.queue_manager,
-            verbose=self.verbose,
-        )
-        middleware.append(self._task_middleware)
-
-        # 7. ToolRunner (innermost — routes all ToolRegistry-registered tool calls)
+        # 6. ToolRunner (innermost — routes all ToolRegistry-registered tool calls)
         self._tool_runner = ToolRunner(
             registry=self._tool_registry,
             validator=ToolValidator(),
@@ -961,6 +933,11 @@ class LeonAgent:
             agent_registry=self._agent_registry,
             queue_manager=self.queue_manager,
             current_thread_id="",  # Updated dynamically per invocation via thread_context
+        )
+
+        # Team coordination (TeamCreate/TeamDelete — deferred mode)
+        self._team_service = TeamService(
+            tool_registry=self._tool_registry,
         )
 
         if self.verbose:

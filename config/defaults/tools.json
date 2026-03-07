@@ -19,6 +19,8 @@
   "SendMessage": { "desc": "向其他 Agent 发送消息", "group": "agent" },
   "load_skill": { "desc": "加载 Skill", "group": "skills" },
   "tool_search": { "desc": "搜索可用工具", "group": "system" },
+  "TeamCreate": { "desc": "创建 Agent 团队", "group": "agent" },
+  "TeamDelete": { "desc": "解散 Agent 团队", "group": "agent" },
 
   "tool_modes": {
     "TaskCreate": "deferred",
@@ -40,6 +42,8 @@
     "WebFetch": "inline",
     "tool_search": "inline",
     "SendMessage": "inline",
-    "load_skill": "inline"
+    "load_skill": "inline",
+    "TeamCreate": "deferred",
+    "TeamDelete": "deferred"
   }
 }
