@@ -35,24 +35,46 @@ class LegacySandboxRepository:
     def ensure_tables(self) -> None:
         """Create all tables using existing code.
 
-        Delegates to existing store classes whose __init__ calls _ensure_tables():
-        - LeaseStore (lease + instance + event tables)
-        - TerminalStore (terminal + pointer tables)
-        - ChatSessionManager (session + command tables)
-        - ProviderEventStore (provider_events table)
+        Delegates to existing store classes whose __init__ calls _ensure_tables().
+        Note: We instantiate stores directly to trigger table creation, but this
+        means stores cannot use repository in their __init__ (circular dependency).
         """
         # Import here to avoid circular dependencies
         from sandbox.lease import LeaseStore
         from sandbox.terminal import TerminalStore
         from sandbox.chat_session import ChatSessionManager
-        from sandbox.provider_events import ProviderEventStore
 
         # Instantiating these classes calls _ensure_tables() in __init__
         LeaseStore(self.db_path)
         TerminalStore(self.db_path)
         # ChatSessionManager needs provider, but _ensure_tables() doesn't use it
         ChatSessionManager(provider=None, db_path=self.db_path)  # type: ignore
-        ProviderEventStore(self.db_path)
+
+        # ProviderEventStore creates its own table in __init__
+        # We don't instantiate it here to avoid circular dependency
+        # (it's created on-demand when needed)
+        with self._connect() as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS provider_events (
+                    event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    provider_name TEXT NOT NULL,
+                    instance_id TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    payload_json TEXT,
+                    matched_lease_id TEXT,
+                    created_at TIMESTAMP NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_provider_events_created
+                ON provider_events(created_at DESC)
+                """
+            )
+            conn.commit()
 
     # === LEASE OPERATIONS ===
 
