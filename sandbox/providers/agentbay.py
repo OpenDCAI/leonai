@@ -35,6 +35,8 @@ class AgentBayProvider(SandboxProvider):
     - Rich inspection APIs (metrics, screenshot, processes)
     """
 
+    CATALOG_ENTRY = {"vendor": "Alibaba Cloud", "description": "Remote Linux sandbox", "provider_type": "cloud"}
+
     name = "agentbay"
     CAPABILITY = ProviderCapability(
         can_pause=True,

@@ -35,6 +35,8 @@ if TYPE_CHECKING:
 class E2BProvider(SandboxProvider):
     """E2B cloud sandbox provider."""
 
+    CATALOG_ENTRY = {"vendor": "E2B", "description": "Cloud sandbox with runtime metrics", "provider_type": "cloud"}
+
     name = "e2b"
     CAPABILITY = ProviderCapability(
         can_pause=True,

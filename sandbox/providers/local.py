@@ -28,6 +28,9 @@ if TYPE_CHECKING:
 
 @dataclass
 class LocalSessionProvider(SandboxProvider):
+    """Local session provider with direct host access."""
+
+    CATALOG_ENTRY = {"vendor": None, "description": "Direct host access", "provider_type": "local"}
     name: str = "local"
     CAPABILITY = ProviderCapability(
         can_pause=True,

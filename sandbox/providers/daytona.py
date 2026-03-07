@@ -32,6 +32,8 @@ if TYPE_CHECKING:
 class DaytonaProvider(SandboxProvider):
     """Daytona cloud sandbox provider."""
 
+    CATALOG_ENTRY = {"vendor": "Daytona", "description": "Managed cloud or self-host Daytona sandboxes", "provider_type": "cloud"}
+
     name = "daytona"
     CAPABILITY = ProviderCapability(
         can_pause=True,

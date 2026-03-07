@@ -49,6 +49,8 @@ class DockerProvider(SandboxProvider):
     - If context_id is provided, uses a named Docker volume for persistence.
     """
 
+    CATALOG_ENTRY = {"vendor": None, "description": "Isolated container sandbox", "provider_type": "container"}
+
     name = "docker"
     CAPABILITY = ProviderCapability(
         can_pause=True,

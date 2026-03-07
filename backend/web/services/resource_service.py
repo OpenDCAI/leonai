@@ -12,6 +12,10 @@ from backend.web.services.config_loader import SandboxConfigLoader
 from backend.web.services.sandbox_service import available_sandbox_types, build_provider_from_config_name
 from backend.web.utils.helpers import _build_thread_config_repo as _make_thread_config_repo
 from sandbox.providers.local import LocalSessionProvider
+from sandbox.providers.docker import DockerProvider
+from sandbox.providers.daytona import DaytonaProvider
+from sandbox.providers.e2b import E2BProvider
+from sandbox.providers.agentbay import AgentBayProvider
 from sandbox.provider import RESOURCE_CAPABILITY_KEYS
 from sandbox.resource_snapshot import (
     ensure_resource_snapshot_table,
@@ -37,12 +41,13 @@ class _CatalogEntry:
     provider_type: str
 
 
+# Build catalog from provider classes
 _CATALOG: dict[str, _CatalogEntry] = {
-    "local": _CatalogEntry(vendor=None, description="Direct host access", provider_type="local"),
-    "daytona": _CatalogEntry(vendor="Daytona", description="Managed cloud or self-host Daytona sandboxes", provider_type="cloud"),
-    "e2b": _CatalogEntry(vendor="E2B", description="Cloud sandbox with runtime metrics", provider_type="cloud"),
-    "agentbay": _CatalogEntry(vendor="Alibaba Cloud", description="Remote Linux sandbox", provider_type="cloud"),
-    "docker": _CatalogEntry(vendor=None, description="Isolated container sandbox", provider_type="container"),
+    "local": _CatalogEntry(**LocalSessionProvider.CATALOG_ENTRY),
+    "docker": _CatalogEntry(**DockerProvider.CATALOG_ENTRY),
+    "daytona": _CatalogEntry(**DaytonaProvider.CATALOG_ENTRY),
+    "e2b": _CatalogEntry(**E2BProvider.CATALOG_ENTRY),
+    "agentbay": _CatalogEntry(**AgentBayProvider.CATALOG_ENTRY),
 }
 
 
