@@ -938,43 +938,63 @@ class LeaseStore:
     def create(self, lease_id: str, provider_name: str) -> SandboxLease:
         now = datetime.now().isoformat()
 
-        with _connect(self.db_path) as conn:
-            conn.execute(
-                """
-                INSERT INTO sandbox_leases (
-                    lease_id,
-                    provider_name,
-                    desired_state,
-                    observed_state,
-                    instance_status,
-                    version,
-                    observed_at,
-                    last_error,
-                    needs_refresh,
-                    refresh_hint_at,
-                    status,
-                    created_at,
-                    updated_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    lease_id,
-                    provider_name,
-                    "running",
-                    "detached",
-                    "detached",
-                    0,
-                    now,
-                    None,
-                    0,
-                    None,
-                    "active",
-                    now,
-                    now,
-                ),
+        # @@@repository-migration - use repository if available
+        if self._repo:
+            self._repo.upsert_lease(
+                lease_id=lease_id,
+                provider_name=provider_name,
+                workspace_key=None,
+                current_instance_id=None,
+                instance_created_at=None,
+                desired_state="running",
+                observed_state="detached",
+                version=0,
+                observed_at=now,
+                last_error=None,
+                needs_refresh=0,
+                refresh_hint_at=None,
+                status="active",
+                created_at=now,
+                updated_at=now,
             )
-            conn.commit()
+        else:
+            with _connect(self.db_path) as conn:
+                conn.execute(
+                    """
+                    INSERT INTO sandbox_leases (
+                        lease_id,
+                        provider_name,
+                        desired_state,
+                        observed_state,
+                        instance_status,
+                        version,
+                        observed_at,
+                        last_error,
+                        needs_refresh,
+                        refresh_hint_at,
+                        status,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        lease_id,
+                        provider_name,
+                        "running",
+                        "detached",
+                        "detached",
+                        0,
+                        now,
+                        None,
+                        0,
+                        None,
+                        "active",
+                        now,
+                        now,
+                    ),
+                )
+                conn.commit()
 
         return SQLiteLease(
             lease_id=lease_id,
