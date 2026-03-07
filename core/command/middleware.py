@@ -341,7 +341,7 @@ class CommandMiddleware(AgentMiddleware[CommandState]):
         output: str,
     ) -> None:
         """Inject CommandNotification to unified queue."""
-        from core.queue.formatters import format_command_notification
+        from core.runtime.middleware.queue.formatters import format_command_notification
         from sandbox.thread_context import get_current_thread_id
 
         notification = format_command_notification(

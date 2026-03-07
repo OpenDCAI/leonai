@@ -27,7 +27,11 @@ from langchain.agents.middleware.types import (
 )
 from langchain_core.messages import ToolMessage
 
-from backend.web.services import task_service
+# Lazy import: backend is only available when running as web service
+try:
+    from backend.web.services import task_service
+except ImportError:
+    task_service = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
 

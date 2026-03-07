@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 from backend.web.services.event_buffer import RunEventBuffer, ThreadEventBuffer
 from backend.web.services.event_store import cleanup_old_runs
 from backend.web.utils.serializers import extract_text_content
-from core.monitor import AgentState
+from core.runtime.middleware.monitor import AgentState
 from storage.contracts import RunEventRepo
 from sandbox.thread_context import set_current_run_id, set_current_thread_id
 

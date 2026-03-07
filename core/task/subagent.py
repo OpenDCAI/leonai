@@ -554,7 +554,7 @@ class SubagentRunner:
         the agent is IDLE. If the agent is ACTIVE, before_model will drain
         the message on the next LLM cycle.
         """
-        from core.queue import format_task_notification
+        from core.runtime.middleware.queue import format_task_notification
 
         summary = (result.result or "")[:200] if result.status == "completed" else (result.error or "")
         xml = format_task_notification(

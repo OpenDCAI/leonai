@@ -16,5 +16,28 @@
   "TaskGet": { "desc": "获取任务详情", "group": "todo" },
   "TaskList": { "desc": "列出所有任务", "group": "todo" },
   "TaskUpdate": { "desc": "更新任务状态", "group": "todo" },
-  "load_skill": { "desc": "加载 Skill", "group": "skills" }
+  "load_skill": { "desc": "加载 Skill", "group": "skills" },
+  "tool_search": { "desc": "搜索可用工具", "group": "system" },
+
+  "tool_modes": {
+    "TaskCreate": "deferred",
+    "TaskUpdate": "deferred",
+    "TaskGet": "deferred",
+    "TaskList": "deferred",
+    "read_file": "inline",
+    "write_file": "inline",
+    "edit_file": "inline",
+    "multi_edit": "inline",
+    "list_dir": "inline",
+    "run_command": "inline",
+    "command_status": "inline",
+    "Grep": "inline",
+    "Glob": "inline",
+    "web_search": "inline",
+    "Fetch": "inline",
+    "tool_search": "inline",
+    "Task": "inline",
+    "TaskOutput": "inline",
+    "load_skill": "inline"
+  }
 }

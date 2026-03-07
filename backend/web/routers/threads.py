@@ -37,8 +37,8 @@ from backend.web.utils.helpers import delete_thread_in_db
 from backend.web.utils.serializers import serialize_message
 
 logger = logging.getLogger(__name__)
-from core.monitor import AgentState
-from core.queue import format_steer_reminder
+from core.runtime.middleware.monitor import AgentState
+from core.runtime.middleware.queue import format_steer_reminder
 from sandbox.thread_context import set_current_thread_id
 
 router = APIRouter(prefix="/api/threads", tags=["threads"])

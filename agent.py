@@ -40,26 +40,40 @@ from config.observation_loader import ObservationLoader
 from config.observation_schema import ObservationConfig
 from core.command import CommandMiddleware
 
-# 导入 SpillBuffer
-from core.spill_buffer import SpillBufferMiddleware
+# Middleware imports (migrated paths)
+from core.runtime.middleware.spill_buffer import SpillBufferMiddleware
+from core.runtime.middleware.memory import MemoryMiddleware
+from core.runtime.middleware.monitor import MonitorMiddleware, apply_usage_patches
+from core.runtime.middleware.prompt_caching import PromptCachingMiddleware
+from core.runtime.middleware.queue import MessageQueueManager, SteeringMiddleware
 
-# 导入 hooks
+# Hooks
 from core.command.hooks.dangerous_commands import DangerousCommandsHook
 from core.command.hooks.file_access_logger import FileAccessLoggerHook
 from core.command.hooks.file_permission import FilePermissionHook
 from core.command.hooks.path_security import PathSecurityHook
+
+# Middleware (tool-bearing, still used in legacy stack)
 from core.filesystem import FileSystemMiddleware
-from core.memory import MemoryMiddleware
 from core.model_params import normalize_model_kwargs
-from core.monitor import MonitorMiddleware, apply_usage_patches
-from core.prompt_caching import PromptCachingMiddleware
-from core.queue import MessageQueueManager, SteeringMiddleware
 from core.search import SearchMiddleware
 from core.skills import SkillsMiddleware
 from storage.container import StorageContainer
 from core.task import TaskMiddleware
 from core.todo import TodoMiddleware
 from core.web import WebMiddleware
+
+# New architecture: ToolRegistry + ToolRunner + Services
+from core.runtime.registry import ToolRegistry
+from core.runtime.runner import ToolRunner
+from core.runtime.validator import ToolValidator
+from core.tools.command.service import CommandService
+from core.tools.filesystem.service import FileSystemService
+from core.tools.search.service import SearchService
+from core.tools.skills.service import SkillsService
+from core.tools.task.service import TaskService
+from core.tools.tool_search.service import ToolSearchService
+from core.tools.web.service import WebService
 
 # Import file operation recorder for time travel
 from tui.operations import get_recorder
@@ -198,6 +212,10 @@ class LeonAgent:
         # Set checkpointer to None if in async context (will be initialized later)
         if self._needs_async_init:
             self.checkpointer = None
+
+        # Initialize ToolRegistry and Services (new architecture)
+        self._tool_registry = ToolRegistry()
+        self._init_services()
 
         # Build middleware stack
         middleware = self._build_middleware_stack()
@@ -609,7 +627,7 @@ class LeonAgent:
 
         # Update memory middleware context_limit
         if hasattr(self, "_memory_middleware"):
-            from core.monitor.cost import get_model_context_limit
+            from core.runtime.middleware.monitor.cost import get_model_context_limit
             lookup_name = model_overrides.get("based_on") or resolved_model
             self._memory_middleware.set_context_limit(
                 model_overrides.get("context_limit") or get_model_context_limit(lookup_name)
@@ -796,7 +814,14 @@ class LeonAgent:
         )
         middleware.append(self._monitor_middleware)
 
-        # 12. SpillBuffer (outermost — catches all oversized tool outputs)
+        # 12. ToolRunner (innermost — routes registered tool calls via ToolRegistry)
+        self._tool_runner = ToolRunner(
+            registry=self._tool_registry,
+            validator=ToolValidator(),
+        )
+        middleware.append(self._tool_runner)
+
+        # 13. SpillBuffer (outermost — catches all oversized tool outputs)
         # Must be first in list: LangChain chains tool-call wrappers with
         # "first = outermost", so index-0 wraps every other middleware's
         # result.  Middlewares like Search short-circuit (return without
@@ -959,6 +984,116 @@ class LeonAgent:
                 verbose=self.verbose,
             )
         )
+
+    def _init_services(self) -> None:
+        """Initialize tool Services and register them with ToolRegistry.
+
+        Each Service registers its tools (INLINE or DEFERRED) into self._tool_registry.
+        This runs after sandbox init so backends are available.
+        """
+        fs_backend = self._sandbox.fs()
+        cmd_executor = self._sandbox.shell()
+
+        # FileSystem tools
+        if self.config.tools.filesystem.enabled:
+            file_hooks = []
+            if self._sandbox.name == "local":
+                if self.enable_audit_log:
+                    file_hooks.append(
+                        FileAccessLoggerHook(
+                            workspace_root=self.workspace_root,
+                            log_file="file_access.log",
+                        )
+                    )
+                file_hooks.append(
+                    FilePermissionHook(
+                        workspace_root=self.workspace_root,
+                        allowed_extensions=self.allowed_file_extensions,
+                    )
+                )
+            max_file_size = self.config.tools.filesystem.tools.read_file.max_file_size
+            self._filesystem_service = FileSystemService(
+                registry=self._tool_registry,
+                workspace_root=self.workspace_root,
+                max_file_size=max_file_size,
+                allowed_extensions=self.allowed_file_extensions,
+                hooks=file_hooks,
+                operation_recorder=get_recorder(),
+                backend=fs_backend,
+            )
+
+        # Search tools
+        if self.config.tools.search.enabled:
+            max_file_size = self.config.tools.search.tools.grep.max_file_size
+            self._search_service = SearchService(
+                registry=self._tool_registry,
+                workspace_root=self.workspace_root,
+                max_file_size=max_file_size,
+            )
+
+        # Web tools
+        if self.config.tools.web.enabled:
+            tavily_key = self.config.tools.web.tools.web_search.tavily_api_key or os.getenv("TAVILY_API_KEY")
+            exa_key = self.config.tools.web.tools.web_search.exa_api_key or os.getenv("EXA_API_KEY")
+            firecrawl_key = self.config.tools.web.tools.web_search.firecrawl_api_key or os.getenv("FIRECRAWL_API_KEY")
+            jina_key = self.config.tools.web.tools.fetch.jina_api_key or os.getenv("JINA_AI_API_KEY")
+            extraction_model = self._create_extraction_model()
+            self._web_service = WebService(
+                registry=self._tool_registry,
+                tavily_api_key=tavily_key,
+                exa_api_key=exa_key,
+                firecrawl_api_key=firecrawl_key,
+                jina_api_key=jina_key,
+                max_search_results=self.config.tools.web.tools.web_search.max_results,
+                timeout=self.config.tools.web.timeout,
+                extraction_model=extraction_model,
+            )
+
+        # Command tools
+        if self.config.tools.command.enabled:
+            command_hooks = []
+            if self._sandbox.name == "local":
+                if self.block_dangerous_commands:
+                    command_hooks.append(
+                        DangerousCommandsHook(
+                            workspace_root=self.workspace_root,
+                            block_network=self.block_network_commands,
+                            verbose=self.verbose,
+                        )
+                    )
+                command_hooks.append(PathSecurityHook(workspace_root=self.workspace_root))
+            self._command_service = CommandService(
+                registry=self._tool_registry,
+                workspace_root=self.workspace_root,
+                hooks=command_hooks,
+                executor=cmd_executor,
+                queue_manager=self.queue_manager,
+            )
+
+        # Skills tools
+        if self.config.skills.enabled and self.config.skills.paths:
+            self._skills_service = SkillsService(
+                registry=self._tool_registry,
+                skill_paths=self.config.skills.paths,
+                enabled_skills=self.config.skills.skills,
+            )
+
+        # Task tools (DEFERRED - discoverable via tool_search)
+        self._task_service = TaskService(
+            registry=self._tool_registry,
+            workspace_root=self.workspace_root,
+        )
+
+        # ToolSearch (INLINE - always available for discovering DEFERRED tools)
+        self._tool_search_service = ToolSearchService(
+            registry=self._tool_registry,
+        )
+
+        if self.verbose:
+            all_tools = self._tool_registry.list_all()
+            inline = [t for t in all_tools if t.mode.value == "inline"]
+            deferred = [t for t in all_tools if t.mode.value == "deferred"]
+            print(f"[LeonAgent] ToolRegistry: {len(inline)} inline, {len(deferred)} deferred tools")
 
     async def _init_mcp_tools(self) -> list:
         mcp_enabled = self.config.mcp.enabled
@@ -1285,6 +1420,10 @@ def create_leon_agent(
         # Custom workspace
         agent = create_leon_agent(workspace_root="/path/to/workspace")
     """
+    # Filter out kwargs that LeonAgent.__init__ doesn't accept (e.g. profile from CLI)
+    import inspect as _inspect
+    _valid = set(_inspect.signature(LeonAgent.__init__).parameters) - {"self"}
+    kwargs = {k: v for k, v in kwargs.items() if k in _valid}
     return LeonAgent(
         model_name=model_name,
         api_key=api_key,
