@@ -4,7 +4,6 @@ Tools:
 - Read: Read file content (with chunking support)
 - Write: Create new file
 - Edit: Edit file (str_replace mode, supports replace_all)
-- multi_edit: Batch edit
 - list_dir: List directory
 """
 
@@ -26,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 
 class FileSystemService:
-    """Registers filesystem tools (Read/Write/Edit/multi_edit/list_dir) into ToolRegistry."""
+    """Registers filesystem tools (Read/Write/Edit/list_dir) into ToolRegistry."""
 
     def __init__(
         self,
@@ -156,39 +155,6 @@ class FileSystemService:
                 },
             },
             handler=self._edit_file,
-            source="FileSystemService",
-        ))
-
-        registry.register(ToolEntry(
-            name="multi_edit",
-            mode=ToolMode.INLINE,
-            schema={
-                "name": "multi_edit",
-                "description": "Apply multiple edits to a file sequentially.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "file_path": {
-                            "type": "string",
-                            "description": "Absolute file path",
-                        },
-                        "edits": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "old_string": {"type": "string"},
-                                    "new_string": {"type": "string"},
-                                    "replace_all": {"type": "boolean"},
-                                },
-                                "required": ["old_string", "new_string"],
-                            },
-                        },
-                    },
-                    "required": ["file_path", "edits"],
-                },
-            },
-            handler=self._multi_edit,
             source="FileSystemService",
         ))
 
@@ -442,54 +408,6 @@ class FileSystemService:
             return f"File edited: {file_path}\n   Replaced {count} occurrence(s)"
         except Exception as e:
             return f"Error editing file: {e}"
-
-    def _multi_edit(self, file_path: str, edits: list[dict[str, str]]) -> str:
-        is_valid, error, resolved = self._validate_path(file_path, "edit")
-        if not is_valid:
-            return error
-
-        if not self.backend.file_exists(str(resolved)):
-            return f"File not found: {file_path}"
-
-        staleness_error = self._check_file_staleness(resolved)
-        if staleness_error:
-            return staleness_error
-
-        try:
-            raw = self.backend.read_file(str(resolved))
-            content = raw.content
-            original_content = content
-
-            for i, edit in enumerate(edits):
-                old_str = edit.get("old_string", "")
-                if old_str not in content:
-                    return f"Edit {i + 1}: String not found\n   Looking for: {old_str[:100]}..."
-
-            for edit in edits:
-                old_str = edit.get("old_string", "")
-                new_str = edit.get("new_string", "")
-                do_replace_all = edit.get("replace_all", False)
-                content = (
-                    content.replace(old_str, new_str)
-                    if do_replace_all
-                    else content.replace(old_str, new_str, 1)
-                )
-
-            result = self.backend.write_file(str(resolved), content)
-            if not result.success:
-                return f"Error in multi_edit: {result.error}"
-
-            self._update_file_tracking(resolved)
-            self._record_operation(
-                operation_type="multi_edit",
-                file_path=file_path,
-                before_content=original_content,
-                after_content=content,
-                changes=edits,
-            )
-            return f"File edited: {file_path}\n   Applied {len(edits)} edits"
-        except Exception as e:
-            return f"Error in multi_edit: {e}"
 
     def _list_dir(self, directory_path: str) -> str:
         is_valid, error, resolved = self._validate_path(directory_path, "list")

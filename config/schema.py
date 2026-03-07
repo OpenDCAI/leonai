@@ -92,7 +92,6 @@ class FileSystemToolsConfig(BaseModel):
     read_file: ReadFileConfig = Field(default_factory=ReadFileConfig)
     write_file: bool = True
     edit_file: bool = True
-    multi_edit: bool = True
     list_dir: bool = True
 
 

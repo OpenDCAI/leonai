@@ -5,7 +5,7 @@ Middleware stack (outer → inner):
   SpillBuffer → Monitor → PromptCaching → Memory → Steering → TaskBoard → Task → ToolRunner
 
 Tools are registered via Services into ToolRegistry:
-- FileSystemService: Read, Write, Edit, multi_edit, list_dir
+- FileSystemService: Read, Write, Edit, list_dir
 - SearchService: Grep, Glob
 - CommandService: Bash (with hooks)
 - WebService: WebSearch, WebFetch
@@ -99,7 +99,7 @@ class LeonAgent:
     - Full security (permission control, command interception, audit logging)
 
     Tools:
-    1. File operations: read_file, write_file, edit_file, multi_edit, list_dir
+    1. File operations: Read, Write, Edit, list_dir
     2. Search: Grep, Glob
     3. Command execution: run_command (via CommandMiddleware)
     """
