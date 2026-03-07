@@ -132,7 +132,7 @@ class SQLiteSandboxMonitorRepo:
                 sl.updated_at,
                 cs.thread_id,
                 CAST(
-                    (julianday('now', 'localtime') - julianday(sl.updated_at)) * 24
+                    (julianday('now', 'utc') - julianday(sl.updated_at)) * 24
                     AS INTEGER
                 ) as hours_diverged
             FROM sandbox_leases sl
