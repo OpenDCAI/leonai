@@ -1,11 +1,19 @@
 """
 Leon - AI Coding Agent with Middleware Architecture
 
-Middleware-based tool implementation:
-- FileSystemMiddleware: read_file, write_file, edit_file, multi_edit, list_dir
-- SearchMiddleware: Grep, Glob
-- CommandMiddleware: run_command (with hooks)
-- PromptCachingMiddleware: cost optimization
+Middleware stack (outer → inner):
+  SpillBuffer → Monitor → PromptCaching → Memory → Steering → TaskBoard → Task → ToolRunner
+
+Tools are registered via Services into ToolRegistry:
+- FileSystemService: Read, Write, Edit, multi_edit, list_dir
+- SearchService: Grep, Glob
+- CommandService: Bash (with hooks)
+- WebService: WebSearch, WebFetch
+- SkillsService: load_skill (dynamic schema)
+- TaskService: TaskCreate/Update/List/Get (deferred)
+- AgentService: Agent, TaskOutput, TaskStop
+- SendMessageService: SendMessage
+- ToolSearchService: tool_search
 
 All paths must be absolute. Full security mechanisms and audit logging.
 """
@@ -38,8 +46,6 @@ from config.models_loader import ModelsLoader
 from config.models_schema import ModelsConfig
 from config.observation_loader import ObservationLoader
 from config.observation_schema import ObservationConfig
-from core.command import CommandMiddleware
-
 # Middleware imports (migrated paths)
 from core.runtime.middleware.spill_buffer import SpillBufferMiddleware
 from core.runtime.middleware.memory import MemoryMiddleware
@@ -47,21 +53,15 @@ from core.runtime.middleware.monitor import MonitorMiddleware, apply_usage_patch
 from core.runtime.middleware.prompt_caching import PromptCachingMiddleware
 from core.runtime.middleware.queue import MessageQueueManager, SteeringMiddleware
 
-# Hooks
+# Hooks (used by Services)
 from core.command.hooks.dangerous_commands import DangerousCommandsHook
 from core.command.hooks.file_access_logger import FileAccessLoggerHook
 from core.command.hooks.file_permission import FilePermissionHook
 from core.command.hooks.path_security import PathSecurityHook
 
-# Middleware (tool-bearing, still used in legacy stack)
-from core.filesystem import FileSystemMiddleware
 from core.model_params import normalize_model_kwargs
-from core.search import SearchMiddleware
-from core.skills import SkillsMiddleware
 from storage.container import StorageContainer
 from core.task import TaskMiddleware
-from core.todo import TodoMiddleware
-from core.web import WebMiddleware
 
 # New architecture: ToolRegistry + ToolRunner + Services
 from core.runtime.registry import ToolRegistry
@@ -255,10 +255,6 @@ class LeonAgent:
 
         # Set agent reference in TaskMiddleware for runtime access
         self._task_middleware.set_agent(self)
-
-        # Set agent reference in CommandMiddleware for async progress events
-        if hasattr(self, "_command_middleware"):
-            self._command_middleware.set_agent(self)
 
         # Inject runtime/model into MemoryMiddleware
         if hasattr(self, "_memory_middleware"):
@@ -786,39 +782,12 @@ class LeonAgent:
         # 4. Steering — injects queued messages before model call
         middleware.append(SteeringMiddleware(queue_manager=self.queue_manager))
 
-        # Legacy middlewares (transitional — their tools are also registered via
-        # Services into ToolRegistry, but old tool names still route here):
-
-        # 5. FileSystem (read_file / write_file / edit_file / list_dir via old names)
-        if self.config.tools.filesystem.enabled:
-            self._add_filesystem_middleware(middleware, fs_backend)
-
-        # 6. Search (Grep / Glob via old BaseTool path)
-        if self.config.tools.search.enabled:
-            self._add_search_middleware(middleware)
-
-        # 7. Web (web_search / Fetch via old names)
-        if self.config.tools.web.enabled:
-            self._add_web_middleware(middleware)
-
-        # 8. Command (run_command via old name)
-        if self.config.tools.command.enabled:
-            self._add_command_middleware(middleware, cmd_executor)
-
-        # 9. Skills
-        if self.config.skills.enabled and self.config.skills.paths:
-            self._add_skills_middleware(middleware)
-
-        # 10. Todo (TaskCreate/Update/List/Get via old TodoMiddleware)
-        self._todo_middleware = TodoMiddleware(verbose=self.verbose)
-        middleware.append(self._todo_middleware)
-
-        # 11. TaskBoard (board management — not yet converted to Service)
+        # 5. TaskBoard (board management — not yet converted to Service)
         from core.taskboard.middleware import TaskBoardMiddleware
         self._taskboard_middleware = TaskBoardMiddleware()
         middleware.append(self._taskboard_middleware)
 
-        # 12. Task (old sub-agent middleware — kept for backward compat)
+        # 6. Task (old sub-agent middleware — kept for backward compat with Task tool)
         self._task_middleware = TaskMiddleware(
             workspace_root=self.workspace_root,
             parent_model=self.model_name,
@@ -829,7 +798,7 @@ class LeonAgent:
         )
         middleware.append(self._task_middleware)
 
-        # 13. ToolRunner (innermost — routes all ToolRegistry-registered tool calls)
+        # 7. ToolRunner (innermost — routes all ToolRegistry-registered tool calls)
         self._tool_runner = ToolRunner(
             registry=self._tool_registry,
             validator=ToolValidator(),
@@ -873,130 +842,6 @@ class LeonAgent:
             verbose=self.verbose,
         )
         middleware.append(self._memory_middleware)
-
-    def _add_filesystem_middleware(self, middleware: list, fs_backend: Any) -> None:
-        """Add filesystem middleware to stack."""
-        file_hooks = []
-        if self._sandbox.name == "local":
-            if self.enable_audit_log:
-                file_hooks.append(
-                    FileAccessLoggerHook(
-                        workspace_root=self.workspace_root,
-                        log_file="file_access.log",
-                    )
-                )
-            file_hooks.append(
-                FilePermissionHook(
-                    workspace_root=self.workspace_root,
-                    allowed_extensions=self.allowed_file_extensions,
-                )
-            )
-
-        fs_tools = {
-            "read_file": self.config.tools.filesystem.tools.read_file.enabled,
-            "write_file": self.config.tools.filesystem.tools.write_file,
-            "edit_file": self.config.tools.filesystem.tools.edit_file,
-            "multi_edit": self.config.tools.filesystem.tools.multi_edit,
-            "list_dir": self.config.tools.filesystem.tools.list_dir,
-        }
-        max_file_size = self.config.tools.filesystem.tools.read_file.max_file_size
-
-        middleware.append(
-            FileSystemMiddleware(
-                workspace_root=self.workspace_root,
-                max_file_size=max_file_size,
-                allowed_extensions=self.allowed_file_extensions,
-                hooks=file_hooks,
-                enabled_tools=fs_tools,
-                operation_recorder=get_recorder(),
-                backend=fs_backend,
-                verbose=self.verbose,
-            )
-        )
-
-    def _add_search_middleware(self, middleware: list) -> None:
-        """Add search middleware to stack."""
-        max_file_size = self.config.tools.search.tools.grep.max_file_size
-
-        middleware.append(
-            SearchMiddleware(
-                workspace_root=self.workspace_root,
-                max_file_size=max_file_size,
-                verbose=self.verbose,
-            )
-        )
-
-    def _add_web_middleware(self, middleware: list) -> None:
-        """Add web middleware to stack."""
-        web_tools = {
-            "web_search": self.config.tools.web.tools.web_search.enabled,
-            "Fetch": self.config.tools.web.tools.fetch.enabled,
-        }
-        tavily_key = self.config.tools.web.tools.web_search.tavily_api_key or os.getenv("TAVILY_API_KEY")
-        exa_key = self.config.tools.web.tools.web_search.exa_api_key or os.getenv("EXA_API_KEY")
-        firecrawl_key = self.config.tools.web.tools.web_search.firecrawl_api_key or os.getenv("FIRECRAWL_API_KEY")
-        jina_key = self.config.tools.web.tools.fetch.jina_api_key or os.getenv("JINA_AI_API_KEY")
-        max_search_results = self.config.tools.web.tools.web_search.max_results
-        timeout = self.config.tools.web.timeout
-
-        # Resolve leon:mini for Fetch AI extraction
-        extraction_model = self._create_extraction_model()
-
-        middleware.append(
-            WebMiddleware(
-                tavily_api_key=tavily_key,
-                exa_api_key=exa_key,
-                firecrawl_api_key=firecrawl_key,
-                jina_api_key=jina_key,
-                max_search_results=max_search_results,
-                timeout=timeout,
-                enabled_tools=web_tools,
-                extraction_model=extraction_model,
-                verbose=self.verbose,
-            )
-        )
-
-    def _add_command_middleware(self, middleware: list, cmd_executor: Any) -> None:
-        """Add command middleware to stack."""
-        command_hooks = []
-        if self._sandbox.name == "local":
-            if self.block_dangerous_commands:
-                command_hooks.append(
-                    DangerousCommandsHook(
-                        workspace_root=self.workspace_root,
-                        block_network=self.block_network_commands,
-                        verbose=self.verbose,
-                    )
-                )
-            command_hooks.append(PathSecurityHook(workspace_root=self.workspace_root))
-
-        command_tools = {
-            "run_command": self.config.tools.command.tools.run_command.enabled,
-            "command_status": self.config.tools.command.tools.command_status,
-        }
-        default_timeout = self.config.tools.command.tools.run_command.default_timeout
-
-        self._command_middleware = CommandMiddleware(
-            workspace_root=self.workspace_root,
-            default_timeout=default_timeout,
-            hooks=command_hooks,
-            enabled_tools=command_tools,
-            executor=cmd_executor,
-            registry=getattr(self, "_registry", None),
-            queue_manager=self.queue_manager,
-            verbose=self.verbose,
-        )
-        middleware.append(self._command_middleware)
-
-    def _add_skills_middleware(self, middleware: list) -> None:
-        """Add skills middleware to stack."""
-        middleware.append(
-            SkillsMiddleware(
-                skill_paths=self.config.skills.paths,
-                enabled_skills=self.config.skills.skills,
-                verbose=self.verbose,
-            )
-        )
 
     def _init_services(self) -> None:
         """Initialize tool Services and register them with ToolRegistry.
@@ -1263,12 +1108,12 @@ class LeonAgent:
         rules.append("""4. **Tool Priority**: When a built-in tool and an MCP tool (`mcp__*`) have the same functionality, use the built-in tool.""")
 
         # Rule 5: Dedicated tools over shell
-        rules.append("""5. **Use Dedicated Tools Instead of Shell Commands**: Do NOT use `run_command` for tasks that have dedicated tools:
-   - File search → use `Grep` (NOT `rg`, `grep`, or `find` via run_command)
-   - File listing → use `Glob` (NOT `find` or `ls` via run_command)
-   - File reading → use `read_file` (NOT `cat`, `head`, `tail` via run_command)
-   - File editing → use `edit_file` (NOT `sed` or `awk` via run_command)
-   - Reserve `run_command` for: git, package managers, build tools, tests, and other system operations.""")
+        rules.append("""5. **Use Dedicated Tools Instead of Shell Commands**: Do NOT use `Bash` for tasks that have dedicated tools:
+   - File search → use `Grep` (NOT `rg`, `grep`, or `find` via Bash)
+   - File listing → use `Glob` (NOT `find` or `ls` via Bash)
+   - File reading → use `Read` (NOT `cat`, `head`, `tail` via Bash)
+   - File editing → use `Edit` (NOT `sed` or `awk` via Bash)
+   - Reserve `Bash` for: git, package managers, build tools, tests, and other system operations.""")
 
         return "\n\n".join(rules)
 
@@ -1290,21 +1135,21 @@ class LeonAgent:
     def _build_common_prompt_sections(self) -> str:
         """Build common prompt sections for both sandbox and local modes."""
         prompt = """
-**Task Tool (Sub-agent Orchestration):**
+**Agent Tool (Sub-agent Orchestration):**
 
-Use the Task tool to launch specialized sub-agents for complex tasks:
+Use the Agent tool to launch specialized sub-agents for complex tasks:
 - `explore`: Read-only codebase exploration. Use for: finding files, searching code, understanding implementations.
 - `plan`: Design implementation plans. Use for: architecture decisions, multi-step planning.
 - `bash`: Execute shell commands. Use for: git operations, running tests, system commands.
 - `general`: Full tool access. Use for: independent multi-step tasks requiring file modifications.
 
-When to use Task:
+When to use Agent:
 - Open-ended searches that may require multiple rounds of exploration
 - Tasks that can run independently while you continue other work
 - Complex operations that benefit from specialized focus
 
-When NOT to use Task:
-- Simple file reads (use read_file directly)
+When NOT to use Agent:
+- Simple file reads (use Read directly)
 - Specific searches with known patterns (use Grep directly)
 - Quick operations that don't need isolation
 
