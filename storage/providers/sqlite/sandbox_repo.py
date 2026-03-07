@@ -7,6 +7,7 @@ It uses explicit transaction boundaries and follows repository pattern best prac
 from __future__ import annotations
 
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -57,6 +58,7 @@ class SandboxRepository:
         # Auto-commit mode: create temporary connection
         return connect_sqlite(self.db_path)
 
+    @contextmanager
     def _transaction(self):
         """Context manager for transaction handling.
 

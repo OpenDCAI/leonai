@@ -35,22 +35,24 @@ class LegacySandboxRepository:
     def ensure_tables(self) -> None:
         """Create all tables using existing code.
 
-        Delegates to existing ensure_tables methods in:
-        - SQLiteLease.ensure_tables()
-        - SQLiteTerminal.ensure_tables()
-        - ChatSession.ensure_tables()
-        - etc.
+        Delegates to existing store classes whose __init__ calls _ensure_tables():
+        - LeaseStore (lease + instance + event tables)
+        - TerminalStore (terminal + pointer tables)
+        - ChatSessionManager (session + command tables)
+        - ProviderEventStore (provider_events table)
         """
         # Import here to avoid circular dependencies
-        from sandbox.lease import SQLiteLease
-        from sandbox.terminal import SQLiteTerminal
-        from sandbox.chat_session import ChatSession
-        from sandbox.provider_events import ensure_provider_events_table
+        from sandbox.lease import LeaseStore
+        from sandbox.terminal import TerminalStore
+        from sandbox.chat_session import ChatSessionManager
+        from sandbox.provider_events import ProviderEventStore
 
-        SQLiteLease.ensure_tables(self.db_path)
-        SQLiteTerminal.ensure_tables(self.db_path)
-        ChatSession.ensure_tables(self.db_path)
-        ensure_provider_events_table(self.db_path)
+        # Instantiating these classes calls _ensure_tables() in __init__
+        LeaseStore(self.db_path)
+        TerminalStore(self.db_path)
+        # ChatSessionManager needs provider, but _ensure_tables() doesn't use it
+        ChatSessionManager(provider=None, db_path=self.db_path)  # type: ignore
+        ProviderEventStore(self.db_path)
 
     # === LEASE OPERATIONS ===
 
