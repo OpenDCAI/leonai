@@ -90,6 +90,20 @@ async def get_or_create_agent(app_obj: FastAPI, sandbox_type: str, thread_id: st
         sandbox_type=sandbox_type,
     )
     agent_obj.agent_id = agent_id
+
+    # @@@per-thread-bind-mounts - mount or copy thread files directory into sandbox
+    if hasattr(agent_obj, "_sandbox") and sandbox_type != "local":
+        from backend.web.services.file_channel_service import ensure_thread_file_channel
+        from sandbox.config import MountSpec
+
+        channel = ensure_thread_file_channel(thread_id)
+        capability = agent_obj._sandbox.manager.provider_capability
+        # @@@cloud-provider-copy - cloud providers can't mount local files, use copy mode instead
+        mode = "mount" if capability.mount.supports_mount else "copy"
+        mount = MountSpec(source=channel["files_path"], target="/workspace/files", mode=mode, read_only=False)
+        manager = getattr(agent_obj._sandbox, "_manager", None) or getattr(agent_obj._sandbox, "manager", None)
+        if manager and hasattr(manager, "set_thread_bind_mounts"):
+            manager.set_thread_bind_mounts(thread_id, [mount])
     pool[pool_key] = agent_obj
     return agent_obj
 

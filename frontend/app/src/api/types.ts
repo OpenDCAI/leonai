@@ -48,13 +48,28 @@ export interface ThreadSummary {
   preview?: string;
   updated_at?: string;
   running?: boolean;
-  agent?: string | null;
 }
 
 export interface SandboxType {
   name: string;
+  provider?: string;
   available: boolean;
   reason?: string;
+  capability?: {
+    can_pause: boolean;
+    can_resume: boolean;
+    can_destroy: boolean;
+    supports_webhook: boolean;
+    supports_status_probe: boolean;
+    eager_instance_binding: boolean;
+    inspect_visible: boolean;
+    runtime_kind: string;
+    mount: {
+      supports_mount: boolean;
+      supports_copy: boolean;
+      supports_read_only: boolean;
+    };
+  };
 }
 
 export interface SandboxSession {
@@ -225,4 +240,28 @@ export interface TaskAgentRequest {
   description?: string;
   model?: string;
   max_turns?: number;
+}
+
+// @@@channel-kind - string union used directly as a selector, not an object
+export type WorkspaceChannelKind = "upload" | "download";
+
+export interface WorkspaceChannelFileEntry {
+  relative_path: string;
+  size_bytes: number;
+  updated_at: string;
+}
+
+export interface WorkspaceChannelFilesResult {
+  thread_id: string;
+  channel: WorkspaceChannelKind;
+  entries: WorkspaceChannelFileEntry[];
+}
+
+export interface WorkspaceUploadResult {
+  thread_id: string;
+  channel: string;
+  relative_path: string;
+  absolute_path: string;
+  size_bytes: number;
+  sha256: string;
 }

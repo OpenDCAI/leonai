@@ -65,9 +65,7 @@ function applyReconnectTurn(
   return { entries: [...prev, newTurn], turnId: fallbackId };
 }
 
-export function useStreamHandler(
-  deps: StreamHandlerDeps,
-): StreamHandlerState & StreamHandlerActions {
+export function useStreamHandler(deps: StreamHandlerDeps): StreamHandlerState & StreamHandlerActions {
   const { threadId, refreshThreads, onUpdate, loading, runStarted } = deps;
 
   // Local state for immediate UI feedback when user sends a message

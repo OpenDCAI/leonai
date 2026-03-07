@@ -49,7 +49,7 @@ class SQLiteThreadConfigRepo:
         self._conn.commit()
 
     def update_fields(self, thread_id: str, **fields: str | None) -> None:
-        allowed = {"sandbox_type", "cwd", "model", "queue_mode", "observation_provider", "agent"}
+        allowed = {"sandbox_type", "cwd", "model", "queue_mode", "observation_provider", "agent", "workspace_id"}
         updates = {k: v for k, v in fields.items() if k in allowed}
         if not updates:
             return
@@ -72,7 +72,7 @@ class SQLiteThreadConfigRepo:
     def lookup_config(self, thread_id: str) -> dict[str, str | None] | None:
         row = self._conn.execute(
             """
-            SELECT sandbox_type, cwd, model, queue_mode, observation_provider, agent
+            SELECT sandbox_type, cwd, model, queue_mode, observation_provider, agent, workspace_id
             FROM thread_config
             WHERE thread_id = ?
             """,
@@ -87,6 +87,7 @@ class SQLiteThreadConfigRepo:
             "queue_mode": row[3],
             "observation_provider": row[4],
             "agent": row[5],
+            "workspace_id": row[6],
         }
 
     def lookup_metadata(self, thread_id: str) -> tuple[str, str | None] | None:
@@ -117,7 +118,8 @@ class SQLiteThreadConfigRepo:
                 model TEXT,
                 queue_mode TEXT DEFAULT 'steer',
                 observation_provider TEXT,
-                agent TEXT
+                agent TEXT,
+                workspace_id TEXT
             )
             """
         )
@@ -135,5 +137,7 @@ class SQLiteThreadConfigRepo:
             self._conn.execute("ALTER TABLE thread_config ADD COLUMN observation_provider TEXT")
         if "agent" not in existing_cols:
             self._conn.execute("ALTER TABLE thread_config ADD COLUMN agent TEXT")
+        if "workspace_id" not in existing_cols:
+            self._conn.execute("ALTER TABLE thread_config ADD COLUMN workspace_id TEXT")
 
         self._conn.commit()

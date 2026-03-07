@@ -1,5 +1,8 @@
 import { useCallback, useState } from "react";
-import { listWorkspace, readWorkspaceFile } from "../../api";
+import {
+  listWorkspace,
+  readWorkspaceFile,
+} from "../../api";
 import type { TreeNode } from "./types";
 import { buildTreeNodes, updateNodeAtPath } from "./utils";
 
