@@ -82,8 +82,6 @@ packages = [
     "core.memory",
     "core.skills",
     "core.monitor",
-    "core.task",
-    "core.todo",
     "core.web",
     "core.web.fetchers",
     "core.web.searchers",
