@@ -2,7 +2,7 @@
 Leon - AI Coding Agent with Middleware Architecture
 
 Middleware stack (outer → inner):
-  SpillBuffer → Monitor → PromptCaching → Memory → Steering → TaskBoard → Task → ToolRunner
+  SpillBuffer → Monitor → PromptCaching → Memory → Steering → TaskBoard → ToolRunner
 
 Tools are registered via Services into ToolRegistry:
 - FileSystemService: Read, Write, Edit, list_dir
@@ -101,7 +101,7 @@ class LeonAgent:
     Tools:
     1. File operations: Read, Write, Edit, list_dir
     2. Search: Grep, Glob
-    3. Command execution: run_command (via CommandMiddleware)
+    3. Command execution: Bash (via CommandService)
     """
 
     def __init__(
@@ -123,7 +123,6 @@ class LeonAgent:
         sandbox: Any = None,
         storage_container: StorageContainer | None = None,
         queue_manager: MessageQueueManager | None = None,
-        registry: Any = None,
         verbose: bool = False,
     ):
         """
@@ -146,7 +145,6 @@ class LeonAgent:
         self.agent_id: str | None = None
         self.verbose = verbose
         self.queue_manager = queue_manager or MessageQueueManager()
-        self._registry = registry
 
         # New config system mode
         self.config, self.models_config = self._load_config(
@@ -879,6 +877,10 @@ class LeonAgent:
                 extraction_model=extraction_model,
             )
 
+        # Shared background run registry: CommandService (bash) and AgentService (agent)
+        # both write here; TaskOutput/TaskStop read from here.
+        self._background_runs: dict = {}
+
         # Command tools
         if self.config.tools.command.enabled:
             command_hooks = []
@@ -898,6 +900,7 @@ class LeonAgent:
                 hooks=command_hooks,
                 executor=cmd_executor,
                 queue_manager=self.queue_manager,
+                background_runs=self._background_runs,
             )
 
         # Skills tools
@@ -927,6 +930,7 @@ class LeonAgent:
             workspace_root=self.workspace_root,
             model_name=self.model_name,
             queue_manager=self.queue_manager,
+            shared_runs=self._background_runs,
         )
         self._send_message_service = SendMessageService(
             registry=self._tool_registry,

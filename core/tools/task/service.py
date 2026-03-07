@@ -11,7 +11,7 @@ import logging
 from typing import Any
 
 from core.runtime.registry import ToolEntry, ToolMode, ToolRegistry
-from core.todo.types import Task, TaskStatus
+from core.tools.task.types import Task, TaskStatus
 
 logger = logging.getLogger(__name__)
 

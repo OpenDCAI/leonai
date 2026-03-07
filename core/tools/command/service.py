@@ -40,14 +40,14 @@ class CommandService:
         hooks: list[Any] | None = None,
         env: dict[str, str] | None = None,
         executor: BaseExecutor | None = None,
-        task_registry: Any = None,
         queue_manager: Any = None,
+        background_runs: dict | None = None,
     ):
         self.workspace_root = Path(workspace_root).resolve()
         self.hooks = hooks or []
         self.env = env
-        self._task_registry = task_registry
         self._queue_manager = queue_manager
+        self._background_runs = background_runs  # shared with AgentService
 
         if executor is not None:
             self._executor = executor
@@ -143,24 +143,14 @@ class CommandService:
         except Exception as e:
             return f"Error starting async command: {e}"
 
-        if self._task_registry:
-            from core.task.registry import TaskEntry
-            from sandbox.thread_context import get_current_thread_id
+        task_id = async_cmd.command_id
 
-            thread_id = get_current_thread_id() or "unknown"
-            entry = TaskEntry(
-                task_id=async_cmd.command_id,
-                task_type="bash",
-                thread_id=thread_id,
-                status="running",
-                command_line=command,
-                stdout_buffer=[],
-                stderr_buffer=[],
-            )
-            await self._task_registry.register(entry)
+        if self._background_runs is not None:
+            from core.agents.service import _BashBackgroundRun
+            self._background_runs[task_id] = _BashBackgroundRun(async_cmd, command)
 
         return (
             f"Command started in background.\n"
-            f"CommandId: {async_cmd.command_id}\n"
+            f"task_id: {task_id}\n"
             f"Use TaskOutput to get result."
         )

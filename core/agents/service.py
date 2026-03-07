@@ -99,7 +99,7 @@ TASK_STOP_SCHEMA = {
 
 
 class _RunningTask:
-    """Tracks a background asyncio.Task with its metadata."""
+    """Tracks a background asyncio.Task (agent run) with its metadata."""
 
     def __init__(self, task: asyncio.Task, agent_id: str, thread_id: str):
         self.task = task
@@ -119,11 +119,45 @@ class _RunningTask:
         return self.task.result()
 
 
+class _BashBackgroundRun:
+    """Wraps AsyncCommand to provide the same is_done/get_result interface as _RunningTask."""
+
+    def __init__(self, async_cmd: Any, command: str):
+        self._cmd = async_cmd
+        self.command = command
+
+    @property
+    def is_done(self) -> bool:
+        return bool(self._cmd.done)
+
+    def get_result(self) -> str | None:
+        if not self._cmd.done:
+            return None
+        stdout = "".join(self._cmd.stdout_buffer)
+        stderr = "".join(self._cmd.stderr_buffer)
+        exit_code = self._cmd.exit_code
+        parts = []
+        if stdout:
+            parts.append(stdout)
+        if stderr:
+            parts.append(f"[stderr]\n{stderr}")
+        if exit_code is not None and exit_code != 0:
+            parts.append(f"[exit_code: {exit_code}]")
+        return "\n".join(parts) if parts else "(completed with no output)"
+
+
+# Type alias for the shared background run registry
+BackgroundRun = _RunningTask | _BashBackgroundRun
+
+
 class AgentService:
     """Registers Agent, TaskOutput, TaskStop tools into ToolRegistry.
 
     Creates independent LeonAgent instances for each spawn. Uses asyncio.shield()
     + wait_for() so long-running agents auto-switch to background without losing work.
+
+    The shared_runs dict (optional) allows CommandService to register bash background
+    runs so that TaskOutput/TaskStop can retrieve them too.
     """
 
     def __init__(
@@ -133,12 +167,14 @@ class AgentService:
         workspace_root: Path,
         model_name: str,
         queue_manager: Any | None = None,
+        shared_runs: dict[str, BackgroundRun] | None = None,
     ):
         self._agent_registry = agent_registry
         self._workspace_root = workspace_root
         self._model_name = model_name
         self._queue_manager = queue_manager
-        self._tasks: dict[str, _RunningTask] = {}  # task_id -> _RunningTask
+        # Shared with CommandService so TaskOutput covers both bash and agent runs.
+        self._tasks: dict[str, BackgroundRun] = shared_runs if shared_runs is not None else {}
 
         tool_registry.register(ToolEntry(
             name="Agent",

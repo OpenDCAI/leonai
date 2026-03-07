@@ -219,10 +219,3 @@ export interface WorkspaceFileResult {
   size: number;
 }
 
-export interface TaskAgentRequest {
-  subagent_type: string;
-  prompt: string;
-  description?: string;
-  model?: string;
-  max_turns?: number;
-}

@@ -222,23 +222,6 @@ class CommandMiddleware(AgentMiddleware[CommandState]):
         except Exception as e:
             return f"Error starting async command: {e}"
 
-        # Register task in registry
-        if self._registry:
-            from core.task.registry import TaskEntry
-            from sandbox.thread_context import get_current_thread_id
-
-            thread_id = get_current_thread_id() or "unknown"
-            entry = TaskEntry(
-                task_id=async_cmd.command_id,
-                task_type="bash",
-                thread_id=thread_id,
-                status="running",
-                command_line=command_line,
-                stdout_buffer=[],
-                stderr_buffer=[],
-            )
-            await self._registry.register(entry)
-
         # Emit task_start event
         runtime = getattr(self._agent, "runtime", None) if self._agent else None
         if runtime:
