@@ -179,11 +179,17 @@ class SandboxManager:
             workspace_path = self.workspace_sync.get_thread_workspace_path(thread_id)
             workspace_path.mkdir(parents=True, exist_ok=True)
             from sandbox.config import MountSpec
+            target = getattr(self.provider, 'WORKSPACE_ROOT', '/workspace') + '/files'
             self.provider.set_thread_bind_mounts(thread_id, [
-                MountSpec(source=str(workspace_path), target="/workspace/files", read_only=False)
+                MountSpec(source=str(workspace_path), target=target, read_only=False)
             ])
 
         self._ensure_bound_instance(lease)
+
+        # @@@force-instance-for-sync - Non-eager providers (E2B, Daytona, etc.) create instances lazily.
+        # Force instance creation here so workspace sync can upload files before tools run.
+        if not lease.get_instance():
+            lease.ensure_active_instance(self.provider)
 
         session_id = f"sess-{uuid.uuid4().hex[:12]}"
         session = self.session_manager.create(
@@ -444,6 +450,15 @@ class SandboxManager:
 
         if not lease.resume_instance(self.provider):
             return False
+
+        # @@@workspace-upload-on-resume - re-sync files that may have been uploaded while paused
+        instance = lease.get_instance()
+        if instance:
+            try:
+                self.workspace_sync.upload_workspace(thread_id, instance.instance_id, self.provider)
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning(f"Failed to upload workspace on resume: {e}")
 
         resumed_any = False
         for terminal in terminals:

@@ -260,12 +260,36 @@ async def send_message(
         if t["direction"] == "upload" and datetime.fromisoformat(t["created_at"]) > cutoff
     ]
 
+    sandbox_type = resolve_thread_sandbox(app, thread_id)
+
     message = payload.message
     if new_files:
-        file_paths = [f"/workspace/files/{f}" for f in new_files]
-        message = f"[User uploaded {len(new_files)} file(s) to /workspace/files/: {', '.join(new_files)}]\n\n{message}"
+        # @@@workspace-root - resolve from provider instance so all aliases (daytona_selfhost etc.) work
+        workspace_root = "/workspace"
+        _, managers = init_providers_and_managers()
+        mgr = managers.get(sandbox_type)
+        if mgr:
+            workspace_root = getattr(mgr.provider, "WORKSPACE_ROOT", "/workspace")
+        files_dir = f"{workspace_root}/files"
+        message = f"[User uploaded {len(new_files)} file(s) to {files_dir}/: {', '.join(new_files)}]\n\n{message}"
 
-    sandbox_type = resolve_thread_sandbox(app, thread_id)
+        # @@@sync-new-uploads - push newly uploaded files to already-running sandbox
+        if mgr and hasattr(mgr, 'workspace_sync'):
+            try:
+                terminal = mgr._get_active_terminal(thread_id)
+                if terminal:
+                    session = mgr.session_manager.get(thread_id, terminal.terminal_id)
+                    if session:
+                        instance = session.lease.get_instance()
+                        if instance:
+                            await asyncio.to_thread(
+                                mgr.workspace_sync.upload_workspace,
+                                thread_id, instance.instance_id, mgr.provider,
+                            )
+            except Exception:
+                import logging
+                logging.getLogger(__name__).warning("Failed to sync uploads to sandbox", exc_info=True)
+
     agent = await get_or_create_agent(app, sandbox_type, thread_id=thread_id)
 
     qm = app.state.queue_manager
@@ -581,7 +605,46 @@ async def run_thread(
     if not payload.message.strip():
         raise HTTPException(status_code=400, detail="message cannot be empty")
 
+    # @@@file-upload-notification - check for recent uploads and prepend to message
+    from datetime import UTC, datetime, timedelta
+    from backend.web.services.file_channel_service import list_thread_file_transfers
+
+    recent_uploads = await asyncio.to_thread(list_thread_file_transfers, thread_id=thread_id, limit=20)
+    cutoff = datetime.now(UTC) - timedelta(seconds=10)
+    new_files = [
+        t["relative_path"] for t in recent_uploads
+        if t["direction"] == "upload" and datetime.fromisoformat(t["created_at"]) > cutoff
+    ]
+
     sandbox_type = resolve_thread_sandbox(app, thread_id)
+    message = payload.message
+    if new_files:
+        workspace_root = "/workspace"
+        _, managers = init_providers_and_managers()
+        mgr = managers.get(sandbox_type)
+        if mgr:
+            workspace_root = getattr(mgr.provider, "WORKSPACE_ROOT", "/workspace")
+        files_dir = f"{workspace_root}/files"
+        message = f"[User uploaded {len(new_files)} file(s) to {files_dir}/: {', '.join(new_files)}]\n\n{message}"
+
+        # @@@sync-new-uploads - push newly uploaded files to already-running sandbox
+        # SyncManager delegates to NoOpStrategy for Docker/local, so safe to call always
+        if mgr and hasattr(mgr, 'workspace_sync'):
+            try:
+                terminal = mgr._get_active_terminal(thread_id)
+                if terminal:
+                    session = mgr.session_manager.get(thread_id, terminal.terminal_id)
+                    if session:
+                        instance = session.lease.get_instance()
+                        if instance:
+                            await asyncio.to_thread(
+                                mgr.workspace_sync.upload_workspace,
+                                thread_id, instance.instance_id, mgr.provider,
+                            )
+            except Exception:
+                import logging
+                logging.getLogger(__name__).warning("Failed to sync uploads to sandbox", exc_info=True)
+
     set_current_thread_id(thread_id)
     agent = await get_or_create_agent(app, sandbox_type, thread_id=thread_id)
 
@@ -593,7 +656,7 @@ async def run_thread(
     async with lock:
         if hasattr(agent, "runtime") and not agent.runtime.transition(AgentState.ACTIVE):
             raise HTTPException(status_code=409, detail="Thread is already running")
-        run_id = start_agent_run(agent, thread_id, payload.message, app, payload.enable_trajectory)
+        run_id = start_agent_run(agent, thread_id, message, app, payload.enable_trajectory)
     return {"run_id": run_id, "thread_id": thread_id}
 
 

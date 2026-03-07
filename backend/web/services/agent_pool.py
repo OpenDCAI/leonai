@@ -97,7 +97,8 @@ async def get_or_create_agent(app_obj: FastAPI, sandbox_type: str, thread_id: st
         capability = agent_obj._sandbox.manager.provider_capability
         # @@@cloud-provider-copy - cloud providers can't mount local files, use copy mode instead
         mode = "mount" if capability.mount.supports_mount else "copy"
-        mount = MountSpec(source=channel["files_path"], target="/workspace/files", mode=mode, read_only=False)
+        target = getattr(agent_obj._sandbox.manager.provider, 'WORKSPACE_ROOT', '/workspace') + '/files'
+        mount = MountSpec(source=channel["files_path"], target=target, mode=mode, read_only=False)
         manager = getattr(agent_obj._sandbox, "_manager", None) or getattr(agent_obj._sandbox, "manager", None)
         if manager and hasattr(manager, "set_thread_bind_mounts"):
             manager.set_thread_bind_mounts(thread_id, [mount])
