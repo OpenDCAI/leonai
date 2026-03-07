@@ -251,12 +251,28 @@ async def send_message(
     if not payload.message.strip():
         raise HTTPException(status_code=400, detail="message cannot be empty")
 
+    # @@@file-upload-notification - check for recent uploads and prepend to message
+    from datetime import UTC, datetime, timedelta
+    from backend.web.services.file_channel_service import list_thread_file_transfers
+
+    recent_uploads = await asyncio.to_thread(list_thread_file_transfers, thread_id=thread_id, limit=20)
+    cutoff = datetime.now(UTC) - timedelta(seconds=10)
+    new_files = [
+        t["relative_path"] for t in recent_uploads
+        if t["direction"] == "upload" and datetime.fromisoformat(t["created_at"]) > cutoff
+    ]
+
+    message = payload.message
+    if new_files:
+        file_list = ", ".join(new_files)
+        message = f"[User uploaded files: {file_list}]\n\n{message}"
+
     sandbox_type = resolve_thread_sandbox(app, thread_id)
     agent = await get_or_create_agent(app, sandbox_type, thread_id=thread_id)
 
     qm = app.state.queue_manager
     if hasattr(agent, "runtime") and agent.runtime.current_state == AgentState.ACTIVE:
-        qm.enqueue(format_steer_reminder(payload.message), thread_id, notification_type="steer")
+        qm.enqueue(format_steer_reminder(message), thread_id, notification_type="steer")
         return {"status": "injected", "routing": "steer", "thread_id": thread_id}
 
     # Agent is IDLE — start new run (both transition and run start must be atomic)
@@ -265,9 +281,9 @@ async def send_message(
     async with lock:
         if hasattr(agent, "runtime") and not agent.runtime.transition(AgentState.ACTIVE):
             # Race: became active between check and lock
-            qm.enqueue(format_steer_reminder(payload.message), thread_id, notification_type="steer")
+            qm.enqueue(format_steer_reminder(message), thread_id, notification_type="steer")
             return {"status": "injected", "routing": "steer", "thread_id": thread_id}
-        run_id = start_agent_run(agent, thread_id, payload.message, app)
+        run_id = start_agent_run(agent, thread_id, message, app)
     return {"status": "started", "routing": "direct", "run_id": run_id, "thread_id": thread_id}
 
 
