@@ -61,14 +61,20 @@ class StoreClass:
    - `record()` → `repository.insert_provider_event()`
    - Table creation remains inline (avoids circular dependency)
 
-2. **TerminalStore** 🔄 (Partial)
+2. **TerminalStore** ✅ (Core CRUD)
    - Added optional repository injection
    - `get_by_id()` → `repository.get_terminal()`
    - `list_by_thread()` → `repository.list_terminals_by_thread()`
-   - Remaining: `delete()` (complex pointer logic), pointer operations
+   - `delete()` → orchestrates `repository.delete_terminal()` + pointer cleanup
+   - Remaining: `get_active()`, `get_default()`, `set_active()` (less critical)
+
+3. **LeaseStore** 🔄 (Partial)
+   - Added optional repository injection
+   - `get()` → `repository.get_lease()`
+   - `delete()` → `repository.delete_lease()` + lock cleanup
+   - Remaining: `create()`, `find_by_instance()`, list operations
 
 **Not Started:**
-- LeaseStore (complex, ~15 methods)
 - ChatSessionManager (complex)
 
 ## Key Technical Decisions
