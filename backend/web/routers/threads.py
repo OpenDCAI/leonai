@@ -262,8 +262,8 @@ async def send_message(
 
     message = payload.message
     if new_files:
-        file_list = ", ".join(new_files)
-        message = f"[User uploaded files: {file_list}]\n\n{message}"
+        file_paths = [f"/workspace/files/{f}" for f in new_files]
+        message = f"[User uploaded {len(new_files)} file(s) to /workspace/files/: {', '.join(new_files)}]\n\n{message}"
 
     sandbox_type = resolve_thread_sandbox(app, thread_id)
     agent = await get_or_create_agent(app, sandbox_type, thread_id=thread_id)
