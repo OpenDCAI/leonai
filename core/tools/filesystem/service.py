@@ -19,7 +19,7 @@ from core.filesystem.read import read_file as read_file_dispatch
 from core.runtime.registry import ToolEntry, ToolMode, ToolRegistry
 
 if TYPE_CHECKING:
-    from tui.operations import FileOperationRecorder
+    from core.operations import FileOperationRecorder
 
 logger = logging.getLogger(__name__)
 

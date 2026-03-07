@@ -30,7 +30,7 @@ from core.filesystem.read import ReadLimits, ReadResult
 from core.filesystem.read import read_file as read_file_dispatch
 
 if TYPE_CHECKING:
-    from tui.operations import FileOperationRecorder
+    from core.operations import FileOperationRecorder
 
 
 class FileSystemMiddleware(AgentMiddleware):
