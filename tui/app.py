@@ -25,8 +25,8 @@ try:
 except ImportError:
     set_sandbox_run_id = None
     set_sandbox_thread_id = None
-from core.monitor import AgentState
-from core.queue import format_steer_reminder
+from core.runtime.middleware.monitor import AgentState
+from core.runtime.middleware.queue import format_steer_reminder
 
 
 class WelcomeBanner(Static):
