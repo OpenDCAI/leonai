@@ -305,6 +305,12 @@ class TerminalStore:
         return self.get_by_id(str(pointer["default_terminal_id"]))
 
     def list_by_thread(self, thread_id: str) -> list[AbstractTerminal]:
+        # @@@repository-migration - use repository if available
+        if self._repo:
+            rows = self._repo.list_terminals_by_thread(thread_id)
+            return [self._row_to_terminal(row) for row in rows]  # type: ignore
+
+        # Fallback to inline SQL
         with _connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
