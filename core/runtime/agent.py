@@ -222,7 +222,7 @@ class LeonAgent:
             self.checkpointer = None
 
         # Initialize ToolRegistry and Services (new architecture)
-        self._tool_registry = ToolRegistry(allowed_tools=self._get_member_allowed_tools())
+        self._tool_registry = ToolRegistry(blocked_tools=self._get_member_blocked_tools())
         self._init_services()
 
         # Build middleware stack
@@ -334,14 +334,39 @@ class LeonAgent:
 
         return _placeholder
 
-    def _get_member_allowed_tools(self) -> set[str] | None:
-        """Return allowed tool names from member bundle runtime config, or None (= allow all)."""
+    def _get_member_blocked_tools(self) -> set[str]:
+        """Return disabled tool names, respecting catalog defaults.
+
+        Logic:
+        - Catalog default=True, absent from runtime.json → enabled
+        - Catalog default=True, runtime enabled=False → blocked
+        - Catalog default=False, absent from runtime.json → blocked (catalog wins)
+        - Catalog default=False, runtime enabled=True → enabled (explicit override)
+        """
         if not hasattr(self, "_agent_bundle") or not self._agent_bundle:
-            return None
-        tool_entries = {k: v for k, v in self._agent_bundle.runtime.items() if k.startswith("tools:")}
-        if not tool_entries:
-            return None  # No per-tool config → allow all
-        return {k.split(":", 1)[1] for k, v in tool_entries.items() if v.enabled}
+            return set()
+
+        from config.defaults.tool_catalog import TOOLS_BY_NAME
+
+        runtime = self._agent_bundle.runtime
+
+        # Tools explicitly disabled in runtime.json
+        blocked = {
+            k.split(":", 1)[1]
+            for k, v in runtime.items()
+            if k.startswith("tools:") and not v.enabled
+        }
+
+        # Also block catalog tools with default=False that aren't explicitly enabled
+        for tool_name, tool_def in TOOLS_BY_NAME.items():
+            if tool_def.default:
+                continue  # default=True: enabled unless explicitly blocked above
+            runtime_key = f"tools:{tool_name}"
+            if runtime_key not in runtime:
+                blocked.add(tool_name)  # default=False and no explicit enable
+            # If runtime_key exists with enabled=True, it's already excluded from blocked above
+
+        return blocked
 
     def _load_config(
         self,
@@ -777,7 +802,9 @@ class LeonAgent:
 
         # 5. TaskBoard (board management — not yet converted to Service)
         from backend.taskboard.middleware import TaskBoardMiddleware
-        self._taskboard_middleware = TaskBoardMiddleware()
+        self._taskboard_middleware = TaskBoardMiddleware(
+            blocked_tools=self._tool_registry.blocked_tools,
+        )
         middleware.append(self._taskboard_middleware)
 
         # 6. ToolRunner (innermost — routes all ToolRegistry-registered tool calls)
