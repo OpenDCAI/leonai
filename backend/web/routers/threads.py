@@ -18,7 +18,7 @@ from backend.web.models.requests import (
 )
 from backend.web.services.agent_pool import get_or_create_agent, resolve_thread_sandbox
 from backend.web.services.event_buffer import ThreadEventBuffer
-from backend.web.services.file_channel_service import cleanup_thread_file_channel, ensure_thread_file_channel
+from backend.web.services.workspace_service import cleanup_thread_files, ensure_thread_files
 from backend.web.services.sandbox_service import destroy_thread_resources_sync, init_providers_and_managers
 from backend.web.services.streaming_service import (
     get_or_create_thread_buffer,
@@ -62,7 +62,9 @@ async def _prepare_attachment_message(
     if mgr:
         workspace_root = getattr(mgr.provider, "WORKSPACE_ROOT", "/workspace")
     files_dir = f"{workspace_root}/files"
-    message = f"[User uploaded {len(attachments)} file(s) to {files_dir}/: {', '.join(attachments)}]\n\n{message}"
+
+    original_message = message
+    sync_ok = True
 
     # @@@sync-new-uploads - push newly uploaded files to already-running sandbox
     if mgr and hasattr(mgr, 'workspace_sync'):
@@ -76,9 +78,17 @@ async def _prepare_attachment_message(
                         await asyncio.to_thread(
                             mgr.workspace_sync.upload_workspace,
                             thread_id, instance.instance_id, mgr.provider,
+                            attachments,
                         )
         except Exception:
-            logger.warning("Failed to sync uploads to sandbox", exc_info=True)
+            logger.error("Failed to sync uploads to sandbox", exc_info=True)
+            sync_ok = False
+
+    # @@@sync-fail-honest - don't tell agent files are in sandbox if sync failed
+    if sync_ok:
+        message = f"[User uploaded {len(attachments)} file(s) to {files_dir}/: {', '.join(attachments)}]\n\n{original_message}"
+    else:
+        message = f"[User uploaded {len(attachments)} file(s) but sync to sandbox failed. Files may not be available in {files_dir}/.]\n\n{original_message}"
 
     return message, message_metadata
 
@@ -181,7 +191,6 @@ async def create_thread(
     from backend.web.utils.helpers import get_active_observation_provider, init_thread_config, save_thread_config
 
     init_thread_config(thread_id, sandbox_type, cwd)
-    await asyncio.to_thread(ensure_thread_file_channel, thread_id, workspace_id=workspace_id)
 
     model = payload.model if payload else None
     obs_provider = get_active_observation_provider()
@@ -196,6 +205,10 @@ async def create_thread(
         updates["workspace_id"] = workspace_id
     if updates:
         save_thread_config(thread_id, **updates)
+
+    # @@@config-before-channel - save workspace_id to thread_config before creating file channel,
+    # so _get_files_dir() can derive the correct path immediately.
+    await asyncio.to_thread(ensure_thread_files, thread_id, workspace_id=workspace_id)
 
     return {"thread_id": thread_id, "sandbox": sandbox_type, "agent": agent_name, "workspace_id": workspace_id}
 
@@ -259,7 +272,7 @@ async def delete_thread(
             await asyncio.to_thread(destroy_thread_resources_sync, thread_id, sandbox_type, app.state.agent_pool)
         except Exception as exc:
             logger.warning("Failed to destroy sandbox resources for thread %s: %s", thread_id, exc)
-        await asyncio.to_thread(cleanup_thread_file_channel, thread_id)
+        await asyncio.to_thread(cleanup_thread_files, thread_id)
         await asyncio.to_thread(delete_thread_in_db, thread_id)
 
     # Clean up thread-specific state
