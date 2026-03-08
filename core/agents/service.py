@@ -42,7 +42,7 @@ AGENT_SCHEMA = {
             },
             "description": {
                 "type": "string",
-                "description": "Short description of what agent will do",
+                "description": "Short description of what agent will do. Required when run_in_background is true; shown in the background task indicator.",
             },
             "run_in_background": {
                 "type": "boolean",
@@ -101,10 +101,11 @@ TASK_STOP_SCHEMA = {
 class _RunningTask:
     """Tracks a background asyncio.Task (agent run) with its metadata."""
 
-    def __init__(self, task: asyncio.Task, agent_id: str, thread_id: str):
+    def __init__(self, task: asyncio.Task, agent_id: str, thread_id: str, description: str = ""):
         self.task = task
         self.agent_id = agent_id
         self.thread_id = thread_id
+        self.description = description
 
     @property
     def is_done(self) -> bool:
@@ -237,9 +238,9 @@ class AgentService:
 
         # Create async task (independent LeonAgent runs inside)
         task = asyncio.create_task(
-            self._run_agent(task_id, agent_name, thread_id, prompt, subagent_type, max_turns)
+            self._run_agent(task_id, agent_name, thread_id, prompt, subagent_type, max_turns, description=description or "")
         )
-        running = _RunningTask(task=task, agent_id=task_id, thread_id=thread_id)
+        running = _RunningTask(task=task, agent_id=task_id, thread_id=thread_id, description=description or "")
         self._tasks[task_id] = running
 
         if run_in_background:
@@ -281,6 +282,7 @@ class AgentService:
         prompt: str,
         subagent_type: str,
         max_turns: int | None,
+        description: str = "",
     ) -> str:
         """Create and run an independent LeonAgent, collect its text output."""
         # Lazy import avoids circular dependency (agent.py imports AgentService)
@@ -324,7 +326,7 @@ class AgentService:
                     "task_id": task_id,
                     "background": True,
                     "task_type": "agent",
-                    "description": agent_name,
+                    "description": description or agent_name,
                 }, ensure_ascii=False)})
 
             config = {"configurable": {"thread_id": thread_id}}
