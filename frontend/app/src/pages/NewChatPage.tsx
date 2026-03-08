@@ -34,12 +34,12 @@ export default function NewChatPage() {
 
     const cwd = workspace || settings?.default_workspace || undefined;
     const threadId = await handleCreateThread(sandbox, cwd, agentForThread);
-    console.log('[NewChatPage] Created thread:', threadId, 'agent:', agentForThread, 'posting run:', message);
-    try {
-      await postRun(threadId, message, undefined, model ? { model } : undefined);
-    } catch (err) {
+    // Fire-and-forget: don't await postRun — agent creation can take 3-5s on first call.
+    // ChatPage mounts immediately with optimistic spinner; SSE (seq=0) picks up run_start
+    // when the agent is ready.
+    postRun(threadId, message, undefined, model ? { model } : undefined).catch(err => {
       console.error('[NewChatPage] postRun failed:', err);
-    }
+    });
     navigate(`/chat/${threadId}`, {
       state: { selectedModel: model, runStarted: true, message },
     });
