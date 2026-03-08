@@ -76,20 +76,61 @@ export default function Sidebar({
   const memberNameMap = new Map(memberList.map(m => [m.id, m.name]));
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   if (collapsed) {
+    const sortedCollapsed = [...threads].sort((a, b) => {
+      const ta = a.updated_at ? new Date(a.updated_at).getTime() : 0;
+      const tb = b.updated_at ? new Date(b.updated_at).getTime() : 0;
+      return tb - ta;
+    });
     return (
-      <div className="w-14 h-full flex flex-col items-center py-4 bg-card border-r border-border animate-slide-in">
+      <div className="w-14 h-full flex flex-col items-center py-3 bg-card border-r border-border animate-slide-in overflow-hidden flex-shrink-0">
         <button
           onClick={onNewChat}
-          className="w-9 h-9 rounded-lg flex items-center justify-center mb-2 text-muted-foreground hover:bg-muted hover:text-foreground"
+          className="w-9 h-9 rounded-lg flex items-center justify-center mb-1 text-muted-foreground hover:bg-muted hover:text-foreground"
         >
-          <Plus className="w-4.5 h-4.5" />
+          <Plus className="w-4 h-4" />
         </button>
         <button
           className="w-9 h-9 rounded-lg flex items-center justify-center mb-2 text-muted-foreground hover:bg-muted hover:text-foreground"
           onClick={onSearchClick}
         >
-          <Search className="w-4.5 h-4.5" />
+          <Search className="w-4 h-4" />
         </button>
+
+        <div className="w-8 h-px bg-border mb-2" />
+
+        <div className="flex-1 min-h-0 overflow-y-auto w-full flex flex-col items-center gap-1 px-2 py-1 custom-scrollbar">
+          {sortedCollapsed.map((thread) => {
+            const isActive = activeThreadId === thread.thread_id;
+            const memberName = thread.agent ? (memberNameMap.get(thread.agent) || thread.agent) : "Leon";
+            const initial = memberName.slice(0, 1).toUpperCase();
+            const preview = thread.preview || memberName;
+            return (
+              <div key={thread.thread_id} className="relative group/item w-full flex justify-center">
+                {isActive && (
+                  <div className="absolute -left-[4px] top-1/2 -translate-y-1/2 w-[3px] h-5 rounded-r-full bg-primary" />
+                )}
+                <Link
+                  to={`/chat/${thread.thread_id}`}
+                  title={preview}
+                  className={`w-9 h-9 rounded-xl flex items-center justify-center text-xs font-semibold transition-colors ${
+                    isActive
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-muted text-muted-foreground hover:bg-primary/15 hover:text-primary"
+                  }`}
+                >
+                  {thread.running ? (
+                    <span className="w-3 h-3 rounded-full border-2 border-current border-t-transparent animate-spin" />
+                  ) : (
+                    initial
+                  )}
+                </Link>
+                <div className="absolute left-[52px] top-1/2 -translate-y-1/2 px-2 py-1 bg-foreground text-background text-xs rounded opacity-0 group-hover/item:opacity-100 pointer-events-none transition-opacity whitespace-nowrap z-50 max-w-[200px] truncate">
+                  {preview}
+                </div>
+              </div>
+            );
+          })}
+        </div>
       </div>
     );
   }
