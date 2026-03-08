@@ -2,7 +2,7 @@
 Leon - AI Coding Agent with Middleware Architecture
 
 Middleware stack (outer → inner):
-  SpillBuffer → Monitor → PromptCaching → Memory → Steering → TaskBoard → ToolRunner
+  SpillBuffer → Monitor → PromptCaching → Memory → Steering → ToolRunner
 
 Tools are registered via Services into ToolRegistry:
 - FileSystemService: Read, Write, Edit, list_dir
@@ -13,6 +13,7 @@ Tools are registered via Services into ToolRegistry:
 - TaskService: TaskCreate/Update/List/Get (deferred)
 - AgentService: Agent, TaskOutput, TaskStop
 - SendMessageService: SendMessage
+- TaskBoardService: ListBoardTasks, ClaimTask, UpdateTaskProgress, CompleteTask, FailTask, CreateBoardTask
 - ToolSearchService: tool_search
 
 All paths must be absolute. Full security mechanisms and audit logging.
@@ -769,8 +770,7 @@ class LeonAgent:
         """Build middleware stack.
 
         Order (outer → inner, i.e. index 0 = outermost):
-          SpillBuffer → Monitor → PromptCaching → Memory → Steering
-            → [legacy middlewares, transitional] → ToolRunner
+          SpillBuffer → Monitor → PromptCaching → Memory → Steering → ToolRunner
         """
         middleware = []
 
@@ -800,14 +800,7 @@ class LeonAgent:
         # 4. Steering — injects queued messages before model call
         middleware.append(SteeringMiddleware(queue_manager=self.queue_manager))
 
-        # 5. TaskBoard (board management — not yet converted to Service)
-        from backend.taskboard.middleware import TaskBoardMiddleware
-        self._taskboard_middleware = TaskBoardMiddleware(
-            blocked_tools=self._tool_registry.blocked_tools,
-        )
-        middleware.append(self._taskboard_middleware)
-
-        # 6. ToolRunner (innermost — routes all ToolRegistry-registered tool calls)
+        # 5. ToolRunner (innermost — routes all ToolRegistry-registered tool calls)
         self._tool_runner = ToolRunner(
             registry=self._tool_registry,
             validator=ToolValidator(),
@@ -992,6 +985,13 @@ class LeonAgent:
         self._team_service = TeamService(
             tool_registry=self._tool_registry,
         )
+
+        # TaskBoard tools (board management — INLINE, blocked by default via catalog)
+        try:
+            from backend.taskboard.service import TaskBoardService
+            self._taskboard_service = TaskBoardService(registry=self._tool_registry)
+        except ImportError:
+            self._taskboard_service = None
 
         if self.verbose:
             all_tools = self._tool_registry.list_all()

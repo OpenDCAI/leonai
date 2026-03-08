@@ -372,9 +372,6 @@ async def _run_agent_to_buffer(
         if hasattr(agent, "_current_model_config"):
             config["configurable"].update(agent._current_model_config)
         set_current_thread_id(thread_id)
-        # Bind thread_id to TaskBoardMiddleware so ClaimTask records the executor
-        if hasattr(agent, '_taskboard_middleware'):
-            agent._taskboard_middleware.thread_id = thread_id
         # @@@web-run-context - web runs have no TUI checkpoint; use run_id to group file ops per run.
         set_current_run_id(run_id)
 
@@ -728,9 +725,10 @@ async def _run_agent_to_buffer(
             agent.runtime.transition(AgentState.IDLE)
 
         # Check for pending board tasks on idle
-        if hasattr(agent, '_taskboard_middleware') and agent._taskboard_middleware.auto_claim:
+        taskboard_svc = getattr(agent, '_taskboard_service', None)
+        if taskboard_svc is not None and taskboard_svc.auto_claim:
             try:
-                next_task = await agent._taskboard_middleware.on_idle()
+                next_task = await taskboard_svc.on_idle()
                 if next_task:
                     logger.info("Board task available: %s (id=%s)", next_task.get("title"), next_task["id"])
                     # V1: log only. Auto-execution requires thread management design (V2).
