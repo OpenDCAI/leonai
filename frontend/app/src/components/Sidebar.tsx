@@ -1,5 +1,5 @@
-import { MessageSquarePlus, MoreHorizontal, Plus, Search, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { ChevronRight, MessageSquarePlus, MoreHorizontal, Plus, Search, Trash2 } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import type { ThreadSummary } from "../api";
 import { useAppStore } from "../store/app-store";
@@ -61,6 +61,77 @@ function ThreadSkeleton() {
   );
 }
 
+function ThreadItem({
+  thread,
+  isActive,
+  label,
+  confirmDelete,
+  setConfirmDelete,
+  onDeleteThread,
+}: {
+  thread: ThreadSummary;
+  isActive: boolean;
+  label: string;
+  confirmDelete: string | null;
+  setConfirmDelete: (id: string | null) => void;
+  onDeleteThread: (id: string) => void;
+}) {
+  return (
+    <div className="group/item relative">
+      <Link
+        to={`/chat/${thread.thread_id}`}
+        className={`block w-full text-left px-3 py-2.5 rounded-lg transition-colors ${
+          isActive
+            ? "bg-background border-l-2 border-l-foreground shadow-sm"
+            : "border-l-2 border-l-transparent hover:bg-muted"
+        }`}
+      >
+        <div className={`flex items-center gap-1.5 ${isActive ? "text-foreground font-medium" : "text-foreground"}`}>
+          {thread.running && (
+            <span className="w-3 h-3 rounded-full border-2 border-muted-foreground border-t-foreground animate-spin flex-shrink-0" />
+          )}
+          <span className="text-sm font-medium truncate">{label}</span>
+        </div>
+        <div className="flex items-center gap-1 mt-0.5">
+          <span className="text-[11px] text-muted-foreground/60 truncate flex-1 min-w-0">
+            {thread.preview || thread.thread_id.slice(0, 14)}
+          </span>
+          {thread.updated_at && (
+            <span className="text-[10px] text-muted-foreground/40 flex-shrink-0">
+              {formatRelativeTime(thread.updated_at)}
+            </span>
+          )}
+        </div>
+      </Link>
+      <div className={`absolute right-2 top-2.5 ${confirmDelete === thread.thread_id ? "flex" : "hidden group-hover/item:flex"} items-center gap-0.5`}>
+        {confirmDelete === thread.thread_id ? (
+          <>
+            <button
+              className="w-6 h-6 rounded flex items-center justify-center text-destructive bg-destructive/10 hover:bg-destructive/20"
+              onClick={(e) => { e.preventDefault(); e.stopPropagation(); setConfirmDelete(null); onDeleteThread(thread.thread_id); }}
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+            <button
+              className="w-6 h-6 rounded flex items-center justify-center text-muted-foreground/60 hover:bg-muted hover:text-foreground text-xs"
+              onClick={(e) => { e.preventDefault(); e.stopPropagation(); setConfirmDelete(null); }}
+            >
+              ✕
+            </button>
+          </>
+        ) : (
+          <button
+            className="w-6 h-6 rounded flex items-center justify-center text-muted-foreground/60 hover:bg-muted hover:text-foreground"
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); setConfirmDelete(thread.thread_id); }}
+          >
+            <MoreHorizontal className="w-3.5 h-3.5" />
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function Sidebar({
   threads,
   collapsed = false,
@@ -73,8 +144,54 @@ export default function Sidebar({
   const { threadId } = useParams<{ threadId?: string }>();
   const activeThreadId = threadId || null;
   const memberList = useAppStore(s => s.memberList);
-  const memberNameMap = new Map(memberList.map(m => [m.id, m.name]));
+  const memberNameMap = useMemo(() => new Map(memberList.map(m => [m.id, m.name])), [memberList]);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [expandedMembers, setExpandedMembers] = useState<Set<string>>(new Set());
+  const hasInitialized = useRef(false);
+
+  // Group threads by member, sorted by most recent activity
+  const groups = useMemo(() => {
+    const map = new Map<string, { memberName: string; threads: ThreadSummary[]; latestAt: number }>();
+    for (const thread of threads) {
+      const key = thread.agent || "__default__";
+      const name = thread.agent ? (memberNameMap.get(thread.agent) || thread.agent) : "Leon";
+      const at = thread.updated_at ? new Date(thread.updated_at).getTime() : 0;
+      if (!map.has(key)) map.set(key, { memberName: name, threads: [], latestAt: 0 });
+      const g = map.get(key)!;
+      g.threads.push(thread);
+      g.latestAt = Math.max(g.latestAt, at);
+    }
+    return [...map.entries()]
+      .map(([memberId, g]) => ({ memberId, ...g }))
+      .sort((a, b) => b.latestAt - a.latestAt)
+      .map(g => ({
+        ...g,
+        threads: [...g.threads].sort((a, b) => {
+          const ta = a.updated_at ? new Date(a.updated_at).getTime() : 0;
+          const tb = b.updated_at ? new Date(b.updated_at).getTime() : 0;
+          return tb - ta;
+        }),
+      }));
+  }, [threads, memberNameMap]);
+
+  // Auto-expand the most recently active member on first load
+  useEffect(() => {
+    if (groups.length > 0 && !hasInitialized.current) {
+      hasInitialized.current = true;
+      setExpandedMembers(new Set([groups[0].memberId]));
+    }
+  }, [groups]);
+
+  const toggleMember = (memberId: string) => {
+    setExpandedMembers(prev => {
+      const next = new Set(prev);
+      if (next.has(memberId)) next.delete(memberId);
+      else next.add(memberId);
+      return next;
+    });
+  };
+
+  // ── Collapsed (narrow) mode ──────────────────────────────────────────────
   if (collapsed) {
     const sortedCollapsed = [...threads].sort((a, b) => {
       const ta = a.updated_at ? new Date(a.updated_at).getTime() : 0;
@@ -83,16 +200,10 @@ export default function Sidebar({
     });
     return (
       <div className="w-14 h-full flex flex-col items-center py-3 bg-card border-r border-border animate-slide-in overflow-hidden flex-shrink-0">
-        <button
-          onClick={onNewChat}
-          className="w-9 h-9 rounded-lg flex items-center justify-center mb-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-        >
+        <button onClick={onNewChat} className="w-9 h-9 rounded-lg flex items-center justify-center mb-1 text-muted-foreground hover:bg-muted hover:text-foreground">
           <Plus className="w-4 h-4" />
         </button>
-        <button
-          className="w-9 h-9 rounded-lg flex items-center justify-center mb-2 text-muted-foreground hover:bg-muted hover:text-foreground"
-          onClick={onSearchClick}
-        >
+        <button onClick={onSearchClick} className="w-9 h-9 rounded-lg flex items-center justify-center mb-2 text-muted-foreground hover:bg-muted hover:text-foreground">
           <Search className="w-4 h-4" />
         </button>
 
@@ -113,16 +224,12 @@ export default function Sidebar({
                   to={`/chat/${thread.thread_id}`}
                   title={preview}
                   className={`w-9 h-9 rounded-xl flex items-center justify-center text-xs font-semibold transition-colors ${
-                    isActive
-                      ? "bg-primary text-primary-foreground"
-                      : "bg-muted text-muted-foreground hover:bg-primary/15 hover:text-primary"
+                    isActive ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-primary/15 hover:text-primary"
                   }`}
                 >
-                  {thread.running ? (
-                    <span className="w-3 h-3 rounded-full border-2 border-current border-t-transparent animate-spin" />
-                  ) : (
-                    initial
-                  )}
+                  {thread.running
+                    ? <span className="w-3 h-3 rounded-full border-2 border-current border-t-transparent animate-spin" />
+                    : initial}
                 </Link>
                 <div className="absolute left-[52px] top-1/2 -translate-y-1/2 px-2 py-1 bg-foreground text-background text-xs rounded opacity-0 group-hover/item:opacity-100 pointer-events-none transition-opacity whitespace-nowrap z-50 max-w-[200px] truncate">
                   {preview}
@@ -135,6 +242,40 @@ export default function Sidebar({
     );
   }
 
+  // ── Expanded mode ────────────────────────────────────────────────────────
+
+  // Flat list with date groups (used when only one member)
+  const renderFlatList = () => {
+    const sorted = [...threads].sort((a, b) => {
+      const ta = a.updated_at ? new Date(a.updated_at).getTime() : 0;
+      const tb = b.updated_at ? new Date(b.updated_at).getTime() : 0;
+      return tb - ta;
+    });
+    let lastGroup: DateGroup | null = null;
+    return sorted.map((thread) => {
+      const isActive = activeThreadId === thread.thread_id;
+      const memberName = thread.agent ? (memberNameMap.get(thread.agent) || thread.agent) : "Leon";
+      const group = getDateGroup(thread.updated_at);
+      const showGroupLabel = group !== lastGroup;
+      lastGroup = group;
+      return (
+        <div key={thread.thread_id}>
+          {showGroupLabel && (
+            <div className="text-[10px] uppercase tracking-wider text-muted-foreground/60 px-3 pt-3 pb-1">{group}</div>
+          )}
+          <ThreadItem
+            thread={thread}
+            isActive={isActive}
+            label={memberName}
+            confirmDelete={confirmDelete}
+            setConfirmDelete={setConfirmDelete}
+            onDeleteThread={onDeleteThread}
+          />
+        </div>
+      );
+    });
+  };
+
   return (
     <div className="h-full flex flex-col bg-card border-r border-border animate-slide-in flex-shrink-0" style={{ width }}>
       {/* Header */}
@@ -142,7 +283,7 @@ export default function Sidebar({
         <span className="text-sm font-semibold text-foreground">消息</span>
       </div>
 
-      {/* Actions */}
+      {/* Search */}
       <div className="px-3 pb-3">
         <button
           className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-muted-foreground/60 hover:bg-muted hover:text-foreground"
@@ -153,7 +294,6 @@ export default function Sidebar({
         </button>
       </div>
 
-      {/* Divider */}
       <div className="h-px mx-3 bg-border" />
 
       {/* Thread list */}
@@ -162,122 +302,67 @@ export default function Sidebar({
           <span className="text-[11px] font-medium tracking-wider uppercase text-muted-foreground/60">对话</span>
           <span className="text-[11px] text-muted-foreground/40">{threads.length}</span>
         </div>
+
         <div className="flex-1 min-h-0 overflow-y-auto space-y-0.5 custom-scrollbar">
           {loading ? (
             <ThreadSkeleton />
+          ) : groups.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-10 px-4 text-center">
+              <div className="w-10 h-10 rounded-xl bg-muted flex items-center justify-center mb-3">
+                <MessageSquarePlus className="w-5 h-5 text-muted-foreground" />
+              </div>
+              <p className="text-xs font-medium text-foreground mb-1">暂无对话</p>
+              <p className="text-[11px] text-muted-foreground/60 mb-3">发起一个会话，开始与 Agent 协作</p>
+              <button
+                onClick={onNewChat}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:opacity-90 transition-opacity"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                发起会话
+              </button>
+            </div>
+          ) : groups.length === 1 ? (
+            // Single member: flat list with date groups
+            renderFlatList()
           ) : (
-            <>
-              {(() => {
-                const sorted = [...threads].sort((a, b) => {
-                  const ta = a.updated_at ? new Date(a.updated_at).getTime() : 0;
-                  const tb = b.updated_at ? new Date(b.updated_at).getTime() : 0;
-                  return tb - ta;
-                });
-                let lastGroup: DateGroup | null = null;
-                return sorted.map((thread) => {
-                const isActive = activeThreadId === thread.thread_id;
-                const group = getDateGroup(thread.updated_at);
-                const showGroupLabel = group !== lastGroup;
-                lastGroup = group;
-                return (
-                  <div key={thread.thread_id}>
-                    {showGroupLabel && (
-                      <div className="text-[10px] uppercase tracking-wider text-muted-foreground/60 px-3 pt-3 pb-1">
-                        {group}
-                      </div>
-                    )}
-                  <div className="group/item relative">
-                    <Link
-                      to={`/chat/${thread.thread_id}`}
-                      className={`block w-full text-left px-3 py-2.5 rounded-lg transition-colors ${
-                        isActive
-                          ? "bg-background border-l-2 border-l-foreground shadow-sm"
-                          : "border-l-2 border-l-transparent hover:bg-muted"
-                      }`}
-                    >
-                      <div className={`flex items-center gap-1.5 ${isActive ? "text-foreground font-medium" : "text-foreground"}`}>
-                        {thread.running && (
-                          <span className="w-3 h-3 rounded-full border-2 border-muted-foreground border-t-foreground animate-spin flex-shrink-0" />
-                        )}
-                        <span className="text-sm font-medium truncate">
-                          {thread.agent ? (memberNameMap.get(thread.agent) || thread.agent) : "Leon"}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-1 mt-0.5">
-                        <span className="text-[11px] text-muted-foreground/60 truncate flex-1 min-w-0">
-                          {thread.preview || thread.thread_id.slice(0, 14)}
-                        </span>
-                        {thread.updated_at && (
-                          <span className="text-[10px] text-muted-foreground/40 flex-shrink-0">
-                            {formatRelativeTime(thread.updated_at)}
-                          </span>
-                        )}
-                      </div>
-                    </Link>
-                    <div className={`absolute right-2 top-2.5 ${confirmDelete === thread.thread_id ? "flex" : "hidden group-hover/item:flex"} items-center gap-0.5`}>
-                      {confirmDelete === thread.thread_id ? (
-                        <>
-                          <button
-                            className="w-6 h-6 rounded flex items-center justify-center text-destructive bg-destructive/10 hover:bg-destructive/20"
-                            onClick={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              setConfirmDelete(null);
-                              onDeleteThread(thread.thread_id);
-                            }}
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            className="w-6 h-6 rounded flex items-center justify-center text-muted-foreground/60 hover:bg-muted hover:text-foreground text-xs"
-                            onClick={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              setConfirmDelete(null);
-                            }}
-                          >
-                            ✕
-                          </button>
-                        </>
-                      ) : (
-                        <button
-                          className="w-6 h-6 rounded flex items-center justify-center text-muted-foreground/60 hover:bg-muted hover:text-foreground"
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            setConfirmDelete(thread.thread_id);
-                          }}
-                        >
-                          <MoreHorizontal className="w-3.5 h-3.5" />
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                  </div>
-                );
-              });
-              })()}
-              {threads.length === 0 && (
-                <div className="flex flex-col items-center justify-center py-10 px-4 text-center">
-                  <div className="w-10 h-10 rounded-xl bg-muted flex items-center justify-center mb-3">
-                    <MessageSquarePlus className="w-5 h-5 text-muted-foreground" />
-                  </div>
-                  <p className="text-xs font-medium text-foreground mb-1">暂无对话</p>
-                  <p className="text-[11px] text-muted-foreground/60 mb-3">发起一个会话，开始与 Agent 协作</p>
+            // Multiple members: grouped by member
+            groups.map((group) => {
+              const isExpanded = expandedMembers.has(group.memberId);
+              const initial = group.memberName.slice(0, 1).toUpperCase();
+              return (
+                <div key={group.memberId} className="mb-1">
                   <button
-                    onClick={onNewChat}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:opacity-90 transition-opacity"
+                    onClick={() => toggleMember(group.memberId)}
+                    className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-muted text-left"
                   >
-                    <Plus className="w-3.5 h-3.5" />
-                    发起会话
+                    <ChevronRight className={`w-3.5 h-3.5 text-muted-foreground/50 transition-transform flex-shrink-0 ${isExpanded ? "rotate-90" : ""}`} />
+                    <div className="w-6 h-6 rounded-lg bg-primary/10 flex items-center justify-center text-[11px] font-semibold text-primary flex-shrink-0">
+                      {initial}
+                    </div>
+                    <span className="text-xs font-medium text-foreground flex-1 truncate">{group.memberName}</span>
+                    <span className="text-[10px] text-muted-foreground/40 flex-shrink-0">{group.threads.length}</span>
                   </button>
+                  {isExpanded && (
+                    <div className="mt-0.5 ml-3 space-y-0.5">
+                      {group.threads.map((thread) => (
+                        <ThreadItem
+                          key={thread.thread_id}
+                          thread={thread}
+                          isActive={activeThreadId === thread.thread_id}
+                          label={thread.preview || thread.thread_id.slice(0, 14)}
+                          confirmDelete={confirmDelete}
+                          setConfirmDelete={setConfirmDelete}
+                          onDeleteThread={onDeleteThread}
+                        />
+                      ))}
+                    </div>
+                  )}
                 </div>
-              )}
-            </>
+              );
+            })
           )}
         </div>
       </div>
-
     </div>
   );
 }
