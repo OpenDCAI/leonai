@@ -23,11 +23,13 @@ function StatusIcon({ status }: { status: string }) {
 export function BackgroundSessionsIndicator({ tasks, onCancelTask }: BackgroundSessionsIndicatorProps) {
   const [isHovered, setIsHovered] = useState(false);
 
-  if (tasks.length === 0) return null;
+  const runningTasks = tasks.filter((t) => t.status === "running");
+  const runningCount = runningTasks.length;
 
-  const runningCount = tasks.filter((t) => t.status === "running").length;
-  const agents = tasks.filter((t) => t.task_type === "agent");
-  const terminals = tasks.filter((t) => t.task_type === "bash");
+  if (runningCount === 0) return null;
+
+  const agents = runningTasks.filter((t) => t.task_type === "agent");
+  const terminals = runningTasks.filter((t) => t.task_type === "bash");
 
   return (
     <div
@@ -37,8 +39,8 @@ export function BackgroundSessionsIndicator({ tasks, onCancelTask }: BackgroundS
     >
       {/* 入口：小圆点 + 数字 */}
       <div className="flex items-center gap-1 text-[11px] text-blue-600 font-medium cursor-default px-1.5 py-0.5 bg-blue-50/90 backdrop-blur-sm rounded border border-blue-200/60 hover:bg-blue-100/90 transition-colors select-none">
-        <span className={`w-1.5 h-1.5 rounded-full ${runningCount > 0 ? "bg-blue-500 animate-pulse" : "bg-green-500"}`} />
-        {tasks.length}
+        <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
+        {runningCount}
       </div>
 
       {/* 悬浮面板 */}
