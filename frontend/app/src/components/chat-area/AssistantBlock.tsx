@@ -99,9 +99,11 @@ export const AssistantBlock = memo(function AssistantBlock({ entry, isStreamingT
 
   if (!hasVisible && !isStreamingThis && !hasNotice) return null;
 
+  const isBooting = isStreamingThis && !hasVisible && !runtimeStatus;
+
   return (
     <div className="flex gap-2.5 animate-fade-in group/block">
-      <div className="w-6 h-6 rounded-full bg-[#171717] flex items-center justify-center flex-shrink-0 mt-0.5">
+      <div className={`w-6 h-6 rounded-full bg-[#171717] flex items-center justify-center flex-shrink-0 mt-0.5${isBooting ? " avatar-booting" : ""}`}>
         <span className="text-[11px] font-semibold text-white">L</span>
       </div>
       <div className="flex-1 min-w-0 space-y-1.5 overflow-hidden">

@@ -9,7 +9,6 @@ import {
   type NotificationType,
   type StreamStatus,
 } from "../api";
-import type { StreamEvent } from "../api/types";
 import { processStreamEvent } from "./stream-event-handlers";
 import { useThreadStream } from "./use-thread-stream";
 import { makeId } from "./utils";
