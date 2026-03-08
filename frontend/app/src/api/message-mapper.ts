@@ -88,11 +88,15 @@ function handleHuman(msg: BackendMessage, i: number, state: MapState): void {
   // Normal user message → breaks current turn
   state.currentTurn = null;
   state.currentRunId = null;
+  const attachments = (msg.metadata?.attachments as string[] | undefined)?.length
+    ? (msg.metadata.attachments as string[])
+    : undefined;
   state.entries.push({
     id: msg.id ?? `hist-user-${i}`,
     role: "user",
     content: extractTextContent(msg.content),
     timestamp: state.now,
+    ...(attachments ? { attachments } : {}),
   });
 }
 

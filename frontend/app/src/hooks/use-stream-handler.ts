@@ -33,7 +33,7 @@ export interface StreamHandlerState {
 }
 
 export interface StreamHandlerActions {
-  handleSendMessage: (message: string) => Promise<void>;
+  handleSendMessage: (message: string, attachments?: string[]) => Promise<void>;
   handleStopStreaming: () => Promise<void>;
 }
 
@@ -200,13 +200,14 @@ export function useStreamHandler(deps: StreamHandlerDeps): StreamHandlerState & 
   }, [subscribe]);
 
   const handleSendMessage = useCallback(
-    async (message: string) => {
+    async (message: string, attachments?: string[]) => {
       const tempTurnId = makeId("turn");
       const userEntry: ChatEntry = {
         id: makeId("user"),
         role: "user",
         content: message,
         timestamp: Date.now(),
+        ...(attachments?.length ? { attachments } : {}),
       };
       const assistantTurn: AssistantTurn = {
         id: tempTurnId,
@@ -226,7 +227,7 @@ export function useStreamHandler(deps: StreamHandlerDeps): StreamHandlerState & 
       });
 
       try {
-        await postRun(threadId, message);
+        await postRun(threadId, message, undefined, attachments?.length ? { attachments } : undefined);
         // Connection is persistent — no need to reconnect.
         // run_start event will confirm isRunning.
       } catch (err) {

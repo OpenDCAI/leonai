@@ -45,6 +45,44 @@ from sandbox.thread_context import set_current_thread_id
 router = APIRouter(prefix="/api/threads", tags=["threads"])
 
 
+async def _prepare_attachment_message(
+    thread_id: str,
+    sandbox_type: str,
+    message: str,
+    attachments: list[str],
+) -> tuple[str, dict[str, Any] | None]:
+    """Build LLM notification prefix and sync uploads to running sandbox.
+
+    Returns (modified_message, message_metadata).
+    """
+    message_metadata: dict[str, Any] = {"attachments": attachments}
+    workspace_root = "/workspace"
+    _, managers = init_providers_and_managers()
+    mgr = managers.get(sandbox_type)
+    if mgr:
+        workspace_root = getattr(mgr.provider, "WORKSPACE_ROOT", "/workspace")
+    files_dir = f"{workspace_root}/files"
+    message = f"[User uploaded {len(attachments)} file(s) to {files_dir}/: {', '.join(attachments)}]\n\n{message}"
+
+    # @@@sync-new-uploads - push newly uploaded files to already-running sandbox
+    if mgr and hasattr(mgr, 'workspace_sync'):
+        try:
+            terminal = mgr._get_active_terminal(thread_id)
+            if terminal:
+                session = mgr.session_manager.get(thread_id, terminal.terminal_id)
+                if session:
+                    instance = session.lease.get_instance()
+                    if instance:
+                        await asyncio.to_thread(
+                            mgr.workspace_sync.upload_workspace,
+                            thread_id, instance.instance_id, mgr.provider,
+                        )
+        except Exception:
+            logger.warning("Failed to sync uploads to sandbox", exc_info=True)
+
+    return message, message_metadata
+
+
 def _find_mount_capability_mismatch(
     requested_mounts: list[MountSpec],
     mount_capability: Any,
@@ -249,46 +287,14 @@ async def send_message(
     if not payload.message.strip():
         raise HTTPException(status_code=400, detail="message cannot be empty")
 
-    # @@@file-upload-notification - check for recent uploads and prepend to message
-    from datetime import UTC, datetime, timedelta
-    from backend.web.services.file_channel_service import list_thread_file_transfers
-
-    recent_uploads = await asyncio.to_thread(list_thread_file_transfers, thread_id=thread_id, limit=20)
-    cutoff = datetime.now(UTC) - timedelta(seconds=10)
-    new_files = [
-        t["relative_path"] for t in recent_uploads
-        if t["direction"] == "upload" and datetime.fromisoformat(t["created_at"]) > cutoff
-    ]
-
     sandbox_type = resolve_thread_sandbox(app, thread_id)
 
     message = payload.message
-    if new_files:
-        # @@@workspace-root - resolve from provider instance so all aliases (daytona_selfhost etc.) work
-        workspace_root = "/workspace"
-        _, managers = init_providers_and_managers()
-        mgr = managers.get(sandbox_type)
-        if mgr:
-            workspace_root = getattr(mgr.provider, "WORKSPACE_ROOT", "/workspace")
-        files_dir = f"{workspace_root}/files"
-        message = f"[User uploaded {len(new_files)} file(s) to {files_dir}/: {', '.join(new_files)}]\n\n{message}"
-
-        # @@@sync-new-uploads - push newly uploaded files to already-running sandbox
-        if mgr and hasattr(mgr, 'workspace_sync'):
-            try:
-                terminal = mgr._get_active_terminal(thread_id)
-                if terminal:
-                    session = mgr.session_manager.get(thread_id, terminal.terminal_id)
-                    if session:
-                        instance = session.lease.get_instance()
-                        if instance:
-                            await asyncio.to_thread(
-                                mgr.workspace_sync.upload_workspace,
-                                thread_id, instance.instance_id, mgr.provider,
-                            )
-            except Exception:
-                import logging
-                logging.getLogger(__name__).warning("Failed to sync uploads to sandbox", exc_info=True)
+    message_metadata: dict[str, Any] | None = None
+    if payload.attachments:
+        message, message_metadata = await _prepare_attachment_message(
+            thread_id, sandbox_type, message, payload.attachments,
+        )
 
     agent = await get_or_create_agent(app, sandbox_type, thread_id=thread_id)
 
@@ -305,7 +311,7 @@ async def send_message(
             # Race: became active between check and lock
             qm.enqueue(format_steer_reminder(message), thread_id, notification_type="steer")
             return {"status": "injected", "routing": "steer", "thread_id": thread_id}
-        run_id = start_agent_run(agent, thread_id, message, app)
+        run_id = start_agent_run(agent, thread_id, message, app, message_metadata=message_metadata)
     return {"status": "started", "routing": "direct", "run_id": run_id, "thread_id": thread_id}
 
 
@@ -605,45 +611,14 @@ async def run_thread(
     if not payload.message.strip():
         raise HTTPException(status_code=400, detail="message cannot be empty")
 
-    # @@@file-upload-notification - check for recent uploads and prepend to message
-    from datetime import UTC, datetime, timedelta
-    from backend.web.services.file_channel_service import list_thread_file_transfers
-
-    recent_uploads = await asyncio.to_thread(list_thread_file_transfers, thread_id=thread_id, limit=20)
-    cutoff = datetime.now(UTC) - timedelta(seconds=10)
-    new_files = [
-        t["relative_path"] for t in recent_uploads
-        if t["direction"] == "upload" and datetime.fromisoformat(t["created_at"]) > cutoff
-    ]
-
     sandbox_type = resolve_thread_sandbox(app, thread_id)
-    message = payload.message
-    if new_files:
-        workspace_root = "/workspace"
-        _, managers = init_providers_and_managers()
-        mgr = managers.get(sandbox_type)
-        if mgr:
-            workspace_root = getattr(mgr.provider, "WORKSPACE_ROOT", "/workspace")
-        files_dir = f"{workspace_root}/files"
-        message = f"[User uploaded {len(new_files)} file(s) to {files_dir}/: {', '.join(new_files)}]\n\n{message}"
 
-        # @@@sync-new-uploads - push newly uploaded files to already-running sandbox
-        # SyncManager delegates to NoOpStrategy for Docker/local, so safe to call always
-        if mgr and hasattr(mgr, 'workspace_sync'):
-            try:
-                terminal = mgr._get_active_terminal(thread_id)
-                if terminal:
-                    session = mgr.session_manager.get(thread_id, terminal.terminal_id)
-                    if session:
-                        instance = session.lease.get_instance()
-                        if instance:
-                            await asyncio.to_thread(
-                                mgr.workspace_sync.upload_workspace,
-                                thread_id, instance.instance_id, mgr.provider,
-                            )
-            except Exception:
-                import logging
-                logging.getLogger(__name__).warning("Failed to sync uploads to sandbox", exc_info=True)
+    message = payload.message
+    message_metadata: dict[str, Any] | None = None
+    if payload.attachments:
+        message, message_metadata = await _prepare_attachment_message(
+            thread_id, sandbox_type, message, payload.attachments,
+        )
 
     set_current_thread_id(thread_id)
     agent = await get_or_create_agent(app, sandbox_type, thread_id=thread_id)
@@ -656,7 +631,7 @@ async def run_thread(
     async with lock:
         if hasattr(agent, "runtime") and not agent.runtime.transition(AgentState.ACTIVE):
             raise HTTPException(status_code=409, detail="Thread is already running")
-        run_id = start_agent_run(agent, thread_id, message, app, payload.enable_trajectory)
+        run_id = start_agent_run(agent, thread_id, message, app, payload.enable_trajectory, message_metadata)
     return {"run_id": run_id, "thread_id": thread_id}
 
 

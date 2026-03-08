@@ -165,6 +165,7 @@ export interface UserMessage {
   role: "user";
   content: string;
   timestamp: number;
+  attachments?: string[];
 }
 
 export interface NoticeMessage {
