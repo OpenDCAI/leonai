@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate, useOutletContext, useLocation } from "react-router-dom";
+import { useNavigate, useOutletContext, useParams } from "react-router-dom";
 import { postRun } from "../api";
 import CenteredInputBox from "../components/CenteredInputBox";
 import WorkspaceSetupModal from "../components/WorkspaceSetupModal";
@@ -15,15 +15,15 @@ interface OutletContext {
 
 export default function NewChatPage() {
   const navigate = useNavigate();
-  const location = useLocation();
+  const { memberId } = useParams<{ memberId: string }>();
   const { tm } = useOutletContext<OutletContext>();
   const { sandboxTypes, selectedSandbox, handleCreateThread } = tm;
   const { settings, loading, hasWorkspace } = useWorkspaceSettings();
   const [showWorkspaceSetup, setShowWorkspaceSetup] = useState(false);
 
-  const startWith = (location.state as any)?.startWith as string | undefined;
-  const memberName = (location.state as any)?.memberName as string | undefined;
-  const agentForThread = startWith === "__leon__" ? undefined : memberName;
+  // memberId in URL is the member name (e.g. "Test Researcher") or "leon" for the default agent
+  const memberName = memberId === "leon" ? undefined : memberId;
+  const agentForThread = memberName;
 
   async function handleSend(message: string, sandbox: string, model: string, workspace?: string) {
     // For local sandbox, check if workspace is set
@@ -40,7 +40,7 @@ export default function NewChatPage() {
     postRun(threadId, message, undefined, model ? { model } : undefined).catch(err => {
       console.error('[NewChatPage] postRun failed:', err);
     });
-    navigate(`/chat/${threadId}`, {
+    navigate(`/chat/${memberId}/${threadId}`, {
       state: { selectedModel: model, runStarted: true, message },
     });
   }

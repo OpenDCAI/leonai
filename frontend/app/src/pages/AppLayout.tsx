@@ -20,7 +20,7 @@ export default function AppLayout() {
   } = tm;
 
   const isMobile = useIsMobile();
-  const { threadId } = useParams<{ threadId?: string }>();
+  const { threadId } = useParams<{ memberId?: string; threadId?: string }>();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [newThreadOpen, setNewThreadOpen] = useState(false);
