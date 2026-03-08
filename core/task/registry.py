@@ -12,7 +12,7 @@ class TaskEntry:
     task_id: str
     task_type: Literal["bash", "agent"]
     thread_id: str
-    status: Literal["running", "completed", "error"]
+    status: Literal["running", "completed", "error", "cancelled"]
 
     # Bash 专属
     command_line: str | None = None

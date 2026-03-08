@@ -611,6 +611,6 @@ async def cancel_task(
     elif task.task_type == "agent" and task._async_task:
         task._async_task.cancel()
 
-    await registry.update(task_id, status="error", error="Cancelled by user")
+    await registry.update(task_id, status="cancelled", error="Cancelled by user")
 
-    return {"success": True}
+    return {"success": True, "status": "cancelled"}

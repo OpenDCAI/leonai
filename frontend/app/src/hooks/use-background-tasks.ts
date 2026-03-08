@@ -5,7 +5,7 @@ import type { StreamEvent } from '../api/types';
 export interface BackgroundTask {
   task_id: string;
   task_type: 'bash' | 'agent';
-  status: 'running' | 'completed' | 'error';
+  status: 'running' | 'completed' | 'error' | 'cancelled';
   command_line?: string;
   description?: string;
   exit_code?: number;
@@ -47,15 +47,28 @@ export function useBackgroundTasks({ threadId, loading, refreshThreads }: UseBac
       if (!isBackgroundTask) return;
 
       if (event.type === 'task_start') {
-        // Optimistic update
-        setTasks(prev => [...prev, {
-          task_id: data.task_id,
-          task_type: data.task_type || 'agent',
-          status: 'running',
-          command_line: data.command_line,
-          description: data.description
-        }]);
-      } else if (event.type === 'task_done' || event.type === 'task_error') {
+        // Optimistic update, but avoid duplicate entries for the same task_id
+        setTasks(prev => {
+          if (prev.some(task => task.task_id === data.task_id)) {
+            return prev.map(task => task.task_id === data.task_id
+              ? {
+                  ...task,
+                  task_type: data.task_type || task.task_type,
+                  status: 'running',
+                  command_line: data.command_line ?? task.command_line,
+                  description: data.description ?? task.description,
+                }
+              : task);
+          }
+          return [...prev, {
+            task_id: data.task_id,
+            task_type: data.task_type || 'agent',
+            status: 'running',
+            command_line: data.command_line,
+            description: data.description
+          }];
+        });
+      } else if (event.type === 'task_done' || event.type === 'task_error' || event.type === 'cancelled') {
         // Re-fetch 获取最新状态
         fetchTasks();
       }

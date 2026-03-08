@@ -14,6 +14,7 @@ function StatusIcon({ status }: { status: string }) {
     case "completed":
       return <CheckCircle2 className="w-3 h-3 text-green-500 flex-shrink-0" />;
     case "error":
+    case "cancelled":
       return <XCircle className="w-3 h-3 text-red-500 flex-shrink-0" />;
     default:
       return <Loader2 className="w-3 h-3 text-gray-400 flex-shrink-0" />;
@@ -22,12 +23,13 @@ function StatusIcon({ status }: { status: string }) {
 
 export function BackgroundSessionsIndicator({ tasks, onCancelTask }: BackgroundSessionsIndicatorProps) {
   const [isHovered, setIsHovered] = useState(false);
+  const runningTasks = tasks.filter((t) => t.status === "running");
 
-  if (tasks.length === 0) return null;
+  if (runningTasks.length === 0) return null;
 
-  const runningCount = tasks.filter((t) => t.status === "running").length;
-  const agents = tasks.filter((t) => t.task_type === "agent");
-  const terminals = tasks.filter((t) => t.task_type === "bash");
+  const runningCount = runningTasks.length;
+  const agents = runningTasks.filter((t) => t.task_type === "agent");
+  const terminals = runningTasks.filter((t) => t.task_type === "bash");
 
   return (
     <div
