@@ -148,7 +148,7 @@ class LeonApp(App):
         if not hasattr(self.agent, "queue_manager"):
             return
 
-        def wake_handler() -> None:
+        def wake_handler(item: object) -> None:
             # Schedule followup check on Textual's event loop (thread-safe)
             self.call_later(self._state_driven_followup)
 

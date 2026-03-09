@@ -278,12 +278,24 @@ def _ensure_thread_handlers(agent: Any, thread_id: str, app: Any) -> None:
     qm = app.state.queue_manager
     loop = getattr(app.state, "_event_loop", None)
 
-    def wake_handler() -> None:
-        """Called by enqueue() — may run in any thread."""
+    def wake_handler(item: Any) -> None:
+        """Called by enqueue() with the newly-enqueued QueueItem — may run in any thread."""
         if not (hasattr(agent, "runtime") and agent.runtime.transition(AgentState.ACTIVE)):
-            logger.warning("wake_handler: failed to transition to ACTIVE for thread %s (state=%s)",
-                           thread_id, getattr(agent.runtime, "current_state", "unknown") if hasattr(agent, "runtime") else "no-runtime")
-            return  # ACTIVE: before_model will drain_all
+            # Agent already ACTIVE — before_model will drain_all on the next LLM call.
+            # Emit only this one notice immediately so the frontend sees it in real-time
+            # instead of requiring a page refresh. The item is the exact QueueItem just
+            # enqueued — no list_queue() needed, so no duplicate emissions.
+            if loop and not loop.is_closed():
+                async def _emit_one_notice() -> None:
+                    await activity_sink({
+                        "event": "notice",
+                        "data": json.dumps({
+                            "content": item.content,
+                            "notification_type": item.notification_type,
+                        }, ensure_ascii=False),
+                    })
+                loop.call_soon_threadsafe(loop.create_task, _emit_one_notice())
+            return
 
         item = qm.dequeue(thread_id)
         if not item:
@@ -490,14 +502,15 @@ async def _run_agent_to_buffer(
             "data": json.dumps({"thread_id": thread_id, "run_id": run_id}),
         })
 
-        async def run_agent_stream():
-            if message_metadata:
-                from langchain_core.messages import HumanMessage
-                input_msg = HumanMessage(content=message, metadata=message_metadata)
-            else:
-                input_msg = {"role": "user", "content": message}
+        if message_metadata:
+            from langchain_core.messages import HumanMessage
+            _initial_input: dict | None = {"messages": [HumanMessage(content=message, metadata=message_metadata)]}
+        else:
+            _initial_input = {"messages": [{"role": "user", "content": message}]}
+
+        async def run_agent_stream(input_data: dict | None = _initial_input):
             async for chunk in agent.agent.astream(
-                {"messages": [input_msg]},
+                input_data,
                 config=config,
                 stream_mode=["messages", "updates"],
             ):
@@ -517,7 +530,9 @@ async def _run_agent_to_buffer(
 
         stream_attempt = 0
         while True:  # 外层重试循环
-            stream_gen = run_agent_stream()
+            # First attempt sends the user message; retries pass None so LangGraph
+            # resumes from the last checkpoint without re-appending the user message.
+            stream_gen = run_agent_stream(_initial_input if stream_attempt == 0 else None)
             task = asyncio.create_task(stream_gen.__anext__())
             app.state.thread_tasks[thread_id] = task
             stream_err: Exception | None = None
@@ -604,22 +619,24 @@ async def _run_agent_to_buffer(
                                     msg.metadata["run_id"] = run_id
                                 for tc in getattr(msg, "tool_calls", []):
                                     tc_id = tc.get("id")
-                                    if tc_id and tc_id in emitted_tool_call_ids:
-                                        continue
-                                    if tc_id:
+                                    full_args = tc.get("args", {})
+                                    if tc_id and tc_id not in emitted_tool_call_ids:
                                         emitted_tool_call_ids.add(tc_id)
                                         pending_tool_calls[tc_id] = {
                                             "name": tc.get("name", "unknown"),
-                                            "args": tc.get("args", {}),
+                                            "args": full_args,
                                         }
+                                    # Always emit from updates mode — carries complete args.
+                                    # Early emission (messages mode) sends args:{} for real-time
+                                    # tool name display; this emission delivers the full args.
                                     await emit(
                                         {
                                             "event": "tool_call",
                                             "data": json.dumps(
                                                 {
-                                                    "id": tc.get("id"),
+                                                    "id": tc_id,
                                                     "name": tc.get("name", "unknown"),
-                                                    "args": tc.get("args", {}),
+                                                    "args": full_args,
                                                 },
                                                 ensure_ascii=False,
                                             ),

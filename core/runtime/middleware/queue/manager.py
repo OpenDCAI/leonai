@@ -28,7 +28,7 @@ class MessageQueueManager:
             self._repo = SQLiteQueueRepo(db_path=resolved)
         # Expose db_path for diagnostics / tests
         self._db_path: str = getattr(self._repo, "_db_path", "")
-        self._wake_handlers: dict[str, Callable[[], None]] = {}
+        self._wake_handlers: dict[str, Callable[["QueueItem"], None]] = {}
         self._wake_lock = threading.Lock()
 
     # ------------------------------------------------------------------
@@ -38,12 +38,13 @@ class MessageQueueManager:
     def enqueue(self, content: str, thread_id: str, notification_type: str = "steer") -> None:
         """Persist a message. Fires wake handler after INSERT."""
         self._repo.enqueue(thread_id, content, notification_type)
-        # Fire wake handler OUTSIDE DB transaction
+        # Fire wake handler OUTSIDE DB transaction, passing the newly-enqueued item
+        # so the handler doesn't need to peek the queue (which causes duplicates).
         with self._wake_lock:
             handler = self._wake_handlers.get(thread_id)
         if handler:
             try:
-                handler()
+                handler(QueueItem(content=content, notification_type=notification_type))
             except Exception:
                 logger.exception("Wake handler raised for thread %s", thread_id)
 
@@ -67,8 +68,12 @@ class MessageQueueManager:
     # Wake handler registration
     # ------------------------------------------------------------------
 
-    def register_wake(self, thread_id: str, handler: Callable[[], None]) -> None:
-        """Register a wake handler for a thread. Called by enqueue() after INSERT."""
+    def register_wake(self, thread_id: str, handler: Callable[["QueueItem"], None]) -> None:
+        """Register a wake handler for a thread.
+
+        The handler receives the newly-enqueued QueueItem.
+        Called by enqueue() after INSERT.
+        """
         with self._wake_lock:
             self._wake_handlers[thread_id] = handler
 
