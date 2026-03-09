@@ -223,12 +223,15 @@ class CommandService:
                 pass
 
         if self._queue_manager:
-            label = description or command[:80]
-            notification = (
-                f'<CommandNotification task_id="{task_id}" status="completed">'
-                f"<Status>completed</Status>"
-                f"<Description>{label}</Description>"
-                f"<CommandLine>{command[:200]}</CommandLine>"
-                f"</CommandNotification>"
+            from core.runtime.middleware.queue.formatters import format_command_notification
+            exit_code = async_cmd.exit_code or 0
+            status = "completed" if exit_code == 0 else "failed"
+            notification = format_command_notification(
+                command_id=task_id,
+                status=status,
+                exit_code=exit_code,
+                command_line=command[:200],
+                output=result,
+                description=description or command[:80],
             )
             self._queue_manager.enqueue(notification, parent_thread_id, notification_type="command")

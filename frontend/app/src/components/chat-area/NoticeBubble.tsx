@@ -196,10 +196,10 @@ function parseCommand(raw: string): ParsedNotice {
 }
 
 function parseAgent(raw: string): ParsedNotice {
-  const taskId = raw.match(/<task-id>([\s\S]*?)<\/task-id>/)?.[1]?.trim() ?? "";
+  const runId = raw.match(/<run-id>([\s\S]*?)<\/run-id>/)?.[1]?.trim() ?? "";
   const statusRaw = raw.match(/<status>([\s\S]*?)<\/status>/)?.[1]?.trim() ?? "";
   const description = raw.match(/<description>([\s\S]*?)<\/description>/)?.[1]?.trim() ?? "";
   const status = normalizeStatus(statusRaw);
-  const label = description || `Task ${taskId}`;
-  return { text: `${label} ${statusLabel(statusRaw, status)}`, status, taskId: taskId || undefined };
+  const label = description || `Run ${runId}`;
+  return { text: `${label} ${statusLabel(statusRaw, status)}`, status, taskId: runId || undefined };
 }

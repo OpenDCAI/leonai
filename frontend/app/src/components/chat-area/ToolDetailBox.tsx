@@ -139,7 +139,7 @@ export const ToolDetailBox = memo(function ToolDetailBox({
               const { step } = seg;
               const badge = TOOL_BADGE_STYLES[step.name] ?? { ...DEFAULT_BADGE, label: step.name };
               const isCalling = step.status === "calling";
-              const isTaskStep = step.name === "Task" && !!onFocusAgent;
+              const isTaskStep = step.name === "Agent" && !!onFocusAgent;
 
               return (
                 <div

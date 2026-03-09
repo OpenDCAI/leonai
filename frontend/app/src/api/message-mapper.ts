@@ -126,13 +126,27 @@ function handleTool(msg: BackendMessage, _i: number, state: MapState): void {
     (s): s is ToolSegment => s.type === "tool" && s.step.id === msg.tool_call_id,
   );
   if (seg) {
-    seg.step.result = extractTextContent(msg.content);
+    const contentStr = extractTextContent(msg.content);
+    seg.step.result = contentStr;
     seg.step.status = "done";
 
     // Restore subagent_stream from persisted metadata (history replay path)
-    const taskId = msg.metadata?.task_id as string | undefined;
-    const threadId = (msg.metadata?.subagent_thread_id as string | undefined)
-      || (taskId ? `subagent_${taskId}` : undefined);
+    let taskId = msg.metadata?.task_id as string | undefined;
+    let threadId = (msg.metadata?.subagent_thread_id as string | undefined)
+      || (taskId ? `subagent-${taskId}` : undefined);
+
+    // For Agent tool calls: also try parsing JSON content for task_id/thread_id
+    // (background agents return JSON with task_id; metadata may be empty)
+    if (!taskId && seg.step.name === "Agent") {
+      try {
+        const parsed = JSON.parse(contentStr) as Record<string, unknown>;
+        if (parsed?.task_id) {
+          taskId = parsed.task_id as string;
+          threadId = (parsed.thread_id as string | undefined) || `subagent-${taskId}`;
+        }
+      } catch { /* not JSON, foreground agent text result */ }
+    }
+
     if (threadId && !seg.step.subagent_stream) {
       seg.step.subagent_stream = {
         task_id: taskId || "",

@@ -308,8 +308,16 @@ async def get_thread_runtime(
 
     if not stream:
         status = agent.runtime.get_compact_dict()
+        # Normalize state to match verbose format: string → {state, flags} object.
+        # This keeps the TypeScript StreamStatus contract consistent across both endpoints.
+        state_str = status.pop("state", "idle")
+        status["state"] = {"state": state_str, "flags": {}}
         status["model"] = lookup_thread_model(thread_id)
         status["last_seq"] = last_seq
+        if state_str == "active":
+            run_id = await get_latest_run_id(thread_id)
+            if run_id:
+                status["run_start_seq"] = await get_run_start_seq(thread_id, run_id)
         return status
 
     status = agent.runtime.get_status_dict()

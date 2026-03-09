@@ -51,10 +51,27 @@ function handleText(event: StreamEvent, turnId: string, onUpdate: UpdateEntries)
 function handleToolCall(event: StreamEvent, turnId: string, onUpdate: UpdateEntries) {
   const payload = (event.data ?? {}) as { id?: string; name?: string; args?: unknown };
   const toolCallId = payload.id ?? makeId("tc");
+  const newArgs = payload.args;
+  const hasRealArgs = newArgs != null && !(typeof newArgs === "object" && Object.keys(newArgs as object).length === 0);
 
   onUpdate((prev) => {
     const existing = findTurnToolSeg(prev, turnId, toolCallId);
-    if (existing) return prev;
+    if (existing) {
+      // Early emission sent args:{} — update with real args when they arrive
+      if (!hasRealArgs) return prev;
+      return prev.map((e) => {
+        if (e.id !== turnId || e.role !== "assistant") return e;
+        const t = e as AssistantTurn;
+        return {
+          ...t,
+          segments: t.segments.map((s) =>
+            s.type === "tool" && s.step.id === toolCallId
+              ? { ...s, step: { ...s.step, args: newArgs } }
+              : s
+          ),
+        };
+      });
+    }
     return prev.map((e) => {
       if (e.id !== turnId || e.role !== "assistant") return e;
       const t = e as AssistantTurn;
@@ -73,7 +90,7 @@ function markToolDone(turn: AssistantTurn, tcId: string | undefined, result: str
     const step = { ...s.step, result, status: "done" as const };
     // For background Task calls: create subagent_stream from metadata so AgentsView can track
     const taskId = metadata?.task_id as string | undefined;
-    const threadId = (metadata?.subagent_thread_id as string | undefined) || (taskId ? `subagent_${taskId}` : undefined);
+    const threadId = (metadata?.subagent_thread_id as string | undefined) || (taskId ? `subagent-${taskId}` : undefined);
     if (threadId && !step.subagent_stream) {
       step.subagent_stream = {
         task_id: taskId || "",
@@ -133,6 +150,57 @@ function handleCancelled(event: StreamEvent, turnId: string, onUpdate: UpdateEnt
   }));
 }
 
+function handleTaskStart(event: StreamEvent, turnId: string, onUpdate: UpdateEntries) {
+  const data = event.data as { task_id?: string; thread_id?: string; description?: string } | undefined;
+  if (!data?.task_id) return;
+  const subagentThreadId = data.thread_id || `subagent-${data.task_id}`;
+
+  onUpdate((prev) =>
+    prev.map((e) => {
+      if (e.id !== turnId || e.role !== "assistant") return e;
+      const t = e as AssistantTurn;
+      // Find the most recent calling Agent step without subagent_stream
+      const idx = t.segments.findLastIndex(
+        (s) => s.type === "tool" && s.step.name === "Agent" && s.step.status === "calling" && !s.step.subagent_stream,
+      );
+      if (idx === -1) return t;
+      const segments = t.segments.map((s, i) =>
+        i === idx
+          ? {
+              ...s,
+              step: {
+                ...s.step,
+                subagent_stream: {
+                  task_id: data.task_id!,
+                  thread_id: subagentThreadId,
+                  description: data.description,
+                  text: "",
+                  tool_calls: [],
+                  status: "running" as const,
+                },
+              },
+            }
+          : s,
+      );
+      return { ...t, segments };
+    }),
+  );
+}
+
+function handleTaskDone(event: StreamEvent, turnId: string, onUpdate: UpdateEntries) {
+  const data = event.data as { task_id?: string } | undefined;
+  if (!data?.task_id) return;
+  updateTurnSegments(onUpdate, turnId, (turn) => ({
+    ...turn,
+    segments: turn.segments.map((s) => {
+      if (s.type === "tool" && s.step.subagent_stream?.task_id === data.task_id) {
+        return { ...s, step: { ...s.step, subagent_stream: { ...s.step.subagent_stream!, status: "completed" as const } } };
+      }
+      return s;
+    }),
+  }));
+}
+
 function handleRetry(event: StreamEvent, turnId: string, onUpdate: UpdateEntries) {
   const d = (event.data ?? {}) as Record<string, unknown>;
   const seg: RetrySegment = {
@@ -158,6 +226,8 @@ const EVENT_HANDLERS: Record<string, EventHandler> = {
   error: handleError,
   cancelled: handleCancelled,
   retry: handleRetry,
+  task_start: handleTaskStart,
+  task_done: handleTaskDone,
 };
 
 export function processStreamEvent(

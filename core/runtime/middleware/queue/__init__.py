@@ -2,7 +2,7 @@
 
 from storage.contracts import QueueItem
 
-from .formatters import format_steer_reminder, format_task_notification
+from .formatters import format_steer_reminder, format_background_notification
 from .manager import MessageQueueManager
 from .middleware import SteeringMiddleware
 
@@ -11,5 +11,5 @@ __all__ = [
     "QueueItem",
     "SteeringMiddleware",
     "format_steer_reminder",
-    "format_task_notification",
+    "format_background_notification",
 ]

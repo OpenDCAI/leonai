@@ -10,8 +10,8 @@ export function getStepSummary(step: ToolStep): string {
   const args = step.args as Record<string, unknown> | null;
   if (!args) return step.name;
 
-  // Task tool: show description (PascalCase from backend)
-  if (step.name === "Task") {
+  // Agent tool: show description (PascalCase from backend)
+  if (step.name === "Agent") {
     const description = (args.Description ?? args.description) as string;
     if (description) return description.length > 60 ? description.slice(0, 57) + "..." : description;
     const prompt = (args.Prompt ?? args.prompt) as string;
@@ -117,8 +117,8 @@ export function getStepResultSummary(step: ToolStep): string | null {
     return "Done";
   }
 
-  // Task/TaskCreate/...: first 60 chars of result
-  if (step.name === "Task" || step.name === "TaskCreate" || step.name === "TaskOutput") {
+  // Agent/TaskCreate/...: first 60 chars of result
+  if (step.name === "Agent" || step.name === "TaskCreate" || step.name === "TaskOutput") {
     return result.length > 60 ? result.slice(0, 57) + "..." : result;
   }
 

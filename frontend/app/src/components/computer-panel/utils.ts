@@ -54,13 +54,13 @@ export function extractCommandSteps(entries: ChatEntry[]): ToolStep[] {
   return steps;
 }
 
-/** Extract all Task agent steps from chat entries */
+/** Extract all Agent tool steps from chat entries */
 export function extractAgentSteps(entries: ChatEntry[]): ToolStep[] {
   const steps: ToolStep[] = [];
   for (const entry of entries) {
     if (entry.role !== "assistant") continue;
     for (const seg of entry.segments) {
-      if (seg.type === "tool" && seg.step.name === "Task") {
+      if (seg.type === "tool" && seg.step.name === "Agent") {
         steps.push(seg.step);
       }
     }
