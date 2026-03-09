@@ -192,6 +192,11 @@ async def create_thread(
 
     init_thread_config(thread_id, sandbox_type, cwd)
 
+    # Create file channel workspace if no workspace_id provided
+    if not workspace_id:
+        from backend.web.services.workspace_service import create_file_channel_workspace
+        workspace_id = await asyncio.to_thread(create_file_channel_workspace, thread_id)
+
     model = payload.model if payload else None
     obs_provider = get_active_observation_provider()
     updates = {}
