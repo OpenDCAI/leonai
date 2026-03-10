@@ -47,6 +47,7 @@ export interface TaskErrorData extends ContentEventData {
 export interface ThreadSummary {
   thread_id: string;
   sandbox?: string;
+  agent?: string;
   messages?: BackendMessage[];
   sandbox_info?: SandboxInfo;
   preview?: string;
