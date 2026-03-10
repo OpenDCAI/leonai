@@ -62,7 +62,6 @@ class DaytonaProvider(SandboxProvider):
         api_url: str = "https://app.daytona.io/api",
         target: str = "local",
         default_cwd: str = "/home/daytona",
-        shell: str = "/bin/bash",
         provider_name: str | None = None,
     ):
         from daytona_sdk import Daytona
@@ -73,7 +72,6 @@ class DaytonaProvider(SandboxProvider):
         self.api_url = api_url
         self.target = target
         self.default_cwd = default_cwd
-        self.shell = shell
 
         os.environ["DAYTONA_API_KEY"] = api_key
         os.environ["DAYTONA_API_URL"] = api_url
@@ -461,14 +459,24 @@ class DaytonaSessionRuntime(_RemoteRuntimeBase):
                     )
                 except Exception as create_exc:
                     message = str(create_exc)
-                    if "/usr/bin/zsh" in message or "/usr/bin/bash" in message:
-                        # @@@daytona-shell-fail-loud - Do not silently override provider shell selection.
-                        # Surface explicit infra error so snapshot/image shell mismatch is fixed at source.
-                        shell = "/usr/bin/zsh" if "/usr/bin/zsh" in message else "/usr/bin/bash"
+                    # @@@pty-fork-exec-error - "fork/exec /path: no such file" can mean shell OR cwd missing
+                    if "fork/exec" in message and "no such file" in message:
+                        # Diagnose: check if working directory exists
+                        try:
+                            result = sandbox.process.exec_sync(f"test -d {effective_cwd} && echo y || echo n", timeout=5)
+                            if "n" in result.stdout:
+                                raise RuntimeError(
+                                    f"PTY bootstrap failed: working directory '{effective_cwd}' does not exist. "
+                                    f"Update config 'cwd' to an existing directory (e.g., /home/daytona)."
+                                ) from create_exc
+                        except RuntimeError:
+                            raise
+                        except Exception:
+                            pass  # Can't diagnose, fall through to shell check
+                    if "/usr/bin/zsh" in message:
                         raise RuntimeError(
-                            f"Daytona PTY bootstrap failed: provider requested {shell} but it is missing "
-                            "in the sandbox image. Fix provider snapshot/image shell config or ensure the shell "
-                            "is installed at the expected path in the Daytona workspace image."
+                            "Daytona PTY bootstrap failed: provider requested /usr/bin/zsh but it is missing "
+                            "in the sandbox image. Fix provider snapshot/image shell config."
                         ) from create_exc
                     raise
             self._pty_handle = handle
