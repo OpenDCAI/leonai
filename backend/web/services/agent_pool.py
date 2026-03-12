@@ -17,7 +17,7 @@ from core.identity.agent_registry import get_or_create_agent_id
 _config_update_locks: dict[str, asyncio.Lock] = {}
 
 
-def create_agent_sync(sandbox_name: str, workspace_root: Path | None = None, model_name: str | None = None, agent: str | None = None, queue_manager: Any = None, member_id: str | None = None) -> Any:
+def create_agent_sync(sandbox_name: str, workspace_root: Path | None = None, model_name: str | None = None, agent: str | None = None, queue_manager: Any = None, member_id: str | None = None, logbook_repos: dict | None = None) -> Any:
     """Create a LeonAgent with the given sandbox. Runs in a thread."""
     storage_container = build_storage_container(
         main_db_path=os.getenv("LEON_DB_PATH"),
@@ -35,6 +35,7 @@ def create_agent_sync(sandbox_name: str, workspace_root: Path | None = None, mod
         verbose=True,
         agent=agent,
         member_id=member_id,
+        logbook_repos=logbook_repos,
     )
 
 
@@ -84,7 +85,16 @@ async def get_or_create_agent(app_obj: FastAPI, sandbox_type: str, thread_id: st
 
     # @@@ agent-init-thread - LeonAgent.__init__ uses run_until_complete, must run in thread
     qm = getattr(app_obj.state, "queue_manager", None)
-    agent_obj = await asyncio.to_thread(create_agent_sync, sandbox_type, workspace_root, model_name, agent_name, qm, member_id)
+    # @@@shared-logbook-repos - pass app.state repos to avoid "database is locked" from competing connections
+    logbook_repos = None
+    if member_id:
+        logbook_repos = {
+            "conversations": getattr(app_obj.state, "conversation_repo", None),
+            "conv_members": getattr(app_obj.state, "conv_member_repo", None),
+            "conv_messages": getattr(app_obj.state, "conv_message_repo", None),
+            "members": getattr(app_obj.state, "member_repo", None),
+        }
+    agent_obj = await asyncio.to_thread(create_agent_sync, sandbox_type, workspace_root, model_name, agent_name, qm, member_id, logbook_repos)
     member = agent_name or "leon"
     agent_id = get_or_create_agent_id(
         member=member,

@@ -20,7 +20,7 @@ class SQLiteConversationRepo:
             self._conn = conn
         else:
             if db_path is None:
-                db_path = resolve_role_db_path(SQLiteDBRole.MAIN)
+                db_path = resolve_role_db_path(SQLiteDBRole.CONVERSATION)
             self._conn = create_connection(db_path)
         self._ensure_table()
 
@@ -100,7 +100,7 @@ class SQLiteConversationMemberRepo:
             self._conn = conn
         else:
             if db_path is None:
-                db_path = resolve_role_db_path(SQLiteDBRole.MAIN)
+                db_path = resolve_role_db_path(SQLiteDBRole.CONVERSATION)
             self._conn = create_connection(db_path)
         self._ensure_table()
 
@@ -182,7 +182,7 @@ class SQLiteConversationMessageRepo:
             self._conn = conn
         else:
             if db_path is None:
-                db_path = resolve_role_db_path(SQLiteDBRole.MAIN)
+                db_path = resolve_role_db_path(SQLiteDBRole.CONVERSATION)
             self._conn = create_connection(db_path)
         self._ensure_table()
 

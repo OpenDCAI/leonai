@@ -111,6 +111,7 @@ class LeonAgent:
         workspace_root: str | Path | None = None,
         *,
         member_id: str | None = None,
+        logbook_repos: dict | None = None,
         agent: str | None = None,
         allowed_file_extensions: list[str] | None = None,
         block_dangerous_commands: bool | None = None,
@@ -145,6 +146,7 @@ class LeonAgent:
         """
         self.agent_id: str | None = None
         self.member_id: str | None = member_id
+        self._logbook_repos: dict | None = logbook_repos
         self.verbose = verbose
         self.queue_manager = queue_manager or MessageQueueManager()
 
@@ -987,6 +989,19 @@ class LeonAgent:
         #     tool_registry=self._tool_registry,
         # )
 
+        # @@@logbook-tools - register logbook tools for agents with member_id
+        if self.member_id:
+            from core.agents.communication.logbook_service import LogbookService
+            repos = self._logbook_repos or {}
+            self._logbook_service = LogbookService(
+                registry=self._tool_registry,
+                member_id=self.member_id,
+                conversations=repos.get("conversations"),
+                conv_members=repos.get("conv_members"),
+                conv_messages=repos.get("conv_messages"),
+                members=repos.get("members"),
+            )
+
         # TaskBoard tools (board management — INLINE, blocked by default via catalog)
         try:
             from backend.taskboard.service import TaskBoardService
@@ -1100,6 +1115,19 @@ class LeonAgent:
 
         if self.allowed_file_extensions:
             prompt += f"\n6. **File Type Restriction**: Only these extensions allowed: {', '.join(self.allowed_file_extensions)}\n"
+
+        # @@@logbook-prompt - add logbook instructions for agents with member_id
+        if self.member_id:
+            prompt += (
+                "\n\n## Communication (Logbook)\n"
+                "You have a logbook for inter-agent and human communication.\n"
+                "- Use `logbook_check_messages` to see new messages from other members\n"
+                "- Use `logbook_reply(conversation_id, content)` to reply\n"
+                "- Use `logbook_mark_read(conversation_id)` to mark messages as read\n"
+                "- Your direct text output is inner monologue — it is NOT sent to anyone.\n"
+                "  Only `logbook_reply` sends messages to conversations.\n"
+                "- When you receive an <incoming-message>, always check your logbook and reply.\n"
+            )
 
         return prompt
 
