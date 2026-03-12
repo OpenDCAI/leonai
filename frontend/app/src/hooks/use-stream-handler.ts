@@ -9,12 +9,15 @@ import {
   type NotificationType,
   type StreamStatus,
 } from "../api";
+import { sendConversationMessage } from "../api/conversations";
 import { processStreamEvent } from "./stream-event-handlers";
 import { useThreadStream } from "./use-thread-stream";
 import { makeId } from "./utils";
 
 interface StreamHandlerDeps {
   threadId: string;
+  /** If set, send messages through conversation API instead of thread API. */
+  conversationId?: string;
   refreshThreads: () => Promise<void>;
   onUpdate: (updater: (prev: ChatEntry[]) => ChatEntry[]) => void;
   /** True while useThreadData is loading the snapshot — connection waits for this. */
@@ -72,7 +75,7 @@ function applyReconnectTurn(
 export function useStreamHandler(
   deps: StreamHandlerDeps,
 ): StreamHandlerState & StreamHandlerActions {
-  const { threadId, refreshThreads, onUpdate, loading, runStarted } = deps;
+  const { threadId, conversationId, refreshThreads, onUpdate, loading, runStarted } = deps;
 
   // Local state for immediate UI feedback when user sends a message
   // (covers the window between flushSync and useThreadStream.isRunning becoming true)
@@ -228,7 +231,12 @@ export function useStreamHandler(
       });
 
       try {
-        await postRun(threadId, message);
+        // @@@conversation-routing - route through conversation API when conversationId is set
+        if (conversationId) {
+          await sendConversationMessage(conversationId, message);
+        } else {
+          await postRun(threadId, message);
+        }
         // Connection is persistent — no need to reconnect.
         // run_start event will confirm isRunning.
       } catch (err) {
@@ -251,7 +259,7 @@ export function useStreamHandler(
         hasBoundRef.current = false;
       }
     },
-    [threadId],
+    [threadId, conversationId],
   );
 
   const handleStopStreaming = useCallback(async () => {
