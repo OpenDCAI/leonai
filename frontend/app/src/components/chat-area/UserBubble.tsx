@@ -5,15 +5,9 @@ import type { UserMessage } from "../../api";
 import { getWorkspaceDownloadUrl } from "../../api";
 import { formatTime } from "./utils";
 
-/** Strip legacy "[User uploaded N file(s) to /workspace/files/: ...]" prefix from message content. */
-function stripUploadPrefix(content: string): string {
-  return content.replace(/^\[User uploaded \d+ file\(s\) to [^\]]+\]\s*/i, "");
-}
-
 export const UserBubble = memo(function UserBubble({ entry }: { entry: UserMessage }) {
   const { threadId } = useParams<{ threadId: string }>();
   const attachments = entry.attachments;
-  const displayContent = attachments?.length ? stripUploadPrefix(entry.content) : entry.content;
 
   return (
     <div className="flex justify-end animate-fade-in">
@@ -36,7 +30,7 @@ export const UserBubble = memo(function UserBubble({ entry }: { entry: UserMessa
         )}
         <div className="rounded-xl rounded-br-sm px-3.5 py-2 bg-[#f5f5f5] border border-[#e5e5e5]">
           <p className="text-[13px] whitespace-pre-wrap leading-[1.55] text-[#171717]">
-            {displayContent}
+            {entry.content}
           </p>
         </div>
         {entry.timestamp && (

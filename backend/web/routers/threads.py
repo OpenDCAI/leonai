@@ -50,20 +50,33 @@ async def _prepare_attachment_message(
     sandbox_type: str,
     message: str,
     attachments: list[str],
+    agent: Any | None = None,
 ) -> tuple[str, dict[str, Any] | None]:
     """Build LLM notification prefix and sync uploads to running sandbox.
 
     Returns (modified_message, message_metadata).
+    When *agent* is supplied, uses its live manager and primes the sandbox
+    (resume if paused) before syncing.
     """
-    message_metadata: dict[str, Any] = {"attachments": attachments}
-    _, managers = init_providers_and_managers()
-    mgr = managers.get(sandbox_type)
+    from backend.web.services.streaming_service import prime_sandbox
+
+    message_metadata: dict[str, Any] = {"attachments": attachments, "original_message": message}
+    if agent is not None and getattr(agent, '_sandbox', None):
+        mgr = agent._sandbox.manager
+    else:
+        _, managers = init_providers_and_managers()
+        mgr = managers.get(sandbox_type)
     files_dir = mgr.resolve_agent_files_dir(thread_id) if mgr else "/workspace/files"
 
     original_message = message
     sync_ok = True
 
-    # @@@sync-new-uploads - push newly uploaded files to already-running sandbox
+    # @@@sync-prime-then-upload - resume sandbox if paused, then push files
+    if mgr and agent is not None:
+        try:
+            await prime_sandbox(agent, thread_id)
+        except Exception:
+            logger.warning("prime_sandbox before sync_uploads failed", exc_info=True)
     if mgr:
         try:
             sync_ok = await asyncio.to_thread(mgr.sync_uploads, thread_id, attachments)
@@ -288,15 +301,14 @@ async def send_message(
         raise HTTPException(status_code=400, detail="message cannot be empty")
 
     sandbox_type = resolve_thread_sandbox(app, thread_id)
+    agent = await get_or_create_agent(app, sandbox_type, thread_id=thread_id)
 
     message = payload.message
     message_metadata: dict[str, Any] | None = None
     if payload.attachments:
         message, message_metadata = await _prepare_attachment_message(
-            thread_id, sandbox_type, message, payload.attachments,
+            thread_id, sandbox_type, message, payload.attachments, agent=agent,
         )
-
-    agent = await get_or_create_agent(app, sandbox_type, thread_id=thread_id)
 
     qm = app.state.queue_manager
     if hasattr(agent, "runtime") and agent.runtime.current_state == AgentState.ACTIVE:
@@ -613,15 +625,15 @@ async def run_thread(
 
     sandbox_type = resolve_thread_sandbox(app, thread_id)
 
+    set_current_thread_id(thread_id)
+    agent = await get_or_create_agent(app, sandbox_type, thread_id=thread_id)
+
     message = payload.message
     message_metadata: dict[str, Any] | None = None
     if payload.attachments:
         message, message_metadata = await _prepare_attachment_message(
-            thread_id, sandbox_type, message, payload.attachments,
+            thread_id, sandbox_type, message, payload.attachments, agent=agent,
         )
-
-    set_current_thread_id(thread_id)
-    agent = await get_or_create_agent(app, sandbox_type, thread_id=thread_id)
 
     # Per-request model override (lightweight, no rebuild)
     if payload.model:
