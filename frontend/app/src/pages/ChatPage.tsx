@@ -16,9 +16,12 @@ import { useSandboxManager } from "../hooks/use-sandbox-manager";
 import { useStreamHandler } from "../hooks/use-stream-handler";
 import { useThreadData } from "../hooks/use-thread-data";
 import type { ThreadManagerState, ThreadManagerActions } from "../hooks/use-thread-manager";
+import type { ConversationSummary } from "../api/conversations";
 
 interface OutletContext {
   tm: ThreadManagerState & ThreadManagerActions;
+  conversations: ConversationSummary[];
+  refreshConversations: () => Promise<void>;
   sidebarCollapsed: boolean;
   setSidebarCollapsed: React.Dispatch<React.SetStateAction<boolean>>;
   setSessionsOpen: (value: boolean) => void;
@@ -33,7 +36,10 @@ export default function ChatPage() {
 
 function ChatPageInner({ threadId }: { threadId: string }) {
   const location = useLocation();
-  const { tm, setSidebarCollapsed } = useOutletContext<OutletContext>();
+  const { tm, conversations, setSidebarCollapsed } = useOutletContext<OutletContext>();
+
+  // Find conversation for this brain thread (if any)
+  const conversation = conversations?.find(c => `brain-${c.agent_member_id}` === threadId);
   const [currentModel, setCurrentModel] = useState<string>("");
 
   const state = location.state as { selectedModel?: string; runStarted?: boolean; message?: string } | null;
@@ -152,7 +158,7 @@ function ChatPageInner({ threadId }: { threadId: string }) {
     <>
       <Header
         activeThreadId={threadId}
-        threadPreview={tm.threads.find((t) => t.thread_id === threadId)?.preview ?? null}
+        threadPreview={conversation?.title ?? tm.threads.find((t) => t.thread_id === threadId)?.preview ?? null}
         sandboxInfo={activeSandbox}
         currentModel={currentModel}
         onToggleSidebar={() => setSidebarCollapsed(v => !v)}

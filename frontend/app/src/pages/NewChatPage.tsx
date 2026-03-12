@@ -8,6 +8,8 @@ import { useWorkspaceSettings } from "../hooks/use-workspace-settings";
 
 interface OutletContext {
   tm: ThreadManagerState & ThreadManagerActions;
+  conversations: unknown[];
+  refreshConversations: () => Promise<void>;
   sidebarCollapsed: boolean;
   setSidebarCollapsed: (value: boolean) => void;
   setSessionsOpen: (value: boolean) => void;

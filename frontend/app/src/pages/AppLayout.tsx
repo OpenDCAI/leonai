@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, Outlet, useParams } from "react-router-dom";
 import { DragHandle } from "../components/DragHandle";
 import NewChatDialog from "../components/NewChatDialog";
@@ -10,16 +10,49 @@ import { useIsMobile } from "../hooks/use-mobile";
 import { useResizableX } from "../hooks/use-resizable-x";
 import { useThreadManager } from "../hooks/use-thread-manager";
 import { useAppStore } from "../store/app-store";
+import { useAuthStore } from "../store/auth-store";
+import { listConversations, type ConversationSummary } from "../api/conversations";
+import type { ThreadSummary } from "../api";
 import { Plus, Trash2 } from "lucide-react";
 
 export default function AppLayout() {
   const tm = useThreadManager();
   const {
-    threads, sandboxTypes, loading,
+    sandboxTypes, loading: threadLoading,
     refreshThreads, handleCreateThread, handleDeleteThread,
   } = tm;
   const fetchMembers = useAppStore(s => s.fetchMembers);
   useEffect(() => { void fetchMembers(); }, [fetchMembers]);
+
+  // @@@conversation-sidebar - fetch conversations for sidebar display
+  const authAgent = useAuthStore(s => s.agent);
+  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+  const [convLoading, setConvLoading] = useState(true);
+
+  const refreshConversations = useCallback(async () => {
+    try {
+      const convs = await listConversations();
+      setConversations(convs);
+    } catch (err) {
+      console.error("[AppLayout] Failed to fetch conversations:", err);
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshConversations().finally(() => setConvLoading(false));
+  }, [refreshConversations]);
+
+  // Map conversations to ThreadSummary for existing Sidebar component
+  const sidebarThreads: ThreadSummary[] = useMemo(() =>
+    conversations.map(conv => ({
+      thread_id: `brain-${conv.agent_member_id}`,
+      preview: conv.title,
+      updated_at: new Date(conv.created_at * 1000).toISOString(),
+      agent: authAgent?.name || "Leon",
+      running: false,
+    })),
+    [conversations, authAgent],
+  );
 
   const isMobile = useIsMobile();
   const { threadId } = useParams<{ memberId?: string; threadId?: string }>();
@@ -35,8 +68,8 @@ export default function AppLayout() {
     if (!threadId) {
       return (
         <MobileThreadList
-          threads={threads}
-          loading={loading}
+          threads={sidebarThreads}
+          loading={convLoading}
           onNewChat={() => setNewChatOpen(true)}
           onDeleteThread={(id) => void handleDeleteThread(id)}
           newChatOpen={newChatOpen}
@@ -47,7 +80,7 @@ export default function AppLayout() {
     return (
       <div className="h-full w-full bg-background flex flex-col overflow-hidden">
         <div className="flex-1 flex flex-col min-w-0 min-h-0">
-          <Outlet context={{ tm, sidebarCollapsed, setSidebarCollapsed, setSessionsOpen }} />
+          <Outlet context={{ tm, conversations, refreshConversations, sidebarCollapsed, setSidebarCollapsed, setSessionsOpen }} />
         </div>
         <NewChatDialog open={newChatOpen} onOpenChange={setNewChatOpen} />
       </div>
@@ -56,18 +89,18 @@ export default function AppLayout() {
   return (
     <div className="h-full w-full bg-background flex overflow-hidden">
       <Sidebar
-        threads={threads}
+        threads={sidebarThreads}
         collapsed={sidebarCollapsed}
-        loading={loading}
+        loading={convLoading}
         width={sidebarResize.width}
-        onDeleteThread={(id) => void handleDeleteThread(id)}
+        onDeleteThread={() => {}}
         onSearchClick={() => setSearchOpen(true)}
         onNewChat={() => setNewChatOpen(true)}
       />
       {!sidebarCollapsed && <DragHandle onMouseDown={sidebarResize.onMouseDown} />}
 
       <div className="flex-1 flex flex-col min-w-0">
-        <Outlet context={{ tm, sidebarCollapsed, setSidebarCollapsed, setSessionsOpen }} />
+        <Outlet context={{ tm, conversations, refreshConversations, sidebarCollapsed, setSidebarCollapsed, setSessionsOpen }} />
       </div>
 
       <NewThreadModal
@@ -83,7 +116,7 @@ export default function AppLayout() {
       <SearchModal
         isOpen={searchOpen}
         onClose={() => setSearchOpen(false)}
-        threads={threads}
+        threads={sidebarThreads}
         onSelectThread={() => {}}
       />
 
