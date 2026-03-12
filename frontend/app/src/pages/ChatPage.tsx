@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams, useOutletContext, useLocation } from "react-router-dom";
-import ChatArea from "../components/ChatArea";
+import ChatArea, { type ViewMode } from "../components/ChatArea";
 import type { AssistantTurn } from "../api";
+import { Eye, MessageSquareText } from "lucide-react";
 import ComputerPanel from "../components/ComputerPanel";
 import { DragHandle } from "../components/DragHandle";
 import Header from "../components/Header";
@@ -41,6 +42,7 @@ function ChatPageInner({ threadId }: { threadId: string }) {
   // Find conversation for this brain thread (if any)
   const conversation = conversations?.find(c => `brain-${c.agent_member_id}` === threadId);
   const [currentModel, setCurrentModel] = useState<string>("");
+  const [viewMode, setViewMode] = useState<ViewMode>("owner");
 
   const state = location.state as { selectedModel?: string; runStarted?: boolean; message?: string } | null;
 
@@ -177,11 +179,25 @@ function ChatPageInner({ threadId }: { threadId: string }) {
           )}
           <div className="relative flex-1 flex flex-col min-h-0">
             <BackgroundSessionsIndicator tasks={tasks} onCancelTask={handleCancelTask} />
+            {/* @@@view-mode-toggle - switch between owner (full) and contact (text-only) view */}
+            {conversation && (
+              <div className="flex items-center justify-end px-4 py-1 border-b border-border/50 bg-muted/20">
+                <button
+                  onClick={() => setViewMode(v => v === "owner" ? "contact" : "owner")}
+                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                  title={viewMode === "owner" ? "切换到联系人视图" : "切换到完整视图"}
+                >
+                  {viewMode === "owner" ? <Eye className="w-3.5 h-3.5" /> : <MessageSquareText className="w-3.5 h-3.5" />}
+                  {viewMode === "owner" ? "完整视图" : "消息视图"}
+                </button>
+              </div>
+            )}
             <ChatArea
               entries={entries}
               isStreaming={isStreaming}
               runtimeStatus={runtimeStatus}
               loading={loading}
+              viewMode={viewMode}
               onFocusAgent={handleFocusAgent}
               onTaskNoticeClick={handleTaskNoticeClick}
             />
