@@ -72,7 +72,9 @@ class LogbookService:
                     "Read your logbook. No args = contact overview with unread counts. "
                     "Pass conversation_id to read messages. Pass query to search within a conversation. "
                     "Pass member to filter contacts by name. "
-                    "Pass directory=true to browse the member directory and discover contacts and strangers."
+                    "Pass directory=true to browse the member directory and discover contacts and strangers.\n\n"
+                    "Messages ending with [END] are closed — the sender doesn't need a reply. "
+                    "Replying would wake up their brain for nothing."
                 ),
                 "parameters": {
                     "type": "object",
@@ -124,7 +126,10 @@ class LogbookService:
                 "description": (
                     "Send a message. Use conversation_id for existing conversations. "
                     "Use 'to' (member name or id) to message someone new — "
-                    "a conversation will be created automatically if needed."
+                    "a conversation will be created automatically if needed.\n\n"
+                    "Your message wakes up the recipient's brain and costs a full LLM run. "
+                    "If your message doesn't need a response (confirming, acknowledging, "
+                    "or saying thanks), end it with [END] so the recipient knows not to reply."
                 ),
                 "parameters": {
                     "type": "object",
