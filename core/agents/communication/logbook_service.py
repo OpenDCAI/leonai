@@ -347,7 +347,7 @@ class LogbookService:
                     sender = self._sender_name(last.sender_id)
                     text = last.content[:60] + ("..." if len(last.content) > 60 else "")
                     preview = f" — {sender}: {text}"
-                lines.append(f"    {unread_dot}{title} [{conv.id[:8]}]{preview}")
+                lines.append(f"    {unread_dot}{title} [id:{conv.id}]{preview}")
 
             lines.append("")
 
