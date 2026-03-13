@@ -11,7 +11,7 @@ import { useResizableX } from "../hooks/use-resizable-x";
 import { useThreadManager } from "../hooks/use-thread-manager";
 import { useAppStore } from "../store/app-store";
 import { useAuthStore } from "../store/auth-store";
-import { listConversations, type ConversationSummary } from "../api/conversations";
+import { listConversations, deleteConversation, type ConversationSummary } from "../api/conversations";
 import type { ThreadSummary } from "../api";
 import { Plus, Trash2 } from "lucide-react";
 
@@ -42,10 +42,20 @@ export default function AppLayout() {
     refreshConversations().finally(() => setConvLoading(false));
   }, [refreshConversations]);
 
-  // Map conversations to ThreadSummary for existing Sidebar component
+  const handleDeleteConversation = useCallback(async (conversationId: string) => {
+    try {
+      await deleteConversation(conversationId);
+      await refreshConversations();
+    } catch (err) {
+      console.error("[AppLayout] Failed to delete conversation:", err);
+    }
+  }, [refreshConversations]);
+
+  // @@@conv-as-route-key - each conversation has its own sidebar entry + URL.
+  // Brain thread ID is derived internally by ChatPage, not exposed in the URL.
   const sidebarThreads: ThreadSummary[] = useMemo(() =>
     conversations.map(conv => ({
-      thread_id: `brain-${conv.agent_member_id}`,
+      thread_id: conv.id,
       preview: conv.title,
       updated_at: new Date(conv.created_at * 1000).toISOString(),
       agent: authAgent?.name || "Leon",
@@ -74,6 +84,7 @@ export default function AppLayout() {
           onDeleteThread={(id) => void handleDeleteThread(id)}
           newChatOpen={newChatOpen}
           setNewChatOpen={setNewChatOpen}
+          onConversationCreated={refreshConversations}
         />
       );
     }
@@ -82,7 +93,7 @@ export default function AppLayout() {
         <div className="flex-1 flex flex-col min-w-0 min-h-0">
           <Outlet context={{ tm, conversations, refreshConversations, sidebarCollapsed, setSidebarCollapsed, setSessionsOpen }} />
         </div>
-        <NewChatDialog open={newChatOpen} onOpenChange={setNewChatOpen} />
+        <NewChatDialog open={newChatOpen} onOpenChange={setNewChatOpen} onConversationCreated={refreshConversations} />
       </div>
     );
   }
@@ -93,7 +104,7 @@ export default function AppLayout() {
         collapsed={sidebarCollapsed}
         loading={convLoading}
         width={sidebarResize.width}
-        onDeleteThread={() => {}}
+        onDeleteThread={(id) => void handleDeleteConversation(id)}
         onSearchClick={() => setSearchOpen(true)}
         onNewChat={() => setNewChatOpen(true)}
       />
@@ -128,18 +139,19 @@ export default function AppLayout() {
         }}
       />
 
-      <NewChatDialog open={newChatOpen} onOpenChange={setNewChatOpen} />
+      <NewChatDialog open={newChatOpen} onOpenChange={setNewChatOpen} onConversationCreated={refreshConversations} />
     </div>
   );
 }
 
-function MobileThreadList({ threads, loading, onNewChat, onDeleteThread, newChatOpen, setNewChatOpen }: {
+function MobileThreadList({ threads, loading, onNewChat, onDeleteThread, newChatOpen, setNewChatOpen, onConversationCreated }: {
   threads: any[];
   loading: boolean;
   onNewChat: () => void;
   onDeleteThread: (id: string) => void;
   newChatOpen: boolean;
   setNewChatOpen: (v: boolean) => void;
+  onConversationCreated: () => Promise<void>;
 }) {
   const memberList = useAppStore(s => s.memberList);
   return (
@@ -185,7 +197,7 @@ function MobileThreadList({ threads, loading, onNewChat, onDeleteThread, newChat
           })
         )}
       </div>
-      <NewChatDialog open={newChatOpen} onOpenChange={setNewChatOpen} />
+      <NewChatDialog open={newChatOpen} onOpenChange={setNewChatOpen} onConversationCreated={onConversationCreated} />
     </div>
   );
 }

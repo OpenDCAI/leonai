@@ -1,39 +1,34 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Search, MessageSquare } from "lucide-react";
+import { MessageSquare } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "./ui/dialog";
-import { Input } from "./ui/input";
-import { useAppStore } from "@/store/app-store";
+import { useAuthStore } from "@/store/auth-store";
+import { createConversation } from "@/api/conversations";
 
 interface NewChatDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onConversationCreated?: () => Promise<void>;
 }
 
-export default function NewChatDialog({ open, onOpenChange }: NewChatDialogProps) {
+export default function NewChatDialog({ open, onOpenChange, onConversationCreated }: NewChatDialogProps) {
   const navigate = useNavigate();
-  const memberList = useAppStore(s => s.memberList);
-  const loadAll = useAppStore(s => s.loadAll);
-  const [filter, setFilter] = useState("");
+  const agent = useAuthStore(s => s.agent);
+  const [creating, setCreating] = useState(false);
 
-  useEffect(() => {
-    if (open) {
-      loadAll();
-      setFilter("");
+  const handleSelect = async () => {
+    if (!agent || creating) return;
+    setCreating(true);
+    try {
+      const conv = await createConversation(agent.id);
+      onOpenChange(false);
+      await onConversationCreated?.();
+      navigate(`/chat/leon/${conv.id}`);
+    } catch (err) {
+      console.error("[NewChatDialog] Failed to create conversation:", err);
+    } finally {
+      setCreating(false);
     }
-  }, [open, loadAll]);
-
-  const filtered = useMemo(() => {
-    if (!filter) return memberList;
-    const q = filter.toLowerCase();
-    return memberList.filter(m =>
-      m.name.toLowerCase().includes(q) || m.description?.toLowerCase().includes(q)
-    );
-  }, [memberList, filter]);
-
-  const handleSelect = (member: typeof memberList[0]) => {
-    onOpenChange(false);
-    navigate(`/chat/${member.name}`);
   };
 
   return (
@@ -43,49 +38,27 @@ export default function NewChatDialog({ open, onOpenChange }: NewChatDialogProps
           <DialogTitle className="text-base">发起会话</DialogTitle>
           <DialogDescription className="sr-only">选择成员发起新对话</DialogDescription>
         </DialogHeader>
-        <div className="px-4 pb-3">
-          <div className="relative">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              className="pl-9 h-9 text-sm"
-              placeholder="搜索成员..."
-              value={filter}
-              onChange={e => setFilter(e.target.value)}
-              autoFocus
-            />
-          </div>
-        </div>
         <div className="border-t max-h-80 overflow-y-auto">
-          {filtered.length === 0 ? (
-            <p className="text-sm text-muted-foreground text-center py-8">
-              {memberList.length === 0 ? "暂无成员" : "无匹配结果"}
-            </p>
+          {!agent ? (
+            <p className="text-sm text-muted-foreground text-center py-8">暂无可用成员</p>
           ) : (
-            filtered.map(member => (
-              <button
-                key={member.id}
-                onClick={() => handleSelect(member)}
-                className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-muted transition-colors"
-              >
-                <div className="w-9 h-9 rounded-full bg-primary/10 text-primary flex items-center justify-center text-sm font-medium shrink-0">
-                  {member.name.slice(0, 2).toUpperCase()}
+            <button
+              onClick={() => void handleSelect()}
+              disabled={creating}
+              className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-muted transition-colors disabled:opacity-50"
+            >
+              <div className="w-9 h-9 rounded-full bg-primary/10 text-primary flex items-center justify-center text-sm font-medium shrink-0">
+                {agent.name.slice(0, 2).toUpperCase()}
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium truncate">{agent.name}</span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-100 text-green-700">在线</span>
                 </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium truncate">{member.name}</span>
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
-                      member.status === "active" ? "bg-green-100 text-green-700" : "bg-muted text-muted-foreground"
-                    }`}>
-                      {member.status === "active" ? "在线" : member.status === "draft" ? "草稿" : "离线"}
-                    </span>
-                  </div>
-                  {member.description && (
-                    <p className="text-xs text-muted-foreground truncate mt-0.5">{member.description}</p>
-                  )}
-                </div>
-                <MessageSquare className="h-4 w-4 text-muted-foreground shrink-0" />
-              </button>
-            ))
+                <p className="text-xs text-muted-foreground truncate mt-0.5">Your AI assistant</p>
+              </div>
+              <MessageSquare className="h-4 w-4 text-muted-foreground shrink-0" />
+            </button>
           )}
         </div>
       </DialogContent>

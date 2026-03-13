@@ -28,13 +28,46 @@ class ConversationService:
         self._contacts = contacts
         self._members = members
 
+    def create_conversation(self, creator_id: str, agent_member_id: str, title: str | None = None) -> dict:
+        """Create a new conversation between creator and agent."""
+        agent = self._members.get_by_id(agent_member_id)
+        if not agent:
+            raise ValueError(f"Agent member {agent_member_id} not found")
+
+        now = time.time()
+        conv_id = str(uuid.uuid4())
+        conv_title = title or f"Chat with {agent.name}"
+
+        self._conversations.create(ConversationRow(
+            id=conv_id, agent_member_id=agent_member_id,
+            title=conv_title, created_at=now,
+        ))
+        self._conv_members.add_member(conv_id, creator_id, now)
+        self._conv_members.add_member(conv_id, agent_member_id, now)
+
+        # Auto-create contact pair if not exists
+        self._contacts.create_pair(creator_id, agent_member_id, now)
+
+        return {
+            "id": conv_id,
+            "agent_member_id": agent_member_id,
+            "title": conv_title,
+            "status": "active",
+            "created_at": now,
+            "members": [creator_id, agent_member_id],
+        }
+
+    def archive_conversation(self, conversation_id: str) -> None:
+        """Archive a conversation (soft delete)."""
+        self._conversations.update_status(conversation_id, "archived")
+
     def list_for_member(self, member_id: str) -> list[dict]:
         """List conversations the member participates in."""
         conv_ids = self._conv_members.list_conversations_for_member(member_id)
         results = []
         for cid in conv_ids:
             conv = self._conversations.get_by_id(cid)
-            if conv:
+            if conv and conv.status != "archived":
                 members = self._conv_members.list_members(cid)
                 results.append({
                     "id": conv.id,

@@ -21,8 +21,27 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/conversations", tags=["conversations"])
 
 
+class CreateConversationBody(BaseModel):
+    agent_member_id: str
+    title: str | None = None
+
+
 class SendMessageBody(BaseModel):
     content: str
+
+
+@router.post("")
+async def create_conversation(
+    body: CreateConversationBody,
+    member_id: Annotated[str, Depends(get_current_member_id)],
+    app: Annotated[Any, Depends(get_app)],
+) -> dict:
+    """Create a new conversation with an agent."""
+    svc = app.state.conversation_service
+    try:
+        return svc.create_conversation(member_id, body.agent_member_id, body.title)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
 
 
 @router.get("")
@@ -33,6 +52,20 @@ async def list_conversations(
     """List conversations for the authenticated member."""
     svc = app.state.conversation_service
     return svc.list_for_member(member_id)
+
+
+@router.delete("/{conversation_id}")
+async def delete_conversation(
+    conversation_id: str,
+    member_id: Annotated[str, Depends(get_current_member_id)],
+    app: Annotated[Any, Depends(get_app)],
+):
+    """Archive a conversation (set status to 'archived')."""
+    svc = app.state.conversation_service
+    if not svc.is_member(conversation_id, member_id):
+        raise HTTPException(403, "Not a member of this conversation")
+    svc.archive_conversation(conversation_id)
+    return {"status": "archived"}
 
 
 @router.get("/{conversation_id}")

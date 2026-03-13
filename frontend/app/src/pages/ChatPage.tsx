@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams, useOutletContext, useLocation } from "react-router-dom";
 import ChatArea, { type ViewMode } from "../components/ChatArea";
+import ConversationView from "../components/chat-area/ConversationView";
 import type { AssistantTurn } from "../api";
 import { Eye, MessageSquareText } from "lucide-react";
 import ComputerPanel from "../components/ComputerPanel";
@@ -39,21 +40,18 @@ function ChatPageInner({ threadId }: { threadId: string }) {
   const location = useLocation();
   const { tm, conversations, setSidebarCollapsed } = useOutletContext<OutletContext>();
 
-  // Find conversation for this brain thread (if any)
-  const conversation = conversations?.find(c => `brain-${c.agent_member_id}` === threadId);
+  // @@@conv-routing - threadId from URL is now a conversation ID.
+  // Look up conversation → derive brain thread ID for internal use.
+  const conversation = conversations?.find(c => c.id === threadId);
+  const brainThreadId = conversation ? `brain-${conversation.agent_member_id}` : threadId;
+
   const [currentModel, setCurrentModel] = useState<string>("");
   const [viewMode, setViewMode] = useState<ViewMode>("owner");
 
   const state = location.state as { selectedModel?: string; runStarted?: boolean; message?: string } | null;
 
-  // location.state.runStarted is set by NewChatPage on SPA navigation only.
-  // On page refresh the browser preserves state but React Router resets it to null,
-  // so state?.runStarted will already be falsy after a real reload — no navEntry check needed.
   const runStarted = !!state?.runStarted;
 
-  // Pre-populate user + empty assistant turn so ThinkingIndicator shows immediately (no skeleton).
-  // The empty assistant turn (streaming=true, segments=[]) renders the three-dot indicator
-  // until stream events arrive and populate it.
   const [initialEntries] = useState(() => {
     if (!runStarted || !state?.message) return undefined;
     const now = Date.now();
@@ -69,10 +67,10 @@ function ChatPageInner({ threadId }: { threadId: string }) {
       void fetch("/api/settings/config", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: state.selectedModel, thread_id: threadId }),
+        body: JSON.stringify({ model: state.selectedModel, thread_id: brainThreadId }),
       });
     } else {
-      fetch(`/api/threads/${threadId}/runtime`)
+      fetch(`/api/threads/${brainThreadId}/runtime`)
         .then((r) => r.json())
         .then((d) => {
           if (d.model) {
@@ -85,36 +83,34 @@ function ChatPageInner({ threadId }: { threadId: string }) {
         })
         .catch(() => setCurrentModel("leon:large"));
     }
-  }, [state?.selectedModel, threadId]);
+  }, [state?.selectedModel, brainThreadId]);
 
-  const { entries, activeSandbox, loading, setEntries, setActiveSandbox, refreshThread } = useThreadData(threadId, runStarted, initialEntries);
+  const { entries, activeSandbox, loading, setEntries, setActiveSandbox, refreshThread } = useThreadData(brainThreadId, runStarted, initialEntries);
 
   const { runtimeStatus, isRunning, handleSendMessage, handleStopStreaming } =
     useStreamHandler({
-      threadId,
+      threadId: brainThreadId,
       conversationId: conversation?.id,
-      // Use tm.refreshThreads (sidebar list only) — NOT refreshThread (which calls
-      // setEntries(history) and would wipe any in-flight streaming entries for the next run).
       refreshThreads: tm.refreshThreads,
       onUpdate: (updater) => setEntries(updater),
       loading,
       runStarted,
     });
 
-  const { tasks, refresh: refreshTasks } = useBackgroundTasks({ threadId, loading, refreshThreads: tm.refreshThreads });
+  const { tasks, refresh: refreshTasks } = useBackgroundTasks({ threadId: brainThreadId, loading, refreshThreads: tm.refreshThreads });
 
   const isStreaming = isRunning;
 
   const { sandboxActionError, handlePauseSandbox, handleResumeSandbox } =
     useSandboxManager({
-      activeThreadId: threadId,
+      activeThreadId: brainThreadId,
       isStreaming,
       activeSandbox,
       setActiveSandbox,
       loadThread: refreshThread,
     });
 
-  const ui = useAppActions({ activeThreadId: threadId, setEntries });
+  const ui = useAppActions({ activeThreadId: brainThreadId, setEntries });
   const {
     computerOpen, computerTab,
     setComputerOpen, setComputerTab,
@@ -139,20 +135,19 @@ function ChatPageInner({ threadId }: { threadId: string }) {
   const handleCancelTask = useCallback(
     async (taskId: string) => {
       try {
-        const response = await fetch(`/api/threads/${threadId}/tasks/${taskId}/cancel`, {
+        const response = await fetch(`/api/threads/${brainThreadId}/tasks/${taskId}/cancel`, {
           method: "POST",
         });
         if (!response.ok) {
           console.error("[ChatPage] Failed to cancel task:", response.statusText);
         } else {
-          // 取消成功后刷新任务列表
           await refreshTasks();
         }
       } catch (err) {
         console.error("[ChatPage] Error cancelling task:", err);
       }
     },
-    [threadId, refreshTasks],
+    [brainThreadId, refreshTasks],
   );
 
   const computerResize = useResizableX(600, 360, 1200, true);
@@ -160,7 +155,7 @@ function ChatPageInner({ threadId }: { threadId: string }) {
   return (
     <>
       <Header
-        activeThreadId={threadId}
+        activeThreadId={brainThreadId}
         threadPreview={conversation?.title ?? tm.threads.find((t) => t.thread_id === threadId)?.preview ?? null}
         sandboxInfo={activeSandbox}
         currentModel={currentModel}
@@ -192,15 +187,19 @@ function ChatPageInner({ threadId }: { threadId: string }) {
                 </button>
               </div>
             )}
-            <ChatArea
-              entries={entries}
-              isStreaming={isStreaming}
-              runtimeStatus={runtimeStatus}
-              loading={loading}
-              viewMode={viewMode}
-              onFocusAgent={handleFocusAgent}
-              onTaskNoticeClick={handleTaskNoticeClick}
-            />
+            {/* @@@two-views - owner reads brain thread, contact reads conversation_messages */}
+            {viewMode === "contact" && conversation ? (
+              <ConversationView conversationId={conversation.id} isStreaming={isStreaming} />
+            ) : (
+              <ChatArea
+                entries={entries}
+                isStreaming={isStreaming}
+                runtimeStatus={runtimeStatus}
+                loading={loading}
+                onFocusAgent={handleFocusAgent}
+                onTaskNoticeClick={handleTaskNoticeClick}
+              />
+            )}
           </div>
           <TaskProgress
             isStreaming={isStreaming}
@@ -227,7 +226,7 @@ function ChatPageInner({ threadId }: { threadId: string }) {
             <ComputerPanel
               isOpen={computerOpen}
               onClose={() => setComputerOpen(false)}
-              threadId={threadId}
+              threadId={brainThreadId}
               sandboxType={activeSandbox?.type ?? null}
               chatEntries={entries}
               width={computerResize.width}

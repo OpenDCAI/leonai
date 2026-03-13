@@ -12,12 +12,12 @@ interface ChatAreaProps {
   isStreaming: boolean;
   runtimeStatus: StreamStatus | null;
   loading?: boolean;
-  viewMode?: ViewMode;
   onFocusAgent?: (taskId: string) => void;
   onTaskNoticeClick?: (taskId: string) => void;
 }
 
-export default function ChatArea({ entries, isStreaming: _isStreaming, runtimeStatus, loading, viewMode = "owner", onFocusAgent, onTaskNoticeClick }: ChatAreaProps) {
+/** Owner view — renders brain thread entries (full fidelity: tool calls, reasoning, etc.) */
+export default function ChatArea({ entries, isStreaming: _isStreaming, runtimeStatus, loading, onFocusAgent, onTaskNoticeClick }: ChatAreaProps) {
   const containerRef = useStickyScroll<HTMLDivElement>();
 
   return (
@@ -28,8 +28,6 @@ export default function ChatArea({ entries, isStreaming: _isStreaming, runtimeSt
         <div className="max-w-3xl mx-auto px-5 space-y-3.5">
           {entries.map((entry) => {
             if (entry.role === "notice") {
-              // @@@view-mode-filter - hide notices in contact mode
-              if (viewMode === "contact") return null;
               return <NoticeBubble key={entry.id} entry={entry as NoticeMessage} onTaskNoticeClick={onTaskNoticeClick} />;
             }
             if (entry.role === "user") {
@@ -38,18 +36,10 @@ export default function ChatArea({ entries, isStreaming: _isStreaming, runtimeSt
             const assistantEntry = entry as AssistantTurn;
             const isStreamingThis = assistantEntry.streaming === true;
 
-            // @@@view-mode-filter - in contact mode, only show text segments
-            const filteredEntry = viewMode === "contact"
-              ? { ...assistantEntry, segments: assistantEntry.segments.filter(s => s.type === "text") }
-              : assistantEntry;
-
-            // Skip empty assistant turns in contact mode (e.g. tool-only turns)
-            if (viewMode === "contact" && filteredEntry.segments.length === 0 && !isStreamingThis) return null;
-
             return (
               <AssistantBlock
                 key={entry.id}
-                entry={filteredEntry}
+                entry={assistantEntry}
                 isStreamingThis={isStreamingThis}
                 runtimeStatus={isStreamingThis ? runtimeStatus : null}
                 onFocusAgent={onFocusAgent}
