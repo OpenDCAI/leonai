@@ -38,6 +38,7 @@ class LogbookService:
         conv_messages: SQLiteConversationMessageRepo | None = None,
         members: SQLiteMemberRepo | None = None,
         event_bus: Any | None = None,
+        message_router: Any | None = None,
     ) -> None:
         self._member_id = member_id
         # @@@shared-repos - reuse existing repos to avoid "database is locked" from competing connections
@@ -47,6 +48,8 @@ class LogbookService:
         self._members = members or SQLiteMemberRepo()
         # @@@logbook-sse-push - duck-typed event bus with .publish(conv_id, event_dict) for real-time SSE
         self._event_bus = event_bus
+        # @@@logbook-delivery - callback(conv_id, sender_id, content) routes to agent recipients' brains
+        self._message_router = message_router
         self._register(registry)
 
     # ------------------------------------------------------------------
@@ -263,6 +266,13 @@ class LogbookService:
                 "content": content,
                 "created_at": now,
             })
+
+        # @@@logbook-delivery - route message to agent recipients in the conversation
+        if self._message_router:
+            try:
+                self._message_router(conversation_id, self._member_id, content)
+            except Exception:
+                logger.exception("Message routing failed for conv=%s", conversation_id[:8])
 
         return f"Reply sent (id: {msg_id})"
 

@@ -1001,6 +1001,7 @@ class LeonAgent:
                 conv_messages=repos.get("conv_messages"),
                 members=repos.get("members"),
                 event_bus=repos.get("event_bus"),
+                message_router=repos.get("message_router"),
             )
 
         # TaskBoard tools (board management — INLINE, blocked by default via catalog)

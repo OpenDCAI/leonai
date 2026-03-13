@@ -1,6 +1,7 @@
 """Agent pool management service."""
 
 import asyncio
+import logging
 import os
 from pathlib import Path
 from typing import Any
@@ -8,10 +9,13 @@ from typing import Any
 from fastapi import FastAPI
 
 from core.runtime.agent import create_leon_agent
+from core.runtime.middleware.monitor import AgentState
 from storage.runtime import build_storage_container
 from sandbox.manager import lookup_sandbox_for_thread
 from sandbox.thread_context import set_current_thread_id
 from core.identity.agent_registry import get_or_create_agent_id
+
+logger = logging.getLogger(__name__)
 
 # Thread lock for config updates
 _config_update_locks: dict[str, asyncio.Lock] = {}
@@ -85,7 +89,7 @@ async def get_or_create_agent(app_obj: FastAPI, sandbox_type: str, thread_id: st
 
     # @@@ agent-init-thread - LeonAgent.__init__ uses run_until_complete, must run in thread
     qm = getattr(app_obj.state, "queue_manager", None)
-    # @@@shared-logbook-repos - pass app.state repos + event bus to avoid lock contention and enable SSE push
+    # @@@shared-logbook-repos - pass app.state repos + event bus + message router to avoid lock contention and enable SSE push + agent delivery
     logbook_repos = None
     if member_id:
         logbook_repos = {
@@ -94,6 +98,7 @@ async def get_or_create_agent(app_obj: FastAPI, sandbox_type: str, thread_id: st
             "conv_messages": getattr(app_obj.state, "conv_message_repo", None),
             "members": getattr(app_obj.state, "member_repo", None),
             "event_bus": getattr(app_obj.state, "conversation_event_bus", None),
+            "message_router": _create_message_router(app_obj),
         }
     agent_obj = await asyncio.to_thread(create_agent_sync, sandbox_type, workspace_root, model_name, agent_name, qm, member_id, logbook_repos)
     member = agent_name or "leon"
@@ -131,6 +136,93 @@ def resolve_thread_sandbox(app_obj: FastAPI, thread_id: str) -> str:
         mapping[thread_id] = detected
         return detected
     return "local"
+
+
+# ---------------------------------------------------------------------------
+# @@@unified-message-delivery - route messages to agent brains regardless of sender type
+# ---------------------------------------------------------------------------
+
+
+async def route_message_to_brain(app_obj: FastAPI, brain_thread_id: str, formatted_message: str) -> str:
+    """Route a formatted message to an agent's brain thread.
+
+    Handles IDLE (start new run) and ACTIVE (steer via queue).
+    Same IDLE/ACTIVE pattern as the POST /conversations/{id}/messages handler.
+    Returns 'direct' or 'steer'.
+    """
+    sandbox_type = resolve_thread_sandbox(app_obj, brain_thread_id)
+    agent = await get_or_create_agent(app_obj, sandbox_type, thread_id=brain_thread_id)
+
+    qm = app_obj.state.queue_manager
+
+    # Fast path: agent already running → steer
+    if hasattr(agent, "runtime") and agent.runtime.current_state == AgentState.ACTIVE:
+        qm.enqueue(formatted_message, brain_thread_id, notification_type="steer")
+        return "steer"
+
+    # Slow path: agent IDLE → acquire lock, transition, start run
+    from backend.web.services.streaming_service import start_agent_run
+
+    lock_key = brain_thread_id
+    locks_guard = app_obj.state.thread_locks_guard
+    async with locks_guard:
+        if lock_key not in app_obj.state.thread_locks:
+            app_obj.state.thread_locks[lock_key] = asyncio.Lock()
+        lock = app_obj.state.thread_locks[lock_key]
+
+    async with lock:
+        if hasattr(agent, "runtime") and not agent.runtime.transition(AgentState.ACTIVE):
+            # Race: became active between check and lock
+            qm.enqueue(formatted_message, brain_thread_id, notification_type="steer")
+            return "steer"
+        start_agent_run(
+            agent, brain_thread_id, formatted_message, app_obj,
+            message_metadata={"source": "system", "notification_type": "steer"},
+        )
+        return "direct"
+
+
+def _create_message_router(app_obj: FastAPI) -> Any:
+    """Create a sync callback that routes messages to agent recipients.
+
+    Called from logbook_reply (sync context, agent tool handler thread).
+    Schedules async routing on the event loop via call_soon_threadsafe.
+    """
+    loop = getattr(app_obj.state, "_event_loop", None)
+    conv_member_repo = getattr(app_obj.state, "conv_member_repo", None)
+    member_repo = getattr(app_obj.state, "member_repo", None)
+
+    if not loop or not conv_member_repo or not member_repo:
+        return None
+
+    def router(conversation_id: str, sender_id: str, content: str) -> None:
+        from storage.contracts import MemberType
+        from core.runtime.middleware.queue import format_conversation_message
+
+        members = conv_member_repo.list_members(conversation_id)
+        for cm in members:
+            if cm.member_id == sender_id:
+                continue
+            member = member_repo.get_by_id(cm.member_id)
+            if not member or member.type != MemberType.MYCEL_AGENT:
+                continue  # human recipients get via SSE, no brain routing needed
+
+            brain_thread_id = f"brain-{cm.member_id}"
+            sender = member_repo.get_by_id(sender_id)
+            sender_name = sender.name if sender else "unknown"
+            formatted = format_conversation_message(content, sender_name, conversation_id)
+
+            async def _route(brain_tid=brain_thread_id, msg=formatted):
+                try:
+                    result = await route_message_to_brain(app_obj, brain_tid, msg)
+                    logger.info("Routed message to %s: %s", brain_tid[:14], result)
+                except Exception:
+                    logger.exception("Failed to route message to %s", brain_tid[:14])
+
+            if loop and not loop.is_closed():
+                loop.call_soon_threadsafe(loop.create_task, _route())
+
+    return router
 
 
 async def update_agent_config(app_obj: FastAPI, model: str, thread_id: str | None = None) -> dict[str, Any]:

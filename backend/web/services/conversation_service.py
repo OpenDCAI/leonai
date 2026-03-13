@@ -57,6 +57,45 @@ class ConversationService:
             "members": [creator_id, agent_member_id],
         }
 
+    # @@@member-conversation - create conversation between any two members (not just human+agent)
+    def create_member_conversation(self, member_ids: list[str], title: str | None = None) -> dict:
+        """Create a conversation between any two members."""
+        if len(member_ids) != 2:
+            raise ValueError("Exactly 2 member IDs required")
+
+        members = []
+        for mid in member_ids:
+            m = self._members.get_by_id(mid)
+            if not m:
+                raise ValueError(f"Member {mid} not found")
+            members.append(m)
+
+        now = time.time()
+        conv_id = str(uuid.uuid4())
+        conv_title = title or f"{members[0].name} ↔ {members[1].name}"
+
+        # Use first agent member as agent_member_id hint (for frontend brain SSE)
+        from storage.contracts import MemberType
+        agent_hint = next((m.id for m in members if m.type == MemberType.MYCEL_AGENT), member_ids[0])
+
+        self._conversations.create(ConversationRow(
+            id=conv_id, agent_member_id=agent_hint,
+            title=conv_title, created_at=now,
+        ))
+        for mid in member_ids:
+            self._conv_members.add_member(conv_id, mid, now)
+
+        self._contacts.create_pair(member_ids[0], member_ids[1], now)
+
+        return {
+            "id": conv_id,
+            "agent_member_id": agent_hint,
+            "title": conv_title,
+            "status": "active",
+            "created_at": now,
+            "members": member_ids,
+        }
+
     def archive_conversation(self, conversation_id: str) -> None:
         """Archive a conversation (soft delete)."""
         self._conversations.update_status(conversation_id, "archived")

@@ -22,7 +22,8 @@ router = APIRouter(prefix="/api/conversations", tags=["conversations"])
 
 
 class CreateConversationBody(BaseModel):
-    agent_member_id: str
+    agent_member_id: str | None = None
+    members: list[str] | None = None  # @@@member-conversation - any two members, not just human+agent
     title: str | None = None
 
 
@@ -36,10 +37,19 @@ async def create_conversation(
     member_id: Annotated[str, Depends(get_current_member_id)],
     app: Annotated[Any, Depends(get_app)],
 ) -> dict:
-    """Create a new conversation with an agent."""
+    """Create a new conversation between members.
+
+    Two modes:
+    - agent_member_id: legacy — conversation between JWT holder and an agent
+    - members: list of 2 member IDs — conversation between any two members
+    """
     svc = app.state.conversation_service
     try:
-        return svc.create_conversation(member_id, body.agent_member_id, body.title)
+        if body.members and len(body.members) == 2:
+            return svc.create_member_conversation(body.members, body.title)
+        if body.agent_member_id:
+            return svc.create_conversation(member_id, body.agent_member_id, body.title)
+        raise HTTPException(400, "Provide agent_member_id or members (list of 2)")
     except ValueError as e:
         raise HTTPException(404, str(e))
 
