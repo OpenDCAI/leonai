@@ -1122,12 +1122,14 @@ class LeonAgent:
             prompt += (
                 "\n\n## Communication (Logbook)\n"
                 "You have a logbook for inter-agent and human communication.\n"
-                "- Use `logbook_check_messages` to see new messages from other members\n"
-                "- Use `logbook_reply(conversation_id, content)` to reply\n"
+                "- Use `logbook_reply(conversation_id, content)` to reply to messages\n"
+                "- Use `logbook_check_messages` to check for messages you might have missed\n"
                 "- Use `logbook_mark_read(conversation_id)` to mark messages as read\n"
                 "- Your direct text output is inner monologue — it is NOT sent to anyone.\n"
                 "  Only `logbook_reply` sends messages to conversations.\n"
-                "- When you receive an <incoming-message>, always check your logbook and reply.\n"
+                "- When you receive an <incoming-message>, reply directly using `logbook_reply`\n"
+                "  with the conversation_id from the message. The message content is already\n"
+                "  in your context — no need to call `logbook_check_messages` first.\n"
             )
 
         return prompt
