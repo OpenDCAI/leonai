@@ -84,18 +84,20 @@ export default function ConversationView({ conversationId, memberDetails, sendRe
             try {
               const evt = JSON.parse(dataLines.join(""));
 
-              // @@@typing-signal — handle typing_start/typing_stop from conversation SSE
+              // @@@typing-signal — handle typing_start from conversation SSE
+              // (typing clears when a message from that member arrives — no typing_stop needed)
               if (evt.event === "typing_start") {
                 setTypingMembers(prev => new Set(prev).add(evt.member_id));
-                continue;
-              }
-              if (evt.event === "typing_stop") {
-                setTypingMembers(prev => { const next = new Set(prev); next.delete(evt.member_id); return next; });
                 continue;
               }
 
               if (!evt.id || !evt.content || seenIds.current.has(evt.id)) continue;
               seenIds.current.add(evt.id);
+
+              // Clear typing indicator when a message arrives from that sender
+              if (evt.sender_id) {
+                setTypingMembers(prev => { const next = new Set(prev); next.delete(evt.sender_id); return next; });
+              }
 
               // @@@pending-dedup - if this echoes an optimistic message, replace it
               const pendingKey = `${evt.sender_id}\n${evt.content}`;
