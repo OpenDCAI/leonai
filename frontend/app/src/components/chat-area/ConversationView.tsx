@@ -24,6 +24,7 @@ export default function ConversationView({ conversationId, isStreaming, memberDe
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [loading, setLoading] = useState(true);
   const memberId = useAuthStore(s => s.member?.id);
+  const agentId = useAuthStore(s => s.agent?.id);
   const containerRef = useStickyScroll<HTMLDivElement>();
   const seenIds = useRef(new Set<string>());
   // @@@pending-dedup - tracks optimistic messages so SSE echo replaces instead of duplicating
@@ -170,10 +171,7 @@ export default function ConversationView({ conversationId, isStreaming, memberDe
             />
           ))}
           {/* @@@typing-indicator - shows while brain thread SSE reports agent is active */}
-          {isStreaming && (() => {
-            const agentId = useAuthStore.getState().agent?.id;
-            return agentId ? <TypingIndicator name={resolveSenderName("")} agentId={agentId} /> : null;
-          })()}
+          {isStreaming && agentId && <TypingIndicator name={resolveSenderName("")} agentId={agentId} />}
         </div>
       )}
     </div>

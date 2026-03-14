@@ -1,4 +1,4 @@
-import { authFetch, authRequest } from "../store/auth-store";
+import { authRequest } from "../store/auth-store";
 import { useAuthStore } from "../store/auth-store";
 
 // @@@member-directory - types + fetch for member discovery (shared with agent logbook)
@@ -97,12 +97,8 @@ export async function sendConversationMessage(
 export async function uploadMemberAvatar(memberId: string, file: File): Promise<void> {
   const form = new FormData();
   form.append("file", file);
-  const res = await authFetch(`/api/members/${memberId}/avatar`, {
+  await authRequest<void>(`/api/members/${memberId}/avatar`, {
     method: "PUT",
     body: form,
   });
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(body || `Upload failed (${res.status})`);
-  }
 }
