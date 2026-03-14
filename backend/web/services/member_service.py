@@ -695,6 +695,11 @@ def delete_member(member_id: str) -> bool:
         shutil.rmtree(member_dir)
         found = True
 
+    # 1.5 Remove avatar file
+    avatar_path = LEON_HOME / "avatars" / f"{member_id}.png"
+    if avatar_path.exists():
+        avatar_path.unlink()
+
     # 2. Remove DB MemberRow
     repo = _get_db_member_repo()
     try:

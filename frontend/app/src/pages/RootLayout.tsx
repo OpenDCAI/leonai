@@ -1,7 +1,8 @@
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { MessageSquare, Users, ListTodo, Library, Layers, Share2, Settings, Plus, ChevronLeft, ChevronRight, LogOut } from "lucide-react";
+import { MessageSquare, Users, ListTodo, Library, Layers, Share2, Settings, Plus, ChevronLeft, ChevronRight, LogOut, Camera } from "lucide-react";
 import { useState, useEffect, useCallback, useRef } from "react";
 import MemberAvatar from "@/components/MemberAvatar";
+import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import CreateMemberDialog from "@/components/CreateMemberDialog";
 import NewChatDialog from "@/components/NewChatDialog";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -38,6 +39,34 @@ export default function RootLayout() {
   const userProfile = useAppStore((s) => s.userProfile);
   const loadAll = useAppStore((s) => s.loadAll);
   const storeAddTask = useAppStore((s) => s.addTask);
+
+  // @@@profile-avatar-upload — state + handler for user avatar upload in sidebar popover
+  const [avatarRev, setAvatarRev] = useState(0);
+  const avatarInputRef = useRef<HTMLInputElement>(null);
+  const handleAvatarUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !token || !authMember?.id) return;
+    const form = new FormData();
+    form.append("file", file);
+    try {
+      const res = await fetch(`/api/members/${authMember.id}/avatar`, {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${token}` },
+        body: form,
+      });
+      if (res.ok) {
+        setAvatarRev((r) => r + 1);
+        toast.success("头像已更新");
+      } else {
+        const body = await res.text();
+        toast.error(`上传失败: ${body}`);
+      }
+    } catch {
+      toast.error("上传失败");
+    } finally {
+      if (avatarInputRef.current) avatarInputRef.current.value = "";
+    }
+  }, [token, authMember?.id]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
@@ -229,24 +258,42 @@ export default function RootLayout() {
           </nav>
 
           <div className={`flex flex-col ${showLabels ? "px-2" : "items-center"} gap-0.5`}>
-            <div className={`flex items-center ${showLabels ? "px-3 gap-3" : "justify-center"} h-10 mb-1`}>
-              <MemberAvatar memberId={authMember?.id || ""} name={authMember?.name || userProfile.name} size="sm" />
-              {showLabels && (
-                <div className="min-w-0 flex-1">
-                  <p className="text-xs font-medium text-foreground truncate">{authMember?.name || userProfile.name}</p>
-                  <p className="text-[10px] text-muted-foreground truncate">{userProfile.email}</p>
-                </div>
-              )}
-              {showLabels && (
-                <button
-                  onClick={authLogout}
-                  className="w-6 h-6 rounded flex items-center justify-center text-muted-foreground/50 hover:text-foreground hover:bg-muted transition-colors"
-                  title="退出登录"
-                >
-                  <LogOut className="w-3.5 h-3.5" />
+            <Popover>
+              <PopoverTrigger asChild>
+                <button className={`flex items-center ${showLabels ? "px-3 gap-3" : "justify-center"} h-10 mb-1 rounded-xl hover:bg-muted transition-colors w-full`}>
+                  <MemberAvatar memberId={authMember?.id || ""} name={authMember?.name || userProfile.name} size="sm" rev={avatarRev} />
+                  {showLabels && (
+                    <div className="min-w-0 flex-1 text-left">
+                      <p className="text-xs font-medium text-foreground truncate">{authMember?.name || userProfile.name}</p>
+                      <p className="text-[10px] text-muted-foreground truncate">{userProfile.email}</p>
+                    </div>
+                  )}
                 </button>
-              )}
-            </div>
+              </PopoverTrigger>
+              <PopoverContent side="top" align="start" className="w-56">
+                <div className="flex flex-col items-center gap-3">
+                  {/* Avatar upload */}
+                  <div className="relative group/avatar cursor-pointer" onClick={() => avatarInputRef.current?.click()}>
+                    <MemberAvatar memberId={authMember?.id || ""} name={authMember?.name || userProfile.name} size="lg" rev={avatarRev} />
+                    <div className="absolute inset-0 rounded-full bg-black/40 opacity-0 group-hover/avatar:opacity-100 transition-opacity flex items-center justify-center">
+                      <Camera className="w-5 h-5 text-white" />
+                    </div>
+                    <input ref={avatarInputRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif" className="hidden" onChange={handleAvatarUpload} />
+                  </div>
+                  <div className="text-center">
+                    <p className="text-sm font-medium">{authMember?.name || userProfile.name}</p>
+                    <p className="text-xs text-muted-foreground">{userProfile.email}</p>
+                  </div>
+                  <button
+                    onClick={authLogout}
+                    className="flex items-center gap-2 w-full px-3 py-2 rounded-lg text-xs text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                  >
+                    <LogOut className="w-3.5 h-3.5" />
+                    退出登录
+                  </button>
+                </div>
+              </PopoverContent>
+            </Popover>
             <NavLink to="/settings" className="group relative block overflow-visible">
               <div className={`flex items-center ${showLabels ? "px-3 gap-3" : "justify-center"} h-10 rounded-xl transition-all duration-150 ${
                 location.pathname.startsWith("/settings") ? "bg-sidebar-accent text-sidebar-accent-foreground" : "text-sidebar-foreground hover:bg-muted hover:text-foreground"
