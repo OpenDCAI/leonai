@@ -28,10 +28,10 @@ function AvatarUploadTrigger({ memberId, name }: { memberId: string; name: strin
     if (!file) return;
     setUploading(true);
     try {
-      const ok = await uploadMemberAvatar(memberId, file);
-      if (ok) { setRev((r) => r + 1); toast.success("头像已更新"); }
-      else toast.error("上传失败");
-    } catch { toast.error("上传失败"); }
+      await uploadMemberAvatar(memberId, file);
+      setRev((r) => r + 1);
+      toast.success("头像已更新");
+    } catch (err) { toast.error(`上传失败: ${err instanceof Error ? err.message : "unknown"}`); }
     finally { setUploading(false); if (inputRef.current) inputRef.current.value = ""; }
   }, [memberId]);
 

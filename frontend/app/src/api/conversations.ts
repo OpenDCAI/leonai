@@ -32,8 +32,6 @@ export interface MemberInfo {
   avatar?: string | null;
 }
 
-/** @deprecated Use MemberInfo */
-export type ConversationMemberDetail = MemberInfo;
 
 export interface ConversationSummary {
   id: string;
@@ -95,13 +93,16 @@ export async function sendConversationMessage(
   });
 }
 
-/** Upload avatar for a member. Returns true on success. */
-export async function uploadMemberAvatar(memberId: string, file: File): Promise<boolean> {
+/** Upload avatar for a member. Throws on failure with server error message. */
+export async function uploadMemberAvatar(memberId: string, file: File): Promise<void> {
   const form = new FormData();
   form.append("file", file);
   const res = await authFetch(`/api/members/${memberId}/avatar`, {
     method: "PUT",
     body: form,
   });
-  return res.ok;
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(body || `Upload failed (${res.status})`);
+  }
 }

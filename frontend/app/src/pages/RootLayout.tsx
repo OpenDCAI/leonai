@@ -48,10 +48,10 @@ export default function RootLayout() {
     const file = e.target.files?.[0];
     if (!file || !authMember?.id) return;
     try {
-      const ok = await uploadMemberAvatar(authMember.id, file);
-      if (ok) { setAvatarRev((r) => r + 1); toast.success("头像已更新"); }
-      else toast.error("上传失败");
-    } catch { toast.error("上传失败"); }
+      await uploadMemberAvatar(authMember.id, file);
+      setAvatarRev((r) => r + 1);
+      toast.success("头像已更新");
+    } catch (err) { toast.error(`上传失败: ${err instanceof Error ? err.message : "unknown"}`); }
     finally { if (avatarInputRef.current) avatarInputRef.current.value = ""; }
   }, [authMember?.id]);
 

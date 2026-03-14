@@ -97,13 +97,13 @@ function Minimap({ nodes, links }: { nodes: FGNode[]; links: FGLink[] }) {
     const draw = () => {
       ctx.clearRect(0, 0, MINIMAP_W, MINIMAP_H);
 
-      const xs = nodes.map((n) => n.x ?? 0);
-      const ys = nodes.map((n) => n.y ?? 0);
-      if (xs.length === 0) { timer = setTimeout(draw, 200); return; }
-      const minX = Math.min(...xs);
-      const maxX = Math.max(...xs);
-      const minY = Math.min(...ys);
-      const maxY = Math.max(...ys);
+      if (nodes.length === 0) { timer = setTimeout(draw, 200); return; }
+      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+      for (const n of nodes) {
+        const nx = n.x ?? 0, ny = n.y ?? 0;
+        if (nx < minX) minX = nx; if (nx > maxX) maxX = nx;
+        if (ny < minY) minY = ny; if (ny > maxY) maxY = ny;
+      }
       const rangeX = maxX - minX || 1;
       const rangeY = maxY - minY || 1;
       const pad = 12;
@@ -187,7 +187,6 @@ export default function NetworkPage() {
 
   // @@@avatar-canvas-cache — pre-load avatar images for Canvas drawImage
   const avatarCache = useRef<Map<string, HTMLImageElement | null>>(new Map());
-  const [avatarLoadCount, setAvatarLoadCount] = useState(0); // trigger re-render on load
 
   // --- fetch ---
   useEffect(() => {
@@ -203,7 +202,6 @@ export default function NetworkPage() {
           const img = new Image();
           img.onload = () => {
             avatarCache.current.set(node.id, img);
-            setAvatarLoadCount((c) => c + 1);
           };
           img.onerror = () => {
             avatarCache.current.set(node.id, null); // no avatar

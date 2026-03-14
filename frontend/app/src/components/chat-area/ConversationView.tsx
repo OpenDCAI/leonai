@@ -170,7 +170,10 @@ export default function ConversationView({ conversationId, isStreaming, memberDe
             />
           ))}
           {/* @@@typing-indicator - shows while brain thread SSE reports agent is active */}
-          {isStreaming && <TypingIndicator name={resolveSenderName("")} agentId={useAuthStore.getState().agent?.id} />}
+          {isStreaming && (() => {
+            const agentId = useAuthStore.getState().agent?.id;
+            return agentId ? <TypingIndicator name={resolveSenderName("")} agentId={agentId} /> : null;
+          })()}
         </div>
       )}
     </div>
