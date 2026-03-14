@@ -31,6 +31,11 @@ async def lifespan(app: FastAPI):
     ensure_members_dir()
     ensure_library_dir()
 
+    # Ensure avatars directory exists
+    from pathlib import Path
+    avatars_dir = Path.home() / ".leon" / "avatars"
+    avatars_dir.mkdir(parents=True, exist_ok=True)
+
     # Initialize contact system repos + auth service
     from storage.providers.sqlite.contact_repo import SQLiteContactRepo
     from storage.providers.sqlite.conversation_repo import (

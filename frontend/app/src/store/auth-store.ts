@@ -10,6 +10,7 @@ export interface AuthMember {
   id: string;
   name: string;
   type: string;
+  avatar?: string | null;
 }
 
 interface AuthState {

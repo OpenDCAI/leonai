@@ -42,6 +42,7 @@ dependencies = [
     "langchain-mcp-adapters>=0.1.0",
     "croniter>=6.0.0",
     "bcrypt>=5.0.0",
+    "Pillow>=10.0.0",
 ]
 
 [project.optional-dependencies]

@@ -103,8 +103,8 @@ class AuthService:
 
         return {
             "token": token,
-            "member": {"id": human_id, "name": username, "type": "human"},
-            "agent": {"id": agent_id, "name": f"{username}'s Leon", "type": "mycel_agent"},
+            "member": {"id": human_id, "name": username, "type": "human", "avatar": None},
+            "agent": {"id": agent_id, "name": f"{username}'s Leon", "type": "mycel_agent", "avatar": None},
             "conversation_id": conv_id,
         }
 
@@ -130,13 +130,13 @@ class AuthService:
         agent_info = None
         if owned_agents:
             a = owned_agents[0]
-            agent_info = {"id": a.id, "name": a.name, "type": a.type.value}
+            agent_info = {"id": a.id, "name": a.name, "type": a.type.value, "avatar": a.avatar}
 
         token = self._make_token(member.id)
 
         return {
             "token": token,
-            "member": {"id": member.id, "name": member.name, "type": member.type.value},
+            "member": {"id": member.id, "name": member.name, "type": member.type.value, "avatar": member.avatar},
             "agent": agent_info,
             "conversation_id": conversation_id,
         }

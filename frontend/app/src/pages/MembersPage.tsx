@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { Search, Plus, Zap, Users, Wrench, Plug, SearchX, ArrowUpDown, AlertTriangle, RefreshCw, MessageSquare, Copy, Trash2, Bot } from "lucide-react";
+import MemberAvatar from "@/components/MemberAvatar";
 import { useNavigate } from "react-router-dom";
 import CreateMemberDialog from "@/components/CreateMemberDialog";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -181,7 +182,7 @@ export default function MembersPage() {
               return (
                 <div key={member.id} onClick={handleCardClick} className="surface-interactive p-4 cursor-pointer group hover:-translate-y-0.5 hover:shadow-md" role="button" aria-label={isBuiltin ? `与 ${member.name} 对话` : `查看成员 ${member.name}`} tabIndex={0} onKeyDown={(e) => e.key === "Enter" && handleCardClick()}>
                   <div className="flex items-start justify-between mb-3">
-                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-xs font-bold font-mono ${colorClass}`}>{initials}</div>
+                    <MemberAvatar memberId={member.id} name={member.name} size="md" className="rounded-xl" />
                     <div className="flex items-center gap-1.5">
                       {isBuiltin && <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary font-medium">内置</span>}
                       <div className={`w-1.5 h-1.5 ${status.shape} ${status.dot}`} />

@@ -5,6 +5,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listMessages, sendConversationMessage, type ConversationMessage, type ConversationMemberDetail } from "../../api/conversations";
 import { authFetch, useAuthStore } from "../../store/auth-store";
+import MemberAvatar from "@/components/MemberAvatar";
 import { useStickyScroll } from "../../hooks/use-sticky-scroll";
 import { ChatSkeleton } from "./ChatSkeleton";
 import { formatTime } from "./utils";
@@ -164,6 +165,7 @@ export default function ConversationView({ conversationId, isStreaming, memberDe
               key={msg.id}
               message={msg}
               isSelf={msg.sender_id === memberId}
+              senderId={msg.sender_id}
               senderName={msg.sender_id === memberId ? undefined : resolveSenderName(msg.sender_id)}
             />
           ))}
@@ -200,19 +202,19 @@ function TypingIndicator({ name }: { name: string }) {
 const MessageBubble = memo(function MessageBubble({
   message,
   isSelf,
+  senderId,
   senderName,
 }: {
   message: ConversationMessage;
   isSelf: boolean;
+  senderId: string;
   senderName?: string;
 }) {
   return (
     <div className={`flex ${isSelf ? "justify-end" : "justify-start"} animate-fade-in`}>
       <div className={`max-w-[78%] ${isSelf ? "" : "flex gap-2.5"}`}>
         {!isSelf && (
-          <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center text-[11px] font-semibold text-primary shrink-0 mt-0.5">
-            {(senderName || "L").slice(0, 1).toUpperCase()}
-          </div>
+          <MemberAvatar memberId={senderId} name={senderName || "Leon"} size="sm" className="mt-0.5" />
         )}
         <div>
           {!isSelf && senderName && (

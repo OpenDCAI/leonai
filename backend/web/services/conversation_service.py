@@ -12,12 +12,12 @@ logger = logging.getLogger(__name__)
 
 
 def _member_details(members_repo: any, member_ids: list[str]) -> list[dict]:
-    """Build member_details list: [{id, name, type}] for each participant."""
+    """Build member_details list: [{id, name, type, avatar}] for each participant."""
     details = []
     for mid in member_ids:
         m = members_repo.get_by_id(mid)
         if m:
-            details.append({"id": m.id, "name": m.name, "type": m.type.value})
+            details.append({"id": m.id, "name": m.name, "type": m.type.value, "avatar": m.avatar})
     return details
 
 
