@@ -50,9 +50,13 @@ function ChatPageInner({ threadId }: { threadId: string }) {
   const brainThreadId = agentMember ? `brain-${agentMember.id}` : null;
   const hasAgent = !!agentMember;
 
-  // @@@own-agent-check - only the agent's owner sees the brain thread (full view).
-  const authAgent = useAuthStore(s => s.agent);
-  const isOwnAgent = agentMember ? agentMember.id === authAgent?.id : false;
+  // @@@own-agent-check - owner sees the brain thread toggle when they're a
+  // participant in the conversation.  All conversations in the user's list
+  // belong to them, so the real gate is just "has an agent member".
+  const authMember = useAuthStore(s => s.member);
+  const isOwnAgent = hasAgent && !!conversation?.member_details?.some(
+    m => m.id === authMember?.id
+  );
 
   const [currentModel, setCurrentModel] = useState<string>("");
   // @@@view-default — conversation view is primary for everyone.
