@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
+import { useNavigate } from "react-router-dom";
 import ForceGraph from "react-force-graph-2d";
 import type { ForceGraphMethods } from "react-force-graph-2d";
 import { fetchGraph, type GraphNode, type GraphEdge } from "../api/network";
+import { createMemberConversation } from "../api/conversations";
 import { useAuthStore } from "../store/auth-store";
 
 interface FGNode extends GraphNode {
@@ -156,6 +158,8 @@ function Minimap({ nodes, links }: { nodes: FGNode[]; links: FGLink[] }) {
 // Main
 // ---------------------------------------------------------------------------
 export default function NetworkPage() {
+  const navigate = useNavigate();
+
   // --- raw data ---
   const [allNodes, setAllNodes] = useState<FGNode[]>([]);
   const [allEdges, setAllEdges] = useState<{ source: string; target: string; weight: number }[]>([]);
@@ -377,14 +381,29 @@ export default function NetworkPage() {
     [],
   );
 
-  // --- click node → set as ego center ---
+  // @@@node-click — single-click: ego center. double-click: launch conversation.
+  const lastClickRef = useRef<{ id: string; time: number } | null>(null);
   const handleNodeClick = useCallback(
     (node: FGNode) => {
-      if (mode === "ego") {
-        setCenterId(node.id);
+      const now = Date.now();
+      const last = lastClickRef.current;
+
+      if (last && last.id === node.id && now - last.time < 400) {
+        // Double-click → launch conversation
+        lastClickRef.current = null;
+        const myId = useAuthStore.getState().member?.id;
+        if (node.id === myId) return;
+        createMemberConversation(node.id)
+          .then((conv) => navigate(`/chat/${encodeURIComponent(node.name)}/${conv.id}`))
+          .catch((err) => console.error("[NetworkPage] conversation create failed:", err));
+        return;
       }
+
+      lastClickRef.current = { id: node.id, time: now };
+      // Single-click → ego center
+      if (mode === "ego") setCenterId(node.id);
     },
-    [mode],
+    [mode, navigate],
   );
 
   if (error) {

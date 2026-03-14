@@ -24,11 +24,16 @@ export async function listDirectory(type?: string, search?: string): Promise<Dir
   return authRequest<DirectoryResult>(`/api/members/directory${qs ? `?${qs}` : ""}`);
 }
 
-export interface ConversationMemberDetail {
+/** Canonical member identity — shared across network graph, chat, directory. */
+export interface MemberInfo {
   id: string;
   name: string;
   type: string;
+  avatar?: string | null;
 }
+
+/** @deprecated Use MemberInfo */
+export type ConversationMemberDetail = MemberInfo;
 
 export interface ConversationSummary {
   id: string;
@@ -36,7 +41,7 @@ export interface ConversationSummary {
   status: string;
   created_at: number;
   members: string[];
-  member_details?: ConversationMemberDetail[];
+  member_details?: MemberInfo[];
   /** Non-null only when the requesting user owns the agent. */
   brain_thread_id?: string | null;
 }

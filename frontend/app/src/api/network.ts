@@ -1,10 +1,7 @@
 import { authRequest } from "../store/auth-store";
+import type { MemberInfo } from "./conversations";
 
-export interface GraphNode {
-  id: string;
-  name: string;
-  type: string;
-}
+export type GraphNode = MemberInfo;
 
 export interface GraphEdge {
   source: string;
