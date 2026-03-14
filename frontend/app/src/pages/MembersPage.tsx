@@ -1,6 +1,7 @@
-import { useState, useEffect } from "react";
-import { Search, Plus, Zap, Users, Wrench, Plug, SearchX, ArrowUpDown, AlertTriangle, RefreshCw, MessageSquare, Copy, Trash2, Bot } from "lucide-react";
+import { useState, useEffect, useRef, useCallback } from "react";
+import { Search, Plus, Zap, Users, Wrench, Plug, SearchX, ArrowUpDown, AlertTriangle, RefreshCw, MessageSquare, Copy, Trash2, Bot, Camera } from "lucide-react";
 import MemberAvatar from "@/components/MemberAvatar";
+import { useAuthStore } from "@/store/auth-store";
 import { useNavigate } from "react-router-dom";
 import CreateMemberDialog from "@/components/CreateMemberDialog";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -24,6 +25,56 @@ const avatarColors = [
 ];
 
 type SortKey = "name" | "skills" | "status" | null;
+
+// @@@avatar-upload — click-to-upload avatar overlay on member cards
+function AvatarUploadTrigger({ memberId, name }: { memberId: string; name: string }) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const token = useAuthStore((s) => s.token);
+  const [uploading, setUploading] = useState(false);
+  // Cache-bust key to force image reload after upload
+  const [rev, setRev] = useState(0);
+
+  const handleUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !token) return;
+    setUploading(true);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const res = await fetch(`/api/members/${memberId}/avatar`, {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${token}` },
+        body: form,
+      });
+      if (!res.ok) {
+        const body = await res.text();
+        toast.error(`上传失败: ${body}`);
+      } else {
+        setRev((r) => r + 1);
+        toast.success("头像已更新");
+      }
+    } catch (err) {
+      toast.error("上传失败");
+    } finally {
+      setUploading(false);
+      if (inputRef.current) inputRef.current.value = "";
+    }
+  }, [memberId, token]);
+
+  return (
+    <div className="relative group/avatar" onClick={(e) => { e.stopPropagation(); inputRef.current?.click(); }}>
+      <MemberAvatar memberId={memberId} name={name} size="md" className="rounded-xl" rev={rev} />
+      <div className="absolute inset-0 rounded-xl bg-black/40 opacity-0 group-hover/avatar:opacity-100 transition-opacity flex items-center justify-center cursor-pointer">
+        {uploading ? (
+          <div className="w-4 h-4 border-2 border-white/60 border-t-white rounded-full animate-spin" />
+        ) : (
+          <Camera className="w-4 h-4 text-white" />
+        )}
+      </div>
+      <input ref={inputRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif" className="hidden" onChange={handleUpload} />
+    </div>
+  );
+}
 
 export default function MembersPage() {
   const isMobile = useIsMobile();
@@ -182,7 +233,7 @@ export default function MembersPage() {
               return (
                 <div key={member.id} onClick={handleCardClick} className="surface-interactive p-4 cursor-pointer group hover:-translate-y-0.5 hover:shadow-md" role="button" aria-label={isBuiltin ? `与 ${member.name} 对话` : `查看成员 ${member.name}`} tabIndex={0} onKeyDown={(e) => e.key === "Enter" && handleCardClick()}>
                   <div className="flex items-start justify-between mb-3">
-                    <MemberAvatar memberId={member.id} name={member.name} size="md" className="rounded-xl" />
+                    <AvatarUploadTrigger memberId={member.id} name={member.name} />
                     <div className="flex items-center gap-1.5">
                       {isBuiltin && <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary font-medium">内置</span>}
                       <div className={`w-1.5 h-1.5 ${status.shape} ${status.dot}`} />

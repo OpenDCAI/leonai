@@ -42,6 +42,8 @@ interface MemberAvatarProps {
   name: string;
   size?: keyof typeof SIZE_MAP;
   className?: string;
+  /** Cache-bust revision — increment to force reload after upload */
+  rev?: number;
 }
 
 export default function MemberAvatar({
@@ -49,16 +51,15 @@ export default function MemberAvatar({
   name,
   size = "md",
   className,
+  rev,
 }: MemberAvatarProps) {
   const sizeClass = SIZE_MAP[size];
   const fallbackColor = colorForId(memberId);
+  const src = `/api/members/${memberId}/avatar${rev ? `?v=${rev}` : ""}`;
 
   return (
     <Avatar className={cn(sizeClass, "shrink-0", className)}>
-      <AvatarImage
-        src={`/api/members/${memberId}/avatar`}
-        alt={name}
-      />
+      <AvatarImage src={src} alt={name} />
       <AvatarFallback className={cn("font-semibold", fallbackColor)}>
         {getInitials(name)}
       </AvatarFallback>
