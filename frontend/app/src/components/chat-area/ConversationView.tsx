@@ -29,10 +29,10 @@ export default function ConversationView({ conversationId, memberDetails, sendRe
   // @@@pending-dedup - tracks optimistic messages so SSE echo replaces instead of duplicating
   const pendingRef = useRef(new Map<string, string>()); // key: `${senderId}\n${content}`, value: optimisticId
 
-  // @@@member-name-map - resolve sender_id → display name from member_details
-  const memberNameMap = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const m of memberDetails || []) map.set(m.id, m.name);
+  // @@@member-map - resolve sender_id → { name, type } from member_details
+  const memberMap = useMemo(() => {
+    const map = new Map<string, { name: string; type: string }>();
+    for (const m of memberDetails || []) map.set(m.id, { name: m.name, type: m.type });
     return map;
   }, [memberDetails]);
 
@@ -161,8 +161,9 @@ export default function ConversationView({ conversationId, memberDetails, sendRe
     if (sendRef) sendRef.current = handleSend;
   }, [handleSend, sendRef]);
 
-  const resolveSenderName = (senderId: string): string => {
-    return memberNameMap.get(senderId) || fallbackName;
+  const resolveSender = (senderId: string) => {
+    const m = memberMap.get(senderId);
+    return { name: m?.name || fallbackName, type: m?.type };
   };
 
   return (
@@ -175,30 +176,35 @@ export default function ConversationView({ conversationId, memberDetails, sendRe
         </div>
       ) : (
         <div className="max-w-3xl mx-auto px-5 space-y-3">
-          {messages.map(msg => (
-            <MessageBubble
-              key={msg.id}
-              message={msg}
-              isSelf={msg.sender_id === memberId}
-              senderId={msg.sender_id}
-              senderName={msg.sender_id === memberId ? undefined : resolveSenderName(msg.sender_id)}
-            />
-          ))}
+          {messages.map(msg => {
+            const isSelf = msg.sender_id === memberId;
+            const sender = isSelf ? undefined : resolveSender(msg.sender_id);
+            return (
+              <MessageBubble
+                key={msg.id}
+                message={msg}
+                isSelf={isSelf}
+                senderId={msg.sender_id}
+                senderName={sender?.name}
+                senderType={sender?.type}
+              />
+            );
+          })}
           {/* @@@typing-lifecycle — driven by conversation SSE typing_start/typing_stop */}
           {typingMembers.size > 0 && (memberDetails || [])
             .filter(m => typingMembers.has(m.id))
-            .map(m => <TypingIndicator key={m.id} name={m.name} memberId={m.id} />)}
+            .map(m => <TypingIndicator key={m.id} name={m.name} memberId={m.id} type={m.type} />)}
         </div>
       )}
     </div>
   );
 }
 
-function TypingIndicator({ name, memberId }: { name: string; memberId: string }) {
+function TypingIndicator({ name, memberId, type }: { name: string; memberId: string; type?: string }) {
   return (
     <div className="flex justify-start animate-fade-in">
       <div className="flex gap-2.5">
-        <MemberAvatar memberId={memberId} name={name} size="sm" className="mt-0.5" />
+        <MemberAvatar memberId={memberId} name={name} type={type} size="sm" className="mt-0.5" />
         <div>
           <span className="text-[11px] text-muted-foreground ml-0.5 mb-0.5 block">{name}</span>
           <div className="rounded-xl rounded-bl-sm bg-white border border-border px-4 py-2.5">
@@ -219,17 +225,19 @@ const MessageBubble = memo(function MessageBubble({
   isSelf,
   senderId,
   senderName,
+  senderType,
 }: {
   message: ConversationMessage;
   isSelf: boolean;
   senderId: string;
   senderName?: string;
+  senderType?: string;
 }) {
   return (
     <div className={`flex ${isSelf ? "justify-end" : "justify-start"} animate-fade-in`}>
       <div className={`max-w-[78%] ${isSelf ? "" : "flex gap-2.5"}`}>
         {!isSelf && (
-          <MemberAvatar memberId={senderId} name={senderName || "Leon"} size="sm" className="mt-0.5" />
+          <MemberAvatar memberId={senderId} name={senderName || "Leon"} type={senderType} size="sm" className="mt-0.5" />
         )}
         <div>
           {!isSelf && senderName && (

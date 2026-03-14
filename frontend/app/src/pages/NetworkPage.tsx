@@ -4,6 +4,7 @@ import ForceGraph from "react-force-graph-2d";
 import type { ForceGraphMethods } from "react-force-graph-2d";
 import { fetchGraph, type GraphNode, type GraphEdge } from "../api/network";
 import { createMemberConversation } from "../api/conversations";
+import { colorForType, getInitials } from "../lib/member-colors";
 import { useAuthStore } from "../store/auth-store";
 
 interface FGNode extends GraphNode {
@@ -39,11 +40,6 @@ function hexagonPath(ctx: CanvasRenderingContext2D, x: number, y: number, r: num
 }
 
 const NODE_R = 6;
-const COLORS: Record<string, string> = {
-  human: "#60a5fa",
-  mycel_agent: "#4ade80",
-  openclaw_agent: "#fb923c",
-};
 
 // @@@ego-bfs — compute visible node set from center node within depth hops
 function bfs(
@@ -128,7 +124,7 @@ function Minimap({ nodes, links }: { nodes: FGNode[]; links: FGLink[] }) {
       }
 
       for (const n of nodes) {
-        ctx.fillStyle = COLORS[n.type] || "#a78bfa";
+        ctx.fillStyle = colorForType(n.type).hex;
         ctx.beginPath();
         ctx.arc(tx(n), ty(n), 2.5, 0, 2 * Math.PI);
         ctx.fill();
@@ -295,7 +291,7 @@ export default function NetworkPage() {
       const x = node.x ?? 0;
       const y = node.y ?? 0;
       const r = NODE_R;
-      const color = COLORS[node.type] || "#a78bfa";
+      const color = colorForType(node.type).hex;
       const isMyAgent = node.id === myAgentId;
       const isMe = node.id === myMemberId;
       const isCenter = mode === "ego" && node.id === centerId;
@@ -323,15 +319,21 @@ export default function NetworkPage() {
         ctx.drawImage(avatarImg, x - r, y - r, r * 2, r * 2);
         ctx.restore();
       } else {
-        // Fallback: colored shape
-        if (node.type === "human") {
-          ctx.beginPath();
-          ctx.arc(x, y, r, 0, 2 * Math.PI);
-        } else {
-          hexagonPath(ctx, x, y, r);
-        }
+        // Fallback: colored shape + initials (matches MemberAvatar DOM fallback)
+        ctx.beginPath();
+        ctx.arc(x, y, r, 0, 2 * Math.PI);
         ctx.fillStyle = color;
         ctx.fill();
+
+        if (globalScale > 0.3) {
+          const initials = getInitials(node.name);
+          const fontSize = Math.max(r * 0.85, 3);
+          ctx.font = `600 ${fontSize}px -apple-system, "Segoe UI", Roboto, sans-serif`;
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillStyle = "#fff";
+          ctx.fillText(initials, x, y);
+        }
       }
 
       // Ring: ego center > self/own-agent > default

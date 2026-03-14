@@ -157,7 +157,10 @@ async def get_avatar(member_id: str) -> FileResponse:
     return FileResponse(
         path,
         media_type="image/png",
-        headers={"Cache-Control": "no-cache"},
+        # @@@avatar-cache - max-age allows browser to serve from memory cache
+        # synchronously, preventing Radix Avatar fallback flash on remount.
+        # Cache-bust after upload via ?v= query param (MemberAvatar rev prop).
+        headers={"Cache-Control": "public, max-age=300"},
     )
 
 

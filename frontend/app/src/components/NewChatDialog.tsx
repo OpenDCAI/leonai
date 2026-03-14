@@ -83,7 +83,7 @@ export default function NewChatDialog({ open, onOpenChange, onConversationCreate
             <Loader2 className="w-4 h-4 animate-spin text-primary" />
           </div>
         ) : (
-          <MemberAvatar memberId={entry.id} name={entry.name} size="sm" />
+          <MemberAvatar memberId={entry.id} name={entry.name} type={entry.type} size="sm" />
         )}
         <div className="min-w-0 flex-1">
           <span className="text-sm font-medium truncate">{entry.name}</span>
