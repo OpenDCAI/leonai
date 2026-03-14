@@ -37,7 +37,6 @@ def _load_tools_catalog() -> dict[str, ToolDef]:
 
 def ensure_members_dir() -> None:
     MEMBERS_DIR.mkdir(parents=True, exist_ok=True)
-    _ensure_leon_dir()  # template must exist before any API reads
 
 
 # ── Low-level I/O helpers ──
@@ -250,85 +249,30 @@ def _member_to_dict(member_dir: Path) -> dict[str, Any] | None:
     }
 
 
-# ── Leon builtin ──
-
-def _leon_builtin() -> dict[str, Any]:
-    """Build Leon builtin member dict with full tool catalog."""
-    catalog = _load_tools_catalog()
-    tools = [{"name": k, "enabled": v.default, "desc": v.desc, "group": v.group} for k, v in catalog.items()]
-    # Load built-in sub-agents (read-only display)
-    builtin_agents = _load_builtin_agents(catalog)
-
-    return {
-        "id": "__leon__",
-        "name": "Leon",
-        "description": "通用数字成员，随时准备为你工作",
-        "status": "active",
-        "version": "1.0.0",
-        "config": {"prompt": "", "rules": [], "tools": tools, "mcps": [], "skills": [], "subAgents": builtin_agents},
-        "created_at": 0,
-        "updated_at": 0,
-        "builtin": True,
-    }
-
-
-def _load_builtin_agents(catalog: dict[str, ToolDef]) -> list[dict[str, Any]]:
-    """Load system built-in agents for display (read-only)."""
-    loader = AgentLoader()
-    agents = []
-    if _SYSTEM_AGENTS_DIR.is_dir():
-        for md in sorted(_SYSTEM_AGENTS_DIR.glob("*.md")):
-            ac = loader.parse_agent_file(md)
-            if ac:
-                is_all = ac.tools == ["*"]
-                agent_tools = [
-                    {"name": k, "enabled": is_all or k in ac.tools, "desc": v.desc, "group": v.group}
-                    for k, v in catalog.items()
-                ]
-                agents.append({
-                    "name": ac.name, "desc": ac.description,
-                    "tools": agent_tools, "system_prompt": ac.system_prompt, "builtin": True,
-                })
-    return agents
-
-
-def _ensure_leon_dir() -> Path:
-    """Ensure Leon's member directory exists for persisting edits."""
-    leon_dir = MEMBERS_DIR / "__leon__"
-    leon_dir.mkdir(parents=True, exist_ok=True)
-    if not (leon_dir / "agent.md").exists():
-        _write_agent_md(leon_dir / "agent.md", name="Leon",
-                        description="通用数字成员，随时准备为你工作")
-    if not (leon_dir / "meta.json").exists():
-        _write_json(leon_dir / "meta.json", {
-            "status": "active", "version": "1.0.0",
-            "created_at": 0, "updated_at": 0,
-        })
-    return leon_dir
-
-
 # ── DB identity helpers ──
 
-def _resolve_config_dir(config_dir_str: str | None) -> Path:
-    """Resolve a member's config directory, defaulting to __leon__ template."""
+def _resolve_config_dir(config_dir_str: str | None) -> Path | None:
+    """Resolve a member's config directory. Returns None if invalid."""
     if config_dir_str:
         p = Path(config_dir_str)
         if p.is_dir():
             return p
-    return MEMBERS_DIR / "__leon__"
+    return None
 
 
-def _db_member_to_dict(row: Any) -> dict[str, Any]:
+def _db_member_to_dict(row: Any) -> dict[str, Any] | None:
     """Build frontend member dict: identity from DB row, config from filesystem."""
     config_dir = _resolve_config_dir(row.config_dir)
-    item = _member_to_dict(config_dir) or _leon_builtin()
-    # DB is the identity source of truth — override filesystem names
+    if not config_dir:
+        logger.warning("Member %s has invalid config_dir: %s", row.id, row.config_dir)
+        return None
+    item = _member_to_dict(config_dir)
+    if not item:
+        logger.warning("Failed to load config for member %s from %s", row.id, config_dir)
+        return None
     item["id"] = row.id
     item["name"] = row.name
     item["description"] = row.description or item.get("description", "")
-    # @@@db-agent-never-builtin — DB-backed agents with real UUIDs are user-owned, never builtin.
-    # The builtin flag may leak from _leon_builtin() fallback when config_dir fails to load.
-    item["builtin"] = False
     return item
 
 
@@ -351,23 +295,15 @@ def list_members(owner_id: str | None = None) -> list[dict[str, Any]]:
     finally:
         repo.close()
 
-    if not db_agents:
-        return [_leon_builtin()]
-
-    return [_db_member_to_dict(agent) for agent in db_agents]
+    results = []
+    for agent in db_agents:
+        item = _db_member_to_dict(agent)
+        if item:
+            results.append(item)
+    return results
 
 
 def get_member(member_id: str) -> dict[str, Any] | None:
-    if member_id == "__leon__":
-        leon_dir = MEMBERS_DIR / "__leon__"
-        if leon_dir.is_dir() and (leon_dir / "agent.md").exists():
-            item = _member_to_dict(leon_dir)
-            if item:
-                item["builtin"] = True
-                return item
-        return _leon_builtin()
-
-    # Try DB first (contact system members)
     repo = _get_db_member_repo()
     try:
         row = repo.get_by_id(member_id)
@@ -460,12 +396,9 @@ def _resolve_member_dir(member_id: str) -> Path | None:
 
 
 def update_member(member_id: str, **fields: Any) -> dict[str, Any] | None:
-    if member_id == "__leon__":
-        member_dir = _ensure_leon_dir()
-    else:
-        member_dir = _resolve_member_dir(member_id)
-        if not member_dir:
-            return None
+    member_dir = _resolve_member_dir(member_id)
+    if not member_dir:
+        return None
     allowed = {"name", "description", "status"}
     updates = {k: v for k, v in fields.items() if k in allowed and v is not None}
     if not updates:
@@ -502,12 +435,9 @@ def update_member(member_id: str, **fields: Any) -> dict[str, Any] | None:
 
 
 def update_member_config(member_id: str, config_patch: dict[str, Any]) -> dict[str, Any] | None:
-    if member_id == "__leon__":
-        member_dir = _ensure_leon_dir()
-    else:
-        member_dir = _resolve_member_dir(member_id)
-        if not member_dir:
-            return None
+    member_dir = _resolve_member_dir(member_id)
+    if not member_dir:
+        return None
 
     # prompt → agent.md body
     if "prompt" in config_patch and config_patch["prompt"] is not None:
@@ -688,9 +618,6 @@ def publish_member(member_id: str, bump_type: str = "patch") -> dict[str, Any] |
 
 
 def delete_member(member_id: str) -> bool:
-    if member_id == "__leon__":
-        return False
-
     found = False
 
     # 1. Remove filesystem config

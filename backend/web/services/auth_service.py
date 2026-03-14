@@ -30,9 +30,6 @@ JWT_SECRET = "leon-dev-secret-change-me"
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_SECONDS = 86400 * 7  # 7 days
 
-# @@@template-path - shared Leon agent config directory for all users' default agent.
-# Points to the existing __leon__ member dir, or falls back to None (no config_dir).
-LEON_TEMPLATE_DIR = str(((__import__("pathlib").Path.home() / ".leon" / "members" / "__leon__")).resolve())
 
 
 class AuthService:
@@ -75,12 +72,21 @@ class AuthService:
             password_hash=password_hash, created_at=now,
         ))
 
-        # 3. Agent member (Leon from template)
+        # 3. Agent member — own config directory (not shared template)
         agent_id = str(uuid.uuid4())
+        from backend.web.services.member_service import MEMBERS_DIR, _write_agent_md, _write_json
+        agent_dir = MEMBERS_DIR / agent_id
+        agent_dir.mkdir(parents=True, exist_ok=True)
+        _write_agent_md(agent_dir / "agent.md", name=f"{username}'s Leon",
+                        description="Your AI assistant")
+        _write_json(agent_dir / "meta.json", {
+            "status": "active", "version": "1.0.0",
+            "created_at": int(now * 1000), "updated_at": int(now * 1000),
+        })
         self._members.create(MemberRow(
             id=agent_id, name=f"{username}'s Leon", type=MemberType.MYCEL_AGENT,
             description="Your AI assistant",
-            config_dir=LEON_TEMPLATE_DIR,
+            config_dir=str(agent_dir),
             owner_id=human_id,
             created_at=now,
         ))

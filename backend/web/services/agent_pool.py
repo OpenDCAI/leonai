@@ -88,16 +88,14 @@ async def get_or_create_agent(app_obj: FastAPI, sandbox_type: str, thread_id: st
     # NOT an agent type name ("bash", "general", etc.). Never pass it to create_leon_agent.
     agent_name = agent  # explicit caller-provided type only; None → default Leon agent
 
-    # @@@custom-member-config - look up member's config_dir for custom agents
+    # @@@custom-member-config - look up member's config_dir
     source_dir = None
     if member_id and not agent_name:
         member_repo = getattr(app_obj.state, "member_repo", None)
         if member_repo:
             db_member = member_repo.get_by_id(member_id)
             if db_member and db_member.config_dir:
-                leon_template = str((Path.home() / ".leon" / "members" / "__leon__").resolve())
-                if db_member.config_dir != leon_template:
-                    source_dir = db_member.config_dir
+                source_dir = db_member.config_dir
 
     # @@@ agent-init-thread - LeonAgent.__init__ uses run_until_complete, must run in thread
     qm = getattr(app_obj.state, "queue_manager", None)
