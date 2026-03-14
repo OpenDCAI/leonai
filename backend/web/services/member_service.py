@@ -37,6 +37,7 @@ def _load_tools_catalog() -> dict[str, ToolDef]:
 
 def ensure_members_dir() -> None:
     MEMBERS_DIR.mkdir(parents=True, exist_ok=True)
+    _ensure_leon_dir()  # template must exist before any API reads
 
 
 # ── Low-level I/O helpers ──
