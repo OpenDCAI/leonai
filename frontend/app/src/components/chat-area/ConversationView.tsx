@@ -24,7 +24,6 @@ export default function ConversationView({ conversationId, isStreaming, memberDe
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [loading, setLoading] = useState(true);
   const memberId = useAuthStore(s => s.member?.id);
-  const agentId = useAuthStore(s => s.agent?.id);
   const containerRef = useStickyScroll<HTMLDivElement>();
   const seenIds = useRef(new Set<string>());
   // @@@pending-dedup - tracks optimistic messages so SSE echo replaces instead of duplicating
@@ -171,18 +170,22 @@ export default function ConversationView({ conversationId, isStreaming, memberDe
             />
           ))}
           {/* @@@typing-indicator - shows while brain thread SSE reports agent is active */}
-          {isStreaming && agentId && <TypingIndicator name={resolveSenderName("")} agentId={agentId} />}
+          {isStreaming && (() => {
+            // The other participant — whoever is typing. No human/agent assumption.
+            const other = (memberDetails || []).find(m => m.id !== memberId);
+            return other ? <TypingIndicator name={other.name} memberId={other.id} /> : null;
+          })()}
         </div>
       )}
     </div>
   );
 }
 
-function TypingIndicator({ name, agentId }: { name: string; agentId?: string }) {
+function TypingIndicator({ name, memberId }: { name: string; memberId: string }) {
   return (
     <div className="flex justify-start animate-fade-in">
       <div className="flex gap-2.5">
-        <MemberAvatar memberId={agentId || ""} name={name} size="sm" className="mt-0.5" />
+        <MemberAvatar memberId={memberId} name={name} size="sm" className="mt-0.5" />
         <div>
           <span className="text-[11px] text-muted-foreground ml-0.5 mb-0.5 block">{name}</span>
           <div className="rounded-xl rounded-bl-sm bg-white border border-border px-4 py-2.5">
