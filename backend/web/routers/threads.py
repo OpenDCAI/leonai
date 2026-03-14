@@ -516,9 +516,12 @@ async def run_thread(
     set_current_thread_id(thread_id)
     agent = await get_or_create_agent(app, sandbox_type, thread_id=thread_id)
 
-    # Per-request model override (lightweight, no rebuild)
+    # Per-request model override, or sync from settings if changed
     if payload.model:
         await asyncio.to_thread(agent.update_config, model=payload.model)
+    else:
+        from backend.web.services.agent_pool import _sync_agent_model
+        await _sync_agent_model(agent, thread_id)
 
     lock = await get_thread_lock(app, thread_id)
     async with lock:

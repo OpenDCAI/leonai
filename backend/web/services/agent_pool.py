@@ -121,6 +121,7 @@ async def get_or_create_agent(app_obj: FastAPI, sandbox_type: str, thread_id: st
         sandbox_type=sandbox_type,
     )
     agent_obj.agent_id = agent_id
+    agent_obj._pool_model_key = model_name  # track for hot-swap detection
     pool[pool_key] = agent_obj
     return agent_obj
 
@@ -152,6 +153,26 @@ def resolve_thread_sandbox(app_obj: FastAPI, thread_id: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# @@@hot-swap-model - re-resolve model from settings before each run
+def _resolve_current_model(thread_id: str) -> str | None:
+    """Read the model for this thread: thread_config → preferences default."""
+    from backend.web.utils.helpers import load_thread_config
+    from backend.web.routers.settings import load_settings as load_preferences
+
+    tc = load_thread_config(thread_id)
+    if tc and tc.model:
+        return tc.model
+    return load_preferences().default_model
+
+
+async def _sync_agent_model(agent: Any, thread_id: str) -> None:
+    """If settings model changed since agent was created, hot-swap it."""
+    current = _resolve_current_model(thread_id)
+    if current and current != getattr(agent, "_pool_model_key", None):
+        await asyncio.to_thread(agent.update_config, model=current)
+        agent._pool_model_key = current
+
+
 # @@@unified-message-delivery - route messages to agent brains regardless of sender type
 # ---------------------------------------------------------------------------
 
@@ -166,6 +187,7 @@ async def route_message_to_brain(app_obj: FastAPI, brain_thread_id: str, formatt
     """
     sandbox_type = resolve_thread_sandbox(app_obj, brain_thread_id)
     agent = await get_or_create_agent(app_obj, sandbox_type, thread_id=brain_thread_id)
+    await _sync_agent_model(agent, brain_thread_id)
 
     qm = app_obj.state.queue_manager
 
