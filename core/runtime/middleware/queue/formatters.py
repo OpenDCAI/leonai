@@ -21,7 +21,7 @@ def format_steer_reminder(content: str) -> str:
     )
 
 
-def format_task_notification(
+def format_background_notification(
     task_id: str,
     status: str,
     summary: str,
@@ -32,20 +32,20 @@ def format_task_notification(
     """Format background task completion as system-reminder XML."""
     parts = [
         "<system-reminder>",
-        "<task-notification>",
-        f"  <task-id>{task_id}</task-id>",
+        "<background-notification>",
+        f"  <run-id>{task_id}</run-id>",
         f"  <status>{status}</status>",
     ]
     if description:
-        parts.append(f"  <description>{description}</description>")
-    parts.append(f"  <summary>{summary}</summary>")
+        parts.append(f"  <description>{escape(description)}</description>")
+    parts.append(f"  <summary>{escape(summary)}</summary>")
     if result is not None:
         # Truncate long results to avoid flooding context
         truncated = result[:2000] + "..." if len(result) > 2000 else result
-        parts.append(f"  <result>{truncated}</result>")
+        parts.append(f"  <result>{escape(truncated)}</result>")
     if usage:
         parts.append(f"  <usage>{json.dumps(usage)}</usage>")
-    parts.append("</task-notification>")
+    parts.append("</background-notification>")
     parts.append("</system-reminder>")
     return "\n".join(parts)
 

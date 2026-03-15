@@ -117,7 +117,7 @@ function ChatPageInner({ threadId }: { threadId: string }) {
       for (const entry of entries) {
         if (entry.role !== "assistant") continue;
         for (const seg of (entry as AssistantTurn).segments) {
-          if (seg.type === "tool" && seg.step.name === "Task" && seg.step.subagent_stream?.task_id === taskId) {
+          if (seg.type === "tool" && seg.step.name === "Agent" && seg.step.subagent_stream?.task_id === taskId) {
             handleFocusAgent(seg.step.id);
             return;
           }

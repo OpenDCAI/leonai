@@ -1,7 +1,9 @@
 """AgentService - Registers Agent/TaskOutput/TaskStop tools into ToolRegistry.
 
-Creates independent LeonAgent instances per spawn, uses asyncio.shield() +
-wait_for() for implicit background switching. Backed by AgentRegistry (SQLite).
+Creates independent LeonAgent instances per spawn. Sub-agents run as asyncio
+tasks; parent blocks until completion by default. `run_in_background=True`
+fires-and-forgets and returns a task_id for polling via TaskOutput.
+Backed by AgentRegistry (SQLite).
 """
 
 from __future__ import annotations
@@ -14,86 +16,10 @@ from pathlib import Path
 from typing import Any
 
 from core.agents.registry import AgentEntry, AgentRegistry
-from core.runtime.middleware.queue.formatters import format_task_notification
+from core.runtime.middleware.queue.formatters import format_background_notification
 from core.runtime.registry import ToolEntry, ToolMode, ToolRegistry
 
 logger = logging.getLogger(__name__)
-
-
-async def _repair_subagent_checkpoint(agent: Any, config: dict) -> None:
-    """Repair incomplete tool_call history in a sub-agent's checkpoint.
-
-    If the checkpoint has an AIMessage with tool_calls lacking matching
-    ToolMessages, inserts synthetic error ToolMessages so the LLM won't
-    reject the history. Safe to call on fresh checkpoints (no-op).
-    """
-    try:
-        from langchain_core.messages import RemoveMessage, ToolMessage
-
-        graph = getattr(agent, "agent", None)
-        if not graph:
-            return
-
-        state = await graph.aget_state(config)
-        if not state or not state.values:
-            return
-
-        messages = state.values.get("messages", [])
-        if not messages:
-            return
-
-        pending: dict[str, str] = {}  # tc_id -> tool_name
-        answered: set[str] = set()
-        for msg in messages:
-            cls = msg.__class__.__name__
-            if cls == "AIMessage":
-                for tc in getattr(msg, "tool_calls", []):
-                    tc_id = tc.get("id")
-                    if tc_id:
-                        pending[tc_id] = tc.get("name", "unknown")
-            elif cls == "ToolMessage":
-                tc_id = getattr(msg, "tool_call_id", None)
-                if tc_id:
-                    answered.add(tc_id)
-
-        unmatched = {tid: name for tid, name in pending.items() if tid not in answered}
-        if not unmatched:
-            return
-
-        thread_id = config.get("configurable", {}).get("thread_id")
-        logger.warning("[AgentService] Repairing %d incomplete tool_call(s) in %s", len(unmatched), thread_id)
-
-        broken_ai_idx = None
-        for i, msg in enumerate(messages):
-            if msg.__class__.__name__ == "AIMessage":
-                for tc in getattr(msg, "tool_calls", []):
-                    if tc.get("id") in unmatched:
-                        broken_ai_idx = i
-                        break
-            if broken_ai_idx is not None:
-                break
-
-        if broken_ai_idx is None:
-            return
-
-        after_msgs = messages[broken_ai_idx + 1:]
-        updates: list[Any] = []
-        for msg in after_msgs:
-            msg_id = getattr(msg, "id", None)
-            if msg_id:
-                updates.append(RemoveMessage(id=msg_id))
-        for tc_id, tool_name in unmatched.items():
-            updates.append(ToolMessage(
-                content="Error: task was interrupted. Results unavailable.",
-                tool_call_id=tc_id,
-                name=tool_name,
-            ))
-        for msg in after_msgs:
-            if msg.__class__.__name__ != "ToolMessage" or getattr(msg, "tool_call_id", None) not in unmatched:
-                updates.append(msg)
-        await graph.aupdate_state(config, {"messages": updates})
-    except Exception:
-        logger.exception("[AgentService] Failed to repair sub-agent checkpoint")
 
 
 AGENT_SCHEMA = {
@@ -125,20 +51,11 @@ AGENT_SCHEMA = {
             "run_in_background": {
                 "type": "boolean",
                 "default": False,
-                "description": "Return immediately with task_id instead of waiting",
-            },
-            "resume": {
-                "type": "string",
-                "description": "Task ID of a previously backgrounded agent to resume",
+                "description": "Fire-and-forget: return immediately with task_id instead of waiting for completion",
             },
             "max_turns": {
                 "type": "integer",
                 "description": "Maximum turns the agent can take",
-            },
-            "timeout": {
-                "type": "integer",
-                "description": "Timeout in milliseconds before auto-backgrounding (default: 300000)",
-                "default": 300000,
             },
         },
         "required": ["prompt"],
@@ -233,11 +150,13 @@ BackgroundRun = _RunningTask | _BashBackgroundRun
 class AgentService:
     """Registers Agent, TaskOutput, TaskStop tools into ToolRegistry.
 
-    Creates independent LeonAgent instances for each spawn. Uses asyncio.shield()
-    + wait_for() so long-running agents auto-switch to background without losing work.
+    Creates independent LeonAgent instances for each spawn. By default the
+    parent blocks until the sub-agent completes (blocking tool call that does
+    NOT block the frontend event loop). Set run_in_background=True for true
+    fire-and-forget behaviour.
 
-    The shared_runs dict (optional) allows CommandService to register bash background
-    runs so that TaskOutput/TaskStop can retrieve them too.
+    The shared_runs dict (optional) allows CommandService to register bash
+    background runs so that TaskOutput/TaskStop can retrieve them too.
     """
 
     def __init__(
@@ -285,22 +204,14 @@ class AgentService:
         name: str | None = None,
         description: str | None = None,
         run_in_background: bool = False,
-        resume: str | None = None,
         max_turns: int | None = None,
-        timeout: int = 300000,
     ) -> str:
         """Spawn an independent LeonAgent and run it with the given prompt."""
         from sandbox.thread_context import get_current_thread_id
 
         task_id = uuid.uuid4().hex[:8]
         agent_name = name or f"agent-{task_id}"
-
-        # Reuse thread_id when resuming a previous backgrounded task
-        if resume and resume in self._tasks:
-            thread_id = self._tasks[resume].thread_id
-        else:
-            thread_id = f"subagent-{task_id}"
-
+        thread_id = f"subagent-{task_id}"
         parent_thread_id = get_current_thread_id()
 
         # Register in AgentRegistry immediately
@@ -316,12 +227,13 @@ class AgentService:
 
         # Create async task (independent LeonAgent runs inside)
         task = asyncio.create_task(
-            self._run_agent(task_id, agent_name, thread_id, prompt, subagent_type, max_turns, description=description or "")
+            self._run_agent(task_id, agent_name, thread_id, prompt, subagent_type, max_turns,
+                            description=description or "", run_in_background=run_in_background)
         )
-        running = _RunningTask(task=task, agent_id=task_id, thread_id=thread_id, description=description or "")
-        self._tasks[task_id] = running
-
         if run_in_background:
+            # True fire-and-forget: track in self._tasks for TaskOutput/TaskStop
+            running = _RunningTask(task=task, agent_id=task_id, thread_id=thread_id, description=description or "")
+            self._tasks[task_id] = running
             return json.dumps({
                 "task_id": task_id,
                 "agent_name": agent_name,
@@ -330,24 +242,11 @@ class AgentService:
                 "message": "Agent started in background. Use TaskOutput to get result.",
             }, ensure_ascii=False)
 
-        # Wait with timeout; asyncio.shield keeps agent running if we time out
-        timeout_s = timeout / 1000
+        # Default: parent blocks until sub-agent completes (does not block frontend event loop)
         try:
-            result = await asyncio.wait_for(asyncio.shield(task), timeout=timeout_s)
+            result = await task
             await self._agent_registry.update_status(task_id, "completed")
             return result
-        except asyncio.TimeoutError:
-            # Auto-switch to background — agent keeps running via shield
-            return json.dumps({
-                "task_id": task_id,
-                "agent_name": agent_name,
-                "thread_id": thread_id,
-                "status": "backgrounded",
-                "message": (
-                    f"Agent still running after {timeout}ms. "
-                    "Use TaskOutput to poll for result."
-                ),
-            }, ensure_ascii=False)
         except Exception as e:
             await self._agent_registry.update_status(task_id, "error")
             return f"<tool_use_error>Agent failed: {e}</tool_use_error>"
@@ -361,6 +260,7 @@ class AgentService:
         subagent_type: str,
         max_turns: int | None,
         description: str = "",
+        run_in_background: bool = False,
     ) -> str:
         """Create and run an independent LeonAgent, collect its text output."""
         # Isolate this sub-agent from the parent's LangChain callback chain.
@@ -399,6 +299,9 @@ class AgentService:
                 workspace_root=self._workspace_root,
                 verbose=False,
             )
+            # In async context LeonAgent defers checkpointer init; call ainit() to
+            # ensure state is persisted (and loadable via GET /api/threads/{thread_id}).
+            await agent.ainit()
 
             # Wire child agent events to the parent's EventBus subscription
             # so the parent SSE stream shows sub-agent activity.
@@ -408,22 +311,18 @@ class AgentService:
 
             set_current_thread_id(thread_id)
 
-            # Notify frontend: background task started
+            # Notify frontend: task started
             if emit_fn is not None:
                 await emit_fn({"event": "task_start", "data": json.dumps({
                     "task_id": task_id,
-                    "background": True,
+                    "thread_id": thread_id,
+                    "background": run_in_background,
                     "task_type": "agent",
                     "description": description or agent_name,
                 }, ensure_ascii=False)})
 
             config = {"configurable": {"thread_id": thread_id}}
             output_parts: list[str] = []
-
-            # Repair broken checkpoint: if last AIMessage has tool_calls without
-            # matching ToolMessages, inject synthetic error ToolMessages so the LLM
-            # won't reject the history (happens when resuming a backgrounded/timed-out task).
-            await _repair_subagent_checkpoint(agent, config)
 
             async for chunk in agent.agent.astream(
                 {"messages": [{"role": "user", "content": prompt}]},
@@ -454,11 +353,14 @@ class AgentService:
             if emit_fn is not None:
                 await emit_fn({"event": "task_done", "data": json.dumps({
                     "task_id": task_id,
-                    "background": True,
+                    "background": run_in_background,
                 }, ensure_ascii=False)})
-            if self._queue_manager and parent_thread_id:
+            # Queue notification only for background runs — blocking callers already
+            # received the result as the tool's return value; sending a notification
+            # would trigger a spurious new parent turn.
+            if run_in_background and self._queue_manager and parent_thread_id:
                 label = description or agent_name
-                notification = format_task_notification(
+                notification = format_background_notification(
                     task_id=task_id,
                     status="completed",
                     summary=label,
@@ -475,13 +377,13 @@ class AgentService:
                 try:
                     await emit_fn({"event": "task_error", "data": json.dumps({
                         "task_id": task_id,
-                        "background": True,
+                        "background": run_in_background,
                     }, ensure_ascii=False)})
                 except Exception:
                     pass
-            if self._queue_manager and parent_thread_id:
+            if run_in_background and self._queue_manager and parent_thread_id:
                 label = description or agent_name
-                notification = format_task_notification(
+                notification = format_background_notification(
                     task_id=task_id,
                     status="error",
                     summary=label,
