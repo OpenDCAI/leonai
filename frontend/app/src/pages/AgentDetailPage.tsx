@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
   ArrowLeft, Bot, FileText, Wrench, Plug, Zap, Users, BookOpen,
-  Play, Tag, Save, Plus, Trash2, Search, X, Check, Lock,
+  Play, Tag, Save, Plus, Trash2, Search, X, Check, Lock, HardDrive,
 } from "lucide-react";
 import TestPanel from "@/components/TestPanel";
 import PublishDialog from "@/components/PublishDialog";
@@ -16,7 +16,15 @@ import type { CrudItem, RuleItem, ResourceItem, SubAgent } from "@/store/types";
 
 // ==================== Types ====================
 
-type ModuleId = "role" | "mcp" | "skills" | "subagents";
+interface WorkplaceItem {
+  member_name: string;
+  provider_type: string;
+  backend_ref: string;
+  mount_path: string;
+  created_at?: string;
+}
+
+type ModuleId = "role" | "mcp" | "skills" | "subagents" | "workplace";
 
 interface ModuleDef {
   id: ModuleId;
@@ -30,6 +38,7 @@ const modules: ModuleDef[] = [
   { id: "mcp", label: "MCP", icon: Plug, count: c => c.mcps.length },
   { id: "skills", label: "Skills", icon: Zap, count: c => c.skills.length },
   { id: "subagents", label: "Agents", icon: Users, count: c => c.subAgents.length },
+  { id: "workplace", label: "Workplace", icon: HardDrive },
 ];
 
 // ==================== Main Component ====================
@@ -50,6 +59,15 @@ export default function AgentDetail() {
   useEffect(() => { loadAll(); }, [loadAll]);
 
   const [pickerType, setPickerType] = useState<"skill" | "mcp" | "agent" | null>(null);
+  const [workplaces, setWorkplaces] = useState<WorkplaceItem[]>([]);
+  useEffect(() => {
+    if (member) {
+      fetch(`/api/panel/members/${member.id}/workplaces`)
+        .then(r => r.json())
+        .then(d => setWorkplaces(d.items || []))
+        .catch(() => setWorkplaces([]));
+    }
+  }, [member?.id]);
 
   const statusLabels: Record<string, string> = { active: "在岗", draft: "草稿", inactive: "离线" };
 
@@ -170,6 +188,8 @@ export default function AgentDetail() {
             onDelete={(name) => handleRemove("subagents", name)}
           />
         );
+      case "workplace":
+        return <WorkplacePanel items={workplaces} />;
       default: return null;
     }
   };
@@ -201,7 +221,7 @@ export default function AgentDetail() {
         <nav className="w-48 shrink-0 border-r bg-muted/30 py-2">
           {modules.map(m => {
             const Icon = m.icon;
-            const count = m.count ? m.count(member.config) : undefined;
+            const count = m.id === "workplace" ? workplaces.length : (m.count ? m.count(member.config) : undefined);
             const active = activeModule === m.id;
             return (
               <button
@@ -229,15 +249,23 @@ export default function AgentDetail() {
 
       {showTest && <TestPanel memberName={member.name} onClose={() => setShowTest(false)} />}
       {showPublish && <PublishDialog open={showPublish} onOpenChange={setShowPublish} memberId={member.id} />}
-      {pickerType && (
-        <ResourcePicker
-          type={pickerType}
-          library={pickerType === "skill" ? librarySkills : pickerType === "mcp" ? libraryMcps : libraryAgents}
-          assigned={pickerType === "skill" ? member.config.skills.map(s => s.name) : pickerType === "mcp" ? member.config.mcps.map(m => m.name) : member.config.subAgents.map(a => a.name)}
-          onConfirm={(names) => { handleAssign(pickerType, names); setPickerType(null); }}
-          onClose={() => setPickerType(null)}
-        />
-      )}
+      {pickerType && (() => {
+        const libraryMap = { skill: librarySkills, mcp: libraryMcps, agent: libraryAgents };
+        const assignedMap = {
+          skill: member.config.skills.map(s => s.name),
+          mcp: member.config.mcps.map(m => m.name),
+          agent: member.config.subAgents.map(a => a.name),
+        };
+        return (
+          <ResourcePicker
+            type={pickerType}
+            library={libraryMap[pickerType]}
+            assigned={assignedMap[pickerType]}
+            onConfirm={(names) => { handleAssign(pickerType, names); setPickerType(null); }}
+            onClose={() => setPickerType(null)}
+          />
+        );
+      })()}
     </div>
   );
 }
@@ -792,5 +820,41 @@ function ResourcePicker({ type, library, assigned, onConfirm, onClose }: {
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+// ==================== WorkplacePanel ====================
+
+function WorkplacePanel({ items }: { items: WorkplaceItem[] }) {
+  if (!items.length) {
+    return (
+      <div className="flex items-center justify-center h-40 text-sm text-muted-foreground">
+        No workplaces created yet. Start a thread with a remote sandbox to create one.
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-3 p-4">
+      {items.map((wp) => (
+        <div key={wp.provider_type} className="rounded-lg border p-4 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="font-medium text-sm">{wp.provider_type}</span>
+            <span className="text-xs text-muted-foreground">
+              {wp.created_at ? new Date(wp.created_at).toLocaleString() : ""}
+            </span>
+          </div>
+          <div className="grid grid-cols-2 gap-2 text-xs">
+            <div>
+              <span className="text-muted-foreground">Backend Ref: </span>
+              <code className="bg-muted px-1 rounded">{wp.backend_ref}</code>
+            </div>
+            <div>
+              <span className="text-muted-foreground">Mount Path: </span>
+              <code className="bg-muted px-1 rounded">{wp.mount_path}</code>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
   );
 }

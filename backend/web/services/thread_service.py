@@ -43,7 +43,10 @@ def list_threads_from_db() -> list[dict[str, Any]]:
                             preview = ""
                             for m in msgs:
                                 if getattr(m, "type", "") == "human":
-                                    preview = str(getattr(m, "content", ""))[:40]
+                                    # @@@preview-clean - use original_message from metadata (strips upload prefix)
+                                    meta = getattr(m, "metadata", None) or {}
+                                    raw = meta.get("original_message") or str(getattr(m, "content", ""))
+                                    preview = raw[:40]
                                     break
                             thread_meta[tid] = {"preview": preview, "updated_at": ts}
                         except Exception:

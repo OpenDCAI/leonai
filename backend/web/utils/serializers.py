@@ -20,14 +20,20 @@ def extract_text_content(raw_content: Any) -> str:
 
 def serialize_message(msg: Any) -> dict[str, Any]:
     """Serialize a LangChain message to a JSON-compatible dict."""
+    metadata = getattr(msg, "metadata", None)
+    content = getattr(msg, "content", "")
+
+    # @@@display-content-split - LLM sees the prefixed message; frontend sees the original.
+    if metadata and "original_message" in metadata:
+        content = metadata["original_message"]
+
     result = {
         "id": getattr(msg, "id", None),
         "type": msg.__class__.__name__,
-        "content": getattr(msg, "content", ""),
+        "content": content,
         "tool_calls": getattr(msg, "tool_calls", []),
         "tool_call_id": getattr(msg, "tool_call_id", None),
     }
-    metadata = getattr(msg, "metadata", None)
     if metadata:
         result["metadata"] = metadata
     return result

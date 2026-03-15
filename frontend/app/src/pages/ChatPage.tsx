@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams, useOutletContext, useLocation } from "react-router-dom";
+import { toast } from "sonner";
 import ChatArea from "../components/ChatArea";
 import type { AssistantTurn } from "../api";
+import { uploadWorkspaceFile } from "../api";
 import ComputerPanel from "../components/ComputerPanel";
 import { DragHandle } from "../components/DragHandle";
 import Header from "../components/Header";
@@ -35,6 +37,7 @@ function ChatPageInner({ threadId }: { threadId: string }) {
   const location = useLocation();
   const { tm, setSidebarCollapsed } = useOutletContext<OutletContext>();
   const [currentModel, setCurrentModel] = useState<string>("");
+  const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
 
   const state = location.state as { selectedModel?: string; runStarted?: boolean; message?: string } | null;
 
@@ -148,6 +151,32 @@ function ChatPageInner({ threadId }: { threadId: string }) {
 
   const computerResize = useResizableX(600, 360, 1200, true);
 
+  async function handleUploadFiles(files: File[]): Promise<void> {
+    const toastId = toast.loading(`Uploading ${files.length} file(s)...`);
+    try {
+      for (const file of files) {
+        await uploadWorkspaceFile(threadId, {
+          file,
+          path: file.name,
+        });
+      }
+      toast.success(`Uploaded ${files.length} file(s)`, { id: toastId });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      toast.error(`Upload failed: ${msg}`, { id: toastId });
+      throw error;
+    }
+  }
+
+  async function handleSendWithAttachments(message: string): Promise<void> {
+    const filenames = attachedFiles.map((f) => f.name);
+    if (attachedFiles.length > 0) {
+      await handleUploadFiles(attachedFiles);
+      setAttachedFiles([]);
+    }
+    await handleSendMessage(message, filenames.length > 0 ? filenames : undefined);
+  }
+
   return (
     <>
       <Header
@@ -191,9 +220,12 @@ function ChatPageInner({ threadId }: { threadId: string }) {
             disabled={isStreaming}
             isStreaming={isStreaming}
             placeholder="告诉 Leon 你需要什么帮助..."
-            onSendMessage={(msg) => void handleSendMessage(msg)}
+            onSendMessage={(msg) => void handleSendWithAttachments(msg)}
             onSendQueueMessage={handleSendQueueMessage}
             onStop={handleStopStreaming}
+            attachedFiles={attachedFiles}
+            onAttachFiles={(files) => setAttachedFiles((prev) => [...prev, ...files])}
+            onRemoveFile={(index) => setAttachedFiles((prev) => prev.filter((_, i) => i !== index))}
           />
           <TokenStats runtimeStatus={runtimeStatus} />
         </div>

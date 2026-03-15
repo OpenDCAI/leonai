@@ -22,6 +22,7 @@ from backend.web.models.panel import (
     UpdateTaskRequest,
 )
 from backend.web.services import member_service, task_service, library_service, profile_service, cron_job_service
+from backend.web.services.workspace_service import list_agent_workplaces
 
 router = APIRouter(prefix="/api/panel", tags=["panel"])
 
@@ -79,6 +80,12 @@ async def delete_member(member_id: str) -> dict[str, Any]:
     if not ok:
         raise HTTPException(404, "Member not found")
     return {"success": True}
+
+
+@router.get("/members/{member_id}/workplaces")
+async def list_member_workplaces(member_id: str) -> dict[str, Any]:
+    items = await asyncio.to_thread(list_agent_workplaces, member_id)
+    return {"items": items}
 
 
 # ── Tasks ──

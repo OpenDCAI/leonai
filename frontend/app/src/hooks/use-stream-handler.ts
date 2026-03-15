@@ -33,7 +33,7 @@ export interface StreamHandlerState {
 }
 
 export interface StreamHandlerActions {
-  handleSendMessage: (message: string) => Promise<void>;
+  handleSendMessage: (message: string, attachments?: string[]) => Promise<void>;
   handleStopStreaming: () => Promise<void>;
 }
 
@@ -69,9 +69,7 @@ function applyReconnectTurn(
   return { entries: [...prev, newTurn], turnId: fallbackId };
 }
 
-export function useStreamHandler(
-  deps: StreamHandlerDeps,
-): StreamHandlerState & StreamHandlerActions {
+export function useStreamHandler(deps: StreamHandlerDeps): StreamHandlerState & StreamHandlerActions {
   const { threadId, refreshThreads, onUpdate, loading, runStarted } = deps;
 
   // Local state for immediate UI feedback when user sends a message
@@ -202,13 +200,14 @@ export function useStreamHandler(
   }, [subscribe]);
 
   const handleSendMessage = useCallback(
-    async (message: string) => {
+    async (message: string, attachments?: string[]) => {
       const tempTurnId = makeId("turn");
       const userEntry: ChatEntry = {
         id: makeId("user"),
         role: "user",
         content: message,
         timestamp: Date.now(),
+        ...(attachments?.length ? { attachments } : {}),
       };
       const assistantTurn: AssistantTurn = {
         id: tempTurnId,
@@ -228,7 +227,7 @@ export function useStreamHandler(
       });
 
       try {
-        await postRun(threadId, message);
+        await postRun(threadId, message, undefined, attachments?.length ? { attachments } : undefined);
         // Connection is persistent — no need to reconnect.
         // run_start event will confirm isRunning.
       } catch (err) {
