@@ -9,12 +9,18 @@ import type {
   WorkspaceFileResult,
   WorkspaceListResult,
 } from "./types";
+import { useAuthStore } from "../store/auth-store";
 
+// @@@auth-header - attach JWT if available so thread/sandbox APIs work with auth-protected endpoints
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, {
-    headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
-    ...init,
-  });
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...(init?.headers as Record<string, string> ?? {}),
+  };
+  const token = useAuthStore.getState().token;
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+
+  const response = await fetch(url, { ...init, headers });
   if (!response.ok) {
     const body = await response.text();
     throw new Error(`API ${response.status}: ${body || response.statusText}`);
@@ -68,16 +74,6 @@ export async function sendMessage(threadId: string, message: string): Promise<{ 
   });
 }
 
-export async function queueMessage(threadId: string, message: string): Promise<void> {
-  await request(`/api/threads/${encodeURIComponent(threadId)}/queue`, {
-    method: "POST",
-    body: JSON.stringify({ message }),
-  });
-}
-
-export async function getQueue(threadId: string): Promise<{ messages: Array<{ id: number; content: string; created_at: string }> }> {
-  return request(`/api/threads/${encodeURIComponent(threadId)}/queue`);
-}
 
 // --- Sandbox API ---
 

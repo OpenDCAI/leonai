@@ -1,5 +1,7 @@
-import { useState, useEffect } from "react";
-import { Search, Plus, Zap, Users, Wrench, Plug, SearchX, ArrowUpDown, AlertTriangle, RefreshCw, MessageSquare, Copy, Trash2, Bot } from "lucide-react";
+import { useState, useEffect, useRef, useCallback } from "react";
+import { Search, Plus, Zap, Users, Wrench, Plug, SearchX, ArrowUpDown, AlertTriangle, RefreshCw, MessageSquare, Copy, Trash2, Bot, Camera } from "lucide-react";
+import MemberAvatar from "@/components/MemberAvatar";
+import { uploadMemberAvatar } from "@/api/conversations";
 import { useNavigate } from "react-router-dom";
 import CreateMemberDialog from "@/components/CreateMemberDialog";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -13,16 +15,40 @@ const statusConfig = {
   inactive: { label: "离线", dot: "bg-muted-foreground", shape: "rounded-full opacity-50" },
 };
 
-const avatarColors = [
-  "bg-primary/15 text-primary",
-  "bg-success/15 text-success",
-  "bg-warning/15 text-warning",
-  "bg-destructive/15 text-destructive",
-  "bg-chart-1/15 text-chart-1",
-  "bg-accent text-accent-foreground",
-];
-
 type SortKey = "name" | "skills" | "status" | null;
+
+// @@@avatar-upload — click-to-upload avatar overlay on member cards
+function AvatarUploadTrigger({ memberId, name }: { memberId: string; name: string }) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
+  const [rev, setRev] = useState(0);
+
+  const handleUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    try {
+      await uploadMemberAvatar(memberId, file);
+      setRev((r) => r + 1);
+      toast.success("头像已更新");
+    } catch (err) { toast.error(`上传失败: ${err instanceof Error ? err.message : "unknown"}`); }
+    finally { setUploading(false); if (inputRef.current) inputRef.current.value = ""; }
+  }, [memberId]);
+
+  return (
+    <div className="relative group/avatar" onClick={(e) => { e.stopPropagation(); inputRef.current?.click(); }}>
+      <MemberAvatar memberId={memberId} name={name} size="md" className="rounded-xl" rev={rev} />
+      <div className="absolute inset-0 rounded-xl bg-black/40 opacity-0 group-hover/avatar:opacity-100 transition-opacity flex items-center justify-center cursor-pointer">
+        {uploading ? (
+          <div className="w-4 h-4 border-2 border-white/60 border-t-white rounded-full animate-spin" />
+        ) : (
+          <Camera className="w-4 h-4 text-white" />
+        )}
+      </div>
+      <input ref={inputRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif" className="hidden" onChange={handleUpload} />
+    </div>
+  );
+}
 
 export default function MembersPage() {
   const isMobile = useIsMobile();
@@ -145,8 +171,6 @@ export default function MembersPage() {
           <div className={`grid gap-4 ${isMobile ? "grid-cols-1" : "grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"}`}>
             {filtered.map((member, index) => {
               const status = statusConfig[member.status];
-              const colorClass = avatarColors[index % avatarColors.length];
-              const initials = member.name.split(" ").map((w) => w[0]).join("").slice(0, 2);
               const isBuiltin = member.builtin === true;
               const handleCardClick = () => {
                 navigate(`/members/${member.id}`);
@@ -181,7 +205,7 @@ export default function MembersPage() {
               return (
                 <div key={member.id} onClick={handleCardClick} className="surface-interactive p-4 cursor-pointer group hover:-translate-y-0.5 hover:shadow-md" role="button" aria-label={isBuiltin ? `与 ${member.name} 对话` : `查看成员 ${member.name}`} tabIndex={0} onKeyDown={(e) => e.key === "Enter" && handleCardClick()}>
                   <div className="flex items-start justify-between mb-3">
-                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-xs font-bold font-mono ${colorClass}`}>{initials}</div>
+                    <AvatarUploadTrigger memberId={member.id} name={member.name} />
                     <div className="flex items-center gap-1.5">
                       {isBuiltin && <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary font-medium">内置</span>}
                       <div className={`w-1.5 h-1.5 ${status.shape} ${status.dot}`} />

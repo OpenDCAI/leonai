@@ -21,6 +21,21 @@ def format_steer_reminder(content: str) -> str:
     )
 
 
+def format_conversation_message(content: str, sender_name: str, conversation_id: str) -> str:
+    """Format an incoming conversation message for brain injection.
+
+    Delivers content without instructing the agent to reply — the agent
+    decides whether and when to respond based on context.
+    """
+    return (
+        "<system-reminder>\n"
+        f"<incoming-message sender=\"{escape(sender_name)}\" conversation=\"{conversation_id}\">\n"
+        f"{content}\n"
+        "</incoming-message>\n"
+        "</system-reminder>"
+    )
+
+
 def format_background_notification(
     task_id: str,
     status: str,

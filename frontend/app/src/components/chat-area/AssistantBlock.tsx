@@ -1,6 +1,8 @@
 import { memo, useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import type { AssistantTurn, NoticeSegment, NotificationType, RetrySegment, StreamStatus, ToolSegment, TurnSegment } from "../../api";
+import type { MemberInfo } from "../../api/conversations";
+import MemberAvatar from "../MemberAvatar";
 import MarkdownContent from "../MarkdownContent";
 import { CopyButton } from "./CopyButton";
 import { InlineNotice } from "./NoticeBubble";
@@ -81,6 +83,7 @@ interface AssistantBlockProps {
   entry: AssistantTurn;
   isStreamingThis?: boolean;
   runtimeStatus?: StreamStatus | null;
+  agentMember?: MemberInfo;
   onFocusAgent?: (taskId: string) => void;
 }
 
@@ -89,7 +92,7 @@ function formatDuration(ms: number): string {
   return `${Math.floor(ms / 60000)}m ${Math.round((ms % 60000) / 1000)}s`;
 }
 
-export const AssistantBlock = memo(function AssistantBlock({ entry, isStreamingThis, runtimeStatus, onFocusAgent }: AssistantBlockProps) {
+export const AssistantBlock = memo(function AssistantBlock({ entry, isStreamingThis, runtimeStatus, agentMember, onFocusAgent }: AssistantBlockProps) {
   const hasNotice = entry.segments.some((s) => s.type === "notice");
 
   const [elapsed, setElapsed] = useState<number | null>(() =>
@@ -118,12 +121,18 @@ export const AssistantBlock = memo(function AssistantBlock({ entry, isStreamingT
 
   return (
     <div className="flex gap-2.5 animate-fade-in group/block">
-      <div className={`w-6 h-6 rounded-full bg-[#171717] flex items-center justify-center flex-shrink-0 mt-0.5${isBooting ? " avatar-booting" : ""}`}>
-        <span className="text-[11px] font-semibold text-white">L</span>
-      </div>
+      {agentMember && (
+        <MemberAvatar
+          memberId={agentMember.id}
+          name={agentMember.name}
+          type={agentMember.type}
+          size="xs"
+          className={`mt-0.5${isBooting ? " avatar-booting" : ""}`}
+        />
+      )}
       <div className="flex-1 min-w-0 space-y-1.5 overflow-hidden">
         <div className="flex items-center gap-2">
-          <span className="text-[13px] font-medium text-[#171717]">Leon</span>
+          <span className="text-[13px] font-medium text-[#171717]">{agentMember?.name ?? "Agent"}</span>
           {entry.timestamp && (
             <span className="text-[10px] text-[#d4d4d4]">{formatTime(entry.timestamp)}</span>
           )}

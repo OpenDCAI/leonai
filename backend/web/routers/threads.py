@@ -9,10 +9,9 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sse_starlette.sse import EventSourceResponse
 
-from backend.web.core.dependencies import get_app, get_thread_agent, get_thread_lock
+from backend.web.core.dependencies import get_app, get_current_member_id, get_thread_agent, get_thread_lock, verify_thread_owner
 from backend.web.models.requests import (
     CreateThreadRequest,
-    RunRequest,
     SendMessageRequest,
 )
 from backend.web.services.agent_pool import get_or_create_agent, resolve_thread_sandbox
@@ -55,6 +54,7 @@ def _get_agent_for_thread(app: Any, thread_id: str) -> Any | None:
 @router.post("")
 async def create_thread(
     payload: CreateThreadRequest | None = None,
+    _member_id: Annotated[str, Depends(get_current_member_id)] = "",
     app: Annotated[Any, Depends(get_app)] = None,
 ) -> dict[str, Any]:
     """Create a new thread with optional sandbox and cwd."""
@@ -84,7 +84,10 @@ async def create_thread(
 
 
 @router.get("")
-async def list_threads(app: Annotated[Any, Depends(get_app)] = None) -> dict[str, Any]:
+async def list_threads(
+    _member_id: Annotated[str, Depends(get_current_member_id)] = "",
+    app: Annotated[Any, Depends(get_app)] = None,
+) -> dict[str, Any]:
     """List all threads with metadata."""
     threads = await asyncio.to_thread(list_threads_from_db)
     tasks = app.state.thread_tasks
@@ -97,6 +100,7 @@ async def list_threads(app: Annotated[Any, Depends(get_app)] = None) -> dict[str
 @router.get("/{thread_id}")
 async def get_thread_messages(
     thread_id: str,
+    _owner: Annotated[str, Depends(verify_thread_owner)] = "",
     app: Annotated[Any, Depends(get_app)] = None,
 ) -> dict[str, Any]:
     """Get messages and sandbox info for a thread."""
@@ -122,6 +126,7 @@ async def get_thread_messages(
 @router.delete("/{thread_id}")
 async def delete_thread(
     thread_id: str,
+    _owner: Annotated[str, Depends(verify_thread_owner)] = "",
     app: Annotated[Any, Depends(get_app)] = None,
 ) -> dict[str, Any]:
     """Delete a thread and its resources."""
@@ -160,6 +165,7 @@ async def delete_thread(
 async def send_message(
     thread_id: str,
     payload: SendMessageRequest,
+    _owner: Annotated[str, Depends(verify_thread_owner)] = "",
     app: Annotated[Any, Depends(get_app)] = None,
 ) -> dict[str, Any]:
     """Send a message to agent. Server auto-routes based on agent state:
@@ -189,34 +195,13 @@ async def send_message(
     return {"status": "started", "routing": "direct", "run_id": run_id, "thread_id": thread_id}
 
 
-@router.post("/{thread_id}/queue")
-async def queue_message(
-    thread_id: str,
-    payload: SendMessageRequest,
-    app: Annotated[Any, Depends(get_app)] = None,
-) -> dict[str, Any]:
-    """Enqueue a followup message. Will be consumed when agent reaches IDLE."""
-    if not payload.message.strip():
-        raise HTTPException(status_code=400, detail="message cannot be empty")
-    app.state.queue_manager.enqueue(payload.message, thread_id, notification_type="steer")
-    return {"status": "queued", "thread_id": thread_id}
-
-
-@router.get("/{thread_id}/queue")
-async def get_queue(
-    thread_id: str,
-    app: Annotated[Any, Depends(get_app)] = None,
-) -> dict[str, Any]:
-    """List pending followup messages in the queue."""
-    messages = app.state.queue_manager.list_queue(thread_id)
-    return {"messages": messages, "thread_id": thread_id}
-
 
 @router.get("/{thread_id}/history")
 async def get_thread_history(
     thread_id: str,
     limit: int = 20,
     truncate: int = 300,
+    _owner: Annotated[str, Depends(verify_thread_owner)] = "",
     app: Annotated[Any, Depends(get_app)] = None,
 ) -> dict[str, Any]:
     """Compact conversation history for debugging — no raw LangChain noise.
@@ -289,6 +274,7 @@ async def get_thread_history(
 async def get_thread_runtime(
     thread_id: str,
     stream: bool = False,
+    _owner: Annotated[str, Depends(verify_thread_owner)] = "",
     app: Annotated[Any, Depends(get_app)] = None,
 ) -> dict[str, Any]:
     """Get runtime status for a thread.
@@ -334,6 +320,7 @@ async def get_thread_runtime(
 @router.post("/{thread_id}/sandbox/pause")
 async def pause_thread_sandbox(
     thread_id: str,
+    _owner: Annotated[str, Depends(verify_thread_owner)] = "",
     agent: Annotated[Any, Depends(get_thread_agent)] = None,
 ) -> dict[str, Any]:
     """Pause sandbox for a thread."""
@@ -349,6 +336,7 @@ async def pause_thread_sandbox(
 @router.post("/{thread_id}/sandbox/resume")
 async def resume_thread_sandbox(
     thread_id: str,
+    _owner: Annotated[str, Depends(verify_thread_owner)] = "",
     agent: Annotated[Any, Depends(get_thread_agent)] = None,
 ) -> dict[str, Any]:
     """Resume paused sandbox for a thread."""
@@ -364,6 +352,7 @@ async def resume_thread_sandbox(
 @router.delete("/{thread_id}/sandbox")
 async def destroy_thread_sandbox(
     thread_id: str,
+    _owner: Annotated[str, Depends(verify_thread_owner)] = "",
     agent: Annotated[Any, Depends(get_thread_agent)] = None,
 ) -> dict[str, Any]:
     """Destroy sandbox session for a thread."""
@@ -381,6 +370,7 @@ async def destroy_thread_sandbox(
 @router.get("/{thread_id}/session")
 async def get_thread_session_status(
     thread_id: str,
+    _owner: Annotated[str, Depends(verify_thread_owner)] = "",
     agent: Annotated[Any, Depends(get_thread_agent)] = None,
 ) -> dict[str, Any]:
     """Get ChatSession status for a thread."""
@@ -393,6 +383,7 @@ async def get_thread_session_status(
 @router.get("/{thread_id}/terminal")
 async def get_thread_terminal_status(
     thread_id: str,
+    _owner: Annotated[str, Depends(verify_thread_owner)] = "",
     agent: Annotated[Any, Depends(get_thread_agent)] = None,
 ) -> dict[str, Any]:
     """Get AbstractTerminal state for a thread."""
@@ -405,6 +396,7 @@ async def get_thread_terminal_status(
 @router.get("/{thread_id}/lease")
 async def get_thread_lease_status(
     thread_id: str,
+    _owner: Annotated[str, Depends(verify_thread_owner)] = "",
     agent: Annotated[Any, Depends(get_thread_agent)] = None,
 ) -> dict[str, Any]:
     """Get SandboxLease status for a thread."""
@@ -431,6 +423,7 @@ async def stream_thread_events(
     thread_id: str,
     request: Request,
     after: int = 0,
+    _owner: Annotated[str, Depends(verify_thread_owner)] = "",
     app: Annotated[Any, Depends(get_app)] = None,
 ) -> EventSourceResponse:
     """Persistent SSE event stream for a thread — survives across runs.
@@ -482,36 +475,11 @@ async def stream_thread_events(
     )
 
 
-# Run endpoint — returns JSON, agent runs in background
-@router.post("/{thread_id}/runs")
-async def run_thread(
-    thread_id: str,
-    payload: RunRequest,
-    app: Annotated[Any, Depends(get_app)] = None,
-) -> dict[str, Any]:
-    """Start an agent run. Returns {run_id, thread_id}; observe via GET /events."""
-    if not payload.message.strip():
-        raise HTTPException(status_code=400, detail="message cannot be empty")
-
-    sandbox_type = resolve_thread_sandbox(app, thread_id)
-    set_current_thread_id(thread_id)
-    agent = await get_or_create_agent(app, sandbox_type, thread_id=thread_id)
-
-    # Per-request model override (lightweight, no rebuild)
-    if payload.model:
-        await asyncio.to_thread(agent.update_config, model=payload.model)
-
-    lock = await get_thread_lock(app, thread_id)
-    async with lock:
-        if hasattr(agent, "runtime") and not agent.runtime.transition(AgentState.ACTIVE):
-            raise HTTPException(status_code=409, detail="Thread is already running")
-        run_id = start_agent_run(agent, thread_id, payload.message, app, payload.enable_trajectory)
-    return {"run_id": run_id, "thread_id": thread_id}
-
 
 @router.post("/{thread_id}/runs/cancel")
 async def cancel_run(
     thread_id: str,
+    _owner: Annotated[str, Depends(verify_thread_owner)] = "",
     app: Annotated[Any, Depends(get_app)] = None,
 ):
     """Cancel an active run for the given thread."""
@@ -536,6 +504,7 @@ def _get_background_runs(app: Any, thread_id: str) -> dict:
 async def list_tasks(
     thread_id: str,
     request: Request,
+    _owner: Annotated[str, Depends(verify_thread_owner)] = "",
 ) -> list[dict]:
     """列出线程的所有后台 run（bash + agent）"""
     runs = _get_background_runs(request.app, thread_id)
@@ -559,6 +528,7 @@ async def get_task(
     thread_id: str,
     task_id: str,
     request: Request,
+    _owner: Annotated[str, Depends(verify_thread_owner)] = "",
 ) -> dict:
     """获取 background run 详情（含完整输出）"""
     runs = _get_background_runs(request.app, thread_id)
@@ -583,6 +553,7 @@ async def cancel_task(
     thread_id: str,
     task_id: str,
     request: Request,
+    _owner: Annotated[str, Depends(verify_thread_owner)] = "",
 ) -> dict:
     """取消 background run（bash + agent 统一）"""
     runs = _get_background_runs(request.app, thread_id)

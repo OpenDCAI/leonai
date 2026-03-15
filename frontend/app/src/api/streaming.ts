@@ -1,5 +1,14 @@
 import type { StreamEvent } from "./types";
 import { processChunk } from "./sse-processor";
+import { useAuthStore } from "../store/auth-store";
+
+/** Build headers with JWT if available. */
+function authHeaders(extra?: Record<string, string>): Record<string, string> {
+  const headers: Record<string, string> = { ...extra };
+  const token = useAuthStore.getState().token;
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  return headers;
+}
 
 /** Read an SSE response body, dispatch events, return { lastSeq, runEnded }. */
 async function consumeSSEStream(
@@ -42,22 +51,12 @@ async function consumeSSEStream(
 async function postJSON<T>(url: string, body: unknown, signal?: AbortSignal): Promise<T> {
   const res = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify(body),
     signal,
   });
   if (!res.ok) throw new Error(`POST ${url} failed ${res.status}: ${await res.text()}`);
   return res.json();
-}
-
-/** Start an agent run (fire-and-forget). */
-export async function postRun(
-  threadId: string,
-  message: string,
-  signal?: AbortSignal,
-  options?: { model?: string; enable_trajectory?: boolean },
-): Promise<{ run_id: string; thread_id: string }> {
-  return postJSON(`/api/threads/${encodeURIComponent(threadId)}/runs`, { message, ...options }, signal);
 }
 
 /** Persistent SSE connection to a thread's event stream. */
@@ -75,7 +74,7 @@ export async function streamThreadEvents(
     try {
       const url = `/api/threads/${encodeURIComponent(threadId)}/events?after=${after}`;
       console.log(`[SSE-FETCH] fetching ${url}`);
-      const res = await fetch(url, { signal });
+      const res = await fetch(url, { signal, headers: authHeaders() });
       console.log(`[SSE-FETCH] response status=${res.status}, ok=${res.ok}`);
 
       if (!res.ok) {
@@ -113,7 +112,10 @@ export async function streamThreadEvents(
 }
 
 export async function cancelRun(threadId: string): Promise<void> {
-  const res = await fetch(`/api/threads/${encodeURIComponent(threadId)}/runs/cancel`, { method: "POST" });
+  const res = await fetch(`/api/threads/${encodeURIComponent(threadId)}/runs/cancel`, {
+    method: "POST",
+    headers: authHeaders(),
+  });
   if (!res.ok) throw new Error(`Cancel failed: ${res.statusText}`);
 }
 

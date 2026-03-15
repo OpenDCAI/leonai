@@ -88,11 +88,12 @@ function RollingNumber({ value }: { value: number }) {
 }
 
 export const ToolDetailBox = memo(function ToolDetailBox({
-  toolSegments,
+  toolSegments: rawToolSegments,
   isStreaming,
   allSegments,
   onFocusAgent,
 }: ToolDetailBoxProps) {
+  const toolSegments = rawToolSegments;
   const scrollRef = useRef<HTMLDivElement>(null);
   const [modalOpen, setModalOpen] = useState(false);
 

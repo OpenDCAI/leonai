@@ -31,6 +31,61 @@ async def lifespan(app: FastAPI):
     ensure_members_dir()
     ensure_library_dir()
 
+    # Ensure avatars directory exists
+    from pathlib import Path
+    avatars_dir = Path.home() / ".leon" / "avatars"
+    avatars_dir.mkdir(parents=True, exist_ok=True)
+
+    # Initialize contact system repos + auth service
+    from storage.providers.sqlite.contact_repo import SQLiteContactRepo
+    from storage.providers.sqlite.conversation_repo import (
+        SQLiteConversationMemberRepo,
+        SQLiteConversationMessageRepo,
+        SQLiteConversationRepo,
+    )
+    from storage.providers.sqlite.member_repo import SQLiteAccountRepo, SQLiteMemberRepo
+    from backend.web.services.auth_service import AuthService
+
+    app.state.member_repo = SQLiteMemberRepo()
+    app.state.account_repo = SQLiteAccountRepo()
+    app.state.contact_repo = SQLiteContactRepo()
+    app.state.conversation_repo = SQLiteConversationRepo()
+    app.state.conv_member_repo = SQLiteConversationMemberRepo()
+    app.state.conv_message_repo = SQLiteConversationMessageRepo()
+    app.state.auth_service = AuthService(
+        members=app.state.member_repo,
+        accounts=app.state.account_repo,
+        contacts=app.state.contact_repo,
+        conversations=app.state.conversation_repo,
+        conv_members=app.state.conv_member_repo,
+    )
+
+    from backend.web.services.conversation_events import ConversationEventBus
+    from backend.web.services.conversation_service import ConversationService
+    from core.agents.communication.delivery import (
+        DeliveryRouter, HumanDelivery, MycelAgentDelivery, OpenClawDelivery,
+    )
+    from storage.contracts import MemberType
+
+    app.state.conversation_event_bus = ConversationEventBus()
+
+    from backend.web.services.typing_tracker import TypingTracker
+    app.state.typing_tracker = TypingTracker(app.state.conversation_event_bus)
+
+    # @@@delivery-bottleneck-init - narrow bottleneck for message delivery
+    app.state.delivery_router = DeliveryRouter({
+        MemberType.HUMAN: HumanDelivery(),
+        MemberType.MYCEL_AGENT: MycelAgentDelivery(app),
+        MemberType.OPENCLAW_AGENT: OpenClawDelivery(),
+    })
+    app.state.conversation_service = ConversationService(
+        conversations=app.state.conversation_repo,
+        conv_members=app.state.conv_member_repo,
+        conv_messages=app.state.conv_message_repo,
+        contacts=app.state.contact_repo,
+        members=app.state.member_repo,
+    )
+
     # Initialize app state
     app.state.queue_manager = MessageQueueManager()
     app.state.agent_pool: dict[str, Any] = {}

@@ -22,6 +22,7 @@ class SQLiteDBRole(StrEnum):
     SANDBOX = "sandbox"
     QUEUE = "queue"
     SUBAGENT = "subagent"
+    CONVERSATION = "conversation"
 
 
 def _env_path(env_var: str, fallback: Path) -> Path:
@@ -50,6 +51,9 @@ def resolve_role_db_path(role: SQLiteDBRole, db_path: Path | str | None = None) 
         return _env_path("LEON_QUEUE_DB_PATH", main_path.with_name("queue.db"))
     if role == SQLiteDBRole.SUBAGENT:
         return _env_path("LEON_SUBAGENT_DB_PATH", main_path.with_name("subagent.db"))
+    # @@@conversation-db-isolation - separate DB avoids write-lock contention with LangGraph checkpointer on leon.db
+    if role == SQLiteDBRole.CONVERSATION:
+        return _env_path("LEON_CONVERSATION_DB_PATH", main_path.with_name("conversations.db"))
     return main_path
 
 

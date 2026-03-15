@@ -249,112 +249,156 @@ def _member_to_dict(member_dir: Path) -> dict[str, Any] | None:
     }
 
 
-# ── Leon builtin ──
+# ── DB identity helpers ──
 
-def _leon_builtin() -> dict[str, Any]:
-    """Build Leon builtin member dict with full tool catalog."""
-    catalog = _load_tools_catalog()
-    tools = [{"name": k, "enabled": v.default, "desc": v.desc, "group": v.group} for k, v in catalog.items()]
-    # Load built-in sub-agents (read-only display)
-    builtin_agents = _load_builtin_agents(catalog)
-
-    return {
-        "id": "__leon__",
-        "name": "Leon",
-        "description": "通用数字成员，随时准备为你工作",
-        "status": "active",
-        "version": "1.0.0",
-        "config": {"prompt": "", "rules": [], "tools": tools, "mcps": [], "skills": [], "subAgents": builtin_agents},
-        "created_at": 0,
-        "updated_at": 0,
-        "builtin": True,
-    }
+def _resolve_config_dir(config_dir_str: str | None) -> Path | None:
+    """Resolve a member's config directory. Returns None if invalid."""
+    if config_dir_str:
+        p = Path(config_dir_str)
+        if p.is_dir():
+            return p
+    return None
 
 
-def _load_builtin_agents(catalog: dict[str, ToolDef]) -> list[dict[str, Any]]:
-    """Load system built-in agents for display (read-only)."""
-    loader = AgentLoader()
-    agents = []
-    if _SYSTEM_AGENTS_DIR.is_dir():
-        for md in sorted(_SYSTEM_AGENTS_DIR.glob("*.md")):
-            ac = loader.parse_agent_file(md)
-            if ac:
-                is_all = ac.tools == ["*"]
-                agent_tools = [
-                    {"name": k, "enabled": is_all or k in ac.tools, "desc": v.desc, "group": v.group}
-                    for k, v in catalog.items()
-                ]
-                agents.append({
-                    "name": ac.name, "desc": ac.description,
-                    "tools": agent_tools, "system_prompt": ac.system_prompt, "builtin": True,
-                })
-    return agents
+def _db_member_to_dict(row: Any) -> dict[str, Any] | None:
+    """Build frontend member dict: identity from DB row, config from filesystem."""
+    config_dir = _resolve_config_dir(row.config_dir)
+    if not config_dir:
+        logger.warning("Member %s has invalid config_dir: %s", row.id, row.config_dir)
+        return None
+    item = _member_to_dict(config_dir)
+    if not item:
+        logger.warning("Failed to load config for member %s from %s", row.id, config_dir)
+        return None
+    item["id"] = row.id
+    item["name"] = row.name
+    item["description"] = row.description or item.get("description", "")
+    return item
 
 
-def _ensure_leon_dir() -> Path:
-    """Ensure Leon's member directory exists for persisting edits."""
-    leon_dir = MEMBERS_DIR / "__leon__"
-    leon_dir.mkdir(parents=True, exist_ok=True)
-    if not (leon_dir / "agent.md").exists():
-        _write_agent_md(leon_dir / "agent.md", name="Leon",
-                        description="通用数字成员，随时准备为你工作")
-    if not (leon_dir / "meta.json").exists():
-        _write_json(leon_dir / "meta.json", {
-            "status": "active", "version": "1.0.0",
-            "created_at": 0, "updated_at": 0,
-        })
-    return leon_dir
+def _get_db_member_repo():
+    from storage.providers.sqlite.member_repo import SQLiteMemberRepo
+    return SQLiteMemberRepo()
 
 
 # ── CRUD operations ──
 
-def list_members() -> list[dict[str, Any]]:
-    leon = get_member("__leon__")
-    results: list[dict[str, Any]] = [leon] if leon else [_leon_builtin()]
-    if MEMBERS_DIR.exists():
-        for d in sorted(MEMBERS_DIR.iterdir(), reverse=True):
-            if d.is_dir() and d.name != "__leon__" and (d / "agent.md").exists():
-                item = _member_to_dict(d)
-                if item:
-                    results.append(item)
+def list_members(owner_id: str | None = None) -> list[dict[str, Any]]:
+    """List agent members. Scoped to owner when owner_id provided."""
+    repo = _get_db_member_repo()
+    try:
+        if owner_id:
+            db_agents = repo.list_by_owner(owner_id)
+        else:
+            from storage.contracts import MemberType
+            db_agents = [m for m in repo.list_all() if m.type != MemberType.HUMAN]
+    finally:
+        repo.close()
+
+    results = []
+    for agent in db_agents:
+        item = _db_member_to_dict(agent)
+        if item:
+            results.append(item)
     return results
 
 
 def get_member(member_id: str) -> dict[str, Any] | None:
-    if member_id == "__leon__":
-        leon_dir = MEMBERS_DIR / "__leon__"
-        if leon_dir.is_dir() and (leon_dir / "agent.md").exists():
-            item = _member_to_dict(leon_dir)
-            if item:
-                item["builtin"] = True
-                return item
-        return _leon_builtin()
+    repo = _get_db_member_repo()
+    try:
+        row = repo.get_by_id(member_id)
+    finally:
+        repo.close()
+
+    if row:
+        return _db_member_to_dict(row)
+
+    # Fallback: filesystem-only member (legacy path)
     member_dir = MEMBERS_DIR / member_id
     if not member_dir.is_dir():
         return None
     return _member_to_dict(member_dir)
 
 
-def create_member(name: str, description: str = "") -> dict[str, Any]:
-    now = int(time.time() * 1000)
-    member_id = str(now)
+def create_member(name: str, description: str = "", owner_id: str | None = None) -> dict[str, Any]:
+    import uuid as _uuid
+    member_id = str(_uuid.uuid4())
     member_dir = MEMBERS_DIR / member_id
     member_dir.mkdir(parents=True, exist_ok=True)
+    now_ms = int(time.time() * 1000)
+    now_s = time.time()
+
+    # 1. Filesystem config
     _write_agent_md(member_dir / "agent.md", name=name, description=description)
     _write_json(member_dir / "meta.json", {
         "status": "draft", "version": "0.1.0",
-        "created_at": now, "updated_at": now,
+        "created_at": now_ms, "updated_at": now_ms,
     })
+
+    # 2. DB identity index
+    if owner_id:
+        from storage.contracts import MemberRow, MemberType
+        repo = _get_db_member_repo()
+        try:
+            repo.create(MemberRow(
+                id=member_id, name=name, type=MemberType.MYCEL_AGENT,
+                description=description,
+                config_dir=str(member_dir),
+                owner_id=owner_id,
+                created_at=now_s,
+            ))
+        finally:
+            repo.close()
+
+        # 3. Contact pair (owner ↔ new agent)
+        from storage.providers.sqlite.contact_repo import SQLiteContactRepo
+        contact_repo = SQLiteContactRepo()
+        try:
+            contact_repo.create_pair(owner_id, member_id, now_s)
+        finally:
+            contact_repo.close()
+
+        # 4. Auto-create conversation (owner ↔ new agent)
+        from storage.providers.sqlite.conversation_repo import (
+            SQLiteConversationRepo, SQLiteConversationMemberRepo,
+        )
+        from storage.contracts import ConversationRow
+        conv_repo = SQLiteConversationRepo()
+        conv_member_repo = SQLiteConversationMemberRepo()
+        try:
+            conv_id = str(_uuid.uuid4())
+            conv_repo.create(ConversationRow(
+                id=conv_id, title=f"Chat with {name}", created_at=now_s,
+            ))
+            conv_member_repo.add_member(conv_id, owner_id, now_s)
+            conv_member_repo.add_member(conv_id, member_id, now_s)
+        finally:
+            conv_repo.close()
+            conv_member_repo.close()
+
     return get_member(member_id)  # type: ignore
 
 
+def _resolve_member_dir(member_id: str) -> Path | None:
+    """Resolve writable config directory for a member. Checks filesystem then DB."""
+    member_dir = MEMBERS_DIR / member_id
+    if member_dir.is_dir():
+        return member_dir
+    # Not a filesystem member — check DB for config_dir
+    repo = _get_db_member_repo()
+    try:
+        row = repo.get_by_id(member_id)
+    finally:
+        repo.close()
+    if row:
+        return _resolve_config_dir(row.config_dir)
+    return None
+
+
 def update_member(member_id: str, **fields: Any) -> dict[str, Any] | None:
-    if member_id == "__leon__":
-        member_dir = _ensure_leon_dir()
-    else:
-        member_dir = MEMBERS_DIR / member_id
-        if not member_dir.is_dir():
-            return None
+    member_dir = _resolve_member_dir(member_id)
+    if not member_dir:
+        return None
     allowed = {"name", "description", "status"}
     updates = {k: v for k, v in fields.items() if k in allowed and v is not None}
     if not updates:
@@ -377,16 +421,23 @@ def update_member(member_id: str, **fields: Any) -> dict[str, Any] | None:
         meta = _read_json(member_dir / "meta.json", {})
         meta["updated_at"] = int(time.time() * 1000)
         _write_json(member_dir / "meta.json", meta)
+    # Sync identity fields to DB
+    if member_id != "__leon__":
+        db_updates = {k: v for k, v in updates.items() if k in {"name", "description"}}
+        if db_updates:
+            repo = _get_db_member_repo()
+            try:
+                if repo.get_by_id(member_id):
+                    repo.update(member_id, **db_updates, updated_at=time.time())
+            finally:
+                repo.close()
     return get_member(member_id)
 
 
 def update_member_config(member_id: str, config_patch: dict[str, Any]) -> dict[str, Any] | None:
-    if member_id == "__leon__":
-        member_dir = _ensure_leon_dir()
-    else:
-        member_dir = MEMBERS_DIR / member_id
-        if not member_dir.is_dir():
-            return None
+    member_dir = _resolve_member_dir(member_id)
+    if not member_dir:
+        return None
 
     # prompt → agent.md body
     if "prompt" in config_patch and config_patch["prompt"] is not None:
@@ -567,10 +618,54 @@ def publish_member(member_id: str, bump_type: str = "patch") -> dict[str, Any] |
 
 
 def delete_member(member_id: str) -> bool:
-    if member_id == "__leon__":
-        return False
+    found = False
+
+    # 1. Remove filesystem config
     member_dir = MEMBERS_DIR / member_id
-    if not member_dir.is_dir():
-        return False
-    shutil.rmtree(member_dir)
-    return True
+    if member_dir.is_dir():
+        shutil.rmtree(member_dir)
+        found = True
+
+    # 1.5 Remove avatar file
+    avatar_path = LEON_HOME / "avatars" / f"{member_id}.png"
+    if avatar_path.exists():
+        avatar_path.unlink()
+
+    # 2. Remove DB MemberRow
+    repo = _get_db_member_repo()
+    try:
+        row = repo.get_by_id(member_id)
+        if row:
+            repo.delete(member_id)
+            found = True
+    finally:
+        repo.close()
+
+    # 3. Remove contacts involving this member
+    from storage.providers.sqlite.contact_repo import SQLiteContactRepo
+    contact_repo = SQLiteContactRepo()
+    try:
+        contacts = contact_repo.list_by_owner(member_id)
+        for c in contacts:
+            contact_repo.delete_pair(member_id, c.contact_id)
+    finally:
+        contact_repo.close()
+
+    # 4. Remove conversations where this member is a participant
+    from storage.providers.sqlite.conversation_repo import (
+        SQLiteConversationMemberRepo, SQLiteConversationRepo,
+    )
+    conv_member_repo = SQLiteConversationMemberRepo()
+    conv_repo = SQLiteConversationRepo()
+    try:
+        conv_ids = conv_member_repo.list_conversations_for_member(member_id)
+        for conv_id in conv_ids:
+            conv_member_repo.remove_member(conv_id, member_id)
+            remaining = conv_member_repo.list_members(conv_id)
+            if not remaining:
+                conv_repo.update_status(conv_id, "deleted")
+    finally:
+        conv_member_repo.close()
+        conv_repo.close()
+
+    return found

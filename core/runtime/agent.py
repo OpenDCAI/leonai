@@ -110,7 +110,10 @@ class LeonAgent:
         api_key: str | None = None,
         workspace_root: str | Path | None = None,
         *,
+        member_id: str | None = None,
+        logbook_repos: dict | None = None,
         agent: str | None = None,
+        source_dir: str | Path | None = None,
         allowed_file_extensions: list[str] | None = None,
         block_dangerous_commands: bool | None = None,
         block_network_commands: bool | None = None,
@@ -143,12 +146,15 @@ class LeonAgent:
             verbose: Whether to output detailed logs (default False)
         """
         self.agent_id: str | None = None
+        self.member_id: str | None = member_id
+        self._logbook_repos: dict | None = logbook_repos
         self.verbose = verbose
         self.queue_manager = queue_manager or MessageQueueManager()
 
         # New config system mode
         self.config, self.models_config = self._load_config(
             agent_name=agent,
+            source_dir=source_dir,
             workspace_root=workspace_root,
             model_name=model_name,
             api_key=api_key,
@@ -371,6 +377,7 @@ class LeonAgent:
     def _load_config(
         self,
         agent_name: str | None,
+        source_dir: str | Path | None,
         workspace_root: str | Path | None,
         model_name: str | None,
         api_key: str | None,
@@ -431,6 +438,15 @@ class LeonAgent:
             else:
                 self._agent_bundle = None
             self._agent_override = agent_def
+        elif source_dir:
+            # @@@custom-member-config - load bundle from member's own config directory
+            source_path = Path(source_dir)
+            if source_path.is_dir() and (source_path / "agent.md").exists():
+                self._agent_bundle = loader.load_bundle(source_path)
+                self._agent_override = self._agent_bundle.agent if self._agent_bundle else None
+            else:
+                self._agent_bundle = None
+                self._agent_override = None
         else:
             self._agent_override = None
             self._agent_bundle = None
@@ -985,6 +1001,22 @@ class LeonAgent:
         #     tool_registry=self._tool_registry,
         # )
 
+        # @@@logbook-tools - register logbook tools for agents with member_id
+        if self.member_id:
+            from core.agents.communication.logbook_service import LogbookService
+            repos = self._logbook_repos or {}
+            self._logbook_service = LogbookService(
+                registry=self._tool_registry,
+                member_id=self.member_id,
+                conversations=repos.get("conversations"),
+                conv_members=repos.get("conv_members"),
+                conv_messages=repos.get("conv_messages"),
+                members=repos.get("members"),
+                contacts=repos.get("contacts"),
+                event_bus=repos.get("event_bus"),
+                message_router=repos.get("message_router"),
+            )
+
         # TaskBoard tools (board management — INLINE, blocked by default via catalog)
         try:
             from backend.taskboard.service import TaskBoardService
@@ -1098,6 +1130,21 @@ class LeonAgent:
 
         if self.allowed_file_extensions:
             prompt += f"\n6. **File Type Restriction**: Only these extensions allowed: {', '.join(self.allowed_file_extensions)}\n"
+
+        # @@@logbook-prompt - add logbook instructions for agents with member_id
+        if self.member_id:
+            prompt += (
+                "\n\n## Communication (Logbook)\n"
+                "You have a logbook — your communication channel with humans and other agents.\n"
+                "- `logbook()` — see all contacts, conversations, and unread counts\n"
+                "- `logbook(member=\"tom\")` — filter to one contact's conversations\n"
+                "- `logbook(conversation_id=\"...\")` — read messages (most recent 100)\n"
+                "- `logbook(conversation_id=\"...\", query=\"keyword\")` — search in conversation\n"
+                "- `logbook_reply(conversation_id=\"...\", content=\"...\")` — send a reply (marks as read)\n"
+                "- Your direct text output is inner monologue — only `logbook_reply` sends messages.\n"
+                "- When you receive an <incoming-message>, reply directly with `logbook_reply`.\n"
+                "  The message content and conversation_id are already in your context.\n"
+            )
 
         return prompt
 

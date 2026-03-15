@@ -1,4 +1,4 @@
-import { ChevronLeft, PanelLeft, Pause, Play } from "lucide-react";
+import { ChevronLeft, Eye, MessageSquareText, PanelLeft, Pause, Play } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import type { SandboxInfo } from "../api";
 import { useIsMobile } from "../hooks/use-mobile";
@@ -16,11 +16,17 @@ function sandboxLabel(name: string): string {
       .join(" ");
 }
 
+type ViewMode = "owner" | "contact";
+
 interface HeaderProps {
   activeThreadId: string | null;
   threadPreview: string | null;
   sandboxInfo: SandboxInfo | null;
   currentModel?: string;
+  /** False for human↔human conversations — hides agent-centric UI. */
+  hasAgent?: boolean;
+  viewMode?: ViewMode;
+  onToggleViewMode?: () => void;
   onToggleSidebar: () => void;
   onPauseSandbox: () => void;
   onResumeSandbox: () => void;
@@ -32,6 +38,9 @@ export default function Header({
   threadPreview,
   sandboxInfo,
   currentModel = "leon:medium",
+  hasAgent = true,
+  viewMode,
+  onToggleViewMode,
   onToggleSidebar,
   onPauseSandbox,
   onResumeSandbox,
@@ -85,13 +94,25 @@ export default function Header({
       </div>
 
       <div className="flex items-center gap-1.5">
-        <ModelSelector
-          currentModel={currentModel}
-          threadId={activeThreadId}
-          onModelChange={onModelChange}
-        />
+        {viewMode && onToggleViewMode && (
+          <button
+            onClick={onToggleViewMode}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-border text-xs text-foreground/70 hover:bg-accent hover:text-foreground transition-colors"
+            title={viewMode === "owner" ? "切换到消息视图" : "切换到完整视图"}
+          >
+            {viewMode === "owner" ? <Eye className="w-3.5 h-3.5" /> : <MessageSquareText className="w-3.5 h-3.5" />}
+            {viewMode === "owner" ? "完整" : "消息"}
+          </button>
+        )}
+        {hasAgent && (
+          <ModelSelector
+            currentModel={currentModel}
+            threadId={activeThreadId}
+            onModelChange={onModelChange}
+          />
+        )}
 
-        {hasRemote && sandboxInfo?.status === "running" && (
+        {hasAgent && hasRemote && sandboxInfo?.status === "running" && (
           <button
             className="px-3 py-1.5 rounded-lg text-xs flex items-center gap-2 border border-[#e5e5e5] text-[#525252] hover:bg-[#f5f5f5] hover:text-[#171717]"
             onClick={onPauseSandbox}
@@ -100,7 +121,7 @@ export default function Header({
             暂停
           </button>
         )}
-        {hasRemote && sandboxInfo?.status === "paused" && (
+        {hasAgent && hasRemote && sandboxInfo?.status === "paused" && (
           <button
             className="px-3 py-1.5 rounded-lg text-xs flex items-center gap-2 border border-[#e5e5e5] text-[#525252] hover:bg-[#f5f5f5] hover:text-[#171717]"
             onClick={onResumeSandbox}

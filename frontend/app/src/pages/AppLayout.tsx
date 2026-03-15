@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, Outlet, useParams } from "react-router-dom";
 import { DragHandle } from "../components/DragHandle";
 import NewChatDialog from "../components/NewChatDialog";
@@ -10,16 +10,63 @@ import { useIsMobile } from "../hooks/use-mobile";
 import { useResizableX } from "../hooks/use-resizable-x";
 import { useThreadManager } from "../hooks/use-thread-manager";
 import { useAppStore } from "../store/app-store";
+import { useAuthStore } from "../store/auth-store";
+import { listConversations, deleteConversation, type ConversationSummary } from "../api/conversations";
+import type { ThreadSummary } from "../api";
 import { Plus, Trash2 } from "lucide-react";
 
 export default function AppLayout() {
   const tm = useThreadManager();
   const {
-    threads, sandboxTypes, loading,
+    sandboxTypes, loading: threadLoading,
     refreshThreads, handleCreateThread, handleDeleteThread,
   } = tm;
   const fetchMembers = useAppStore(s => s.fetchMembers);
   useEffect(() => { void fetchMembers(); }, [fetchMembers]);
+
+  // @@@conversation-sidebar - fetch conversations for sidebar display
+  const authAgent = useAuthStore(s => s.agent);
+  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+  const [convLoading, setConvLoading] = useState(true);
+
+  const refreshConversations = useCallback(async () => {
+    try {
+      const convs = await listConversations();
+      setConversations(convs);
+    } catch (err) {
+      console.error("[AppLayout] Failed to fetch conversations:", err);
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshConversations().finally(() => setConvLoading(false));
+  }, [refreshConversations]);
+
+  const handleDeleteConversation = useCallback(async (conversationId: string) => {
+    try {
+      await deleteConversation(conversationId);
+      await refreshConversations();
+    } catch (err) {
+      console.error("[AppLayout] Failed to delete conversation:", err);
+    }
+  }, [refreshConversations]);
+
+  // @@@conv-as-route-key - group by the OTHER participant's name (works for human↔human too)
+  const currentMemberId = useAuthStore(s => s.member?.id);
+  const sidebarThreads: ThreadSummary[] = useMemo(() =>
+    conversations.map(conv => {
+      const otherMember = conv.member_details?.find(m => m.id !== currentMemberId);
+      const displayName = otherMember?.name || "Chat";
+      return {
+        thread_id: conv.id,
+        preview: conv.title,
+        updated_at: new Date(conv.created_at * 1000).toISOString(),
+        agent: displayName,
+        running: false,
+      };
+    }),
+    [conversations, currentMemberId],
+  );
 
   const isMobile = useIsMobile();
   const { threadId } = useParams<{ memberId?: string; threadId?: string }>();
@@ -35,39 +82,40 @@ export default function AppLayout() {
     if (!threadId) {
       return (
         <MobileThreadList
-          threads={threads}
-          loading={loading}
+          threads={sidebarThreads}
+          loading={convLoading}
           onNewChat={() => setNewChatOpen(true)}
           onDeleteThread={(id) => void handleDeleteThread(id)}
           newChatOpen={newChatOpen}
           setNewChatOpen={setNewChatOpen}
+          onConversationCreated={refreshConversations}
         />
       );
     }
     return (
       <div className="h-full w-full bg-background flex flex-col overflow-hidden">
         <div className="flex-1 flex flex-col min-w-0 min-h-0">
-          <Outlet context={{ tm, sidebarCollapsed, setSidebarCollapsed, setSessionsOpen }} />
+          <Outlet context={{ tm, conversations, refreshConversations, sidebarCollapsed, setSidebarCollapsed, setSessionsOpen }} />
         </div>
-        <NewChatDialog open={newChatOpen} onOpenChange={setNewChatOpen} />
+        <NewChatDialog open={newChatOpen} onOpenChange={setNewChatOpen} onConversationCreated={refreshConversations} />
       </div>
     );
   }
   return (
     <div className="h-full w-full bg-background flex overflow-hidden">
       <Sidebar
-        threads={threads}
+        threads={sidebarThreads}
         collapsed={sidebarCollapsed}
-        loading={loading}
+        loading={convLoading}
         width={sidebarResize.width}
-        onDeleteThread={(id) => void handleDeleteThread(id)}
+        onDeleteThread={(id) => void handleDeleteConversation(id)}
         onSearchClick={() => setSearchOpen(true)}
         onNewChat={() => setNewChatOpen(true)}
       />
       {!sidebarCollapsed && <DragHandle onMouseDown={sidebarResize.onMouseDown} />}
 
       <div className="flex-1 flex flex-col min-w-0">
-        <Outlet context={{ tm, sidebarCollapsed, setSidebarCollapsed, setSessionsOpen }} />
+        <Outlet context={{ tm, conversations, refreshConversations, sidebarCollapsed, setSidebarCollapsed, setSessionsOpen }} />
       </div>
 
       <NewThreadModal
@@ -83,7 +131,7 @@ export default function AppLayout() {
       <SearchModal
         isOpen={searchOpen}
         onClose={() => setSearchOpen(false)}
-        threads={threads}
+        threads={sidebarThreads}
         onSelectThread={() => {}}
       />
 
@@ -95,20 +143,20 @@ export default function AppLayout() {
         }}
       />
 
-      <NewChatDialog open={newChatOpen} onOpenChange={setNewChatOpen} />
+      <NewChatDialog open={newChatOpen} onOpenChange={setNewChatOpen} onConversationCreated={refreshConversations} />
     </div>
   );
 }
 
-function MobileThreadList({ threads, loading, onNewChat, onDeleteThread, newChatOpen, setNewChatOpen }: {
+function MobileThreadList({ threads, loading, onNewChat, onDeleteThread, newChatOpen, setNewChatOpen, onConversationCreated }: {
   threads: any[];
   loading: boolean;
   onNewChat: () => void;
   onDeleteThread: (id: string) => void;
   newChatOpen: boolean;
   setNewChatOpen: (v: boolean) => void;
+  onConversationCreated: () => Promise<void>;
 }) {
-  const memberList = useAppStore(s => s.memberList);
   return (
     <div className="h-full w-full bg-background flex flex-col overflow-hidden">
       <div className="h-14 flex items-center justify-between px-4 border-b border-border shrink-0">
@@ -127,17 +175,16 @@ function MobileThreadList({ threads, loading, onNewChat, onDeleteThread, newChat
           </div>
         ) : (
           threads.map(t => {
-            const member = memberList.find((m: any) => m.id === t.agent);
-            const memberName = member?.name || t.agent || "Leon";
+            const agentName = t.agent || "Leon";
             const preview = t.preview || "新会话";
             return (
               <div key={t.thread_id} className="flex items-center border-b border-border">
-                <Link to={`/chat/${t.thread_id}`} className="flex items-center gap-3 px-4 py-3 flex-1 min-w-0 hover:bg-muted/50 transition-colors">
+                <Link to={`/chat/${agentName}/${t.thread_id}`} className="flex items-center gap-3 px-4 py-3 flex-1 min-w-0 hover:bg-muted/50 transition-colors">
                   <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
-                    <span className="text-xs font-bold text-primary">{memberName.slice(0, 1)}</span>
+                    <span className="text-xs font-bold text-primary">{agentName.slice(0, 1)}</span>
                   </div>
                   <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium text-foreground truncate">{memberName}</p>
+                    <p className="text-sm font-medium text-foreground truncate">{agentName}</p>
                     <p className="text-xs text-muted-foreground truncate">{preview}</p>
                   </div>
                 </Link>
@@ -152,7 +199,7 @@ function MobileThreadList({ threads, loading, onNewChat, onDeleteThread, newChat
           })
         )}
       </div>
-      <NewChatDialog open={newChatOpen} onOpenChange={setNewChatOpen} />
+      <NewChatDialog open={newChatOpen} onOpenChange={setNewChatOpen} onConversationCreated={onConversationCreated} />
     </div>
   );
 }

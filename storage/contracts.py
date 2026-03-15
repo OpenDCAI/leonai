@@ -2,11 +2,135 @@
 
 from __future__ import annotations
 
+from enum import Enum
 from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel
 
 NotificationType = Literal["steer", "command", "agent"]
+
+
+# ---------------------------------------------------------------------------
+# Contact System — row types + enums
+# ---------------------------------------------------------------------------
+
+
+class MemberType(str, Enum):
+    MYCEL_AGENT = "mycel_agent"
+    OPENCLAW_AGENT = "openclaw_agent"
+    HUMAN = "human"
+
+
+class MemberRow(BaseModel):
+    id: str
+    name: str
+    type: MemberType
+    avatar: str | None = None
+    description: str | None = None
+    config_dir: str | None = None
+    owner_id: str | None = None  # human member_id for agents, NULL for humans
+    created_at: float
+    updated_at: float | None = None
+
+
+class AccountRow(BaseModel):
+    id: str
+    member_id: str
+    username: str
+    password_hash: str | None = None
+    api_key_hash: str | None = None
+    created_at: float
+
+
+class ContactRow(BaseModel):
+    id: str
+    owner_id: str
+    contact_id: str
+    created_at: float
+
+
+class ConversationRow(BaseModel):
+    id: str
+    title: str | None = None
+    status: str = "active"
+    created_at: float
+    updated_at: float | None = None
+
+
+class ConversationMemberRow(BaseModel):
+    conversation_id: str
+    member_id: str
+    joined_at: float
+    last_read_at: float | None = None
+
+
+class ConversationMessageRow(BaseModel):
+    id: str
+    conversation_id: str
+    sender_id: str
+    content: str
+    created_at: float
+
+
+# ---------------------------------------------------------------------------
+# Contact System — repo protocols
+# ---------------------------------------------------------------------------
+
+
+class MemberRepo(Protocol):
+    def close(self) -> None: ...
+    def create(self, row: MemberRow) -> None: ...
+    def get_by_id(self, member_id: str) -> MemberRow | None: ...
+    def get_by_name(self, name: str) -> MemberRow | None: ...
+    def list_all(self) -> list[MemberRow]: ...
+    def list_by_owner(self, owner_id: str) -> list[MemberRow]: ...
+    def update(self, member_id: str, **fields: Any) -> None: ...
+    def delete(self, member_id: str) -> None: ...
+
+
+class AccountRepo(Protocol):
+    def close(self) -> None: ...
+    def create(self, row: AccountRow) -> None: ...
+    def get_by_id(self, account_id: str) -> AccountRow | None: ...
+    def get_by_member_id(self, member_id: str) -> AccountRow | None: ...
+    def get_by_username(self, username: str) -> AccountRow | None: ...
+    def delete(self, account_id: str) -> None: ...
+
+
+class ContactRepo(Protocol):
+    def close(self) -> None: ...
+    def create_pair(self, owner_a: str, owner_b: str, created_at: float) -> None: ...
+    def list_by_owner(self, owner_id: str) -> list[ContactRow]: ...
+    def exists(self, owner_id: str, contact_id: str) -> bool: ...
+    def delete_pair(self, owner_a: str, owner_b: str) -> None: ...
+
+
+class ConversationRepo(Protocol):
+    def close(self) -> None: ...
+    def create(self, row: ConversationRow) -> None: ...
+    def get_by_id(self, conversation_id: str) -> ConversationRow | None: ...
+    def list_by_member(self, member_id: str) -> list[ConversationRow]: ...
+    def update_status(self, conversation_id: str, status: str) -> None: ...
+
+
+class ConversationMemberRepo(Protocol):
+    def close(self) -> None: ...
+    def add_member(self, conversation_id: str, member_id: str, joined_at: float) -> None: ...
+    def remove_member(self, conversation_id: str, member_id: str) -> None: ...
+    def list_members(self, conversation_id: str) -> list[ConversationMemberRow]: ...
+    def list_conversations_for_member(self, member_id: str) -> list[str]: ...
+    def is_member(self, conversation_id: str, member_id: str) -> bool: ...
+    def update_last_read(self, conversation_id: str, member_id: str, last_read_at: float) -> None: ...
+    def get_last_read_at(self, conversation_id: str, member_id: str) -> float | None: ...
+    def list_all_edges(self) -> list[tuple[str, str, int]]: ...
+
+
+class ConversationMessageRepo(Protocol):
+    def close(self) -> None: ...
+    def create(self, row: ConversationMessageRow) -> None: ...
+    def list_by_conversation(self, conversation_id: str, *, limit: int = 50, before: float | None = None) -> list[ConversationMessageRow]: ...
+    def count_unread(self, conversation_id: str, member_id: str) -> int: ...
+    def search_in_conversation(self, conversation_id: str, query: str, *, limit: int = 50) -> list[ConversationMessageRow]: ...
 
 
 class CheckpointRepo(Protocol):

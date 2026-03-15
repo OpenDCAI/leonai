@@ -1,20 +1,27 @@
-import type { AssistantTurn, ChatEntry, NoticeMessage, StreamStatus } from "../api";
+import type { AssistantTurn, ChatEntry, ConversationMessage, NoticeMessage, StreamStatus } from "../api";
+import type { MemberInfo } from "../api/conversations";
 import { useStickyScroll } from "../hooks/use-sticky-scroll";
 import { AssistantBlock } from "./chat-area/AssistantBlock";
 import { ChatSkeleton } from "./chat-area/ChatSkeleton";
+import { ConversationBubble } from "./chat-area/ConversationBubble";
 import { NoticeBubble } from "./chat-area/NoticeBubble";
 import { UserBubble } from "./chat-area/UserBubble";
+
+export type ViewMode = "owner" | "contact";
 
 interface ChatAreaProps {
   entries: ChatEntry[];
   isStreaming: boolean;
   runtimeStatus: StreamStatus | null;
   loading?: boolean;
+  agentMember?: MemberInfo;
+  ownerMember?: MemberInfo;
   onFocusAgent?: (taskId: string) => void;
   onTaskNoticeClick?: (taskId: string) => void;
 }
 
-export default function ChatArea({ entries, isStreaming: _isStreaming, runtimeStatus, loading, onFocusAgent, onTaskNoticeClick }: ChatAreaProps) {
+/** Owner view — renders brain thread entries (full fidelity: tool calls, reasoning, etc.) */
+export default function ChatArea({ entries, isStreaming: _isStreaming, runtimeStatus, loading, agentMember, ownerMember, onFocusAgent, onTaskNoticeClick }: ChatAreaProps) {
   const containerRef = useStickyScroll<HTMLDivElement>();
 
   return (
@@ -28,16 +35,21 @@ export default function ChatArea({ entries, isStreaming: _isStreaming, runtimeSt
               return <NoticeBubble key={entry.id} entry={entry as NoticeMessage} onTaskNoticeClick={onTaskNoticeClick} />;
             }
             if (entry.role === "user") {
-              return <UserBubble key={entry.id} entry={entry} />;
+              return <UserBubble key={entry.id} entry={entry} ownerMember={ownerMember} />;
+            }
+            if (entry.role === "conversation") {
+              return <ConversationBubble key={entry.id} entry={entry as ConversationMessage} agentMember={agentMember} />;
             }
             const assistantEntry = entry as AssistantTurn;
             const isStreamingThis = assistantEntry.streaming === true;
+
             return (
               <AssistantBlock
                 key={entry.id}
                 entry={assistantEntry}
                 isStreamingThis={isStreamingThis}
                 runtimeStatus={isStreamingThis ? runtimeStatus : null}
+                agentMember={agentMember}
                 onFocusAgent={onFocusAgent}
               />
             );

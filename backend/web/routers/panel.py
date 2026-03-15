@@ -1,10 +1,11 @@
 """Panel API router — Members, Tasks, Library, Profile."""
 
 import asyncio
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
+from backend.web.core.dependencies import get_current_member_id
 from backend.web.models.panel import (
     BulkDeleteTasksRequest,
     BulkTaskStatusRequest,
@@ -29,8 +30,10 @@ router = APIRouter(prefix="/api/panel", tags=["panel"])
 # ── Members ──
 
 @router.get("/members")
-async def list_members() -> dict[str, Any]:
-    items = await asyncio.to_thread(member_service.list_members)
+async def list_members(
+    member_id: Annotated[str, Depends(get_current_member_id)],
+) -> dict[str, Any]:
+    items = await asyncio.to_thread(member_service.list_members, member_id)
     return {"items": items}
 
 
@@ -43,18 +46,27 @@ async def get_member(member_id: str) -> dict[str, Any]:
 
 
 @router.post("/members")
-async def create_member(req: CreateMemberRequest) -> dict[str, Any]:
-    return await asyncio.to_thread(member_service.create_member, req.name, req.description)
+async def create_member(
+    req: CreateMemberRequest,
+    member_id: Annotated[str, Depends(get_current_member_id)],
+) -> dict[str, Any]:
+    return await asyncio.to_thread(member_service.create_member, req.name, req.description, member_id)
 
 @router.put("/members/{member_id}")
-async def update_member(member_id: str, req: UpdateMemberRequest) -> dict[str, Any]:
+async def update_member(
+    member_id: str, req: UpdateMemberRequest,
+    _auth: Annotated[str, Depends(get_current_member_id)] = "",
+) -> dict[str, Any]:
     item = await asyncio.to_thread(member_service.update_member, member_id, **req.model_dump())
     if not item:
         raise HTTPException(404, "Member not found")
     return item
 
 @router.put("/members/{member_id}/config")
-async def update_member_config(member_id: str, req: MemberConfigPayload) -> dict[str, Any]:
+async def update_member_config(
+    member_id: str, req: MemberConfigPayload,
+    _auth: Annotated[str, Depends(get_current_member_id)] = "",
+) -> dict[str, Any]:
     item = await asyncio.to_thread(member_service.update_member_config, member_id, req.model_dump())
     if not item:
         raise HTTPException(404, "Member not found")
@@ -62,7 +74,10 @@ async def update_member_config(member_id: str, req: MemberConfigPayload) -> dict
 
 
 @router.put("/members/{member_id}/publish")
-async def publish_member(member_id: str, req: PublishMemberRequest) -> dict[str, Any]:
+async def publish_member(
+    member_id: str, req: PublishMemberRequest,
+    _auth: Annotated[str, Depends(get_current_member_id)] = "",
+) -> dict[str, Any]:
     if member_id == "__leon__":
         raise HTTPException(403, "Cannot publish builtin member")
     item = await asyncio.to_thread(member_service.publish_member, member_id, req.bump_type)
@@ -72,7 +87,10 @@ async def publish_member(member_id: str, req: PublishMemberRequest) -> dict[str,
 
 
 @router.delete("/members/{member_id}")
-async def delete_member(member_id: str) -> dict[str, Any]:
+async def delete_member(
+    member_id: str,
+    _auth: Annotated[str, Depends(get_current_member_id)] = "",
+) -> dict[str, Any]:
     if member_id == "__leon__":
         raise HTTPException(403, "Cannot delete builtin member")
     ok = await asyncio.to_thread(member_service.delete_member, member_id)

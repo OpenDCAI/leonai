@@ -1,12 +1,15 @@
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { MessageSquare, Users, ListTodo, Library, Layers, Settings, Plus, ChevronLeft, ChevronRight } from "lucide-react";
+import { MessageSquare, Users, ListTodo, Library, Layers, Share2, Settings, Plus, ChevronLeft, ChevronRight, LogOut, Camera } from "lucide-react";
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import MemberAvatar from "@/components/MemberAvatar";
+import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
+import { uploadMemberAvatar } from "@/api/conversations";
 import CreateMemberDialog from "@/components/CreateMemberDialog";
 import NewChatDialog from "@/components/NewChatDialog";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useAppStore } from "@/store/app-store";
 import { toast } from "sonner";
+import { useAuthStore } from "../store/auth-store";
 
 const navItems = [
   { to: "/chat", icon: MessageSquare, label: "消息" },
@@ -14,6 +17,7 @@ const navItems = [
   { to: "/tasks", icon: ListTodo, label: "任务" },
   { to: "/resources", icon: Layers, label: "资源" },
   { to: "/library", icon: Library, label: "能力库" },
+  { to: "/network", icon: Share2, label: "网络" },
 ];
 
 const mobileNavItems = [
@@ -22,6 +26,10 @@ const mobileNavItems = [
 ];
 
 export default function RootLayout() {
+  const token = useAuthStore(s => s.token);
+  const authMember = useAuthStore(s => s.member);
+  const authLogout = useAuthStore(s => s.logout);
+
   const location = useLocation();
   const navigate = useNavigate();
   const isMobile = useIsMobile();
@@ -32,6 +40,20 @@ export default function RootLayout() {
   const userProfile = useAppStore((s) => s.userProfile);
   const loadAll = useAppStore((s) => s.loadAll);
   const storeAddTask = useAppStore((s) => s.addTask);
+
+  // @@@profile-avatar-upload — state + handler for user avatar upload in sidebar popover
+  const [avatarRev, setAvatarRev] = useState(0);
+  const avatarInputRef = useRef<HTMLInputElement>(null);
+  const handleAvatarUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !authMember?.id) return;
+    try {
+      await uploadMemberAvatar(authMember.id, file);
+      setAvatarRev((r) => r + 1);
+      toast.success("头像已更新");
+    } catch (err) { toast.error(`上传失败: ${err instanceof Error ? err.message : "unknown"}`); }
+    finally { if (avatarInputRef.current) avatarInputRef.current.value = ""; }
+  }, [authMember?.id]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
@@ -127,6 +149,9 @@ export default function RootLayout() {
     prevIsChatRef.current = isChat;
   }, [isChat]);
 
+  // @@@auth-guard - show login form when no JWT token
+  if (!token) return <LoginForm />;
+
   // Shared nav content
   const renderNavItems = (closeMobile?: () => void) => (
     <>
@@ -220,17 +245,42 @@ export default function RootLayout() {
           </nav>
 
           <div className={`flex flex-col ${showLabels ? "px-2" : "items-center"} gap-0.5`}>
-            <div className={`flex items-center ${showLabels ? "px-3 gap-3" : "justify-center"} h-10 mb-1`}>
-              <Avatar className="w-7 h-7 shrink-0">
-                <AvatarFallback className="text-[10px] font-semibold bg-primary/10 text-primary">{userProfile.initials}</AvatarFallback>
-              </Avatar>
-              {showLabels && (
-                <div className="min-w-0">
-                  <p className="text-xs font-medium text-foreground truncate">{userProfile.name}</p>
-                  <p className="text-[10px] text-muted-foreground truncate">{userProfile.email}</p>
+            <Popover>
+              <PopoverTrigger asChild>
+                <button className={`flex items-center ${showLabels ? "px-3 gap-3" : "justify-center"} h-10 mb-1 rounded-xl hover:bg-muted transition-colors w-full`}>
+                  <MemberAvatar memberId={authMember?.id || ""} name={authMember?.name || userProfile.name} size="sm" rev={avatarRev} />
+                  {showLabels && (
+                    <div className="min-w-0 flex-1 text-left">
+                      <p className="text-xs font-medium text-foreground truncate">{authMember?.name || userProfile.name}</p>
+                      <p className="text-[10px] text-muted-foreground truncate">{userProfile.email}</p>
+                    </div>
+                  )}
+                </button>
+              </PopoverTrigger>
+              <PopoverContent side="top" align="start" className="w-56">
+                <div className="flex flex-col items-center gap-3">
+                  {/* Avatar upload */}
+                  <div className="relative group/avatar cursor-pointer" onClick={() => avatarInputRef.current?.click()}>
+                    <MemberAvatar memberId={authMember?.id || ""} name={authMember?.name || userProfile.name} size="lg" rev={avatarRev} />
+                    <div className="absolute inset-0 rounded-full bg-black/40 opacity-0 group-hover/avatar:opacity-100 transition-opacity flex items-center justify-center">
+                      <Camera className="w-5 h-5 text-white" />
+                    </div>
+                    <input ref={avatarInputRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif" className="hidden" onChange={handleAvatarUpload} />
+                  </div>
+                  <div className="text-center">
+                    <p className="text-sm font-medium">{authMember?.name || userProfile.name}</p>
+                    <p className="text-xs text-muted-foreground">{userProfile.email}</p>
+                  </div>
+                  <button
+                    onClick={authLogout}
+                    className="flex items-center gap-2 w-full px-3 py-2 rounded-lg text-xs text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                  >
+                    <LogOut className="w-3.5 h-3.5" />
+                    退出登录
+                  </button>
                 </div>
-              )}
-            </div>
+              </PopoverContent>
+            </Popover>
             <NavLink to="/settings" className="group relative block overflow-visible">
               <div className={`flex items-center ${showLabels ? "px-3 gap-3" : "justify-center"} h-10 rounded-xl transition-all duration-150 ${
                 location.pathname.startsWith("/settings") ? "bg-sidebar-accent text-sidebar-accent-foreground" : "text-sidebar-foreground hover:bg-muted hover:text-foreground"
@@ -312,5 +362,78 @@ function CreateDropdown({
         </button>
       </div>
     </>
+  );
+}
+
+function LoginForm() {
+  const [mode, setMode] = useState<"login" | "register">("login");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const login = useAuthStore(s => s.login);
+  const register = useAuthStore(s => s.register);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setLoading(true);
+    try {
+      if (mode === "login") await login(username, password);
+      else await register(username, password);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "认证失败");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="h-screen flex items-center justify-center bg-background">
+      <div className="w-full max-w-sm px-6">
+        <div className="text-center mb-8">
+          <div className="w-12 h-12 rounded-xl bg-primary mx-auto mb-4 flex items-center justify-center">
+            <span className="text-primary-foreground font-mono font-bold text-lg">L</span>
+          </div>
+          <h1 className="text-xl font-semibold text-foreground">Leon</h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            {mode === "login" ? "登录你的账号" : "创建新账号"}
+          </p>
+        </div>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <input
+            type="text"
+            placeholder="用户名"
+            value={username}
+            onChange={e => setUsername(e.target.value)}
+            className="w-full px-4 py-2.5 rounded-lg border border-border bg-card text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+            required
+          />
+          <input
+            type="password"
+            placeholder="密码"
+            value={password}
+            onChange={e => setPassword(e.target.value)}
+            className="w-full px-4 py-2.5 rounded-lg border border-border bg-card text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+            required
+          />
+          {error && <p className="text-xs text-destructive">{error}</p>}
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full py-2.5 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 disabled:opacity-50"
+          >
+            {loading ? "..." : mode === "login" ? "登录" : "注册"}
+          </button>
+        </form>
+        <p className="text-center text-xs text-muted-foreground mt-4">
+          {mode === "login" ? (
+            <>还没有账号？<button onClick={() => { setMode("register"); setError(null); }} className="text-primary hover:underline">注册</button></>
+          ) : (
+            <>已有账号？<button onClick={() => { setMode("login"); setError(null); }} className="text-primary hover:underline">登录</button></>
+          )}
+        </p>
+      </div>
+    </div>
   );
 }

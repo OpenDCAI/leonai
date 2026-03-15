@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 interface VirtualModel {
   id: string;
@@ -51,6 +51,32 @@ export default function ModelMappingSection({
   };
 
   const enabledModelsList = availableModels.filter((m) => enabledModels.includes(m.id));
+
+  // @@@auto-fix-stale-mapping - when a mapped model is no longer enabled, auto-save first enabled model
+  useEffect(() => {
+    if (enabledModelsList.length === 0) return;
+    const enabledIds = new Set(enabledModelsList.map((m) => m.id));
+    const stale: Record<string, string> = {};
+    for (const vm of virtualModels) {
+      const cur = modelMapping[vm.id];
+      if (cur && !enabledIds.has(cur)) {
+        stale[vm.id] = enabledModelsList[0].id;
+      }
+    }
+    if (Object.keys(stale).length > 0) {
+      // batch-save all stale mappings
+      const newMapping = { ...modelMapping, ...stale };
+      onUpdate(newMapping);
+      const payload: Record<string, { model: string }> = {};
+      for (const [k, v] of Object.entries(stale)) payload[k] = { model: v };
+      void fetch("/api/settings/model-mapping", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mapping: payload }),
+      });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabledModels]);
 
   return (
     <div className="space-y-4 relative">
