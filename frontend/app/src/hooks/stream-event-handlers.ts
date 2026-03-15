@@ -1,6 +1,7 @@
 import {
   type AssistantTurn,
   type ChatEntry,
+  type ConversationMessage,
   type RetrySegment,
   type StreamStatus,
   type ToolSegment,
@@ -54,10 +55,43 @@ function handleToolCall(event: StreamEvent, turnId: string, onUpdate: UpdateEntr
   const newArgs = payload.args;
   const hasRealArgs = newArgs != null && !(typeof newArgs === "object" && Object.keys(newArgs as object).length === 0);
 
+  // @@@logbook-reply-flat - logbook_reply → flat ConversationMessage, not ToolSegment
+  // Insert BEFORE the streaming turn so it appears above the narration text
+  if (payload.name === "logbook_reply") {
+    if (hasRealArgs) {
+      const a = payload.args as Record<string, unknown>;
+      if (a.content) {
+        onUpdate((prev) => {
+          const lastIncoming = [...prev].reverse().find(
+            (e): e is ConversationMessage => e.role === "conversation" && (e as ConversationMessage).direction === "incoming",
+          ) as ConversationMessage | undefined;
+          const convEntry = {
+            id: makeId("conv-out"),
+            role: "conversation" as const,
+            direction: "outgoing" as const,
+            senderName: "",
+            recipientName: (a.to as string) || lastIncoming?.senderName,
+            content: a.content as string,
+            conversationId: a.conversation_id as string | undefined,
+            timestamp: Date.now(),
+          };
+          // Insert before the streaming turn (turnId) to maintain chronological order
+          const turnIdx = prev.findIndex(e => e.id === turnId);
+          if (turnIdx >= 0) {
+            const updated = [...prev];
+            updated.splice(turnIdx, 0, convEntry);
+            return updated;
+          }
+          return [...prev, convEntry];
+        });
+      }
+    }
+    return; // Don't add ToolSegment
+  }
+
   onUpdate((prev) => {
     const existing = findTurnToolSeg(prev, turnId, toolCallId);
     if (existing) {
-      // Early emission sent args:{} — update with real args when they arrive
       if (!hasRealArgs) return prev;
       return prev.map((e) => {
         if (e.id !== turnId || e.role !== "assistant") return e;
@@ -118,6 +152,8 @@ function handleToolResult(event: StreamEvent, turnId: string, onUpdate: UpdateEn
       setTimeout(() => updateTurnSegments(onUpdate, turnId, (t) => markToolDone(t, tcId, result, metadata)), 200 - (Date.now() - seg.step.timestamp));
       return prev;
     }
+    // logbook_reply has no ToolSegment (handled in handleToolCall as flat ConversationMessage)
+    if (!seg) return prev;
     return prev.map((e) => e.id === turnId && e.role === "assistant" ? markToolDone(e as AssistantTurn, tcId, result, metadata) : e);
   });
 }

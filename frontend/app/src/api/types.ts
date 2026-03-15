@@ -118,7 +118,7 @@ export interface ToolSegment {
   step: ToolStep;
 }
 
-export type NotificationType = "steer" | "command" | "agent";
+export type NotificationType = "steer" | "command" | "agent" | "conversation";
 
 export interface NoticeSegment {
   type: "notice";
@@ -160,7 +160,20 @@ export interface NoticeMessage {
   timestamp: number;
 }
 
-export type ChatEntry = UserMessage | AssistantTurn | NoticeMessage;
+export interface ConversationMessage {
+  id: string;
+  role: "conversation";
+  direction: "incoming" | "outgoing";
+  senderName: string;
+  senderId?: string;
+  senderType?: string;
+  recipientName?: string;
+  content: string;
+  conversationId?: string;
+  timestamp: number;
+}
+
+export type ChatEntry = UserMessage | AssistantTurn | NoticeMessage | ConversationMessage;
 
 export interface StreamStatus {
   state: { state: string; flags: Record<string, boolean> };

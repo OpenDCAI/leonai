@@ -1,4 +1,4 @@
-import type { AssistantTurn, BackendMessage, ChatEntry, NoticeMessage, NotificationType, ToolSegment, TurnSegment } from "./types";
+import type { AssistantTurn, BackendMessage, ChatEntry, ConversationMessage, NoticeMessage, NotificationType, ToolSegment, TurnSegment } from "./types";
 
 function extractTextContent(raw: unknown): string {
   if (typeof raw === "string") return raw;
@@ -21,21 +21,36 @@ function stripSystemReminders(text: string): string {
   return text.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "").trim();
 }
 
+/** Unescape HTML entities (&#x27; &#39; &amp; &lt; &gt; &quot;). */
+function unescapeHtml(s: string): string {
+  return s.replace(/&#x27;/g, "'").replace(/&#39;/g, "'")
+    .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"');
+}
+
+/** Extract plain text content from <incoming-message> XML wrapper. */
+function extractIncomingMessageContent(raw: string): string {
+  const match = raw.match(/<incoming-message[^>]*>([\s\S]*?)<\/incoming-message>/);
+  return match ? match[1].trim() : raw;
+}
+
 
 function buildToolSegments(toolCalls: unknown[], msgIndex: number, now: number): TurnSegment[] {
-  return toolCalls.map((raw, j) => {
-    const call = raw as { id?: string; name?: string; args?: unknown };
-    return {
-      type: "tool" as const,
-      step: {
-        id: call.id ?? `hist-tc-${msgIndex}-${j}`,
-        name: call.name ?? "unknown",
-        args: call.args ?? {},
-        status: "calling" as const,
-        timestamp: now,
-      },
-    };
-  });
+  // @@@logbook-reply-flat - skip logbook_reply (absorbed into flat ConversationMessage)
+  return toolCalls
+    .filter((raw) => (raw as { name?: string }).name !== "logbook_reply")
+    .map((raw, j) => {
+      const call = raw as { id?: string; name?: string; args?: unknown };
+      return {
+        type: "tool" as const,
+        step: {
+          id: call.id ?? `hist-tc-${msgIndex}-${j}`,
+          name: call.name ?? "unknown",
+          args: call.args ?? {},
+          status: "calling" as const,
+          timestamp: now,
+        },
+      };
+    });
 }
 
 function createTurn(msgId: string, segments: TurnSegment[], now: number): AssistantTurn {
@@ -58,6 +73,25 @@ function handleHuman(msg: BackendMessage, i: number, state: MapState): void {
   // System-injected messages (steer reminders, task notifications) → notice
   if (msg.metadata?.source === "system") {
     const content = extractTextContent(msg.content);
+
+    // @@@unified-conversation - detect <incoming-message> XML even in steer path
+    // (agent-to-agent via queue loses conversation_meta but content is still XML)
+    const incomingMatch = content.match(/<incoming-message\s+sender="([^"]*)"(?:\s+conversation="([^"]*)")?>([\s\S]*?)<\/incoming-message>/);
+    if (incomingMatch) {
+      state.currentTurn = null;
+      state.currentRunId = null;
+      state.entries.push({
+        id: msg.id ?? `hist-conv-${i}`,
+        role: "conversation",
+        direction: "incoming",
+        senderName: unescapeHtml(incomingMatch[1]),
+        content: unescapeHtml(incomingMatch[3].trim()),
+        conversationId: incomingMatch[2],
+        timestamp: state.now,
+      } as ConversationMessage);
+      return;
+    }
+
     const msgRunId = (msg.metadata?.run_id as string) || null;
     const ntype = msg.metadata?.notification_type as NotificationType | undefined;
 
@@ -85,6 +119,28 @@ function handleHuman(msg: BackendMessage, i: number, state: MapState): void {
     return;
   }
 
+  // @@@conversation-metadata - conversation-delivered messages → top-level ConversationMessage
+  if (msg.metadata?.source === "conversation") {
+    const raw = extractTextContent(msg.content);
+    const content = extractIncomingMessageContent(raw);
+    const entry: ConversationMessage = {
+      id: msg.id ?? `hist-conv-${i}`,
+      role: "conversation",
+      direction: "incoming",
+      senderName: msg.metadata.sender_name as string,
+      senderId: msg.metadata.sender_id as string,
+      senderType: msg.metadata.sender_type as string | undefined,
+      content,
+      conversationId: msg.metadata.conversation_id as string,
+      timestamp: state.now,
+    };
+    // Break current turn — each conversation exchange needs its own AssistantTurn
+    state.currentTurn = null;
+    state.currentRunId = null;
+    state.entries.push(entry);
+    return;
+  }
+
   // Normal user message → breaks current turn
   state.currentTurn = null;
   state.currentRunId = null;
@@ -102,6 +158,26 @@ function handleAI(msg: BackendMessage, i: number, state: MapState): void {
   const msgId = msg.id ?? `hist-turn-${i}`;
   const msgRunId = (msg.metadata?.run_id as string) || null;
 
+  // @@@logbook-reply-flat - extract logbook_reply as flat ConversationMessage BEFORE the turn
+  const lastIncoming = [...state.entries].reverse().find(
+    (e): e is ConversationMessage => e.role === "conversation" && e.direction === "incoming",
+  );
+  for (const tc of toolCalls) {
+    const call = tc as { name?: string; args?: Record<string, unknown> };
+    if (call.name === "logbook_reply" && call.args?.content) {
+      state.entries.push({
+        id: `${msgId}-conv-${call.args.conversation_id || "reply"}`,
+        role: "conversation",
+        direction: "outgoing",
+        senderName: "",
+        recipientName: (call.args.to as string) || lastIncoming?.senderName,
+        content: call.args.content as string,
+        conversationId: call.args.conversation_id as string | undefined,
+        timestamp: state.now,
+      } as ConversationMessage);
+    }
+  }
+
   const segments: TurnSegment[] = [];
   if (textContent) segments.push({ type: "text", content: textContent });
   if (toolCalls.length > 0) segments.push(...buildToolSegments(toolCalls, i, state.now));
@@ -118,6 +194,7 @@ function handleAI(msg: BackendMessage, i: number, state: MapState): void {
     state.currentRunId = msgRunId;
     state.entries.push(state.currentTurn);
   }
+
 }
 
 function handleTool(msg: BackendMessage, _i: number, state: MapState): void {
@@ -125,38 +202,37 @@ function handleTool(msg: BackendMessage, _i: number, state: MapState): void {
   const seg = state.currentTurn.segments.find(
     (s): s is ToolSegment => s.type === "tool" && s.step.id === msg.tool_call_id,
   );
-  if (seg) {
-    const contentStr = extractTextContent(msg.content);
-    seg.step.result = contentStr;
-    seg.step.status = "done";
+  // @@@logbook-reply-flat - logbook_reply has no ToolSegment (skipped in buildToolSegments)
+  if (!seg) return;
 
-    // Restore subagent_stream from persisted metadata (history replay path)
-    let taskId = msg.metadata?.task_id as string | undefined;
-    let threadId = (msg.metadata?.subagent_thread_id as string | undefined)
-      || (taskId ? `subagent-${taskId}` : undefined);
+  const contentStr = extractTextContent(msg.content);
+  seg.step.result = contentStr;
+  seg.step.status = "done";
 
-    // For Agent tool calls: also try parsing JSON content for task_id/thread_id
-    // (background agents return JSON with task_id; metadata may be empty)
-    if (!taskId && seg.step.name === "Agent") {
-      try {
-        const parsed = JSON.parse(contentStr) as Record<string, unknown>;
-        if (parsed?.task_id) {
-          taskId = parsed.task_id as string;
-          threadId = (parsed.thread_id as string | undefined) || `subagent-${taskId}`;
-        }
-      } catch { /* not JSON, foreground agent text result */ }
-    }
+  // Restore subagent_stream from persisted metadata (history replay path)
+  let taskId = msg.metadata?.task_id as string | undefined;
+  let threadId = (msg.metadata?.subagent_thread_id as string | undefined)
+    || (taskId ? `subagent-${taskId}` : undefined);
 
-    if (threadId && !seg.step.subagent_stream) {
-      seg.step.subagent_stream = {
-        task_id: taskId || "",
-        thread_id: threadId,
-        description: (msg.metadata?.description as string) || undefined,
-        text: "",
-        tool_calls: [],
-        status: "completed",
-      };
-    }
+  if (!taskId && seg.step.name === "Agent") {
+    try {
+      const parsed = JSON.parse(contentStr) as Record<string, unknown>;
+      if (parsed?.task_id) {
+        taskId = parsed.task_id as string;
+        threadId = (parsed.thread_id as string | undefined) || `subagent-${taskId}`;
+      }
+    } catch { /* not JSON, foreground agent text result */ }
+  }
+
+  if (threadId && !seg.step.subagent_stream) {
+    seg.step.subagent_stream = {
+      task_id: taskId || "",
+      thread_id: threadId,
+      description: (msg.metadata?.description as string) || undefined,
+      text: "",
+      tool_calls: [],
+      status: "completed",
+    };
   }
 }
 

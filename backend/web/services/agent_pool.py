@@ -175,7 +175,12 @@ async def _sync_agent_model(agent: Any, thread_id: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def route_message_to_brain(app_obj: FastAPI, brain_thread_id: str, formatted_message: str) -> dict:
+async def route_message_to_brain(
+    app_obj: FastAPI,
+    brain_thread_id: str,
+    formatted_message: str,
+    message_metadata: dict[str, Any] | None = None,
+) -> dict:
     """Route a formatted message to an agent's brain thread.
 
     Handles IDLE (start new run) and ACTIVE (steer via queue).
@@ -212,6 +217,7 @@ async def route_message_to_brain(app_obj: FastAPI, brain_thread_id: str, formatt
         run_id = start_agent_run(
             agent, brain_thread_id, formatted_message, app_obj,
             emit_notice=True,
+            message_metadata=message_metadata,
         )
         return {"routing": "direct", "run_id": run_id}
 

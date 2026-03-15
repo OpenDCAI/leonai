@@ -4,6 +4,7 @@ import {
   cancelRun,
   type AssistantTurn,
   type ChatEntry,
+  type ConversationMessage,
   type NoticeMessage,
   type NotificationType,
   type StreamStatus,
@@ -106,6 +107,8 @@ export function useStreamHandler(
    * flushSync forces the updater to execute immediately.
    */
   const turnIdRef = useRef<string>("");
+  // @@@optimistic-dedup - track pending optimistic entry for notice→replace
+  const pendingConvRef = useRef<string | null>(null);
   /**
    * True once the server message_id has been bound to the turn entry.
    * Reset at the start of each new connection.
@@ -132,13 +135,71 @@ export function useStreamHandler(
     return subscribe((event) => {
       console.log(`[STREAM-DIAG] event=${event.type}, turnId=${turnIdRef.current}, hasBound=${hasBoundRef.current}`);
 
-      // notice: standalone entry inserted between turns (e.g. task completion notification)
+      // notice: standalone entry inserted between turns
       if (event.type === "notice") {
-        const d = (event.data ?? {}) as { content?: string; notification_type?: string };
+        const d = (event.data ?? {}) as {
+          content?: string;
+          notification_type?: string;
+          conversation_meta?: { sender_name: string; sender_id: string; conversation_id: string };
+        };
+
+        // @@@conversation-metadata - conversation message → top-level ConversationMessage
+        if (d.conversation_meta) {
+          const meta = d.conversation_meta;
+          const raw = d.content ?? "";
+          const match = raw.match(/<incoming-message[^>]*>([\s\S]*?)<\/incoming-message>/);
+          const content = match ? match[1].trim() : raw;
+          const entry: ConversationMessage = {
+            id: makeId("conv"),
+            role: "conversation",
+            direction: "incoming",
+            senderName: meta.sender_name,
+            senderId: meta.sender_id,
+            senderType: meta.sender_type,
+            content,
+            conversationId: meta.conversation_id,
+            timestamp: Date.now(),
+          };
+
+          // @@@optimistic-dedup - if we have a pending optimistic entry, replace it
+          const optimisticId = pendingConvRef.current;
+          if (optimisticId) {
+            pendingConvRef.current = null;
+            onUpdateRef.current((prev) => prev.map(e =>
+              e.id === optimisticId ? entry : e
+            ));
+            return;
+          }
+
+          // No pending → agent-to-agent message → insert as new entry
+          onUpdateRef.current((prev) => [...prev, entry]);
+          return;
+        }
+
+        // @@@unified-conversation - detect <incoming-message> XML even in non-meta notices
+        // (agent-to-agent via steer queue loses conversation_meta)
+        const rawContent = d.content ?? "";
+        const xmlMatch = rawContent.match(/<incoming-message\s+sender="([^"]*)"(?:\s+conversation="([^"]*)")?>([\s\S]*?)<\/incoming-message>/);
+        if (xmlMatch) {
+          const unescape = (s: string) => s.replace(/&#x27;/g, "'").replace(/&#39;/g, "'").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"');
+          const convEntry: ConversationMessage = {
+            id: makeId("conv"),
+            role: "conversation",
+            direction: "incoming",
+            senderName: unescape(xmlMatch[1]),
+            content: unescape(xmlMatch[3].trim()),
+            conversationId: xmlMatch[2],
+            timestamp: Date.now(),
+          };
+          onUpdateRef.current((prev) => [...prev, convEntry]);
+          return;
+        }
+
+        // Regular notice (steer, command, agent)
         const noticeEntry: NoticeMessage = {
           id: makeId("stream-notice"),
           role: "notice",
-          content: d.content ?? "",
+          content: rawContent,
           notification_type: d.notification_type as NotificationType | undefined,
           timestamp: Date.now(),
         };
@@ -223,6 +284,8 @@ export function useStreamHandler(
       // Set turn context before connect() so the subscriber knows which turn to update
       turnIdRef.current = tempTurnId;
       hasBoundRef.current = false;
+      // @@@optimistic-dedup - track this entry so conversation notice can replace it
+      pendingConvRef.current = userEntry.id;
 
       flushSync(() => {
         onUpdateRef.current((prev) => [...prev, userEntry, assistantTurn]);

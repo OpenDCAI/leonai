@@ -36,9 +36,6 @@ export default function ConversationView({ conversationId, memberDetails, sendRe
     return map;
   }, [memberDetails]);
 
-  // Fallback name for non-self senders
-  const fallbackName = useAuthStore(s => s.agent?.name) || "Leon";
-
   // Fetch initial messages
   useEffect(() => {
     setLoading(true);
@@ -163,7 +160,8 @@ export default function ConversationView({ conversationId, memberDetails, sendRe
 
   const resolveSender = (senderId: string) => {
     const m = memberMap.get(senderId);
-    return { name: m?.name || fallbackName, type: m?.type };
+    if (!m) throw new Error(`Unknown sender ${senderId} — not in member_details`);
+    return m;
   };
 
   return (
@@ -178,15 +176,15 @@ export default function ConversationView({ conversationId, memberDetails, sendRe
         <div className="max-w-3xl mx-auto px-5 space-y-3">
           {messages.map(msg => {
             const isSelf = msg.sender_id === memberId;
-            const sender = isSelf ? undefined : resolveSender(msg.sender_id);
+            const sender = resolveSender(msg.sender_id);
             return (
               <MessageBubble
                 key={msg.id}
                 message={msg}
                 isSelf={isSelf}
                 senderId={msg.sender_id}
-                senderName={sender?.name}
-                senderType={sender?.type}
+                senderName={sender.name}
+                senderType={sender.type}
               />
             );
           })}
@@ -230,17 +228,17 @@ const MessageBubble = memo(function MessageBubble({
   message: ConversationMessage;
   isSelf: boolean;
   senderId: string;
-  senderName?: string;
-  senderType?: string;
+  senderName: string;
+  senderType: string;
 }) {
   return (
     <div className={`flex ${isSelf ? "justify-end" : "justify-start"} animate-fade-in`}>
-      <div className={`max-w-[78%] ${isSelf ? "" : "flex gap-2.5"}`}>
+      <div className="max-w-[78%] flex gap-2.5">
         {!isSelf && (
-          <MemberAvatar memberId={senderId} name={senderName || "Leon"} type={senderType} size="sm" className="mt-0.5" />
+          <MemberAvatar memberId={senderId} name={senderName} type={senderType} size="sm" className="mt-0.5" />
         )}
         <div>
-          {!isSelf && senderName && (
+          {!isSelf && (
             <span className="text-[11px] text-muted-foreground ml-0.5 mb-0.5 block">{senderName}</span>
           )}
           <div className={`rounded-xl px-3.5 py-2 ${
@@ -256,6 +254,9 @@ const MessageBubble = memo(function MessageBubble({
             {formatTime(message.created_at)}
           </div>
         </div>
+        {isSelf && (
+          <MemberAvatar memberId={senderId} name={senderName} type={senderType} size="sm" className="mt-0.5" />
+        )}
       </div>
     </div>
   );

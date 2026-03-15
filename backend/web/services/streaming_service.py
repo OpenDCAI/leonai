@@ -344,6 +344,7 @@ async def _run_agent_to_buffer(
     thread_buf: ThreadEventBuffer,
     run_id: str,
     emit_notice: bool = False,
+    message_metadata: dict[str, Any] | None = None,
 ) -> None:
     """Run agent execution and write all SSE events into *thread_buf*."""
     from backend.web.services.event_store import append_event
@@ -482,9 +483,16 @@ async def _run_agent_to_buffer(
         # Emit notice BEFORE run_start when this run was triggered by routing
         # (agent-to-agent, followup queue). Visible in brain thread full view.
         if emit_notice:
+            notice_data: dict[str, Any] = {"content": message}
+            if message_metadata and message_metadata.get("source") == "conversation":
+                notice_data["conversation_meta"] = {
+                    k: message_metadata[k]
+                    for k in ("sender_name", "sender_id", "sender_type", "conversation_id")
+                    if k in message_metadata
+                }
             await emit({
                 "event": "notice",
-                "data": json.dumps({"content": message}, ensure_ascii=False),
+                "data": json.dumps(notice_data, ensure_ascii=False),
             })
 
         # Emit run_start
@@ -494,7 +502,13 @@ async def _run_agent_to_buffer(
         })
 
         # @@@unified-input - ALL messages use the same format regardless of sender type.
-        _initial_input: dict | None = {"messages": [{"role": "user", "content": message}]}
+        # When message_metadata is provided, attach it to the HumanMessage so the
+        # frontend mapper can identify conversation messages in checkpoint history.
+        if message_metadata:
+            from langchain_core.messages import HumanMessage
+            _initial_input: dict | None = {"messages": [HumanMessage(content=message, metadata=message_metadata)]}
+        else:
+            _initial_input: dict | None = {"messages": [{"role": "user", "content": message}]}
 
         async def run_agent_stream(input_data: dict | None = _initial_input):
             async for chunk in agent.agent.astream(
@@ -824,6 +838,7 @@ def start_agent_run(
     app: Any,
     enable_trajectory: bool = False,
     emit_notice: bool = False,
+    message_metadata: dict[str, Any] | None = None,
 ) -> str:
     """Launch agent producer on the persistent ThreadEventBuffer. Returns run_id.
 
@@ -845,7 +860,7 @@ def start_agent_run(
     ctx.run(var_child_runnable_config.set, None)
 
     bg_task = asyncio.get_running_loop().create_task(
-        _run_agent_to_buffer(agent, thread_id, message, app, enable_trajectory, thread_buf, run_id, emit_notice),
+        _run_agent_to_buffer(agent, thread_id, message, app, enable_trajectory, thread_buf, run_id, emit_notice, message_metadata),
         context=ctx,
     )
     # Store the background task so cancel_run can still cancel it

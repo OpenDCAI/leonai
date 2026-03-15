@@ -45,6 +45,10 @@ function ChatPageInner({ threadId }: { threadId: string }) {
   // @@@brain-thread-gate - backend decides ownership; null = contact, string = owner
   const brainThreadId = conversation?.brain_thread_id ?? null;
 
+  // @@@member-identity - extract agent/owner for avatar rendering in both views
+  const agentMember = conversation?.member_details?.find(m => m.type !== "human");
+  const ownerMember = conversation?.member_details?.find(m => m.type === "human");
+
   const [currentModel, setCurrentModel] = useState<string>("");
   // @@@view-default — conversation view is primary for everyone.
   // Toggle to "owner" (brain thread) available only for own agent.
@@ -194,6 +198,8 @@ function ChatPageInner({ threadId }: { threadId: string }) {
                 isStreaming={isStreaming}
                 runtimeStatus={runtimeStatus}
                 loading={loading}
+                agentMember={agentMember}
+                ownerMember={ownerMember}
                 onFocusAgent={handleFocusAgent}
                 onTaskNoticeClick={handleTaskNoticeClick}
               />

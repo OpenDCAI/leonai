@@ -34,6 +34,7 @@ class DeliveryStrategy(Protocol):
         content: str,
         sender_name: str,
         conversation_id: str,
+        sender_id: str,
     ) -> dict: ...
 
 
@@ -41,7 +42,7 @@ class HumanDelivery:
     """Human members receive messages via conversation SSE — no extra action needed."""
 
     async def deliver(
-        self, member: MemberRow, content: str, sender_name: str, conversation_id: str,
+        self, member: MemberRow, content: str, sender_name: str, conversation_id: str, sender_id: str,
     ) -> dict:
         return {"routing": "sse_only", "member_id": member.id}
 
@@ -53,7 +54,7 @@ class MycelAgentDelivery:
         self._app = app
 
     async def deliver(
-        self, member: MemberRow, content: str, sender_name: str, conversation_id: str,
+        self, member: MemberRow, content: str, sender_name: str, conversation_id: str, sender_id: str,
     ) -> dict:
         from backend.web.services.agent_pool import route_message_to_brain
         from core.runtime.middleware.queue import format_conversation_message
@@ -65,8 +66,22 @@ class MycelAgentDelivery:
         if typing_tracker is not None:
             typing_tracker.start(brain_thread_id, conversation_id, member.id)
 
+        # @@@conversation-metadata - attach sender info so frontend can render
+        # conversation messages as ConversationBubble instead of raw XML
+        sender_member = self._app.state.member_repo.get_by_id(sender_id)
+        message_metadata = {
+            "source": "conversation",
+            "sender_name": sender_name,
+            "sender_id": sender_id,
+            "sender_type": sender_member.type.value if sender_member else "human",
+            "conversation_id": conversation_id,
+        }
+
         formatted = format_conversation_message(content, sender_name, conversation_id)
-        result = await route_message_to_brain(self._app, brain_thread_id, formatted)
+        result = await route_message_to_brain(
+            self._app, brain_thread_id, formatted,
+            message_metadata=message_metadata,
+        )
         return {**result, "member_id": member.id, "brain_thread_id": brain_thread_id}
 
 
@@ -74,7 +89,7 @@ class OpenClawDelivery:
     """Placeholder for external agent frameworks. Future: webhook/API call."""
 
     async def deliver(
-        self, member: MemberRow, content: str, sender_name: str, conversation_id: str,
+        self, member: MemberRow, content: str, sender_name: str, conversation_id: str, sender_id: str,
     ) -> dict:
         logger.info("OpenClaw delivery placeholder for member %s", member.id)
         return {"routing": "openclaw_placeholder", "member_id": member.id}
@@ -115,7 +130,7 @@ class DeliveryRouter:
                 logger.warning("No delivery strategy for member type %s (member %s)", member.type, member.id)
                 continue
             try:
-                result = await strategy.deliver(member, content, sender_name, conversation_id)
+                result = await strategy.deliver(member, content, sender_name, conversation_id, sender_id)
                 results.append(result)
                 logger.info("Delivered to %s (%s): %s", member.name, member.type.value, result.get("routing"))
             except Exception:
