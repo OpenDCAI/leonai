@@ -17,7 +17,7 @@ from core.identity.agent_registry import get_or_create_agent_id
 _config_update_locks: dict[str, asyncio.Lock] = {}
 
 
-def create_agent_sync(sandbox_name: str, workspace_root: Path | None = None, model_name: str | None = None, agent: str | None = None, queue_manager: Any = None) -> Any:
+def create_agent_sync(sandbox_name: str, workspace_root: Path | None = None, model_name: str | None = None, agent: str | None = None, queue_manager: Any = None, chat_repos: dict | None = None) -> Any:
     """Create a LeonAgent with the given sandbox. Runs in a thread."""
     storage_container = build_storage_container(
         main_db_path=os.getenv("LEON_DB_PATH"),
@@ -32,6 +32,7 @@ def create_agent_sync(sandbox_name: str, workspace_root: Path | None = None, mod
         sandbox=sandbox_name if sandbox_name != "local" else None,
         storage_container=storage_container,
         queue_manager=queue_manager,
+        chat_repos=chat_repos,
         verbose=True,
         agent=agent,
     )
@@ -75,9 +76,35 @@ async def get_or_create_agent(app_obj: FastAPI, sandbox_type: str, thread_id: st
     # NOT an agent type name ("bash", "general", etc.). Never pass it to create_leon_agent.
     agent_name = agent  # explicit caller-provided type only; None → default Leon agent
 
+    # @@@chat-repos - construct chat_repos for ChatToolService if entity system is available
+    chat_repos = None
+    if hasattr(app_obj.state, "entity_repo") and thread_data:
+        entity_repo = app_obj.state.entity_repo
+        agent_entity = entity_repo.get_by_thread_id(thread_id)
+        if agent_entity:
+            # Find owner's human entity via member chain
+            agent_member = app_obj.state.member_repo.get_by_id(agent_entity.member_id) if hasattr(app_obj.state, "member_repo") else None
+            owner_entity_id = ""
+            if agent_member and agent_member.owner_id:
+                owner_entities = entity_repo.get_by_member_id(agent_member.owner_id)
+                human_entity = next((e for e in owner_entities if e.type == "human"), None)
+                if human_entity:
+                    owner_entity_id = human_entity.id
+            chat_repos = {
+                "entity_id": agent_entity.id,
+                "owner_entity_id": owner_entity_id,
+                "entity_repo": entity_repo,
+                "chat_service": getattr(app_obj.state, "chat_service", None),
+                "chat_entity_repo": getattr(app_obj.state, "chat_entity_repo", None),
+                "chat_message_repo": getattr(app_obj.state, "chat_message_repo", None),
+                "member_repo": getattr(app_obj.state, "member_repo", None),
+                "contact_repo": getattr(app_obj.state, "contact_repo", None),
+                "chat_event_bus": getattr(app_obj.state, "chat_event_bus", None),
+            }
+
     # @@@ agent-init-thread - LeonAgent.__init__ uses run_until_complete, must run in thread
     qm = getattr(app_obj.state, "queue_manager", None)
-    agent_obj = await asyncio.to_thread(create_agent_sync, sandbox_type, workspace_root, model_name, agent_name, qm)
+    agent_obj = await asyncio.to_thread(create_agent_sync, sandbox_type, workspace_root, model_name, agent_name, qm, chat_repos)
     member = agent_name or "leon"
     agent_id = get_or_create_agent_id(
         member=member,

@@ -123,6 +123,7 @@ class LeonAgent:
         sandbox: Any = None,
         storage_container: StorageContainer | None = None,
         queue_manager: MessageQueueManager | None = None,
+        chat_repos: dict | None = None,
         verbose: bool = False,
     ):
         """
@@ -145,6 +146,7 @@ class LeonAgent:
         self.agent_id: str | None = None
         self.verbose = verbose
         self.queue_manager = queue_manager or MessageQueueManager()
+        self._chat_repos: dict | None = chat_repos
 
         # New config system mode
         self.config, self.models_config = self._load_config(
@@ -991,6 +993,26 @@ class LeonAgent:
             self._taskboard_service = TaskBoardService(registry=self._tool_registry)
         except ImportError:
             self._taskboard_service = None
+
+        # @@@chat-tools - register chat tools for agents with entity identity
+        if self._chat_repos:
+            repos = self._chat_repos
+            entity_id = repos.get("entity_id")
+            owner_entity_id = repos.get("owner_entity_id", "")
+            if entity_id:
+                from core.agents.communication.chat_tool_service import ChatToolService
+                self._chat_tool_service = ChatToolService(
+                    registry=self._tool_registry,
+                    entity_id=entity_id,
+                    owner_entity_id=owner_entity_id,
+                    entity_repo=repos.get("entity_repo"),
+                    chat_service=repos.get("chat_service"),
+                    chat_entity_repo=repos.get("chat_entity_repo"),
+                    chat_message_repo=repos.get("chat_message_repo"),
+                    member_repo=repos.get("member_repo"),
+                    contact_repo=repos.get("contact_repo"),
+                    chat_event_bus=repos.get("chat_event_bus"),
+                )
 
         if self.verbose:
             all_tools = self._tool_registry.list_all()

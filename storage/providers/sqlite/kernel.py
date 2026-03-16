@@ -22,6 +22,7 @@ class SQLiteDBRole(StrEnum):
     SANDBOX = "sandbox"
     QUEUE = "queue"
     SUBAGENT = "subagent"
+    CHAT = "chat"
 
 
 def _env_path(env_var: str, fallback: Path) -> Path:
@@ -50,6 +51,8 @@ def resolve_role_db_path(role: SQLiteDBRole, db_path: Path | str | None = None) 
         return _env_path("LEON_QUEUE_DB_PATH", main_path.with_name("queue.db"))
     if role == SQLiteDBRole.SUBAGENT:
         return _env_path("LEON_SUBAGENT_DB_PATH", main_path.with_name("subagent.db"))
+    if role == SQLiteDBRole.CHAT:
+        return _env_path("LEON_CHAT_DB_PATH", main_path.with_name("chat.db"))
     return main_path
 
 
