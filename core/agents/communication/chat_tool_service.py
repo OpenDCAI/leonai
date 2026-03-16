@@ -159,12 +159,16 @@ class ChatToolService:
                 "name": "chat_send",
                 "description": (
                     "Send a message to an entity. Use entity_id from directory() or chats(). "
-                    "Cannot send to your owner — use tell_owner() instead."
+                    "Cannot send to your owner — use tell_owner() instead.\n\n"
+                    "Signal protocol — append to content:\n"
+                    "  (no tag) = expecting a reply\n"
+                    "  ::yield = I have nothing more to add; up to you whether to continue\n"
+                    "  ::close = conversation over, do NOT reply"
                 ),
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "content": {"type": "string", "description": "Message content"},
+                        "content": {"type": "string", "description": "Message content. Append ::yield or ::close to signal intent."},
                         "entity_id": {"type": "string", "description": "Target entity_id"},
                     },
                     "required": ["content", "entity_id"],
