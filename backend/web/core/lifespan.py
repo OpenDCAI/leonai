@@ -40,15 +40,16 @@ async def lifespan(app: FastAPI):
     from storage.providers.sqlite.chat_repo import SQLiteChatRepo, SQLiteChatEntityRepo, SQLiteChatMessageRepo
 
     db = Path("~/.leon/leon.db").expanduser()
+    chat_db = db.with_name("chat.db")
 
     app.state.member_repo = SQLiteMemberRepo(db)
     app.state.account_repo = SQLiteAccountRepo(db)
     app.state.entity_repo = SQLiteEntityRepo(db)
     app.state.thread_repo = SQLiteThreadRepo(db)
-    app.state.contact_repo = SQLiteContactRepo(db)
-    app.state.chat_repo = SQLiteChatRepo(db)
-    app.state.chat_entity_repo = SQLiteChatEntityRepo(db)
-    app.state.chat_message_repo = SQLiteChatMessageRepo(db)
+    app.state.contact_repo = SQLiteContactRepo(chat_db)
+    app.state.chat_repo = SQLiteChatRepo(chat_db)
+    app.state.chat_entity_repo = SQLiteChatEntityRepo(chat_db)
+    app.state.chat_message_repo = SQLiteChatMessageRepo(chat_db)
 
     from backend.web.services.auth_service import AuthService
     app.state.auth_service = AuthService(

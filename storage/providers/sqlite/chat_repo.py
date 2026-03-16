@@ -4,11 +4,24 @@ from __future__ import annotations
 
 import sqlite3
 import threading
+import time
 from pathlib import Path
 
 from storage.contracts import ChatEntityRow, ChatMessageRow, ChatRow
 from storage.providers.sqlite.connection import create_connection
 from storage.providers.sqlite.kernel import SQLiteDBRole, resolve_role_db_path
+
+
+def _retry_on_locked(fn, max_retries=5, delay=0.2):
+    """Retry a DB write operation on 'database is locked' errors."""
+    for attempt in range(max_retries):
+        try:
+            return fn()
+        except sqlite3.OperationalError as e:
+            if "database is locked" in str(e) and attempt < max_retries - 1:
+                time.sleep(delay * (attempt + 1))
+                continue
+            raise
 
 
 class SQLiteChatRepo:
@@ -20,7 +33,7 @@ class SQLiteChatRepo:
             self._conn = conn
         else:
             if db_path is None:
-                db_path = resolve_role_db_path(SQLiteDBRole.MAIN)
+                db_path = resolve_role_db_path(SQLiteDBRole.CHAT)
             self._conn = create_connection(db_path)
         self._ensure_table()
 
@@ -29,13 +42,15 @@ class SQLiteChatRepo:
             self._conn.close()
 
     def create(self, row: ChatRow) -> None:
-        with self._lock:
-            self._conn.execute(
-                "INSERT INTO chats (id, title, status, created_at, updated_at)"
-                " VALUES (?, ?, ?, ?, ?)",
-                (row.id, row.title, row.status, row.created_at, row.updated_at),
-            )
-            self._conn.commit()
+        def _do():
+            with self._lock:
+                self._conn.execute(
+                    "INSERT INTO chats (id, title, status, created_at, updated_at)"
+                    " VALUES (?, ?, ?, ?, ?)",
+                    (row.id, row.title, row.status, row.created_at, row.updated_at),
+                )
+                self._conn.commit()
+        _retry_on_locked(_do)
 
     def get_by_id(self, chat_id: str) -> ChatRow | None:
         with self._lock:
@@ -74,7 +89,7 @@ class SQLiteChatEntityRepo:
             self._conn = conn
         else:
             if db_path is None:
-                db_path = resolve_role_db_path(SQLiteDBRole.MAIN)
+                db_path = resolve_role_db_path(SQLiteDBRole.CHAT)
             self._conn = create_connection(db_path)
         self._ensure_table()
 
@@ -159,7 +174,7 @@ class SQLiteChatMessageRepo:
             self._conn = conn
         else:
             if db_path is None:
-                db_path = resolve_role_db_path(SQLiteDBRole.MAIN)
+                db_path = resolve_role_db_path(SQLiteDBRole.CHAT)
             self._conn = create_connection(db_path)
         self._ensure_table()
 
@@ -168,13 +183,15 @@ class SQLiteChatMessageRepo:
             self._conn.close()
 
     def create(self, row: ChatMessageRow) -> None:
-        with self._lock:
-            self._conn.execute(
-                "INSERT INTO chat_messages (id, chat_id, sender_entity_id, content, created_at)"
-                " VALUES (?, ?, ?, ?, ?)",
-                (row.id, row.chat_id, row.sender_entity_id, row.content, row.created_at),
-            )
-            self._conn.commit()
+        def _do():
+            with self._lock:
+                self._conn.execute(
+                    "INSERT INTO chat_messages (id, chat_id, sender_entity_id, content, created_at)"
+                    " VALUES (?, ?, ?, ?, ?)",
+                    (row.id, row.chat_id, row.sender_entity_id, row.content, row.created_at),
+                )
+                self._conn.commit()
+        _retry_on_locked(_do)
 
     def list_by_chat(
         self, chat_id: str, *, limit: int = 50, before: float | None = None,
