@@ -9,6 +9,20 @@ from backend.web.core.dependencies import get_app, get_current_member_id
 router = APIRouter(prefix="/api/entities", tags=["entities"])
 
 
+@router.get("")
+async def list_entities(
+    member_id: Annotated[str, Depends(get_current_member_id)],
+    app: Annotated[Any, Depends(get_app)],
+):
+    """List all entities in the system (for directory / new-chat picker)."""
+    entity_repo = app.state.entity_repo
+    all_entities = entity_repo.list_all()
+    return [
+        {"id": e.id, "name": e.name, "type": e.type, "avatar": getattr(e, "avatar", None)}
+        for e in all_entities
+    ]
+
+
 @router.get("/{entity_id}/agent-thread")
 async def get_agent_thread(
     entity_id: str,

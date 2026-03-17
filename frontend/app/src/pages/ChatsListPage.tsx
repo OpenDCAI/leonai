@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { useCallback, useEffect, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { Plus, X, Search } from "lucide-react";
 import { authFetch } from "../store/auth-store";
 import { useAuthStore } from "../store/auth-store";
 
@@ -37,7 +38,6 @@ function ChatAvatar({ entities, myEntityId }: { entities: ChatEntity[]; myEntity
   const isGroup = entities.length >= 3;
 
   if (isGroup) {
-    // Stacked avatars for group
     const show = others.slice(0, 2);
     return (
       <div className="relative w-10 h-10 shrink-0">
@@ -54,7 +54,6 @@ function ChatAvatar({ entities, myEntityId }: { entities: ChatEntity[]; myEntity
     );
   }
 
-  // 1:1 — show the other person
   const other = others[0];
   if (!other) return <div className="w-10 h-10 rounded-full bg-muted shrink-0" />;
   return (
@@ -70,10 +69,99 @@ function chatDisplayName(chat: ChatSummary, myEntityId: string | null): string {
   return others.map(e => e.name).join(", ") || "Chat";
 }
 
+// @@@new-chat-dialog — inline dialog to pick an entity and create a 1:1 chat
+function NewChatDialog({ onClose, onCreated }: { onClose: () => void; onCreated: (chatId: string) => void }) {
+  const [entities, setEntities] = useState<ChatEntity[]>([]);
+  const [search, setSearch] = useState("");
+  const [creating, setCreating] = useState(false);
+  const myEntityId = useAuthStore(s => s.entityId);
+
+  useEffect(() => {
+    authFetch("/api/entities")
+      .then(r => r.json())
+      .then((data: ChatEntity[]) => {
+        // Filter out self
+        setEntities(data.filter(e => e.id !== myEntityId));
+      })
+      .catch(console.error);
+  }, [myEntityId]);
+
+  const filtered = search
+    ? entities.filter(e => e.name.toLowerCase().includes(search.toLowerCase()))
+    : entities;
+
+  const handleSelect = useCallback(async (targetEntity: ChatEntity) => {
+    if (!myEntityId || creating) return;
+    setCreating(true);
+    try {
+      const res = await authFetch("/api/chats", {
+        method: "POST",
+        body: JSON.stringify({ entity_ids: [myEntityId, targetEntity.id] }),
+      });
+      if (!res.ok) throw new Error(`Create chat failed: ${res.status}`);
+      const data = await res.json();
+      onCreated(data.id);
+    } catch (err) {
+      console.error("[NewChat] error:", err);
+      setCreating(false);
+    }
+  }, [myEntityId, creating, onCreated]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
+      <div className="w-full max-w-sm bg-card rounded-xl shadow-xl border border-border" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+          <h3 className="text-sm font-semibold">New Chat</h3>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        <div className="px-4 py-2">
+          <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-muted/50 border border-border">
+            <Search className="w-4 h-4 text-muted-foreground" />
+            <input
+              type="text"
+              placeholder="Search entities..."
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              className="flex-1 bg-transparent text-sm outline-none"
+              autoFocus
+            />
+          </div>
+        </div>
+        <div className="max-h-64 overflow-y-auto px-2 pb-2">
+          {filtered.length === 0 ? (
+            <p className="text-xs text-muted-foreground text-center py-4">No entities found</p>
+          ) : (
+            filtered.map(e => (
+              <button
+                key={e.id}
+                onClick={() => void handleSelect(e)}
+                disabled={creating}
+                className="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-muted transition-colors text-left disabled:opacity-50"
+              >
+                <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-xs font-semibold text-primary shrink-0">
+                  {e.name.charAt(0).toUpperCase()}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium truncate">{e.name}</p>
+                  <p className="text-[10px] text-muted-foreground">{e.type}</p>
+                </div>
+              </button>
+            ))
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function ChatsListPage() {
   const [chats, setChats] = useState<ChatSummary[]>([]);
   const [loading, setLoading] = useState(true);
+  const [showNewChat, setShowNewChat] = useState(false);
   const myEntityId = useAuthStore(s => s.entityId);
+  const navigate = useNavigate();
 
   useEffect(() => {
     authFetch("/api/chats")
@@ -81,6 +169,10 @@ export default function ChatsListPage() {
       .then((data) => { setChats(data); setLoading(false); })
       .catch((err) => { console.error("[ChatsListPage] fetch error:", err); setLoading(false); });
   }, []);
+
+  const handleChatCreated = useCallback((chatId: string) => {
+    navigate(`/chats/${chatId}`);
+  }, [navigate]);
 
   if (loading) {
     return (
@@ -94,7 +186,13 @@ export default function ChatsListPage() {
     return (
       <div className="flex-1 flex flex-col items-center justify-center px-4">
         <p className="text-sm text-muted-foreground">No chats yet</p>
-        <p className="text-xs text-muted-foreground/60 mt-1">Start a conversation to see it here</p>
+        <button
+          onClick={() => setShowNewChat(true)}
+          className="mt-3 px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:opacity-90"
+        >
+          Start a conversation
+        </button>
+        {showNewChat && <NewChatDialog onClose={() => setShowNewChat(false)} onCreated={handleChatCreated} />}
       </div>
     );
   }
@@ -110,8 +208,14 @@ export default function ChatsListPage() {
 
   return (
     <div className="flex-1 flex flex-col min-h-0">
-      <div className="px-6 py-4 border-b border-border shrink-0">
+      <div className="px-6 py-4 border-b border-border shrink-0 flex items-center justify-between">
         <h2 className="text-lg font-semibold text-foreground">Chats</h2>
+        <button
+          onClick={() => setShowNewChat(true)}
+          className="w-8 h-8 rounded-lg flex items-center justify-center text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+        >
+          <Plus className="w-4 h-4" />
+        </button>
       </div>
       <div className="flex-1 overflow-y-auto">
         {sorted.map(chat => (
@@ -139,7 +243,6 @@ export default function ChatsListPage() {
                 </p>
               )}
             </div>
-            {/* Unread badge / @mention indicator */}
             {chat.has_mention ? (
               <span className="w-5 h-5 rounded-full bg-destructive text-destructive-foreground text-[10px] font-bold flex items-center justify-center shrink-0">
                 @
@@ -152,6 +255,7 @@ export default function ChatsListPage() {
           </Link>
         ))}
       </div>
+      {showNewChat && <NewChatDialog onClose={() => setShowNewChat(false)} onCreated={handleChatCreated} />}
     </div>
   );
 }
