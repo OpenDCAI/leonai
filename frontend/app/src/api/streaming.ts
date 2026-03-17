@@ -1,5 +1,6 @@
 import type { StreamEvent } from "./types";
 import { processChunk } from "./sse-processor";
+import { authFetch } from "../store/auth-store";
 
 /** Read an SSE response body, dispatch events, return { lastSeq, runEnded }. */
 async function consumeSSEStream(
@@ -40,9 +41,8 @@ async function consumeSSEStream(
 }
 
 async function postJSON<T>(url: string, body: unknown, signal?: AbortSignal): Promise<T> {
-  const res = await fetch(url, {
+  const res = await authFetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
     signal,
   });
@@ -73,8 +73,11 @@ export async function streamThreadEvents(
 
   while (!signal?.aborted) {
     try {
-      const url = `/api/threads/${encodeURIComponent(threadId)}/events?after=${after}`;
-      console.log(`[SSE-FETCH] fetching ${url}`);
+      // @@@sse-token-auth — thread events endpoint uses ?token= (not Bearer header)
+      const { useAuthStore } = await import("../store/auth-store");
+      const token = useAuthStore.getState().token || "";
+      const url = `/api/threads/${encodeURIComponent(threadId)}/events?after=${after}&token=${encodeURIComponent(token)}`;
+      console.log(`[SSE-FETCH] fetching ${url.replace(/token=[^&]+/, "token=***")}`);
       const res = await fetch(url, { signal });
       console.log(`[SSE-FETCH] response status=${res.status}, ok=${res.ok}`);
 

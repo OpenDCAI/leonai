@@ -10,11 +10,10 @@ import type {
   WorkspaceListResult,
 } from "./types";
 
+import { authFetch } from "../store/auth-store";
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, {
-    headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
-    ...init,
-  });
+  const response = await authFetch(url, init);
   if (!response.ok) {
     const body = await response.text();
     throw new Error(`API ${response.status}: ${body || response.statusText}`);

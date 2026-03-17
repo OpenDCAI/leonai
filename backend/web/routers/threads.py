@@ -103,7 +103,12 @@ async def list_threads(
     app: Annotated[Any, Depends(get_app)] = None,
 ) -> dict[str, Any]:
     """List threads owned by the current user."""
-    threads = app.state.thread_repo.list_by_owner(member_id)
+    raw = app.state.thread_repo.list_by_owner(member_id)
+    threads = [
+        {"thread_id": t["id"], "sandbox": t.get("sandbox_type", "local"), "agent": t.get("agent"),
+         "member_name": t.get("member_name"), "member_id": t.get("member_id")}
+        for t in raw
+    ]
     return {"threads": threads}
 
 
