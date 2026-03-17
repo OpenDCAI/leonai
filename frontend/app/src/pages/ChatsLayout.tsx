@@ -1,7 +1,8 @@
 import { useEffect, useState, useCallback } from "react";
 import { Link, Outlet, useParams, useNavigate } from "react-router-dom";
-import { Plus, Search, X } from "lucide-react";
+import { X, Search } from "lucide-react";
 import MemberAvatar from "../components/MemberAvatar";
+import SidebarPanel from "../components/SidebarPanel";
 import { authFetch, useAuthStore } from "../store/auth-store";
 
 interface ChatEntity {
@@ -146,79 +147,62 @@ export default function ChatsLayout() {
     return tb - ta;
   });
 
+  const emptyContent = sorted.length === 0 && !loading ? (
+    <div className="flex flex-col items-center justify-center py-12 px-4">
+      <p className="text-xs text-muted-foreground mb-2">No chats yet</p>
+      <button onClick={() => setShowNewChat(true)}
+        className="text-xs text-primary hover:underline">Start a conversation</button>
+    </div>
+  ) : undefined;
+
   return (
     <div className="h-full w-full flex overflow-hidden">
-      {/* Sidebar — chat list */}
-      <div className="w-72 h-full flex flex-col border-r border-border bg-card shrink-0">
-        <div className="px-4 pt-3 pb-1 flex items-center justify-between">
-          <span className="text-sm font-semibold text-foreground">Chats</span>
-          <button onClick={() => setShowNewChat(true)}
-            className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:bg-muted hover:text-foreground">
-            <Plus className="w-4 h-4" />
-          </button>
-        </div>
-
-        {/* Search — matches Threads sidebar style */}
-        <div className="px-3 pb-3">
-          <div className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-muted-foreground/60 bg-muted/30 border border-transparent focus-within:border-primary/40">
-            <Search className="w-4 h-4 shrink-0" />
-            <input
-              type="text"
-              placeholder="Search chats..."
-              value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
-              className="flex-1 bg-transparent outline-none text-foreground placeholder:text-muted-foreground/60 text-sm"
-            />
-          </div>
-        </div>
-
-        <div className="flex-1 overflow-y-auto">
-          {loading ? (
-            <p className="text-xs text-muted-foreground text-center py-8">Loading...</p>
-          ) : sorted.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12 px-4">
-              <p className="text-xs text-muted-foreground mb-2">No chats yet</p>
-              <button onClick={() => setShowNewChat(true)}
-                className="text-xs text-primary hover:underline">Start a conversation</button>
-            </div>
-          ) : sorted.map(chat => {
-            const isActive = chatId === chat.id;
-            const name = chatDisplayName(chat, myEntityId);
-            return (
-              <Link key={chat.id} to={`/chats/${chat.id}`}
-                className={`flex items-center gap-3 px-4 py-2.5 transition-colors ${isActive ? "bg-background" : "hover:bg-muted/50"}`}>
-                <MemberAvatar name={name} size="sm" />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between">
-                    <span className={`text-sm truncate ${chat.unread_count > 0 ? "font-semibold" : "font-medium"} text-foreground`}>
-                      {name}
-                    </span>
-                    {chat.last_message && (
-                      <span className="text-[10px] text-muted-foreground/50 shrink-0 ml-1">
-                        {formatTime(chat.last_message.created_at)}
-                      </span>
-                    )}
-                  </div>
+      <SidebarPanel
+        title="Chats"
+        searchPlaceholder="Search chats..."
+        searchQuery={searchQuery}
+        onSearchChange={setSearchQuery}
+        onAdd={() => setShowNewChat(true)}
+        count={chats.length}
+        loading={loading}
+        emptyContent={emptyContent}
+      >
+        {sorted.map(chat => {
+          const isActive = chatId === chat.id;
+          const name = chatDisplayName(chat, myEntityId);
+          return (
+            <Link key={chat.id} to={`/chats/${chat.id}`}
+              className={`flex items-center gap-3 px-4 py-2.5 transition-colors ${isActive ? "bg-background shadow-sm" : "hover:bg-muted/50"}`}>
+              <MemberAvatar name={name} size="sm" />
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center justify-between">
+                  <span className={`text-sm truncate ${chat.unread_count > 0 ? "font-semibold" : "font-medium"} text-foreground`}>
+                    {name}
+                  </span>
                   {chat.last_message && (
-                    <p className="text-[11px] text-muted-foreground truncate mt-0.5">
-                      {chat.last_message.content}
-                    </p>
+                    <span className="text-[10px] text-muted-foreground/50 shrink-0 ml-1">
+                      {formatTime(chat.last_message.created_at)}
+                    </span>
                   )}
                 </div>
-                {chat.has_mention ? (
-                  <span className="w-4 h-4 rounded-full bg-destructive text-destructive-foreground text-[9px] font-bold flex items-center justify-center shrink-0">@</span>
-                ) : chat.unread_count > 0 ? (
-                  <span className="min-w-4 h-4 rounded-full bg-primary text-primary-foreground text-[9px] flex items-center justify-center px-1 shrink-0">
-                    {chat.unread_count > 99 ? "99+" : chat.unread_count}
-                  </span>
-                ) : null}
-              </Link>
-            );
-          })}
-        </div>
-      </div>
+                {chat.last_message && (
+                  <p className="text-[11px] text-muted-foreground truncate mt-0.5">
+                    {chat.last_message.content}
+                  </p>
+                )}
+              </div>
+              {chat.has_mention ? (
+                <span className="w-4 h-4 rounded-full bg-destructive text-destructive-foreground text-[9px] font-bold flex items-center justify-center shrink-0">@</span>
+              ) : chat.unread_count > 0 ? (
+                <span className="min-w-4 h-4 rounded-full bg-primary text-primary-foreground text-[9px] flex items-center justify-center px-1 shrink-0">
+                  {chat.unread_count > 99 ? "99+" : chat.unread_count}
+                </span>
+              ) : null}
+            </Link>
+          );
+        })}
+      </SidebarPanel>
 
-      {/* Main content — conversation or empty state */}
       <div className="flex-1 min-w-0">
         <Outlet />
       </div>
