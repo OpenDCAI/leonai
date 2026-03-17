@@ -176,7 +176,7 @@ export default function ChatsListPage() {
 
   if (loading) {
     return (
-      <div className="flex-1 flex items-center justify-center">
+      <div className="h-full flex items-center justify-center">
         <p className="text-sm text-muted-foreground">Loading...</p>
       </div>
     );
@@ -184,7 +184,7 @@ export default function ChatsListPage() {
 
   if (chats.length === 0) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center px-4">
+      <div className="h-full flex flex-col items-center justify-center px-4">
         <p className="text-sm text-muted-foreground">No chats yet</p>
         <button
           onClick={() => setShowNewChat(true)}
@@ -207,7 +207,7 @@ export default function ChatsListPage() {
   });
 
   return (
-    <div className="flex-1 flex flex-col min-h-0">
+    <div className="h-full flex flex-col min-h-0">
       <div className="px-6 py-4 border-b border-border shrink-0 flex items-center justify-between">
         <h2 className="text-lg font-semibold text-foreground">Chats</h2>
         <button

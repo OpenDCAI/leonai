@@ -249,7 +249,7 @@ function ChatConversationInner({ chatId }: { chatId: string }) {
 
   if (loading) {
     return (
-      <div className="flex-1 flex items-center justify-center">
+      <div className="h-full flex items-center justify-center">
         <p className="text-sm text-muted-foreground">Loading...</p>
       </div>
     );
@@ -257,7 +257,7 @@ function ChatConversationInner({ chatId }: { chatId: string }) {
 
   if (error) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center gap-2">
+      <div className="h-full flex flex-col items-center justify-center gap-2">
         <p className="text-sm text-destructive">{error}</p>
         <Link to="/chats" className="text-xs text-primary hover:underline">Back to chats</Link>
       </div>
@@ -265,7 +265,7 @@ function ChatConversationInner({ chatId }: { chatId: string }) {
   }
 
   return (
-    <div className="flex-1 flex flex-col min-h-0">
+    <div className="h-full flex flex-col min-h-0">
       {/* Header */}
       <div className="px-4 py-3 border-b border-border flex items-center gap-3 shrink-0">
         <Link to="/chats" className="text-muted-foreground hover:text-foreground transition-colors">
