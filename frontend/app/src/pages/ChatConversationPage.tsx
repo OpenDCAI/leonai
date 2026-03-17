@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, Link } from "react-router-dom";
-import { ArrowLeft, Send } from "lucide-react";
+import { PanelLeft, Send } from "lucide-react";
 import { authFetch, useAuthStore } from "../store/auth-store";
 
 interface ChatEntity {
@@ -266,20 +266,25 @@ function ChatConversationInner({ chatId }: { chatId: string }) {
 
   return (
     <div className="h-full flex flex-col min-h-0">
-      {/* Header */}
-      <div className="px-4 py-3 border-b border-border flex items-center gap-3 shrink-0">
-        <Link to="/chats" className="text-muted-foreground hover:text-foreground transition-colors">
-          <ArrowLeft className="w-5 h-5" />
-        </Link>
-        <div className="min-w-0 flex-1">
-          <h2 className="text-sm font-semibold text-foreground truncate">{chatName}</h2>
+      {/* Header — matches Threads Header.tsx structure */}
+      <header className="h-12 flex items-center justify-between px-4 flex-shrink-0 bg-white border-b border-[#e5e5e5]">
+        <div className="flex items-center gap-3 min-w-0">
+          <button
+            onClick={() => window.history.back()}
+            className="w-8 h-8 rounded-lg flex items-center justify-center text-[#737373] hover:bg-[#f5f5f5] hover:text-[#171717]"
+          >
+            <PanelLeft className="w-4 h-4" />
+          </button>
+          <span className="text-sm font-medium text-[#171717] truncate max-w-[200px]">
+            {chatName}
+          </span>
           {chat && (
-            <p className="text-[11px] text-muted-foreground">
+            <span className="text-[10px] px-1.5 py-0.5 rounded-md font-medium border border-[#e5e5e5] text-[#737373] bg-[#fafafa]">
               {chat.entities.length} member{chat.entities.length !== 1 ? "s" : ""}
-            </p>
+            </span>
           )}
         </div>
-      </div>
+      </header>
 
       {/* Messages */}
       <div
