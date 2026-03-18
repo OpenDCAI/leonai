@@ -217,17 +217,25 @@ def _to_session_metrics(snapshot: dict[str, Any] | None) -> dict[str, Any] | Non
 
 
 def _member_name_map() -> dict[str, str]:
+    mapping: dict[str, str] = {}
+    # Filesystem-backed members (legacy)
     try:
         from backend.web.services.member_service import list_members
-        members = list_members()
+        for member in list_members():
+            member_id = str(member.get("id") or "").strip()
+            member_name = str(member.get("name") or "").strip()
+            if member_id and member_name:
+                mapping[member_id] = member_name
     except Exception:
-        return {}
-    mapping: dict[str, str] = {}
-    for member in members:
-        member_id = str(member.get("id") or "").strip()
-        member_name = str(member.get("name") or "").strip()
-        if member_id and member_name:
-            mapping[member_id] = member_name
+        pass
+    # DB-backed members (entity-chat)
+    try:
+        from storage.providers.sqlite.member_repo import SQLiteMemberRepo
+        for m in SQLiteMemberRepo().list_all():
+            if m.id and m.name:
+                mapping[m.id] = m.name
+    except Exception:
+        pass
     return mapping
 
 
@@ -241,7 +249,7 @@ def _thread_agent_refs(thread_ids: list[str]) -> dict[str, str]:
         refs: dict[str, str] = {}
         for tid in unique:
             data = repo.get_by_id(tid)
-            agent_ref = str(data.get("agent") or "").strip() if data else ""
+            agent_ref = str(data.get("agent") or data.get("member_id") or "").strip() if data else ""
             if agent_ref:
                 refs[tid] = agent_ref
         return refs
