@@ -340,6 +340,34 @@ export default function Sidebar({
 
       <div className="h-px mx-3 bg-border" />
 
+      {/* Bulk action bar */}
+      {isSelectMode && (
+        <div className="px-3 py-2.5 border-b border-border flex items-center gap-2 flex-shrink-0">
+          <button
+            onClick={handleSelectAll}
+            className="text-xs text-muted-foreground/70 hover:text-foreground transition-colors"
+          >
+            {isAllSelected ? "取消全选" : "全选"}
+          </button>
+          <span className="text-xs text-muted-foreground/40">·</span>
+          <span className="text-xs text-muted-foreground flex-1">已选 {selectedIds.size} 条</span>
+          <button
+            onClick={handleBulkDelete}
+            disabled={selectedIds.size === 0}
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-destructive/10 text-destructive hover:bg-destructive/20 disabled:opacity-40 text-xs font-medium transition-colors"
+          >
+            <Trash2 className="w-3 h-3" />
+            删除
+          </button>
+          <button
+            onClick={exitSelectMode}
+            className="px-2.5 py-1.5 rounded-lg text-xs text-muted-foreground hover:bg-muted transition-colors"
+          >
+            取消
+          </button>
+        </div>
+      )}
+
       {/* Thread list */}
       <div className="flex-1 min-h-0 px-3 pt-3 flex flex-col">
         <div className="flex items-center justify-between px-2 mb-2 flex-shrink-0">
@@ -407,34 +435,6 @@ export default function Sidebar({
           )}
         </div>
       </div>
-
-      {/* Bulk action bar */}
-      {isSelectMode && (
-        <div className="px-3 py-2.5 border-t border-border flex items-center gap-2 flex-shrink-0">
-          <button
-            onClick={handleSelectAll}
-            className="text-xs text-muted-foreground/70 hover:text-foreground transition-colors"
-          >
-            {isAllSelected ? "取消全选" : "全选"}
-          </button>
-          <span className="text-xs text-muted-foreground/40">·</span>
-          <span className="text-xs text-muted-foreground flex-1">已选 {selectedIds.size} 条</span>
-          <button
-            onClick={handleBulkDelete}
-            disabled={selectedIds.size === 0}
-            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-destructive/10 text-destructive hover:bg-destructive/20 disabled:opacity-40 text-xs font-medium transition-colors"
-          >
-            <Trash2 className="w-3 h-3" />
-            删除
-          </button>
-          <button
-            onClick={exitSelectMode}
-            className="px-2.5 py-1.5 rounded-lg text-xs text-muted-foreground hover:bg-muted transition-colors"
-          >
-            取消
-          </button>
-        </div>
-      )}
     </div>
   );
 }
