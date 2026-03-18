@@ -93,7 +93,7 @@ function ChatConversationInner({ chatId }: { chatId: string }) {
         // Mark read + refresh sidebar
         authFetch(`/api/chats/${chatId}/read`, { method: "POST" })
           .then(() => refreshChatList())
-          .catch(() => {});
+          .catch(err => console.warn("[mark_read] failed:", err));
       })
       .catch(err => {
         if (cancelled) return;
@@ -139,7 +139,7 @@ function ChatConversationInner({ chatId }: { chatId: string }) {
         if (isAtBottomRef.current) {
           setTimeout(scrollToBottom, 50);
           // User is viewing → mark read + refresh sidebar
-          authFetch(`/api/chats/${chatId}/read`, { method: "POST" }).catch(() => {});
+          authFetch(`/api/chats/${chatId}/read`, { method: "POST" }).catch(err => console.warn("[mark_read] failed:", err));
           refreshChatList();
         }
       } catch (err) {
@@ -151,7 +151,7 @@ function ChatConversationInner({ chatId }: { chatId: string }) {
       try {
         const data = JSON.parse(e.data);
         setTypingEntities(prev => new Set([...prev, data.entity_id]));
-      } catch {}
+      } catch (err) { console.warn("[ChatSSE] typing_start parse error:", err); }
     });
 
     es.addEventListener("typing_stop", (e) => {
@@ -162,11 +162,13 @@ function ChatConversationInner({ chatId }: { chatId: string }) {
           next.delete(data.entity_id);
           return next;
         });
-      } catch {}
+      } catch (err) { console.warn("[ChatSSE] typing_stop parse error:", err); }
     });
 
     es.onerror = () => {
-      console.warn("[ChatSSE] connection error, will auto-reconnect");
+      if (es.readyState === EventSource.CLOSED) {
+        console.error("[ChatSSE] connection permanently closed");
+      }
     };
 
     return () => {
