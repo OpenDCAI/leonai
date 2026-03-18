@@ -156,9 +156,10 @@ class TestSummaryRestoreOnStartup:
         await middleware1.awrap_model_call(mock_request, mock_handler)
 
         # Verify summary was saved
-        assert middleware1._cached_summary is not None
-        original_summary = middleware1._cached_summary
-        original_index = middleware1._compact_up_to_index
+        thread_id = "test-thread-1"
+        assert thread_id in middleware1._thread_cache
+        original_summary = middleware1._thread_cache[thread_id]["summary"]
+        original_index = middleware1._thread_cache[thread_id]["compact_up_to_index"]
 
         # Step 2: Create new middleware instance (simulating restart)
         middleware2 = MemoryMiddleware(
@@ -177,9 +178,9 @@ class TestSummaryRestoreOnStartup:
         await middleware2.awrap_model_call(mock_request, mock_handler)
 
         # Verify summary was restored
-        assert middleware2._cached_summary == original_summary
-        assert middleware2._compact_up_to_index == original_index
-        assert middleware2._summary_restored is True
+        assert thread_id in middleware2._thread_cache
+        assert middleware2._thread_cache[thread_id]["summary"] == original_summary
+        assert middleware2._thread_cache[thread_id]["compact_up_to_index"] == original_index
 
 
 class TestSplitTurnSaveAndRestore:
@@ -323,10 +324,6 @@ class TestMultipleThreadsIsolated:
 
         # Execute for both threads
         await middleware.awrap_model_call(request1, mock_handler)
-
-        # Reset restoration flag for second thread
-        middleware._summary_restored = False
-
         await middleware.awrap_model_call(request2, mock_handler)
 
         # Verify both threads have separate summaries
@@ -381,8 +378,7 @@ class TestMissingThreadIdRaisesError:
         # Verify execution succeeded
         assert result is not None
         # Verify summary was not restored (since thread_id was missing)
-        assert middleware._cached_summary is None
-        assert middleware._summary_restored is False
+        assert len(middleware._thread_cache) == 0
 
 
 class TestCheckpointerUnavailableGracefulDegradation:
@@ -423,8 +419,9 @@ class TestCheckpointerUnavailableGracefulDegradation:
 
         # Verify middleware continues to work (no crash)
         # Fresh compaction should have created a new summary
-        assert middleware._cached_summary is not None
-        assert "This is a test summary of the conversation." in middleware._cached_summary
+        thread_id = "test-thread-1"
+        assert thread_id in middleware._thread_cache
+        assert "This is a test summary of the conversation." in middleware._thread_cache[thread_id]["summary"]
 
 
 class TestSummaryUpdateOnSecondCompaction:

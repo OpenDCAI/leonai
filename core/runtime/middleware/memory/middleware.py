@@ -80,10 +80,8 @@ class MemoryMiddleware(AgentMiddleware):
         self._model: Any = None
         self._runtime: Any = None
 
-        # Compaction cache
-        self._cached_summary: str | None = None
-        self._compact_up_to_index: int = 0
-        self._summary_restored: bool = False
+        # Compaction cache (per-thread)
+        self._thread_cache: dict[str, dict[str, Any]] = {}  # thread_id -> {summary, compact_up_to_index}
 
         if verbose:
             print("[MemoryMiddleware] Initialized")
@@ -112,12 +110,10 @@ class MemoryMiddleware(AgentMiddleware):
         messages = list(request.messages)
         original_count = len(messages)
 
-        # Restore summary from store if not already done
-        if not self._summary_restored and self.summary_store:
-            thread_id = self._extract_thread_id(request)
-            if thread_id:
-                await self._restore_summary_from_store(thread_id)
-                self._summary_restored = True
+        # Restore summary from store if not already done for this thread
+        thread_id = self._extract_thread_id(request)
+        if thread_id and self.summary_store and thread_id not in self._thread_cache:
+            await self._restore_summary_from_store(thread_id)
 
         sys_tokens = self._estimate_system_tokens(request)
 
@@ -150,16 +146,16 @@ class MemoryMiddleware(AgentMiddleware):
             )
 
         if self.compactor.should_compact(estimated, self._context_limit, self._compaction_threshold) and self._model:
-            thread_id = self._extract_thread_id(request)
             messages = await self._do_compact(messages, thread_id)
-        elif self._cached_summary and self._compact_up_to_index > 0:
-            if self._compact_up_to_index <= len(messages):
-                summary_msg = SystemMessage(content=f"[Conversation Summary]\n{self._cached_summary}")
-                messages = [summary_msg] + messages[self._compact_up_to_index :]
+        elif thread_id and thread_id in self._thread_cache:
+            cache = self._thread_cache[thread_id]
+            if cache["compact_up_to_index"] > 0 and cache["compact_up_to_index"] <= len(messages):
+                summary_msg = SystemMessage(content=f"[Conversation Summary]\n{cache['summary']}")
+                messages = [summary_msg] + messages[cache["compact_up_to_index"] :]
                 if self.verbose:
                     print(
                         f"[Memory] Using cached summary: "
-                        f"{self._compact_up_to_index} old msgs replaced, "
+                        f"{cache['compact_up_to_index']} old msgs replaced, "
                         f"{len(messages) - 1} msgs sent to LLM"
                     )
 
@@ -199,15 +195,21 @@ class MemoryMiddleware(AgentMiddleware):
                 if self.verbose:
                     print(f"[Memory] Compacted: {len(to_summarize)} msgs → summary + {len(to_keep)} recent")
 
-            self._cached_summary = summary_text
-            self._compact_up_to_index = len(messages) - len(to_keep)
+            compact_up_to_index = len(messages) - len(to_keep)
+
+            # Cache per thread
+            if thread_id:
+                self._thread_cache[thread_id] = {
+                    "summary": summary_text,
+                    "compact_up_to_index": compact_up_to_index,
+                }
 
             if self.summary_store and thread_id:
                 try:
                     summary_id = self.summary_store.save_summary(
                         thread_id=thread_id,
                         summary_text=summary_text,
-                        compact_up_to_index=self._compact_up_to_index,
+                        compact_up_to_index=compact_up_to_index,
                         compacted_at=len(messages),
                         is_split_turn=is_split_turn,
                         split_turn_prefix=prefix_summary,
@@ -223,7 +225,7 @@ class MemoryMiddleware(AgentMiddleware):
             if self._runtime:
                 self._runtime.set_flag("isCompacting", False)
 
-    async def force_compact(self, messages: list[Any]) -> dict[str, Any] | None:
+    async def force_compact(self, messages: list[Any], thread_id: str | None = None) -> dict[str, Any] | None:
         """Manual compaction trigger (/compact command). Ignores threshold."""
         if not self._model:
             return None
@@ -237,8 +239,15 @@ class MemoryMiddleware(AgentMiddleware):
             self._runtime.set_flag("isCompacting", True)
         try:
             summary_text = await self.compactor.compact(to_summarize, self._model)
-            self._cached_summary = summary_text
-            self._compact_up_to_index = len(messages) - len(to_keep)
+            compact_up_to_index = len(messages) - len(to_keep)
+
+            # Cache per thread
+            if thread_id:
+                self._thread_cache[thread_id] = {
+                    "summary": summary_text,
+                    "compact_up_to_index": compact_up_to_index,
+                }
+
             return {
                 "stats": {
                     "summarized": len(to_summarize),
@@ -306,8 +315,10 @@ class MemoryMiddleware(AgentMiddleware):
                     await self._rebuild_summary_from_checkpointer(thread_id)
                 return
 
-            self._cached_summary = summary_data.summary_text
-            self._compact_up_to_index = summary_data.compact_up_to_index
+            self._thread_cache[thread_id] = {
+                "summary": summary_data.summary_text,
+                "compact_up_to_index": summary_data.compact_up_to_index,
+            }
 
             if self.verbose:
                 print(
@@ -364,13 +375,18 @@ class MemoryMiddleware(AgentMiddleware):
                 summary_text = await self.compactor.compact(to_summarize, self._model)
                 prefix_summary = None
 
-            self._cached_summary = summary_text
-            self._compact_up_to_index = len(messages) - len(to_keep)
+            compact_up_to_index = len(messages) - len(to_keep)
+
+            # Cache per thread
+            self._thread_cache[thread_id] = {
+                "summary": summary_text,
+                "compact_up_to_index": compact_up_to_index,
+            }
 
             summary_id = self.summary_store.save_summary(
                 thread_id=thread_id,
                 summary_text=summary_text,
-                compact_up_to_index=self._compact_up_to_index,
+                compact_up_to_index=compact_up_to_index,
                 compacted_at=len(messages),
                 is_split_turn=is_split_turn,
                 split_turn_prefix=prefix_summary,
