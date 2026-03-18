@@ -186,7 +186,7 @@ async def delete_thread(
         try:
             app.state.entity_repo.delete(thread_id)
         except Exception:
-            pass
+            logger.error("Failed to delete entity for thread %s", thread_id, exc_info=True)
 
     # Clean up thread-specific state
     app.state.thread_sandbox.pop(thread_id, None)
@@ -615,7 +615,7 @@ async def _notify_task_cancelled(app: Any, thread_id: str, task_id: str, run: An
             "cancelled": True,
         }, ensure_ascii=False)})
     except Exception:
-        logger.debug("Failed to emit task_done for cancelled task %s", task_id, exc_info=True)
+        logger.warning("Failed to emit task_done for cancelled task %s", task_id, exc_info=True)
 
     # Notify the main agent so it knows the user cancelled this task
     try:
@@ -634,4 +634,4 @@ async def _notify_task_cancelled(app: Any, thread_id: str, task_id: str, run: An
             )
             qm.enqueue(notification, thread_id, notification_type="command")
     except Exception:
-        logger.debug("Failed to enqueue cancellation notice for task %s", task_id, exc_info=True)
+        logger.warning("Failed to enqueue cancellation notice for task %s", task_id, exc_info=True)

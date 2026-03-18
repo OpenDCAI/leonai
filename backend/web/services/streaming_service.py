@@ -497,7 +497,7 @@ async def _run_agent_to_buffer(
                             if tc_id:
                                 checkpoint_tc_ids.add(tc_id)
         except Exception:
-            logger.debug("[stream:checkpoint] failed to pre-populate tc_ids for thread=%s", thread_id[:15], exc_info=True)
+            logger.warning("[stream:checkpoint] failed to pre-populate tc_ids for thread=%s", thread_id[:15], exc_info=True)
         emitted_tool_call_ids.update(checkpoint_tc_ids)
         logger.debug("[stream:checkpoint] thread=%s pre-populated %d tc_ids", thread_id[:15], len(checkpoint_tc_ids))
 
