@@ -146,24 +146,12 @@ Agent 在隔离环境中运行，具有托管生命周期：
 | **E2B** | 生产 | $0.15/小时 |
 | **AgentBay** | 中国区域 | ¥1/小时 |
 
-### MCP 集成
+### 可扩展性：MCP 与 Skills
 
-通过 [Model Context Protocol](https://modelcontextprotocol.io) 连接外部服务：
+Agent 可通过外部工具和专业技能进行扩展：
 
-```json
-{
-  "mcp": {
-    "servers": {
-      "github": {
-        "command": "npx",
-        "args": ["-y", "@modelcontextprotocol/server-github"],
-        "env": {"GITHUB_TOKEN": "${GITHUB_TOKEN}"},
-        "allowed_tools": ["create_issue", "list_issues"]
-      }
-    }
-  }
-}
-```
+- **MCP (Model Context Protocol)** — 通过 [MCP 标准](https://modelcontextprotocol.io) 连接外部服务（GitHub、数据库、API）。在 Web UI 中按成员配置，或通过 `.mcp.json` 文件配置。
+- **Skills** — 按需加载领域专业知识。Skills 将专业提示词和工具配置注入 Agent 会话。通过 Web UI 的成员设置管理。
 
 ### 安全与治理
 
