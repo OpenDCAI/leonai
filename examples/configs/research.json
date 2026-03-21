@@ -1,8 +1,5 @@
 {
-  "api": {
-    "model": "leon:research",
-    "temperature": 0.3
-  },
+  "temperature": 0.3,
   "tools": {
     "filesystem": {
       "enabled": true,
@@ -25,32 +22,15 @@
     },
     "web": {
       "enabled": true,
-      "timeout": 30,
       "tools": {
         "web_search": {
           "enabled": true,
           "max_results": 20
         },
-        "read_url_content": {
+        "fetch": {
           "enabled": true
-        },
-        "view_web_content": true
+        }
       }
-    }
-  },
-  "memory": {
-    "pruning": {
-      "enabled": true,
-      "protect_recent": 5,
-      "trim_tool_results": true,
-      "soft_trim_chars": 8000,
-      "hard_clear_threshold": 20000
-    },
-    "compaction": {
-      "enabled": true,
-      "reserve_tokens": 16384,
-      "keep_recent_tokens": 20000,
-      "min_messages": 25
     }
   },
   "system_prompt": "You are a research expert. Focus on gathering comprehensive information, analyzing sources critically, and providing well-reasoned insights."

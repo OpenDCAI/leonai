@@ -10,8 +10,8 @@
         "web_search": {
           "tavily_api_key": "${TAVILY_API_KEY}"
         },
-        "read_url_content": {
-          "jina_api_key": "${JINA_API_KEY}"
+        "fetch": {
+          "enabled": true
         }
       }
     }

@@ -72,9 +72,9 @@ def main() -> None:
 
     _require_env("OPENAI_API_KEY")
     env_model_name = os.environ.get("MODEL_NAME")
-    model_name = env_model_name or "gpt-5.2"
+    model_name = env_model_name or "gpt-4o"
     if env_model_name and env_model_name.lower().startswith("claude-"):
-        model_name = "gpt-5.2"
+        model_name = "gpt-4o"
 
     base_url = os.environ.get("OPENAI_BASE_URL")
     if base_url:

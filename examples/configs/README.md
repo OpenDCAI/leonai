@@ -1,48 +1,33 @@
-# Leon Configuration Examples
+# Mycel Configuration Examples
 
-This directory contains example configuration files for common use cases.
+Example `runtime.json` configurations for common use cases. These are project-level configs — place them at `.leon/runtime.json` in your project root.
 
-## Quick Start
-
-Copy an example to your config location:
+## Usage
 
 ```bash
-# User config (API keys and personal settings)
-cp examples/configs/user-config.json ~/.leon/config.json
-
-# Project config (project-specific settings)
-cp examples/configs/local-dev.json .leon/config.json
+# Copy to your project
+mkdir -p .leon
+cp examples/configs/local-dev.json .leon/runtime.json
 ```
 
 ## Available Examples
 
-### User Configuration
+| File | Use Case | Description |
+|------|----------|-------------|
+| `minimal.json` | Getting started | Just temperature — everything else uses defaults |
+| `user-config.json` | User config (`~/.leon/runtime.json`) | API credentials, MCP servers, web tools |
+| `local-dev.json` | Development | Full filesystem + command access, no web |
+| `production.json` | Production (read-only) | No writes, no commands, audit logging enabled |
+| `research.json` | Research agent | Web search + fetch enabled, no code execution |
+| `testing.json` | QA / Testing | Extended command timeout (300s), no web |
 
-- **user-config.json** - Basic user configuration with API credentials
-- **user-config-proxy.json** - Configuration for OpenAI-compatible proxy
+## Tips
 
-### Project Configurations
-
-- **local-dev.json** - Local development with full access
-- **production.json** - Production environment (read-only, secure)
-- **testing.json** - Testing environment with extended timeouts
-- **research.json** - Research agent (web access, no code execution)
-- **minimal.json** - Minimal configuration example
-
-### Migration Examples
-
-- **migration-before.yaml** - Example old profile.yaml format
-- **migration-after.json** - Equivalent new config.json format
-
-## Configuration Tips
-
-1. **Never commit API keys** - Use environment variables (`${VAR}`)
-2. **Separate concerns** - User config for credentials, project config for settings
-3. **Start simple** - Begin with minimal config, add features as needed
-4. **Use virtual models** - `leon:*` names are easier to manage than full model names
-5. **Enable security** - Always use `block_dangerous_commands: true` in production
+1. **Never commit API keys** — use `${VAR}` syntax for env var substitution
+2. **Start simple** — begin with `minimal.json`, add settings as needed
+3. **Separate concerns** — user config in `~/.leon/runtime.json`, project config in `.leon/runtime.json`
 
 ## See Also
 
-- [Configuration Documentation](../../docs/configuration.md)
-- [Migration Guide](../../docs/migration-guide.md)
+- [Configuration Documentation](../../docs/en/configuration.md)
+- [Sandbox Examples](../sandboxes/) — sandbox provider configs

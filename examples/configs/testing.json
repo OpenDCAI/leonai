@@ -1,8 +1,5 @@
 {
-  "api": {
-    "model": "leon:balanced",
-    "temperature": 0.5
-  },
+  "temperature": 0.5,
   "tools": {
     "filesystem": {
       "enabled": true
@@ -23,14 +20,5 @@
       "enabled": false
     }
   },
-  "memory": {
-    "pruning": {
-      "enabled": true,
-      "protect_recent": 3
-    },
-    "compaction": {
-      "enabled": false
-    }
-  },
-  "system_prompt": "You are a testing expert. Focus on comprehensive test coverage, edge cases, and quality assurance. Write clear, maintainable tests."
+  "system_prompt": "You are a testing expert. Focus on comprehensive test coverage, edge cases, and quality assurance."
 }
