@@ -1,12 +1,12 @@
 English | [中文](../zh/configuration.md)
 
-# Leon Configuration Guide
+# Mycel Configuration Guide
 
-Leon uses a split configuration system: **runtime.json** for behavior settings, **models.json** for model/provider identity, and **config.env** for quick API key setup. Each config file follows a three-tier merge with system defaults, user overrides, and project overrides.
+Mycel uses a split configuration system: **runtime.json** for behavior settings, **models.json** for model/provider identity, and **config.env** for quick API key setup. Each config file follows a three-tier merge with system defaults, user overrides, and project overrides.
 
 ## Quick Setup (First Run)
 
-On first launch without an API key, Leon automatically opens the config wizard:
+On first launch without an API key, Mycel automatically opens the config wizard:
 
 ```bash
 leonai config        # Interactive wizard: API key, base URL, model name
@@ -21,11 +21,11 @@ OPENAI_BASE_URL=https://api.openai.com/v1
 MODEL_NAME=claude-sonnet-4-5-20250929
 ```
 
-This is enough to start using Leon. The sections below cover advanced configuration.
+This is enough to start using Mycel. The sections below cover advanced configuration.
 
 ## Config File Locations
 
-Leon has three separate config domains, each with its own file:
+Mycel has three separate config domains, each with its own file:
 
 | Domain | Filename | Purpose |
 |--------|----------|---------|
@@ -308,14 +308,14 @@ Define API credentials per provider. The `active.provider` field determines whic
 
 ### API Key Resolution
 
-Leon looks for an API key in this order:
+Mycel looks for an API key in this order:
 1. Active provider's `api_key` from `models.json`
 2. Any provider with an `api_key` in `models.json`
 3. Environment variables: `ANTHROPIC_API_KEY` > `OPENAI_API_KEY` > `OPENROUTER_API_KEY`
 
 ### Provider Auto-Detection
 
-When no explicit `provider` is set, Leon auto-detects from environment:
+When no explicit `provider` is set, Mycel auto-detects from environment:
 - `ANTHROPIC_API_KEY` set -> provider = `anthropic`
 - `OPENAI_API_KEY` set -> provider = `openai`
 - `OPENROUTER_API_KEY` set -> provider = `openai`
@@ -338,11 +338,11 @@ Add models not in the built-in catalog via the `pool.custom` list:
 }
 ```
 
-`based_on` tells Leon which model family to use for tokenizer/context detection. `context_limit` overrides the auto-detected context window.
+`based_on` tells Mycel which model family to use for tokenizer/context detection. `context_limit` overrides the auto-detected context window.
 
 ## Virtual Models
 
-Leon provides four virtual model aliases (`leon:*`) that map to concrete models with preset parameters:
+Mycel provides four virtual model aliases (`leon:*`) that map to concrete models with preset parameters:
 
 | Virtual Name | Concrete Model | Provider | Extras | Use Case |
 |-------------|---------------|----------|--------|----------|
@@ -387,7 +387,7 @@ When you override just the `model` without specifying `provider`, the inherited 
 
 ## Agent Profiles
 
-Leon ships with four built-in agent profiles defined as Markdown files with YAML frontmatter:
+Mycel ships with four built-in agent profiles defined as Markdown files with YAML frontmatter:
 
 | Name | Description |
 |------|-------------|
@@ -534,7 +534,7 @@ Members (`~/.leon/members/<id>/`) can have their own `.mcp.json` following the s
 
 Skill paths are directories containing skill subdirectories. Each skill has a `SKILL.md` file. The `skills` map enables/disables individual skills by name.
 
-On first run, Leon creates `~/.leon/skills` automatically if it's in the paths list.
+On first run, Mycel creates `~/.leon/skills` automatically if it's in the paths list.
 
 ## Observation Configuration (observation.json)
 
