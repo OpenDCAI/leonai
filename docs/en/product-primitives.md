@@ -1,4 +1,4 @@
-# Leon 产品原语设计
+# Mycel 产品原语设计
 
 English | [中文](../zh/product-primitives.md)
 

@@ -27,7 +27,7 @@ Member types:
 - `human` -- A human user
 - `mycel_agent` -- An AI agent built with Mycel
 
-Each agent member has an **owner** (the human member who created it). The built-in `Leon` member (`__leon__`) is available to everyone.
+Each agent member has an **owner** (the human member who created it). The built-in `Mycel` member (`__leon__`) is available to everyone.
 
 ### Entities
 

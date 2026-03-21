@@ -1,12 +1,12 @@
 [English](../en/configuration.md) | 中文
 
-# Leon 配置指南
+# Mycel 配置指南
 
-Leon 使用分离式配置系统：**runtime.json** 控制行为设置，**models.json** 控制模型/提供商身份，**config.env** 用于快速 API 密钥设置。每个配置文件遵循三层合并策略：系统默认值、用户覆盖和项目覆盖。
+Mycel 使用分离式配置系统：**runtime.json** 控制行为设置，**models.json** 控制模型/提供商身份，**config.env** 用于快速 API 密钥设置。每个配置文件遵循三层合并策略：系统默认值、用户覆盖和项目覆盖。
 
 ## 快速设置（首次运行）
 
-首次启动时如果没有 API 密钥，Leon 会自动打开配置向导：
+首次启动时如果没有 API 密钥，Mycel 会自动打开配置向导：
 
 ```bash
 leonai config        # 交互式向导：API 密钥、Base URL、模型名称
@@ -21,11 +21,11 @@ OPENAI_BASE_URL=https://api.openai.com/v1
 MODEL_NAME=claude-sonnet-4-5-20250929
 ```
 
-这些就足够开始使用 Leon 了。以下章节涵盖高级配置。
+这些就足够开始使用 Mycel 了。以下章节涵盖高级配置。
 
 ## 配置文件位置
 
-Leon 有三个独立的配置域，各自有对应的文件：
+Mycel 有三个独立的配置域，各自有对应的文件：
 
 | 域 | 文件名 | 用途 |
 |--------|----------|---------|
@@ -308,14 +308,14 @@ CLI 参数（`--model`、`--workspace` 等）优先级最高，覆盖一切。
 
 ### API 密钥解析顺序
 
-Leon 按以下顺序查找 API 密钥：
+Mycel 按以下顺序查找 API 密钥：
 1. `models.json` 中当前提供商的 `api_key`
 2. `models.json` 中任何有 `api_key` 的提供商
 3. 环境变量：`ANTHROPIC_API_KEY` > `OPENAI_API_KEY` > `OPENROUTER_API_KEY`
 
 ### 提供商自动检测
 
-未明确设置 `provider` 时，Leon 从环境变量自动检测：
+未明确设置 `provider` 时，Mycel 从环境变量自动检测：
 - 设置了 `ANTHROPIC_API_KEY` -> provider = `anthropic`
 - 设置了 `OPENAI_API_KEY` -> provider = `openai`
 - 设置了 `OPENROUTER_API_KEY` -> provider = `openai`
@@ -338,11 +338,11 @@ Leon 按以下顺序查找 API 密钥：
 }
 ```
 
-`based_on` 告诉 Leon 使用哪个模型族进行分词器/上下文检测。`context_limit` 覆盖自动检测的上下文窗口大小。
+`based_on` 告诉 Mycel 使用哪个模型族进行分词器/上下文检测。`context_limit` 覆盖自动检测的上下文窗口大小。
 
 ## 虚拟模型
 
-Leon 提供四个虚拟模型别名（`leon:*`），映射到具体模型并带有预设参数：
+Mycel 提供四个虚拟模型别名（`leon:*`），映射到具体模型并带有预设参数：
 
 | 虚拟名称 | 具体模型 | 提供商 | 额外参数 | 适用场景 |
 |-------------|---------------|----------|--------|----------|
@@ -387,7 +387,7 @@ leonai --model leon:large
 
 ## 智能体预设
 
-Leon 内置四个智能体预设，定义为带有 YAML frontmatter 的 Markdown 文件：
+Mycel 内置四个智能体预设，定义为带有 YAML frontmatter 的 Markdown 文件：
 
 | 名称 | 说明 |
 |------|-------------|
@@ -534,7 +534,7 @@ MCP 服务器字段：
 
 技能路径是包含技能子目录的目录。每个技能有一个 `SKILL.md` 文件。`skills` 映射按名称启用/禁用单个技能。
 
-首次运行时，如果 `~/.leon/skills` 在路径列表中，Leon 会自动创建它。
+首次运行时，如果 `~/.leon/skills` 在路径列表中，Mycel 会自动创建它。
 
 ## 可观测性配置（observation.json）
 

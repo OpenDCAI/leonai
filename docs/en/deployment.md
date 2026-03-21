@@ -1,4 +1,4 @@
-# Leon AI Deployment Guide
+# Mycel Deployment Guide
 
 English | [中文](../zh/deployment.md)
 
@@ -44,7 +44,7 @@ uv pip install -e ".[sandbox]"  # All sandbox providers
 
 ### User Config Directory
 
-Leon stores configuration in `~/.leon/`:
+Mycel stores configuration in `~/.leon/`:
 
 ```
 ~/.leon/
@@ -110,7 +110,7 @@ Create `~/.leon/sandboxes/docker.json`:
 
 **Troubleshooting:**
 - If Docker CLI hangs, check proxy environment variables
-- Leon strips `http_proxy`/`https_proxy` when calling Docker CLI
+- Mycel strips `http_proxy`/`https_proxy` when calling Docker CLI
 - Use `docker_host` config to override Docker socket path
 
 ### E2B
@@ -234,7 +234,7 @@ Create `~/.leon/sandboxes/agentbay.json`:
 ### Health Check
 
 ```bash
-# Check Leon installation
+# Check Mycel installation
 leon --version
 
 # List available sandboxes
@@ -284,7 +284,7 @@ env -u ALL_PROXY -u all_proxy uvicorn main:app
 
 ### Docker provider hangs
 
-Proxy environment variables inherited by Docker CLI. Leon strips these automatically, but if issues persist, check `docker_host` configuration.
+Proxy environment variables inherited by Docker CLI. Mycel strips these automatically, but if issues persist, check `docker_host` configuration.
 
 ### Daytona PTY bootstrap fails
 
@@ -300,7 +300,7 @@ Check:
 
 ### Database
 
-Leon uses SQLite by default (`~/.leon/leon.db`). For production:
+Mycel uses SQLite by default (`~/.leon/leon.db`). For production:
 
 1. **Backup regularly:**
    ```bash
