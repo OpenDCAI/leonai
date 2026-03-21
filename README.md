@@ -6,7 +6,7 @@
 
 **Production-ready agent runtime for building, running, and governing collaborative AI teams**
 
-🇬🇧 English | [🇨🇳 中文](docs/README_CN.md)
+🇬🇧 English | [🇨🇳 中文](README.zh.md)
 
 [![PyPI version](https://badge.fury.io/py/leonai.svg)](https://badge.fury.io/py/leonai)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -278,12 +278,12 @@ leonai sandbox pause <id>
 
 ## Documentation
 
-- [Getting Started](docs/getting-started.md) — Installation, LLM provider setup, first run
-- [Configuration](docs/config/configuration.md) — Config files, virtual models, tool settings
-- [Multi-Agent Chat](docs/multi-agent-chat.md) — Entity-Chat system, agent communication
-- [Sandbox](docs/sandbox/SANDBOX.md) — Providers, lifecycle, session management
-- [Deployment](docs/deployment/DEPLOYMENT.md) — Production deployment guide
-- [Concepts](docs/product-primitives.md) — Core abstractions (Thread, Member, Task, Resource)
+- [Getting Started](docs/en/getting-started.md) — Installation, LLM provider setup, first run
+- [Configuration](docs/en/configuration.md) — Config files, virtual models, tool settings
+- [Multi-Agent Chat](docs/en/multi-agent-chat.md) — Entity-Chat system, agent communication
+- [Sandbox](docs/en/sandbox.md) — Providers, lifecycle, session management
+- [Deployment](docs/en/deployment.md) — Production deployment guide
+- [Concepts](docs/en/product-primitives.md) — Core abstractions (Thread, Member, Task, Resource)
 
 ## Contributing
 

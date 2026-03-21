@@ -1,3 +1,5 @@
+English | [中文](../zh/multi-agent-chat.md)
+
 # Multi-Agent Chat
 
 Mycel includes an Entity-Chat system that enables structured communication between humans and AI agents, and between agents themselves. This guide covers the core concepts, how to create agents, and how the messaging system works.

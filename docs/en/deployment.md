@@ -1,5 +1,7 @@
 # Leon AI Deployment Guide
 
+English | [中文](../zh/deployment.md)
+
 ## Prerequisites
 
 ### Required

@@ -1,5 +1,7 @@
 # Sandbox
 
+English | [中文](../zh/sandbox.md)
+
 LEON's sandbox system runs agent operations (file I/O, shell commands) in isolated environments instead of the host machine. Four providers are supported: **Docker** (local container), **E2B** (cloud), **Daytona** (cloud or self-hosted), and **AgentBay** (Alibaba cloud).
 
 ## Quick Start
