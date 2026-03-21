@@ -2,11 +2,11 @@
 
 <div align="center">
 
-<img src="../assets/banner.png" alt="Mycel Banner" width="600">
+<img src="./assets/banner.png" alt="Mycel Banner" width="600">
 
 **企业级 Agent 运行时，构建、运行和治理协作 AI 团队**
 
-[🇬🇧 English](../README.md) | 🇨🇳 中文
+[🇬🇧 English](README.md) | 🇨🇳 中文
 
 [![PyPI version](https://badge.fury.io/py/leonai.svg)](https://badge.fury.io/py/leonai)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -278,12 +278,12 @@ leonai sandbox pause <id>
 
 ## 文档
 
-- [快速入门](getting-started.md) — 安装、LLM 配置、首次运行
-- [配置指南](config/configuration.md) — 配置文件、虚拟模型、工具设置
-- [多 Agent 通讯](multi-agent-chat.md) — Entity-Chat 系统、Agent 间通讯
-- [沙箱](sandbox/SANDBOX.md) — 提供商、生命周期、会话管理
-- [部署](deployment/DEPLOYMENT.md) — 生产部署指南
-- [核心概念](product-primitives.md) — 核心抽象（Thread、Member、Task、Resource）
+- [快速入门](docs/zh/getting-started.md) — 安装、LLM 配置、首次运行
+- [配置指南](docs/zh/configuration.md) — 配置文件、虚拟模型、工具设置
+- [多 Agent 通讯](docs/zh/multi-agent-chat.md) — Entity-Chat 系统、Agent 间通讯
+- [沙箱](docs/zh/sandbox.md) — 提供商、生命周期、会话管理
+- [部署](docs/zh/deployment.md) — 生产部署指南
+- [核心概念](docs/zh/product-primitives.md) — 核心抽象（Thread、Member、Task、Resource）
 
 ## 贡献
 
@@ -294,7 +294,7 @@ uv sync
 uv run pytest
 ```
 
-详见 [CONTRIBUTING.md](../CONTRIBUTING.md)。
+详见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ## 许可证
 

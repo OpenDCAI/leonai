@@ -1,3 +1,5 @@
+English | [中文](../zh/configuration.md)
+
 # Leon Configuration Guide
 
 Leon uses a split configuration system: **runtime.json** for behavior settings, **models.json** for model/provider identity, and **config.env** for quick API key setup. Each config file follows a three-tier merge with system defaults, user overrides, and project overrides.

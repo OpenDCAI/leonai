@@ -1,3 +1,5 @@
+English | [中文](../zh/getting-started.md)
+
 # Getting Started with Mycel
 
 Mycel is a proactive AI coding assistant with persistent memory, a terminal UI (TUI), and a web interface. It supports multiple LLM providers and features sandboxed code execution, time-travel debugging, and multi-agent communication.

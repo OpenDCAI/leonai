@@ -1,5 +1,7 @@
 # Leon 产品原语设计
 
+English | [中文](../zh/product-primitives.md)
+
 ## 核心哲学
 
 > Agent 拥有一切的能力，关键在于有没有对应的资源。
