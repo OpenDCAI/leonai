@@ -146,24 +146,12 @@ Agents run in isolated environments with managed lifecycles:
 | **E2B** | Production | $0.15/hr |
 | **AgentBay** | China Region | ¥1/hr |
 
-### MCP Integration
+### Extensibility: MCP & Skills
 
-Connect external services via [Model Context Protocol](https://modelcontextprotocol.io):
+Agents can be extended with external tools and specialized expertise:
 
-```json
-{
-  "mcp": {
-    "servers": {
-      "github": {
-        "command": "npx",
-        "args": ["-y", "@modelcontextprotocol/server-github"],
-        "env": {"GITHUB_TOKEN": "${GITHUB_TOKEN}"},
-        "allowed_tools": ["create_issue", "list_issues"]
-      }
-    }
-  }
-}
-```
+- **MCP (Model Context Protocol)** — Connect external services (GitHub, databases, APIs) via the [MCP standard](https://modelcontextprotocol.io). Configure per-member in the Web UI or via `.mcp.json`.
+- **Skills** — Load domain expertise on demand. Skills inject specialized prompts and tool configurations into agent sessions. Managed through the Web UI member settings.
 
 ### Security & Governance
 
