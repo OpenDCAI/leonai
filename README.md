@@ -142,6 +142,7 @@ Agents run in isolated environments with managed lifecycles:
 |----------|----------|------|
 | **Local** | Development | Free |
 | **Docker** | Testing | Free |
+| **Daytona** | Production (cloud or self-hosted) | Free (self-host) |
 | **E2B** | Production | $0.15/hr |
 | **AgentBay** | China Region | ¥1/hr |
 
