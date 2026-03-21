@@ -35,26 +35,9 @@ DeltaType = Literal[
 # Helpers — ported from message-mapper.ts
 # ---------------------------------------------------------------------------
 
-_SYSTEM_REMINDER_RE = re.compile(r"<system-reminder>[\s\S]*?</system-reminder>")
+from backend.web.utils.serializers import extract_text_content as _extract_text_content, strip_system_tags as _strip_system_tags
 _CHAT_MESSAGE_RE = re.compile(r"<chat-message[^>]*>([\s\S]*?)</chat-message>")
 
-
-def _extract_text_content(raw: Any) -> str:
-    if isinstance(raw, str):
-        return raw
-    if isinstance(raw, list):
-        parts = []
-        for block in raw:
-            if isinstance(block, str):
-                parts.append(block)
-            elif isinstance(block, dict) and block.get("type") == "text":
-                parts.append(block.get("text", ""))
-        return "".join(parts)
-    return str(raw) if raw is not None else ""
-
-
-def _strip_system_reminders(text: str) -> str:
-    return _SYSTEM_REMINDER_RE.sub("", text).strip()
 
 
 def _extract_chat_message(text: str) -> str | None:
@@ -281,7 +264,7 @@ class DisplayBuilder:
         if display.get("showing") is False:
             return current_turn, current_run_id
 
-        text_content = _strip_system_reminders(_extract_text_content(msg.get("content")))
+        text_content = _strip_system_tags(_extract_text_content(msg.get("content")))
         tool_calls = msg.get("tool_calls") or []
         msg_id = msg.get("id") or f"hist-turn-{i}"
         msg_run_id = (msg.get("metadata") or {}).get("run_id") or None

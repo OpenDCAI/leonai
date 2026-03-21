@@ -29,11 +29,6 @@ button, input, textarea {
   transition: color 0.15s ease, background-color 0.15s ease, border-color 0.15s ease, opacity 0.15s ease, box-shadow 0.15s ease;
 }
 
-/* Prevent text selection on UI elements */
-.no-select {
-  user-select: none;
-}
-
 /* Line clamp */
 .line-clamp-1 {
   display: -webkit-box;
@@ -101,59 +96,6 @@ button, input, textarea {
 
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
   background: #a3a3a3;
-}
-
-/* Hide scrollbar but keep functionality */
-.hide-scrollbar {
-  -ms-overflow-style: none;
-  scrollbar-width: none;
-}
-
-.hide-scrollbar::-webkit-scrollbar {
-  display: none;
-}
-
-/* Loading spinner */
-.spinner {
-  border: 2px solid transparent;
-  border-top-color: #171717;
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
-/* Shimmer wave effect for tool execution */
-@keyframes shimmer {
-  0% { background-position: -200% 0; }
-  100% { background-position: 200% 0; }
-}
-
-.tool-shimmer {
-  background: linear-gradient(
-    90deg,
-    #a3a3a3 0%,
-    #525252 40%,
-    #a3a3a3 60%,
-    #a3a3a3 100%
-  );
-  background-size: 200% 100%;
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
-  animation: shimmer 2s ease-in-out infinite;
-}
-
-/* Pulse glow for card-level tools while calling */
-@keyframes pulse-border {
-  0%, 100% { border-color: #e5e5e5; }
-  50% { border-color: #a3a3a3; }
-}
-
-.tool-card-calling {
-  animation: pulse-border 2s ease-in-out infinite;
 }
 
 *:focus-visible {

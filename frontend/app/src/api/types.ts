@@ -20,36 +20,9 @@ export interface StreamEvent {
   data?: unknown;
 }
 
-/** Common fields injected into all content/lifecycle events by the backend. */
-export interface ContentEventData {
-  parent_tool_call_id?: string;
-  background?: boolean;
-  seq: number;
-  run_id: string;
-  message_id?: string;
-}
-
-export interface TaskStartData extends ContentEventData {
-  task_id: string;
-  subagent_type: string;
-  description: string;
-}
-
-export interface TaskDoneData extends ContentEventData {
-  task_id: string;
-  thread_id?: string;
-  status: string;
-}
-
-export interface TaskErrorData extends ContentEventData {
-  task_id: string;
-  error: string;
-}
-
 export interface ThreadSummary {
   thread_id: string;
   sandbox?: string;
-  messages?: BackendMessage[];
   sandbox_info?: SandboxInfo;
   preview?: string;
   updated_at?: string;
@@ -85,15 +58,6 @@ export interface SandboxInfo {
   status: string | null;
   session_id: string | null;
   terminal_id?: string | null;
-}
-
-export interface BackendMessage {
-  id?: string;
-  type: string;
-  content: unknown;
-  tool_calls?: unknown[];
-  tool_call_id?: string | null;
-  metadata?: Record<string, unknown> | null;
 }
 
 export interface ToolStep {
@@ -183,12 +147,6 @@ export interface StreamStatus {
   last_seq?: number;
   run_start_seq?: number;
 }
-
-export interface ChatSettings {
-  turnGrouping: "merged" | "separate";
-}
-
-export const DEFAULT_CHAT_SETTINGS: ChatSettings = { turnGrouping: "merged" };
 
 export interface SessionStatus {
   thread_id: string;

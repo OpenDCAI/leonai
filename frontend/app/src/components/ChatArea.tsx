@@ -7,7 +7,6 @@ import { UserBubble } from "./chat-area/UserBubble";
 
 interface ChatAreaProps {
   entries: ChatEntry[];
-  isStreaming: boolean;
   runtimeStatus: StreamStatus | null;
   loading?: boolean;
   onFocusAgent?: (taskId: string) => void;
@@ -18,7 +17,7 @@ interface ChatAreaProps {
   userAvatarUrl?: string;
 }
 
-export default function ChatArea({ entries, isStreaming: _isStreaming, runtimeStatus, loading, onFocusAgent, onTaskNoticeClick, agentName, agentAvatarUrl, userName, userAvatarUrl }: ChatAreaProps) {
+export default function ChatArea({ entries, runtimeStatus, loading, onFocusAgent, onTaskNoticeClick, agentName, agentAvatarUrl, userName, userAvatarUrl }: ChatAreaProps) {
   const containerRef = useStickyScroll<HTMLDivElement>();
 
   return (

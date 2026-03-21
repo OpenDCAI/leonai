@@ -178,7 +178,6 @@ function ChatPageInner({ threadId }: { threadId: string }) {
             <BackgroundSessionsIndicator tasks={tasks} onCancelTask={handleCancelTask} />
             <ChatArea
               entries={entries}
-              isStreaming={isStreaming}
               runtimeStatus={runtimeStatus}
               loading={loading}
               onFocusAgent={handleFocusAgent}
