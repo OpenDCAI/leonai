@@ -101,7 +101,7 @@ class ChatToolService:
     def _register_chat_read(self, registry: ToolRegistry) -> None:
         eid = self._entity_id
 
-        def handle(entity_id: str | None = None, chat_id: str | None = None, limit: int = 20, mark_read: bool = True) -> str:
+        def handle(entity_id: str | None = None, chat_id: str | None = None) -> str:
             if chat_id:
                 pass  # use chat_id directly
             elif entity_id:
@@ -112,11 +112,16 @@ class ChatToolService:
                     return f"No chat history with {name}."
             else:
                 return "Provide entity_id or chat_id."
-            msgs = self._messages.list_by_chat(chat_id, limit=limit)
+
+            # @@@read-unread-only — default to unread messages only.
+            # Falls back to last 20 if nothing is unread (context on re-entry).
+            msgs = self._messages.list_unread(chat_id, eid)
+            if not msgs:
+                msgs = self._messages.list_by_chat(chat_id, limit=20)
             if not msgs:
                 return "No messages yet."
-            if mark_read:
-                self._chat_entities.update_last_read(chat_id, eid, time.time())
+
+            self._chat_entities.update_last_read(chat_id, eid, time.time())
             lines = []
             for m in msgs:
                 sender = self._entities.get_by_id(m.sender_entity_id)
@@ -130,14 +135,15 @@ class ChatToolService:
             mode=ToolMode.INLINE,
             schema={
                 "name": "chat_read",
-                "description": "Read chat history. Use entity_id for 1:1, chat_id for group chats.",
+                "description": (
+                    "Read chat messages. Returns only unread messages by default.\n"
+                    "Use entity_id for 1:1, chat_id for group chats."
+                ),
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "entity_id": {"type": "string", "description": "Entity_id for 1:1 chat history"},
                         "chat_id": {"type": "string", "description": "Chat_id for group chat history"},
-                        "limit": {"type": "integer", "description": "Max messages to return", "default": 20},
-                        "mark_read": {"type": "boolean", "description": "Mark messages as read", "default": True},
                     },
                 },
             },
