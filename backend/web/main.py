@@ -58,4 +58,12 @@ if __name__ == "__main__":
     # @@@port-precedence - git worktree config > LEON_BACKEND_PORT > PORT > 8001
     port = _resolve_port()
     # @@@module-launch-target - Package-qualified target keeps module launch (`python -m backend.web.main`) import-safe.
-    uvicorn.run("backend.web.main:app", host="0.0.0.0", port=port, reload=True)
+    # @@@reload-dirs - restrict file watching to backend + core + config + storage only.
+    # Without this, StatReload scans .venv/, node_modules/, .git/ etc. and burns 50-80% CPU.
+    uvicorn.run(
+        "backend.web.main:app",
+        host="0.0.0.0",
+        port=port,
+        reload=True,
+        reload_dirs=["backend", "core", "config", "storage", "sandbox"],
+    )
