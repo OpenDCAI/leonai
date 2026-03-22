@@ -36,14 +36,15 @@ class SQLiteThreadRepo:
                cwd: str | None = None, created_at: float = 0, **extra: Any) -> None:
         with self._lock:
             self._conn.execute(
-                "INSERT INTO threads (id, member_id, sandbox_type, cwd, model, observation_provider, created_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO threads (id, member_id, sandbox_type, cwd, model, observation_provider, workspace_id, created_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (thread_id, member_id, sandbox_type, cwd,
-                 extra.get("model"), extra.get("observation_provider"), created_at),
+                 extra.get("model"), extra.get("observation_provider"),
+                 extra.get("workspace_id"), created_at),
             )
             self._conn.commit()
 
-    _COLS = ("id", "member_id", "sandbox_type", "model", "cwd", "observation_provider", "created_at")
+    _COLS = ("id", "member_id", "sandbox_type", "model", "cwd", "observation_provider", "workspace_id", "created_at")
     _SELECT = ", ".join(_COLS)
 
     def _to_dict(self, r: tuple) -> dict[str, Any]:
@@ -83,7 +84,7 @@ class SQLiteThreadRepo:
                      "entity_name": r[ncols + 2]} for r in rows]
 
     def update(self, thread_id: str, **fields: Any) -> None:
-        allowed = {"sandbox_type", "model", "cwd", "observation_provider"}
+        allowed = {"sandbox_type", "model", "cwd", "observation_provider", "workspace_id"}
         sets = {k: v for k, v in fields.items() if k in allowed}
         if not sets:
             return
@@ -108,6 +109,7 @@ class SQLiteThreadRepo:
                 cwd TEXT,
                 observation_provider TEXT,
                 agent TEXT,
+                workspace_id TEXT,
                 created_at REAL NOT NULL
             )
             """
