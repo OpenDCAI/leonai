@@ -242,6 +242,30 @@ class SQLiteChatMessageRepo:
         rows.reverse()
         return [self._to_msg(r) for r in rows]
 
+    def list_unread(self, chat_id: str, entity_id: str) -> list[ChatMessageRow]:
+        """Return unread messages (after last_read_at, excluding own) in chronological order."""
+        with self._lock:
+            cursor_row = self._conn.execute(
+                "SELECT last_read_at FROM chat_entities WHERE chat_id = ? AND entity_id = ?",
+                (chat_id, entity_id),
+            ).fetchone()
+            last_read = cursor_row[0] if cursor_row else None
+            if last_read is None:
+                rows = self._conn.execute(
+                    f"SELECT {self._MSG_COLS} FROM chat_messages"
+                    " WHERE chat_id = ? AND sender_entity_id != ?"
+                    " ORDER BY created_at ASC",
+                    (chat_id, entity_id),
+                ).fetchall()
+            else:
+                rows = self._conn.execute(
+                    f"SELECT {self._MSG_COLS} FROM chat_messages"
+                    " WHERE chat_id = ? AND sender_entity_id != ? AND created_at > ?"
+                    " ORDER BY created_at ASC",
+                    (chat_id, entity_id, last_read),
+                ).fetchall()
+        return [self._to_msg(r) for r in rows]
+
     def count_unread(self, chat_id: str, entity_id: str) -> int:
         with self._lock:
             cursor_row = self._conn.execute(
