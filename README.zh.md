@@ -177,6 +177,11 @@ Agent 可通过外部工具和专业技能进行扩展：
 - [部署](docs/zh/deployment.md) — 生产部署指南
 - [核心概念](docs/zh/product-primitives.md) — 核心抽象（Thread、Member、Task、Resource）
 
+## 联系我们
+
+- [微信交流群](https://github.com/OpenDCAI/Mycel/issues/165)
+- [GitHub Issues](https://github.com/OpenDCAI/Mycel/issues)
+
 ## 贡献
 
 ```bash

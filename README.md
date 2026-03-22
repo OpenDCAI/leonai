@@ -177,6 +177,11 @@ Agents can be extended with external tools and specialized expertise:
 - [Deployment](docs/en/deployment.md) — Production deployment guide
 - [Concepts](docs/en/product-primitives.md) — Core abstractions (Thread, Member, Task, Resource)
 
+## Contact Us
+
+- [WeChat Group (微信交流群)](https://github.com/OpenDCAI/Mycel/issues/165)
+- [GitHub Issues](https://github.com/OpenDCAI/Mycel/issues)
+
 ## Contributing
 
 ```bash
